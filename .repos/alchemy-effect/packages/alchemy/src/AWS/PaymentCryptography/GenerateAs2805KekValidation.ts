@@ -14,9 +14,8 @@ export interface GenerateAs2805KekValidationRequest extends Omit<
  * send/receive components) under a KEK {@link Key}, used during AS2805 node
  * key establishment in Australian payment networks. Provide
  * `GenerateAs2805KekValidationHttp` on the Function to satisfy this service.
- * @binding
- * @section AS2805 Key Establishment
- * @example Generate KEK validation data
+ * ### AS2805 Key Establishment
+ * **Example:** Generate KEK validation data
  * ```typescript
  * // init
  * const generateKekValidation =
@@ -28,6 +27,8 @@ export interface GenerateAs2805KekValidationRequest extends Omit<
  *   RandomKeySendVariantMask: mask,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateAs2805KekValidation extends Binding.Service<
   GenerateAs2805KekValidation,

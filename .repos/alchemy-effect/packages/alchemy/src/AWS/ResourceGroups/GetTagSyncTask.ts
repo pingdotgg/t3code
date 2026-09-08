@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * {@link StartTagSyncTask} or found via {@link ListTagSyncTasks}), so the
  * grant is on `*`. Provide the implementation with
  * `Effect.provide(AWS.ResourceGroups.GetTagSyncTaskHttp)`.
- * @binding
- * @section Tag-Sync Tasks
- * @example Read A Task's Status
+ * ### Tag-Sync Tasks
+ * **Example:** Read A Task's Status
  * ```typescript
  * // init
  * const getTagSyncTask = yield* AWS.ResourceGroups.GetTagSyncTask();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logError(`tag sync failed: ${task.ErrorMessage}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetTagSyncTask extends Binding.Service<
   GetTagSyncTask,

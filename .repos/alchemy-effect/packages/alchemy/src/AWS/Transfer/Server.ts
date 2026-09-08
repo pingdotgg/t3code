@@ -133,9 +133,8 @@ export interface Server extends Resource<
  * An AWS Transfer Family server — a managed SFTP/FTPS/FTP/AS2 endpoint in
  * front of S3 or EFS storage. A running server is billed hourly (plus data
  * transfer), so create it only when needed and destroy it promptly.
- * @resource
- * @section Creating a Server
- * @example Public SFTP Server (Service-Managed Users)
+ * ### Creating a Server
+ * **Example:** Public SFTP Server (Service-Managed Users)
  * ```typescript
  * const server = yield* Server("Sftp", {
  *   protocols: ["SFTP"],
@@ -145,8 +144,8 @@ export interface Server extends Resource<
  * });
  * ```
  *
- * @section Adding Users
- * @example SFTP Server with a Service-Managed User
+ * ### Adding Users
+ * **Example:** SFTP Server with a Service-Managed User
  * ```typescript
  * const server = yield* Server("Sftp", {
  *   protocols: ["SFTP"],
@@ -187,6 +186,8 @@ export interface Server extends Resource<
  *   sshPublicKeyBody: "ssh-ed25519 AAAA...",
  * });
  * ```
+ *
+ * @resource
  */
 export const Server = Resource<Server>("AWS.Transfer.Server");
 

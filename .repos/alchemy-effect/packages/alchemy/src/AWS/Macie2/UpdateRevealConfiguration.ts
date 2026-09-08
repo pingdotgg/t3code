@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.UpdateRevealConfigurationHttp)`.
- * @binding
- * @section Retrieving Sensitive Data Samples
- * @example Enable Sample Retrieval
+ * ### Retrieving Sensitive Data Samples
+ * **Example:** Enable Sample Retrieval
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateRevealConfiguration = yield* AWS.Macie2.UpdateRevealConfiguration();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   configuration: { status: "ENABLED" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateRevealConfiguration extends Binding.Service<
   UpdateRevealConfiguration,

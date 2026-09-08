@@ -10,9 +10,8 @@ import type { MatchingWorkflow } from "./MatchingWorkflow.ts";
  * by the bound rule-based matching workflow — a read-only dry run of an
  * incremental load. Provide the implementation with
  * `Effect.provide(AWS.EntityResolution.GetMatchIdHttp)`.
- * @binding
- * @section Real-Time Matching
- * @example Look Up a Record's Match ID
+ * ### Real-Time Matching
+ * **Example:** Look Up a Record's Match ID
  * ```typescript
  * // init — bind the operation to the workflow
  * const getMatchId = yield* AWS.EntityResolution.GetMatchId(workflow);
@@ -22,6 +21,8 @@ import type { MatchingWorkflow } from "./MatchingWorkflow.ts";
  *   record: { id: "1", email: "jane@example.com" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetMatchId extends Binding.Service<
   GetMatchId,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:StopICD10CMInferenceJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.StopICD10CMInferenceJobHttp)`.
  *
- * @binding
- * @section Batch ICD-10-CM Inference Jobs
- * @example Stop a Running Job
+ * ### Batch ICD-10-CM Inference Jobs
+ * **Example:** Stop a Running Job
  * ```typescript
  * // init
  * const stopICD10CMInferenceJob = yield* AWS.ComprehendMedical.StopICD10CMInferenceJob();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* stopICD10CMInferenceJob({ JobId: jobId });
  * ```
+ *
+ * @binding
  */
 export interface StopICD10CMInferenceJob extends Binding.Service<
   StopICD10CMInferenceJob,

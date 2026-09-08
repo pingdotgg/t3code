@@ -49,22 +49,23 @@ export interface Application extends Resource<
  * An AWS AppConfig application — the top-level container that groups the
  * environments and configuration profiles for one application's configuration.
  *
- * @resource
- * @section Creating an Application
- * @example Basic Application
+ * ### Creating an Application
+ * **Example:** Basic Application
  * ```typescript
  * const app = yield* AppConfig.Application("MyApp", {
  *   description: "Configuration for my service",
  * });
  * ```
  *
- * @example Named Application with Tags
+ * **Example:** Named Application with Tags
  * ```typescript
  * const app = yield* AppConfig.Application("MyApp", {
  *   applicationName: "my-service",
  *   tags: { team: "platform" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Application = Resource<Application>("AWS.AppConfig.Application");
 

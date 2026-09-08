@@ -12,9 +12,8 @@ export interface GetInsightRequest extends xray.GetInsightRequest {}
  * provide the implementation with `Effect.provide(XRay.GetInsightHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetInsight`, so the binding grants it on `*`.
- * @binding
- * @section Insights
- * @example Fetch an insight by id
+ * ### Insights
+ * **Example:** Fetch an insight by id
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -25,6 +24,8 @@ export interface GetInsightRequest extends xray.GetInsightRequest {}
  * const result = yield* getInsight({ InsightId: insightId });
  * const state = result.Insight?.State;
  * ```
+ *
+ * @binding
  */
 export interface GetInsight extends Binding.Service<
   GetInsight,

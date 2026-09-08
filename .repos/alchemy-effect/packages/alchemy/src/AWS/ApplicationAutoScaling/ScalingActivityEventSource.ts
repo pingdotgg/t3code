@@ -88,8 +88,8 @@ export interface ScalingActivityEventSourceProps {
  * account; inspect `event.detail.resourceId` / `event.detail.serviceNamespace`
  * in the handler if multiple targets share the Function.
  *
- * @section Reacting to Scaling Activity
- * @example Alert When a Target Is Pinned at Max Capacity
+ * ### Reacting to Scaling Activity
+ * **Example:** Alert When a Target Is Pinned at Max Capacity
  * ```typescript
  * yield* consumeScalingActivityEvents(target, {}, (events) =>
  *   Stream.runForEach(events, (event) =>

@@ -1,0 +1,16 @@
+{
+  "include": ["src", "test", "e2e.config.ts", "playwright.config.ts"],
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "types": ["react", "react-dom", "node"]
+  }
+}

@@ -23,9 +23,8 @@ export interface StartReplayRequest extends Omit<
  * destination event bus — the runtime half of disaster-recovery and
  * backfill tooling. Provide the `StartReplayHttp` layer on the Function to
  * satisfy the binding.
- * @binding
- * @section Replaying Events
- * @example Replay a Time Window from the Bound Archive
+ * ### Replaying Events
+ * **Example:** Replay a Time Window from the Bound Archive
  * ```typescript
  * // init — bind the archive (provide AWS.EventBridge.StartReplayHttp on the Function)
  * const startReplay = yield* AWS.EventBridge.StartReplay(archive);
@@ -37,6 +36,8 @@ export interface StartReplayRequest extends Omit<
  *   EventEndTime: new Date("2026-07-15T00:00:00Z"),
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartReplay extends Binding.Service<
   StartReplay,

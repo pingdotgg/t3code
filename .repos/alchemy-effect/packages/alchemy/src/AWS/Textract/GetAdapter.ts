@@ -9,9 +9,8 @@ import type { Adapter } from "./Adapter.ts";
  * runtime. The grant is scoped to the adapter's ARN and the `AdapterId`
  * is injected automatically.
  *
- * @binding
- * @section Managing Adapters
- * @example Read the Bound Adapter
+ * ### Managing Adapters
+ * **Example:** Read the Bound Adapter
  * ```typescript
  * // init
  * const getAdapter = yield* AWS.Textract.GetAdapter(adapter);
@@ -20,6 +19,8 @@ import type { Adapter } from "./Adapter.ts";
  * const result = yield* getAdapter();
  * console.log(result.AdapterName, result.FeatureTypes);
  * ```
+ *
+ * @binding
  */
 export interface GetAdapter extends Binding.Service<
   GetAdapter,

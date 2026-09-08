@@ -114,11 +114,8 @@ export type Domain = Resource<
  *
  * Both properties are the attachment's identity, so every change triggers a
  * replacement (detach + attach).
- * @resource
- * @product Pages
- * @category Workers & Compute
- * @section Attaching a Domain
- * @example Custom domain with its CNAME record
+ * ### Attaching a Domain
+ * **Example:** Custom domain with its CNAME record
  * ```typescript
  * const project = yield* Cloudflare.Pages.Project("site", {});
  *
@@ -137,6 +134,10 @@ export type Domain = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/pages/configuration/custom-domains/
+ *
+ * @resource
+ * @product Pages
+ * @category Workers & Compute
  */
 export const Domain = Resource<Domain>(TypeId);
 

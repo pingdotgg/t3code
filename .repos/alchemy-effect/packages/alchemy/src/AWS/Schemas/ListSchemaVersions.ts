@@ -11,9 +11,8 @@ import type { Schema } from "./Schema.ts";
  * version was published, or to pin consumers to a version range). The
  * registry and schema names are injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.Schemas.ListSchemaVersionsHttp)`.
- * @binding
- * @section Reading Schemas
- * @example List All Versions
+ * ### Reading Schemas
+ * **Example:** List All Versions
  * ```typescript
  * // init — bind the operation to the schema
  * const listSchemaVersions = yield* AWS.Schemas.ListSchemaVersions(schema);
@@ -22,6 +21,8 @@ import type { Schema } from "./Schema.ts";
  * const { SchemaVersions } = yield* listSchemaVersions();
  * const versions = (SchemaVersions ?? []).map((v) => v.SchemaVersion);
  * ```
+ *
+ * @binding
  */
 export interface ListSchemaVersions extends Binding.Service<
   ListSchemaVersions,

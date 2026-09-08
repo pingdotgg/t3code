@@ -60,11 +60,8 @@ export type Webhook = Resource<
  * Destroying the resource deletes the webhook configuration.
  *
  * Requires the Stream subscription to be enabled on the account.
- * @resource
- * @product Stream
- * @category Media
- * @section Configuring the webhook
- * @example Receive Stream notifications
+ * ### Configuring the webhook
+ * **Example:** Receive Stream notifications
  * ```typescript
  * const webhook = yield* Cloudflare.Stream.Webhook("Notifications", {
  *   notificationUrl: "https://example.com/hooks/stream",
@@ -75,6 +72,10 @@ export type Webhook = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/stream/manage-video-library/using-webhooks/
+ *
+ * @resource
+ * @product Stream
+ * @category Media
  */
 export const Webhook = Resource<Webhook>(TypeId);
 

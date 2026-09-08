@@ -12,9 +12,8 @@ import type { Pipe } from "./Pipe.ts";
  * pipe settled after a start/stop. The pipe name is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.Pipes.DescribePipeHttp)`.
- * @binding
- * @section Observing a Pipe
- * @example Read the Pipe's Live State
+ * ### Observing a Pipe
+ * **Example:** Read the Pipe's Live State
  * ```typescript
  * // init — bind the operation to the pipe
  * const describePipe = yield* AWS.Pipes.DescribePipe(pipe);
@@ -23,6 +22,8 @@ import type { Pipe } from "./Pipe.ts";
  * const described = yield* describePipe();
  * // described.CurrentState === "RUNNING"
  * ```
+ *
+ * @binding
  */
 export interface DescribePipe extends Binding.Service<
   DescribePipe,

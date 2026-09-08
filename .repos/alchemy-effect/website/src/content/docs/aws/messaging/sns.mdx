@@ -65,7 +65,7 @@ import { Orders } from "./topic.ts";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const topic = yield* Orders;
     const publish = yield* SNS.Publish(topic);

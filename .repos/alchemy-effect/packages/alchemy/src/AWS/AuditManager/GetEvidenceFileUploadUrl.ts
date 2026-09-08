@@ -10,13 +10,14 @@ import * as Binding from "../../Binding.ts";
  * {@link BatchImportEvidenceToAssessmentControl} to attach the uploaded
  * file to a control. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.GetEvidenceFileUploadUrlHttp)`.
- * @binding
- * @section Manual Evidence
- * @example Presign a Manual-Evidence Upload
+ * ### Manual Evidence
+ * **Example:** Presign a Manual-Evidence Upload
  * ```typescript
  * const getEvidenceFileUploadUrl = yield* AWS.AuditManager.GetEvidenceFileUploadUrl();
  * const result = yield* getEvidenceFileUploadUrl({ fileName: "access-review.pdf" });
  * ```
+ *
+ * @binding
  */
 export interface GetEvidenceFileUploadUrl extends Binding.Service<
   GetEvidenceFileUploadUrl,

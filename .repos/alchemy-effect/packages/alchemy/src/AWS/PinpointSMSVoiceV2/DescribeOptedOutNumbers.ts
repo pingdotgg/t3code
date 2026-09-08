@@ -21,9 +21,8 @@ export interface DescribeOptedOutNumbersRequest extends Omit<
  * The deploy-time half grants `sms-voice:DescribeOptedOutNumbers` on the
  * list. Provide the implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.DescribeOptedOutNumbersHttp)`.
- * @binding
- * @section Managing Opt-Outs
- * @example Check a Number Before Sending
+ * ### Managing Opt-Outs
+ * **Example:** Check a Number Before Sending
  * ```typescript
  * // init
  * const describeOptedOut =
@@ -35,6 +34,8 @@ export interface DescribeOptedOutNumbersRequest extends Omit<
  * });
  * const optedOut = (OptedOutNumbers ?? []).length > 0;
  * ```
+ *
+ * @binding
  */
 export interface DescribeOptedOutNumbers extends Binding.Service<
   DescribeOptedOutNumbers,

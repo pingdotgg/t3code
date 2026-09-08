@@ -30,9 +30,8 @@ export interface CreateWorkspaceServiceAccountTokenRequest {
  * `Bearer` token against the workspace's Grafana HTTP API. Ideal for token
  * rotation from a scheduled Lambda. Provide the implementation with
  * `Effect.provide(AWS.Grafana.CreateWorkspaceServiceAccountTokenHttp)`.
- * @binding
- * @section Managing Service Accounts
- * @example Mint a Short-Lived Grafana API Token
+ * ### Managing Service Accounts
+ * **Example:** Mint a Short-Lived Grafana API Token
  * ```typescript
  * const createToken =
  *   yield* Grafana.CreateWorkspaceServiceAccountToken(workspace);
@@ -44,6 +43,8 @@ export interface CreateWorkspaceServiceAccountTokenRequest {
  * });
  * const key = Redacted.value(serviceAccountToken.key); // "glsa_..."
  * ```
+ *
+ * @binding
  */
 export interface CreateWorkspaceServiceAccountToken extends Binding.Service<
   CreateWorkspaceServiceAccountToken,

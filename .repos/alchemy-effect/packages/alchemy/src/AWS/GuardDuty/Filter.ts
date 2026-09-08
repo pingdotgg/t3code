@@ -90,8 +90,8 @@ export interface Filter extends Resource<
  * `(detectorId, name)` pair; description, action, rank, and criteria are
  * updatable in place.
  *
- * @section Filtering Findings
- * @example Auto-archive low-severity findings
+ * ### Filtering Findings
+ * **Example:** Auto-archive low-severity findings
  * ```typescript
  * const detector = yield* AWS.GuardDuty.Detector("Detector", {});
  * const filter = yield* AWS.GuardDuty.Filter("LowSeverity", {
@@ -102,7 +102,7 @@ export interface Filter extends Resource<
  * });
  * ```
  *
- * @example Keep a named filter for the console
+ * **Example:** Keep a named filter for the console
  * ```typescript
  * const filter = yield* AWS.GuardDuty.Filter("ProdOnly", {
  *   detectorId: detector.detectorId,

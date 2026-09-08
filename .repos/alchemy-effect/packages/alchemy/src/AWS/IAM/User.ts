@@ -77,9 +77,8 @@ export interface User extends Resource<
  *
  * `User` manages a long-lived IAM identity together with its attached managed
  * policies, inline policies, permissions boundary, and tags.
- * @resource
- * @section Creating IAM Users
- * @example User with Managed Policies
+ * ### Creating IAM Users
+ * **Example:** User with Managed Policies
  * ```typescript
  * const user = yield* User("AppUser", {
  *   userName: "app-user",
@@ -88,6 +87,8 @@ export interface User extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const User = Resource<User>("AWS.IAM.User");
 

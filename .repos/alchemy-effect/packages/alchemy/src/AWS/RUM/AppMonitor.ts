@@ -2,6 +2,7 @@ import * as logs from "@distilled.cloud/aws/cloudwatch-logs";
 import * as rum from "@distilled.cloud/aws/rum";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
@@ -132,9 +133,8 @@ export interface AppMonitor extends Resource<
  * An Amazon CloudWatch RUM app monitor that collects client-side telemetry
  * (page load times, JavaScript errors, user behavior) from your web
  * application.
- * @resource
- * @section Creating App Monitors
- * @example Monitor a single domain
+ * ### Creating App Monitors
+ * **Example:** Monitor a single domain
  * ```typescript
  * import * as RUM from "alchemy/AWS/RUM";
  *
@@ -143,7 +143,7 @@ export interface AppMonitor extends Resource<
  * });
  * ```
  *
- * @example Sample all sessions and collect every telemetry type
+ * **Example:** Sample all sessions and collect every telemetry type
  * ```typescript
  * const monitor = yield* RUM.AppMonitor("SiteMonitor", {
  *   domain: "*.example.com",
@@ -155,8 +155,8 @@ export interface AppMonitor extends Resource<
  * });
  * ```
  *
- * @section Log Retention and Custom Events
- * @example Copy telemetry to CloudWatch Logs and accept custom events
+ * ### Log Retention and Custom Events
+ * **Example:** Copy telemetry to CloudWatch Logs and accept custom events
  * ```typescript
  * const monitor = yield* RUM.AppMonitor("SiteMonitor", {
  *   domainList: ["example.com", "app.example.com"],
@@ -164,6 +164,8 @@ export interface AppMonitor extends Resource<
  *   customEvents: "ENABLED",
  * });
  * ```
+ *
+ * @resource
  */
 export const AppMonitor = Resource<AppMonitor>("AWS.RUM.AppMonitor");
 
@@ -332,7 +334,7 @@ export const AppMonitorProvider = () =>
           const arn = appMonitorArn(region, accountId, name);
           const internalTags = yield* createInternalTags(id);
           const desiredTags: Record<string, string> = {
-            ...(news.tags ?? {}),
+            ...news.tags,
             ...internalTags,
           };
           const desiredConfig = desiredConfiguration(news);
@@ -345,7 +347,10 @@ export const AppMonitorProvider = () =>
 
           // 2. ENSURE — create when missing; a concurrent create surfaces as
           //    the typed ConflictException, which we treat as a race and
-          //    re-observe.
+          //    re-observe. CreateAppMonitor is eventually consistent — an
+          //    immediate GetAppMonitor can still miss it, and persisting an
+          //    undefined appMonitorId poisons every downstream binding env —
+          //    so poll (bounded) until the monitor is observable.
           if (live === undefined) {
             yield* rum
               .createAppMonitor({
@@ -361,7 +366,13 @@ export const AppMonitorProvider = () =>
                 Effect.asVoid,
                 Effect.catchTag("ConflictException", () => Effect.void),
               );
-            live = yield* observeMonitor(name);
+            live = yield* observeMonitor(name).pipe(
+              Effect.repeat({
+                schedule: Schedule.spaced("2 seconds"),
+                until: (monitor) => monitor !== undefined,
+                times: 15,
+              }),
+            );
           }
 
           // 3. SYNC — diff the OBSERVED domain(s), configuration, log

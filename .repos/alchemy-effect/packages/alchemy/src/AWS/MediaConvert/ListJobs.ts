@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.MediaConvert.ListJobsHttp)`.
  *
- * @binding
- * @section Tracking Jobs
- * @example List In-Flight Jobs
+ * ### Tracking Jobs
+ * **Example:** List In-Flight Jobs
  * ```typescript
  * // init
  * const listJobs = yield* AWS.MediaConvert.ListJobs();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Jobs } = yield* listJobs({ Status: "PROGRESSING" });
  * ```
+ *
+ * @binding
  */
 export interface ListJobs extends Binding.Service<
   ListJobs,

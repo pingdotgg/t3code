@@ -89,8 +89,8 @@ export interface ClusterEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Cluster Events
- * @example Alert On Failed Steps
+ * ### Consuming Cluster Events
+ * **Example:** Alert On Failed Steps
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

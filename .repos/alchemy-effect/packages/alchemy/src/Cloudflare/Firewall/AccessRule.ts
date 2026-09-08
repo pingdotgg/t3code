@@ -121,11 +121,8 @@ export type AccessRule = Resource<
  * prior state, `read` scans the scope for an existing rule with the same
  * configuration and reports it as `Unowned`, so the engine refuses to take
  * it over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Firewall
- * @category Application Security
- * @section Blocking an IP
- * @example Block a single IPv4 address on a zone
+ * ### Blocking an IP
+ * **Example:** Block a single IPv4 address on a zone
  * ```typescript
  * yield* Cloudflare.Firewall.AccessRule("BlockBadActor", {
  *   zoneId: zone.zoneId,
@@ -135,7 +132,7 @@ export type AccessRule = Resource<
  * });
  * ```
  *
- * @example Block a CIDR range account-wide
+ * **Example:** Block a CIDR range account-wide
  * ```typescript
  * // No zoneId — the rule applies to every zone in the account.
  * yield* Cloudflare.Firewall.AccessRule("BlockScannerRange", {
@@ -144,8 +141,8 @@ export type AccessRule = Resource<
  * });
  * ```
  *
- * @section Challenging traffic
- * @example Managed challenge for a country
+ * ### Challenging traffic
+ * **Example:** Managed challenge for a country
  * ```typescript
  * // `block` for country targets is Enterprise-only; challenges work on
  * // all plans.
@@ -156,8 +153,8 @@ export type AccessRule = Resource<
  * });
  * ```
  *
- * @section Whitelisting
- * @example Always allow an office IP
+ * ### Whitelisting
+ * **Example:** Always allow an office IP
  * ```typescript
  * yield* Cloudflare.Firewall.AccessRule("AllowOffice", {
  *   zoneId: zone.zoneId,
@@ -168,6 +165,10 @@ export type AccessRule = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/waf/tools/ip-access-rules/
+ *
+ * @resource
+ * @product Firewall
+ * @category Application Security
  */
 export const AccessRule = Resource<AccessRule>(FirewallAccessRuleTypeId);
 

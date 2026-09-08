@@ -1,0 +1,177 @@
+---
+title: Websites
+description: Deploy Vite, Astro, Next.js, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Railway with first-class Website resources.
+sidebar:
+  label: Overview
+  order: 1
+---
+
+Alchemy deploys frontends to Railway with a family of
+`Railway.Website` resources. Each one builds your project
+programmatically and deploys it as a
+[Service](/railway/compute/services) from a container image — Node
+on port 3000, health check `/health` — with no `railway.toml` and
+no adapter to put in the framework config. Your framework's own
+config file (`vite.config.ts`, `astro.config.*`, `nuxt.config.ts`,
+...) loads natively; Alchemy layers its Node container integration
+on top.
+
+Omit `project` and Alchemy creates a
+[`Railway.Project`](/railway/compute/projects). Pass `project` to
+put the site next to other Services in an existing Project.
+
+The live path generates a Dockerfile and uploads it; Railway
+builds the image. No GHCR. No Docker daemon on your machine.
+`alchemy dev` never creates a Project or Service.
+
+The live URL is the generated `https://{name}.up.railway.app`,
+or `https://{domain}` when you pass `domain` (a
+[`CustomDomain`](/railway/networking#custom-domains) on port
+3000).
+
+- [`Vite`](/railway/frontend/vite) — client-only Vite apps
+  (React, Vue, Solid SPAs, `index.html` multi-page sites); a tiny
+  static-file server serves the `vite build` output.
+- [`Astro`](/railway/frontend/astro) — Astro sites, server-rendered
+  on Node or fully static; your `astro.config.*` loads natively.
+- [`Nextjs`](/railway/frontend/nextjs) — Next.js as a long-running
+  Node process (`next build`, then `next({ dev: false })`). Not
+  OpenNext.
+- [`Nuxt`](/railway/frontend/nuxt) — Nuxt apps through nitro's
+  Node server; your `nuxt.config.ts` loads natively. Do not set
+  `nitro.preset`.
+- [`ReactRouter`](/railway/frontend/react-router) — React Router
+  v7 in framework mode, built through your own `vite build`.
+- [`SolidStart`](/railway/frontend/solidstart) — SolidStart 2.x
+  SSR; Alchemy appends nitro's `node` preset to your `vite build`.
+- [`SvelteKit`](/railway/frontend/sveltekit) — SvelteKit SSR plus
+  prerendered assets; the Node adapter is injected. Do not set
+  `kit.adapter`.
+- [`TanStackStart`](/railway/frontend/tanstack-start) — TanStack
+  Start (React or Solid), built through your own `vite build`.
+- [`Waku`](/railway/frontend/waku) — Waku (React Server
+  Components) on Node, with SSG pages baked into the image.
+- [`Octane`](/railway/frontend/octane) — OctaneJS SSR. Select
+  `node()` from `@alchemy.run/frontend-frameworks/octane/node-adapter`
+  in `octane.config.ts`.
+- [`Foldkit`](/railway/frontend/foldkit) — client-only Foldkit
+  SPA; deep links fall back to `index.html`.
+- [`Vocs`](/railway/frontend/vocs) — prerendered Vocs docs;
+  extensionless pages (`/about` → `about/index.html`).
+- [`StaticSite`](/railway/frontend/static-site) — any build
+  command's output directory (Hugo, Zola, Eleventy).
+
+The return is `{ url, service, project }` — `service` and
+`project` are `undefined` under `alchemy dev`.
+
+Shared props: `rootDir`, `memo`, `env` (process environment on
+the Service — not Worker bindings), `dev`, `domain`, `project`.
+Builds are memoized by content-hashing the input files — an
+unchanged project skips the build.
+
+## What's supported
+
+| Framework | Resource | Guide |
+| --- | --- | --- |
+| React / Vue / Solid SPA | `Vite` | [Vite](/railway/frontend/vite) |
+| TanStack Start (React & Solid) | `TanStackStart` | [TanStack Start](/railway/frontend/tanstack-start) |
+| React Router | `ReactRouter` | [React Router](/railway/frontend/react-router) |
+| SolidStart | `SolidStart` | [SolidStart](/railway/frontend/solidstart) |
+| Astro | `Astro` | [Astro](/railway/frontend/astro) |
+| Next.js | `Nextjs` | [Next.js](/railway/frontend/nextjs) |
+| Nuxt | `Nuxt` | [Nuxt](/railway/frontend/nuxt) |
+| SvelteKit | `SvelteKit` | [SvelteKit](/railway/frontend/sveltekit) |
+| Waku | `Waku` | [Waku](/railway/frontend/waku) |
+| OctaneJS | `Octane` | [Octane](/railway/frontend/octane) |
+| Foldkit | `Foldkit` | [Foldkit](/railway/frontend/foldkit) |
+| Vocs | `Vocs` | [Vocs](/railway/frontend/vocs) |
+| Zola, Hugo, or any static generator | `StaticSite` | [Static sites](/railway/frontend/static-site) |
+
+See
+[examples/railway-website-vite](https://github.com/alchemy-run/alchemy/tree/main/examples/railway-website-vite)
+for a Vite SPA in a shared Project.
+
+## How to choose
+
+Use the resource named after your framework. `Astro`, `Nextjs`,
+`Nuxt`, `ReactRouter`, `SolidStart`, `SvelteKit`,
+`TanStackStart`, `Waku`, `Octane`, `Foldkit`, and `Vocs` each
+drive that framework's programmatic build and know its output
+layout, config surface, and dev server.
+
+Use `Vite` when the whole deployable output is static assets — a
+React, Vue, or Solid SPA, or an `index.html`-per-route multi-page
+app. SSR frameworks that wrap Vite (`Astro`, `SvelteKit`,
+`Octane`, …) have their own resources; `Vite` never starts a
+framework server module.
+
+Use `StaticSite` when the build is an arbitrary shell command
+that emits a directory of files.
+
+## Environment variables
+
+Top-level `env` is copied onto `process.env` before build and
+dev, and onto the Railway Service at deploy. Client inlining is
+whatever the framework already does (`VITE_*` for Vite). It is
+not Worker bindings and not AWS `server.environment`.
+
+```typescript
+const site = yield* Railway.Website.Vite("Web", {
+  project,
+  env: {
+    VITE_API_URL: api.url,
+  },
+});
+```
+
+Server code reads `process.env`. Pair a site with
+[Postgres](/railway/data/postgres) in the same Project the same
+way you would any other Service.
+
+## Local development
+
+`alchemy dev` runs the framework's own dev server (native HMR)
+instead of deploying. `site.url` is the local address and no
+Project or Service is created. Wrap the site in
+`Alchemy.remote()` to deploy the live path even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* Railway.Website.Astro("Web", {
+  project,
+  domain: "app.example.com",
+});
+```
+
+`domain` attaches a `Railway.CustomDomain` (`targetPort: 3000`).
+`url` becomes `https://app.example.com` instead of the generated
+`*.up.railway.app`.
+
+## Where next
+
+- [The Vite resource](/railway/frontend/vite) — assets-only SPA,
+  `assets.notFoundHandling`, env inlining.
+- [The StaticSite resource](/railway/frontend/static-site) — build
+  commands, SPA/404 handling.
+- Framework guides:
+  [Astro](/railway/frontend/astro),
+  [Next.js](/railway/frontend/nextjs),
+  [Nuxt](/railway/frontend/nuxt),
+  [React Router](/railway/frontend/react-router),
+  [SolidStart](/railway/frontend/solidstart),
+  [SvelteKit](/railway/frontend/sveltekit),
+  [TanStack Start](/railway/frontend/tanstack-start),
+  [Waku](/railway/frontend/waku),
+  [Octane](/railway/frontend/octane),
+  [Foldkit](/railway/frontend/foldkit),
+  [Vocs](/railway/frontend/vocs).
+- [Services](/railway/compute/services) — the container these
+  resources deploy.
+- [Custom domains](/railway/networking#custom-domains) — hostname
+  on a Service.
+- [Postgres](/railway/data/postgres) — Postgres in the same
+  Project.
+- [`Vite` reference](/providers/railway/website/vite),
+  [`Astro` reference](/providers/railway/website/astro),
+  [`StaticSite` reference](/providers/railway/website/staticsite).

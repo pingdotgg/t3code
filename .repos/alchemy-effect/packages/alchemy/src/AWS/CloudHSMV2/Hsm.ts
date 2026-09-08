@@ -72,9 +72,8 @@ export interface Hsm extends Resource<
  * HSMs take roughly 10-20 minutes to provision and are billed hourly while
  * they exist. The cluster must be in the `UNINITIALIZED`, `ACTIVE`, or
  * `DEGRADED` state to accept a new HSM. Destroy HSMs you are not using.
- * @resource
- * @section Creating an HSM
- * @example HSM in a Cluster's Availability Zone
+ * ### Creating an HSM
+ * **Example:** HSM in a Cluster's Availability Zone
  * ```typescript
  * const hsm = yield* Hsm("Primary", {
  *   clusterId: cluster.clusterId,
@@ -82,7 +81,7 @@ export interface Hsm extends Resource<
  * });
  * ```
  *
- * @example HSM with a Fixed ENI Address
+ * **Example:** HSM with a Fixed ENI Address
  * ```typescript
  * const hsm = yield* Hsm("Primary", {
  *   clusterId: cluster.clusterId,
@@ -90,6 +89,8 @@ export interface Hsm extends Resource<
  *   ipAddress: "10.0.1.20",
  * });
  * ```
+ *
+ * @resource
  */
 export const Hsm = Resource<Hsm>("AWS.CloudHSMV2.Hsm");
 

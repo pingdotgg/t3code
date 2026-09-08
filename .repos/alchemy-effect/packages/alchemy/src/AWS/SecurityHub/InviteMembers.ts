@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.InviteMembersHttp)`.
- * @binding
- * @section Members & Organization
- * @example Invite Members
+ * ### Members & Organization
+ * **Example:** Invite Members
  * ```typescript
  * // init — account-level binding, no resource argument
  * const inviteMembers = yield* AWS.SecurityHub.InviteMembers();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* inviteMembers({ AccountIds: ["111122223333"] });
  * ```
+ *
+ * @binding
  */
 export interface InviteMembers extends Binding.Service<
   InviteMembers,

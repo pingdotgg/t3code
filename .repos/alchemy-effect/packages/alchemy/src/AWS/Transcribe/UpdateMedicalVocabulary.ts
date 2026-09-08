@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:UpdateMedicalVocabulary` on `*`.
  *
- * @binding
- * @section Medical Vocabularies
- * @example Update a Medical Vocabulary
+ * ### Medical Vocabularies
+ * **Example:** Update a Medical Vocabulary
  * ```typescript
  * // init
  * const updateMedicalVocabulary = yield* AWS.Transcribe.UpdateMedicalVocabulary();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   VocabularyFileUri: "s3://my-bucket/vocab-v2.txt",
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateMedicalVocabulary extends Binding.Service<
   UpdateMedicalVocabulary,

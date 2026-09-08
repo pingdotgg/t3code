@@ -11,7 +11,7 @@ import type { Connection } from "./Connection.ts";
  * (connection string, host, port, user, password, database) plus a `raw`
  * escape hatch for libraries that want direct access.
  *
- * @example Bind Hyperdrive in a Worker
+ * **Example:** Bind Hyperdrive in a Worker
  * ```typescript
  * const hd = yield* Cloudflare.Hyperdrive.Connect(MyConnection);
  * const url = yield* hd.connectionString;
@@ -28,7 +28,7 @@ import type { Connection } from "./Connection.ts";
  * `Connect` is a single identifier that is simultaneously the binding's Context
  * tag, its type, and the callable — `yield* Cloudflare.Hyperdrive.Connect(conn)`.
  *
- * @example Using Hyperdrive inside a Worker
+ * **Example:** Using Hyperdrive inside a Worker
  * ```typescript
  * const hd = yield* Cloudflare.Hyperdrive.Connect(MyConnection);
  * const url = yield* hd.connectionString;

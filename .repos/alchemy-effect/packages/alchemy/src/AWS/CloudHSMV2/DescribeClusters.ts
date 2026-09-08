@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * cluster-health monitoring and automatic-HSM-replacement automation.
  * Provide the implementation with
  * `Effect.provide(AWS.CloudHSMV2.DescribeClustersHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Check A Cluster's HSM Health
+ * ### Monitoring Clusters
+ * **Example:** Check A Cluster's HSM Health
  * ```typescript
  * const describeClusters = yield* AWS.CloudHSMV2.DescribeClusters();
  *
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   (hsm) => hsm.State === "ACTIVE",
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeClusters extends Binding.Service<
   DescribeClusters,

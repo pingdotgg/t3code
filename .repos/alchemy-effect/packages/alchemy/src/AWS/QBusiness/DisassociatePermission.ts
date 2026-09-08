@@ -19,14 +19,15 @@ export interface DisassociatePermissionRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.DisassociatePermissionHttp)`.
  *
- * @binding
- * @section Cross-Account Permissions
- * @example Revoke a Permission Statement
+ * ### Cross-Account Permissions
+ * **Example:** Revoke a Permission Statement
  * ```typescript
  * const disassociate = yield* AWS.QBusiness.DisassociatePermission(app);
  *
  * yield* disassociate({ statementId: "isv-search" });
  * ```
+ *
+ * @binding
  */
 export interface DisassociatePermission extends Binding.Service<
   DisassociatePermission,

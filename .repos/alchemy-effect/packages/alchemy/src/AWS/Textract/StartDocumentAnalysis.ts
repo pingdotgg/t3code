@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * (pair it with an SNS event source to invoke a Function on completion).
  * The caller needs `s3:GetObject` on the input bucket.
  *
- * @binding
- * @section Asynchronous Document Analysis
- * @example Start an Analysis Job
+ * ### Asynchronous Document Analysis
+ * **Example:** Start an Analysis Job
  * ```typescript
  * // init
  * const startDocumentAnalysis = yield* AWS.Textract.StartDocumentAnalysis();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   FeatureTypes: ["TABLES"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartDocumentAnalysis extends Binding.Service<
   StartDocumentAnalysis,

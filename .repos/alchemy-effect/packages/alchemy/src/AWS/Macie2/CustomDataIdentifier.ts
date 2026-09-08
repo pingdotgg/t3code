@@ -94,8 +94,8 @@ export interface CustomDataIdentifier extends Resource<
  * `Macie2.Session`). Definitions are immutable: any change other than tags
  * replaces the identifier. Destroy soft-deletes it.
  *
- * @section Creating a custom data identifier
- * @example Employee-id detector
+ * ### Creating a custom data identifier
+ * **Example:** Employee-id detector
  * ```typescript
  * const identifier = yield* Macie2.CustomDataIdentifier("EmployeeId", {
  *   regex: "EMP-[0-9]{8}",
@@ -103,7 +103,7 @@ export interface CustomDataIdentifier extends Resource<
  * });
  * ```
  *
- * @example Keyword-scoped detector with severity thresholds
+ * **Example:** Keyword-scoped detector with severity thresholds
  * ```typescript
  * const identifier = yield* Macie2.CustomDataIdentifier("AccountNumber", {
  *   regex: "[0-9]{12}",

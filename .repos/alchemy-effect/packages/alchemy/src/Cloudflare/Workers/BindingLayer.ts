@@ -32,6 +32,11 @@ export const makeBindingLayer = <Self, Runtime, Client>(
           if (isWorker(host)) {
             yield* host.bind(binding.name, {
               bindings: [binding.toWorkerBinding()],
+              // Dev-only local-emulation opt-out, contributed as a parallel
+              // channel (like `hyperdrives`) so the wire binding stays pure.
+              ...(binding.devRemote
+                ? { devRemote: { [binding.name]: true } }
+                : {}),
             });
           }
         }

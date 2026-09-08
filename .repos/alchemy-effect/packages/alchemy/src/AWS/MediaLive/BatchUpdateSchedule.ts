@@ -12,9 +12,8 @@ import type { Channel } from "./Channel.ts";
  * a playout-automation Lambda that switches inputs on a timecode). The
  * channel id is injected from the binding. Provide the implementation
  * with `Effect.provide(AWS.MediaLive.BatchUpdateScheduleHttp)`.
- * @binding
- * @section Driving the Channel Schedule
- * @example Schedule an Input Switch
+ * ### Driving the Channel Schedule
+ * **Example:** Schedule an Input Switch
  * ```typescript
  * // init — bind the operation to the channel
  * const updateSchedule = yield* AWS.MediaLive.BatchUpdateSchedule(channel);
@@ -38,6 +37,8 @@ import type { Channel } from "./Channel.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchUpdateSchedule extends Binding.Service<
   BatchUpdateSchedule,

@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * the action name, opt-in status, and apply dates. Provide the
  * implementation with
  * `Effect.provide(AWS.DocDBElastic.GetPendingMaintenanceActionHttp)`.
- * @binding
- * @section Scheduling Maintenance
- * @example Read a Cluster's Pending Maintenance
+ * ### Scheduling Maintenance
+ * **Example:** Read a Cluster's Pending Maintenance
  * ```typescript
  * const getPending = yield* DocDBElastic.GetPendingMaintenanceAction();
  *
  * const result = yield* getPending({ resourceArn: cluster.clusterArn });
  * // result.resourcePendingMaintenanceAction.pendingMaintenanceActionDetails
  * ```
+ *
+ * @binding
  */
 export interface GetPendingMaintenanceAction extends Binding.Service<
   GetPendingMaintenanceAction,

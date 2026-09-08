@@ -85,8 +85,8 @@ export interface Filter extends Resource<
  * (`SUPPRESS`, a suppression rule). Everything is updatable in place; the
  * filter's identity is its ARN.
  *
- * @section Suppressing Findings
- * @example Suppress informational findings
+ * ### Suppressing Findings
+ * **Example:** Suppress informational findings
  * ```typescript
  * const filter = yield* AWS.Inspector2.Filter("SuppressInfo", {
  *   action: "SUPPRESS",
@@ -97,7 +97,7 @@ export interface Filter extends Resource<
  * });
  * ```
  *
- * @example Saved view of one repository's findings
+ * **Example:** Saved view of one repository's findings
  * ```typescript
  * const filter = yield* AWS.Inspector2.Filter("RepoView", {
  *   name: "payments-repository",

@@ -22,9 +22,8 @@ export interface DescribeReplicationConfigurationsRequest extends Omit<
  * timestamps. A file system with no replication fails with the typed
  * `ReplicationNotFound`. Provide the implementation with
  * `Effect.provide(AWS.EFS.DescribeReplicationConfigurationsHttp)`.
- * @binding
- * @section Replication
- * @example Check replication health
+ * ### Replication
+ * **Example:** Check replication health
  * ```typescript
  * const describeReplicationConfigurations =
  *   yield* AWS.EFS.DescribeReplicationConfigurations(files);
@@ -34,6 +33,8 @@ export interface DescribeReplicationConfigurationsRequest extends Omit<
  *   Effect.catchTag("ReplicationNotFound", () => Effect.succeed(undefined)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeReplicationConfigurations extends Binding.Service<
   DescribeReplicationConfigurations,

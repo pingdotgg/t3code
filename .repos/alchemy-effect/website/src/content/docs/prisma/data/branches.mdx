@@ -1,0 +1,96 @@
+---
+title: Branches
+description: Prisma branches group databases under git-style names — preview branches per stage, default-branch promotion, and database attachment.
+---
+
+A `Prisma.Branch` groups databases and apps under a git-style name
+inside a project. Prisma tracks two separate properties:
+
+- `role` controls whether Compute resolves `production` or `preview`
+  environment variables.
+- `isDefault` identifies the branch new resources use when they omit
+  a branch.
+
+The first branch created with a project has the immutable
+`production` role. Additional branches have the `preview` role.
+Promoting a preview branch changes `isDefault`; it does not change
+that branch's role.
+
+```typescript
+import * as Prisma from "alchemy/Prisma";
+
+const branch = yield* Prisma.Branch("preview", { project });
+```
+
+`gitName` is optional — omitted, alchemy generates a stable physical
+name. Pass one when the branch should mirror a real git branch:
+
+```typescript
+const branch = yield* Prisma.Branch("feature", {
+  project,
+  gitName: "feature/search",
+});
+```
+
+## Attaching databases
+
+A database joins a branch by `branchId` (or `branchGitName`):
+
+```typescript
+const previewDb = yield* Prisma.Postgres("preview-db", {
+  project,
+  branchId: branch.branchId,
+});
+```
+
+Compute apps attach the same way. Environment-variable scope follows
+the branch's `role`, not `isDefault`, so a promoted preview branch
+continues to use the `preview` class.
+
+## A branch per stage
+
+Branch names can come from the Stack's stage, giving every preview
+stage its own branch — and the databases and apps attached to it —
+that tears down with the stage:
+
+```typescript
+import { Stage } from "alchemy";
+
+const stage = yield* Stage;
+
+const branch = yield* Prisma.Branch("stage", {
+  project,
+  gitName: `preview/${stage}`,
+});
+```
+
+## Default-branch promotion
+
+`isDefault: true` promotes the branch, atomically clearing the current
+default flag. The Management API only supports promotion — demotion
+happens by promoting another branch — and alchemy records the
+displaced branch so destroying the resource can restore it:
+
+```typescript
+const release = yield* Prisma.Branch("release", {
+  project,
+  gitName: "release/next",
+  isDefault: true,
+});
+```
+
+The original `production`-role branch is owned by the project and
+cannot be deleted through `Prisma.Branch`. A preview-role
+`Prisma.Branch` promoted to default remains owned by its Branch
+resource: on destroy, alchemy restores the displaced default and then
+deletes the promoted branch.
+
+## Where next
+
+- [Postgres](/prisma/data/postgres) — projects and databases.
+- [Connections](/prisma/data/connections) — credentials for the
+  databases on a branch.
+
+Reference:
+
+- [Branch API reference](/providers/prisma/branch)

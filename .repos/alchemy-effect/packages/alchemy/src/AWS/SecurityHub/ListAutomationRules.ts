@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.ListAutomationRulesHttp)`.
- * @binding
- * @section Custom Actions, Automation Rules & Aggregation
- * @example List Automation Rules
+ * ### Custom Actions, Automation Rules & Aggregation
+ * **Example:** List Automation Rules
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listAutomationRules = yield* AWS.SecurityHub.ListAutomationRules();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { AutomationRulesMetadata } = yield* listAutomationRules();
  * ```
+ *
+ * @binding
  */
 export interface ListAutomationRules extends Binding.Service<
   ListAutomationRules,

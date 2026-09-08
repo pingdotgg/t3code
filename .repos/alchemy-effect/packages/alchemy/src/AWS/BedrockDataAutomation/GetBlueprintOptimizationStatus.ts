@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.BedrockDataAutomation.GetBlueprintOptimizationStatusHttp)`.
- * @binding
- * @section Blueprint Optimization
- * @example Poll An Optimization Job
+ * ### Blueprint Optimization
+ * **Example:** Poll An Optimization Job
  * ```typescript
  * // deploy time — account-level binding
  * const getStatus =
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   );
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetBlueprintOptimizationStatus extends Binding.Service<
   GetBlueprintOptimizationStatus,

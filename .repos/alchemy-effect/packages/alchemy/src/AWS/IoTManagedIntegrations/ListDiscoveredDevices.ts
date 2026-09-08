@@ -16,14 +16,15 @@ export interface ListDiscoveredDevicesRequest
  * id assigned to each already-onboarded device. Provide the implementation
  * with `Effect.provide(AWS.IoTManagedIntegrations.ListDiscoveredDevicesHttp)`.
  *
- * @binding
- * @section Discovering Devices
- * @example List Devices Found by a Scan
+ * ### Discovering Devices
+ * **Example:** List Devices Found by a Scan
  * ```typescript
  * const listDiscovered = yield* IoTManagedIntegrations.ListDiscoveredDevices();
  *
  * const { Items } = yield* listDiscovered({ Identifier: discoveryId });
  * ```
+ *
+ * @binding
  */
 export interface ListDiscoveredDevices extends Binding.Service<
   ListDiscoveredDevices,

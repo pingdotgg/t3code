@@ -82,30 +82,27 @@ export const makeHttpBrowserClient = (auth: BrowserAuth): BrowserClient => {
 
   const content = (options: unknown) =>
     run(browser.createContent(req(options))).pipe(
-      Effect.map(
-        (result): BrowserContentResult => ({
-          success: true,
-          result,
-          meta: { status: 200, title: "" },
-        }),
-      ),
+      Effect.map((result): BrowserContentResult => ({
+        success: true,
+        result,
+        meta: { status: 200, title: "" },
+      })),
     );
 
   const markdown = (options: unknown) =>
     run(browser.createMarkdown(req(options))).pipe(
-      Effect.map(
-        (result): BrowserMarkdownResult => ({ success: true, result }),
-      ),
+      Effect.map((result): BrowserMarkdownResult => ({
+        success: true,
+        result,
+      })),
     );
 
   const links = (options: unknown) =>
     run(browser.createLink(req(options))).pipe(
-      Effect.map(
-        (result): BrowserLinksResult => ({
-          success: true,
-          result: [...result],
-        }),
-      ),
+      Effect.map((result): BrowserLinksResult => ({
+        success: true,
+        result: [...result],
+      })),
     );
 
   const json = (options: unknown) =>
@@ -115,35 +112,31 @@ export const makeHttpBrowserClient = (auth: BrowserAuth): BrowserClient => {
 
   const scrape = (options: unknown) =>
     run(browser.createScrape(req(options))).pipe(
-      Effect.map(
-        (result): BrowserScrapeResult => ({
-          success: true,
-          result: result.map((item) => ({
-            selector: item.selector,
-            // distilled models per-selector `results` as a single object; the
-            // native shape is an array of matched elements.
-            results: (Array.isArray(item.results)
-              ? item.results
-              : [
-                  item.results,
-                ]) as BrowserScrapeResult["result"][number]["results"],
-          })),
-        }),
-      ),
+      Effect.map((result): BrowserScrapeResult => ({
+        success: true,
+        result: result.map((item) => ({
+          selector: item.selector,
+          // distilled models per-selector `results` as a single object; the
+          // native shape is an array of matched elements.
+          results: (Array.isArray(item.results)
+            ? item.results
+            : [
+                item.results,
+              ]) as BrowserScrapeResult["result"][number]["results"],
+        })),
+      })),
     );
 
   const snapshot = (options: unknown) =>
     run(browser.createSnapshot(req(options))).pipe(
-      Effect.map(
-        (result): BrowserSnapshotResult => ({
-          success: true,
-          result: {
-            content: result.content ?? "",
-            screenshot: result.screenshot ?? "",
-          },
-          meta: { status: 200, title: "" },
-        }),
-      ),
+      Effect.map((result): BrowserSnapshotResult => ({
+        success: true,
+        result: {
+          content: result.content ?? "",
+          screenshot: result.screenshot ?? "",
+        },
+        meta: { status: 200, title: "" },
+      })),
     );
 
   // Binary actions have no REST byte-stream equivalent through the distilled

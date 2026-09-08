@@ -33,31 +33,31 @@ import * as Schedule from "effect/Schedule";
 import { FetchHttpClient } from "effect/unstable/http";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 
-import { fromChain } from "../distilled/packages/aws/src/credentials.ts";
-import { Region } from "../distilled/packages/aws/src/region.ts";
+import { fromChain } from "@distilled.cloud/aws/Credentials";
+import { Region } from "@distilled.cloud/aws/Region";
 
-import * as Logs from "../distilled/packages/aws/src/services/cloudwatch-logs.ts";
-import * as DynamoDB from "../distilled/packages/aws/src/services/dynamodb.ts";
-import * as EC2 from "../distilled/packages/aws/src/services/ec2.ts";
-import * as ECS from "../distilled/packages/aws/src/services/ecs.ts";
-import * as EFS from "../distilled/packages/aws/src/services/efs.ts";
-import * as ELBv2 from "../distilled/packages/aws/src/services/elastic-load-balancing-v2.ts";
-import * as EventBridge from "../distilled/packages/aws/src/services/eventbridge.ts";
-import * as IAM from "../distilled/packages/aws/src/services/iam.ts";
-import * as Kinesis from "../distilled/packages/aws/src/services/kinesis.ts";
-import * as KMS from "../distilled/packages/aws/src/services/kms.ts";
-import * as Lambda from "../distilled/packages/aws/src/services/lambda.ts";
-import * as RDS from "../distilled/packages/aws/src/services/rds.ts";
+import * as Logs from "@distilled.cloud/aws/cloudwatch-logs";
+import * as DynamoDB from "@distilled.cloud/aws/dynamodb";
+import * as EC2 from "@distilled.cloud/aws/ec2";
+import * as ECS from "@distilled.cloud/aws/ecs";
+import * as EFS from "@distilled.cloud/aws/efs";
+import * as ELBv2 from "@distilled.cloud/aws/elastic-load-balancing-v2";
+import * as EventBridge from "@distilled.cloud/aws/eventbridge";
+import * as IAM from "@distilled.cloud/aws/iam";
+import * as Kinesis from "@distilled.cloud/aws/kinesis";
+import * as KMS from "@distilled.cloud/aws/kms";
+import * as Lambda from "@distilled.cloud/aws/lambda";
+import * as RDS from "@distilled.cloud/aws/rds";
 import {
   getResources,
   type GetResourcesOutput,
-} from "../distilled/packages/aws/src/services/resource-groups-tagging-api.ts";
-import * as S3 from "../distilled/packages/aws/src/services/s3.ts";
-import * as Scheduler from "../distilled/packages/aws/src/services/scheduler.ts";
-import * as SecretsManager from "../distilled/packages/aws/src/services/secrets-manager.ts";
-import * as SNS from "../distilled/packages/aws/src/services/sns.ts";
-import * as SQS from "../distilled/packages/aws/src/services/sqs.ts";
-import * as SSM from "../distilled/packages/aws/src/services/ssm.ts";
+} from "@distilled.cloud/aws/resource-groups-tagging-api";
+import * as S3 from "@distilled.cloud/aws/s3";
+import * as Scheduler from "@distilled.cloud/aws/scheduler";
+import * as SecretsManager from "@distilled.cloud/aws/secrets-manager";
+import * as SNS from "@distilled.cloud/aws/sns";
+import * as SQS from "@distilled.cloud/aws/sqs";
+import * as SSM from "@distilled.cloud/aws/ssm";
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -94,7 +94,7 @@ const parseArgs = Effect.sync((): Args => {
 // ---------------------------------------------------------------------------
 
 type Env =
-  | import("../distilled/packages/aws/src/credentials.ts").Credentials
+  | import("@distilled.cloud/aws/Credentials").Credentials
   | Region
   | HttpClient.HttpClient;
 
@@ -823,7 +823,7 @@ const MAX_PAGES = 50;
 
 const discoverTagged = (stage: string) =>
   Effect.gen(function* () {
-    const all: import("../distilled/packages/aws/src/services/resource-groups-tagging-api.ts").ResourceTagMapping[] =
+    const all: import("@distilled.cloud/aws/resource-groups-tagging-api").ResourceTagMapping[] =
       [];
     let token: string | undefined = undefined;
     for (let page = 0; page < MAX_PAGES; page++) {
@@ -854,7 +854,7 @@ const discoverIam = (stage: string, account: string) =>
       createdAt: Date | undefined;
     }[] = [];
 
-    const roles: import("../distilled/packages/aws/src/services/iam.ts").Role[] =
+    const roles: import("@distilled.cloud/aws/iam").Role[] =
       [];
     {
       let marker: string | undefined = undefined;
@@ -892,7 +892,7 @@ const discoverIam = (stage: string, account: string) =>
       }
     }
 
-    const policies: import("../distilled/packages/aws/src/services/iam.ts").Policy[] =
+    const policies: import("@distilled.cloud/aws/iam").Policy[] =
       [];
     {
       let marker: string | undefined = undefined;
@@ -937,7 +937,7 @@ const discoverIam = (stage: string, account: string) =>
 const discoverSchedules = (stage: string, region: string, account: string) =>
   Effect.gen(function* () {
     const marker = `-${stage}-`;
-    const schedules: import("../distilled/packages/aws/src/services/scheduler.ts").ScheduleSummary[] =
+    const schedules: import("@distilled.cloud/aws/scheduler").ScheduleSummary[] =
       [];
     {
       let token: string | undefined = undefined;

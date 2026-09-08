@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * can be edited down to the desired mapping. Optionally writes the template
  * to S3 via `outputSampleLocation`. Provide the implementation with
  * `Effect.provide(AWS.B2BI.CreateStarterMappingTemplateHttp)`.
- * @binding
- * @section Generating Mappings
- * @example Scaffold a JSONATA Template for X12 850
+ * ### Generating Mappings
+ * **Example:** Scaffold a JSONATA Template for X12 850
  * ```typescript
  * // init — account-level, no resource argument
  * const createStarterMappingTemplate =
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.mappingTemplate — the generated starter template
  * ```
+ *
+ * @binding
  */
 export interface CreateStarterMappingTemplate extends Binding.Service<
   CreateStarterMappingTemplate,

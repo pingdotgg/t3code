@@ -1,0 +1,19 @@
+---
+// On-demand SSR: rendered inside workerd (dev) / the Worker (live). The
+// middleware sets `Astro.locals.fromMiddleware` before this page renders and
+// stamps the `x-middleware` response header on the way out.
+const value = Astro.locals.fromMiddleware ?? "missing";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Locals — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>Locals</h1>
+    <p id="locals">{value}</p>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

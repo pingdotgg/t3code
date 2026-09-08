@@ -1,3 +1,4 @@
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Effectable from "effect/Effectable";
 import * as Layer from "effect/Layer";
@@ -5,12 +6,18 @@ import * as Option from "effect/Option";
 import type { Pipeable } from "effect/Pipeable";
 import { AdoptPolicy } from "./AdoptPolicy.ts";
 import { toFqn } from "./FQN.ts";
-import type { Input, InputProps } from "./Input.ts";
+import type { Input, InputProps, PropsInput } from "./Input.ts";
 import { CurrentNamespace, type NamespaceNode } from "./Namespace.ts";
 import * as Output from "./Output.ts";
 import { Provider } from "./Provider.ts";
+import {
+  ConflictingProviderModeError,
+  ProviderModePolicy,
+  type ProviderMode,
+} from "./ProviderMode.ts";
 import { ref as makeRef } from "./Ref.ts";
 import { RemovalPolicy } from "./RemovalPolicy.ts";
+import { RenamePolicy } from "./Rename.ts";
 import { Self } from "./Self.ts";
 import { Stack } from "./Stack.ts";
 
@@ -22,17 +29,11 @@ export type ResourceConstructor<R extends ResourceLike, Req = never> = {
   ): ResourceClassWithMethods<R, Methods>;
   (
     id: string,
+    // PropsInput distributes over union Props so discriminated-union
+    // resources keep the correlation between discriminant and payload.
     ...args: {} extends R["Props"]
-      ? [
-          props?: {
-            [prop in keyof R["Props"]]: Input<R["Props"][prop]>;
-          },
-        ]
-      : [
-          props: {
-            [prop in keyof R["Props"]]: Input<R["Props"][prop]>;
-          },
-        ]
+      ? [props?: PropsInput<R["Props"]>]
+      : [props: PropsInput<R["Props"]>]
   ): Effect.Effect<R, never, Req>;
   <PropsReq = never>(
     id: string,
@@ -50,8 +51,12 @@ export interface ResourceClassLike<R extends ResourceLike> {
    * (see {@link ResourceOptions.aliases}). Copied onto the
    * `ProviderService` by `Provider.succeed`/`Provider.effect` so provider
    * lookup can resolve state persisted under a pre-rename type.
+   *
+   * `undefined` is accepted explicitly so `ResourceClass` (whose `Aliases`
+   * is `readonly string[] | undefined`) stays assignable to
+   * `ResourceClassLike` under `exactOptionalPropertyTypes`.
    */
-  Aliases?: readonly string[];
+  Aliases?: readonly string[] | undefined;
 }
 
 export type ResourceClass<R extends ResourceLike> = ResourceConstructor<
@@ -130,6 +135,31 @@ export interface ResourceLike<
    * resource-scoped override — the planner falls back to the stack/CLI default.
    */
   Adopt: boolean | undefined;
+  /**
+   * Per-resource provider mode captured from the ambient
+   * {@link ProviderModePolicy} at registration time. `"live"` when the
+   * resource was pinned via `.pipe(remote())` (opting out of local emulation
+   * during dev); `undefined` means the run default (`AlchemyContext.dev`).
+   */
+  Mode: ProviderMode | undefined;
+  /**
+   * Copied from {@link ResourceOptions.requiresImplementation} at
+   * registration: `true` for platform-typed resources, whose registrations
+   * must have resolved {@link Props} by plan time. `Plan.make` fails fast
+   * with {@link MissingImplementationError} when this is set and `Props`
+   * are still `undefined` after the whole program has evaluated — a bare
+   * tag was yielded but its `.make(props, impl)` Layer was never provided.
+   */
+  RequiresImplementation: boolean | undefined;
+  /**
+   * Former FQNs this resource's state may still be persisted under,
+   * captured from the ambient {@link RenamePolicy} at registration (via
+   * `.pipe(renamedFrom("OldId"))`) and resolved against the same namespace
+   * as the resource's own FQN. The planner migrates a state row found at a
+   * former FQN to {@link FQN} instead of planning a create+delete
+   * replacement — see `renamedFrom` in Rename.ts for the full semantics.
+   */
+  FormerFqns: readonly string[] | undefined;
   /** @internal phantom */
   Attributes: Attributes;
   /** @internal phantom */
@@ -239,7 +269,71 @@ export interface ResourceOptions {
    * ```
    */
   aliases?: string[];
+  /**
+   * Marks every registration of this type as requiring resolved props by
+   * plan time. Set by `Platform(...)` on its resource class: every
+   * legitimate platform construction (a `.make(props, impl)` Layer build,
+   * a tag declared with props, a plain `Worker("id", props)` call) produces
+   * defined `Props` — the only way a platform-typed registration reaches
+   * the planner with `Props === undefined` is a bare-tag FORWARD REFERENCE
+   * whose `.make` Layer never built. `Plan.make` fails fast with
+   * {@link MissingImplementationError} in that case, instead of letting a
+   * provider read `undefined` props. Plain (non-platform) resources leave
+   * this unset so a no-props reference yield (`yield* Queue("MyQueue")`)
+   * keeps planning as a noop.
+   */
+  requiresImplementation?: boolean;
 }
+
+/**
+ * A tagged platform resource declared with neither props nor an inline
+ * implementation was `yield*`ed, but its `.make(props, impl)` Layer never
+ * built.
+ *
+ * Such a tag carries no configuration on its own — props AND impl both live
+ * on the Layer — so its registration is a forward reference with `undefined`
+ * props that the Layer's build repairs (in either order; see the #874
+ * circular env-tag pattern). Props still `undefined` once the whole program
+ * has evaluated means the Layer was never provided; `Plan.make` fails fast
+ * with this error instead of letting the failure surface deep inside
+ * whichever provider first reads a prop (e.g. `TypeError: undefined is not
+ * an object (evaluating 'news.name')` in the Cloudflare Worker pre-create).
+ */
+export class MissingImplementationError extends Data.TaggedError(
+  "MissingImplementationError",
+)<{
+  message: string;
+  /** Resource type of the platform, e.g. `Cloudflare.Worker`. */
+  type: string;
+  /** Logical id of the tagged resource (its class name by convention). */
+  id: string;
+}> {}
+
+export const missingImplementation = (type: string, id: string) =>
+  new MissingImplementationError({
+    type,
+    id,
+    message: [
+      `${type}<${id}> was yielded without its implementation.`,
+      "",
+      `\`${id}\` is declared as a bare tag — no props, no inline implementation — so both come from its \`.make(...)\` Layer:`,
+      "",
+      `  export class ${id} extends ${type}<${id}>()("${id}") {}`,
+      `  export const ${id}Live = ${id}.make({ /* props */ }, Effect.gen(function* () { /* ... */ }));`,
+      "",
+      `That Layer is not in scope where \`${id}\` is yielded. Provide it to the Stack's program:`,
+      "",
+      "  Alchemy.Stack(",
+      `    "my-stack",`,
+      "    { providers, state },",
+      "    Effect.gen(function* () {",
+      `      const instance = yield* ${id};`,
+      `    }).pipe(Effect.provide([${id}Live])),`,
+      "  )",
+      "",
+      `If \`${id}\` is not Effect-native, declare it with props instead: \`()("${id}", { /* props */ })\`.`,
+    ].join("\n"),
+  });
 
 /**
  * Creates a resource constructor for a concrete resource type.
@@ -265,8 +359,41 @@ export function Resource<R extends ResourceLike>(
       const namespace = yield* CurrentNamespace;
       const fqn = toFqn(namespace, id);
 
+      // `remote()` opts resources out of local emulation during dev. The
+      // captured Mode is either "live" (pinned) or undefined (run default).
+      // The Reference default is `undefined` — "no explicit decoration" —
+      // which is distinct from an explicit `remote(false)`.
+      const ambientPolicy = yield* ProviderModePolicy;
+      const ambientMode: ProviderMode | undefined = ambientPolicy
+        ? "live"
+        : undefined;
+
       const existing = stack.resources[fqn];
       if (existing) {
+        // A resource may be `yield*`ed from several places (idempotent
+        // registration). If a later site carries an *explicit* ambient
+        // ProviderModePolicy that disagrees with what the resource was
+        // registered with, the decorations are conflicting — fail loudly
+        // instead of silently picking one. A later site with NO ambient
+        // policy simply inherits the registered resource (the common
+        // "reference it from elsewhere" pattern).
+        if (ambientPolicy !== undefined && existing.Mode !== ambientMode) {
+          return yield* Effect.die(
+            new ConflictingProviderModeError({
+              message:
+                `Resource '${fqn}' was registered with provider mode ` +
+                `'${existing.Mode ?? "default"}' but is now being registered ` +
+                `with conflicting mode '${ambientMode ?? "default"}'. A ` +
+                "resource must resolve to a single provider mode: register " +
+                "it once and close over the returned value, or make both " +
+                "registration sites agree (e.g. wrap both in the same " +
+                "`remote()` scope).",
+              fqn,
+              existingMode: existing.Mode,
+              conflictingMode: ambientMode,
+            }),
+          );
+        }
         // // TODO(sam): check if props are different and die
         return existing;
       }
@@ -340,6 +467,25 @@ export function Resource<R extends ResourceLike>(
         ),
         Adopt: yield* Effect.serviceOption(AdoptPolicy).pipe(
           Effect.map(Option.getOrUndefined),
+        ),
+        Mode: ambientMode,
+        RequiresImplementation: options?.requiresImplementation || undefined,
+        // Bare-string former ids resolve against the SAME namespace as the
+        // resource's own id, so `renamedFrom("Site/Worker")` declared at the
+        // caller's level claims `<callerNs>/Site/Worker`; the `{ fqn }` form
+        // is absolute (cross-namespace moves).
+        FormerFqns: yield* Effect.serviceOption(RenamePolicy).pipe(
+          Effect.map(
+            Option.match({
+              onNone: () => undefined,
+              onSome: (formerIds) =>
+                formerIds.map((formerId) =>
+                  typeof formerId === "string"
+                    ? toFqn(namespace, formerId)
+                    : formerId.fqn,
+                ),
+            }),
+          ),
         ),
         bind,
         toString(this: typeof target) {

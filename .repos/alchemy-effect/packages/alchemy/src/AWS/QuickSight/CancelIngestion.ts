@@ -9,9 +9,8 @@ import type { DataSet } from "./DataSet.ts";
  * Cancels an in-flight SPICE ingestion on the bound {@link DataSet}.
  * `AwsAccountId` and `DataSetId` are injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.QuickSight.CancelIngestionHttp)`.
- * @binding
- * @section Refreshing SPICE Data
- * @example Cancel A Running Refresh
+ * ### Refreshing SPICE Data
+ * **Example:** Cancel A Running Refresh
  * ```typescript
  * // init — bind the operation to the dataset
  * const cancelIngestion = yield* AWS.QuickSight.CancelIngestion(dataSet);
@@ -19,6 +18,8 @@ import type { DataSet } from "./DataSet.ts";
  * // runtime
  * yield* cancelIngestion({ IngestionId: ingestionId });
  * ```
+ *
+ * @binding
  */
 export interface CancelIngestion extends Binding.Service<
   CancelIngestion,

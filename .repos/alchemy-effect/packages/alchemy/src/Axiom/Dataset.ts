@@ -13,7 +13,8 @@ export type DatasetKind =
   | "otel:metrics:v1"
   | "otel:traces:v1"
   | "otel:logs:v1"
-  | "axiom:events:v1";
+  | "axiom:events:v1"
+  | (string & {});
 
 export type DatasetProps = {
   /**
@@ -23,6 +24,13 @@ export type DatasetProps = {
   name: string;
   /** Free-form description shown in the Axiom UI. */
   description?: string;
+  /**
+   * Edge deployment where Axiom stores and processes the dataset's data.
+   * Defaults to the organization's default edge deployment.
+   *
+   * Cannot be changed after creation — triggers a replacement.
+   */
+  edgeDeployment?: string;
   /**
    * Dataset kind. Defaults to `axiom:events:v1`.
    *
@@ -49,8 +57,13 @@ export type Dataset = Resource<
     kind: DatasetKind;
     description: string;
     created: string;
+    /** Edge deployment where the dataset's data is stored and processed. */
+    edgeDeployment: string;
+    /** Base URL for ingesting and querying data in the dataset's edge deployment. */
+    edgeDeploymentUrl: string;
+    /** Base URL for Axiom's centralized management API. */
     apiBaseUrl: string;
-    /** Root OTLP endpoint (`${apiBaseUrl}`). Most exporters auto-append the signal path. */
+    /** Root OTLP endpoint. Most exporters auto-append the signal path. */
     otelEndpoint: string;
     /** OTLP/HTTP traces endpoint. */
     otelTracesEndpoint: string;
@@ -75,17 +88,16 @@ export type Dataset = Resource<
  * the data is shown in the UI, and **cannot be changed** after creation
  * (changing it triggers a replacement, which deletes the data).
  *
- * Datasets expose Axiom's OTLP/HTTP endpoints (`otelTracesEndpoint`,
- * `otelLogsEndpoint`, `otelMetricsEndpoint`) as output attributes so you can
- * inject them into a Worker / Lambda's env vars for OpenTelemetry shipping.
- * The bearer token is **not** stored in resource state — supply
- * `Authorization: Bearer <AXIOM_TOKEN>` separately at runtime.
- * @resource
+ * Datasets expose their edge deployment and Axiom's OTLP/HTTP endpoints
+ * (`otelTracesEndpoint`, `otelLogsEndpoint`, `otelMetricsEndpoint`) as output
+ * attributes so you can inject them into a Worker / Lambda's env vars for
+ * OpenTelemetry shipping. The bearer token is **not** stored in resource state
+ * — supply `Authorization: Bearer <AXIOM_TOKEN>` separately at runtime.
  * @see https://axiom.co/docs/reference/datasets
  * @see https://axiom.co/docs/send-data/opentelemetry — OTLP endpoint reference
  *
- * @section Creating a Dataset
- * @example Logs dataset with 30-day retention
+ * ### Creating a Dataset
+ * **Example:** Logs dataset with 30-day retention
  * ```typescript
  * const logs = yield* Axiom.Dataset("app-logs", {
  *   name: "my-app-logs",
@@ -96,15 +108,15 @@ export type Dataset = Resource<
  * });
  * ```
  *
- * @example Separate datasets per OTEL signal
+ * **Example:** Separate datasets per OTEL signal
  * ```typescript
  * const traces  = yield* Axiom.Dataset("traces",  { name: "app-traces",  kind: "otel:traces:v1"  });
  * const logs    = yield* Axiom.Dataset("logs",    { name: "app-logs",    kind: "otel:logs:v1"    });
  * const metrics = yield* Axiom.Dataset("metrics", { name: "app-metrics", kind: "otel:metrics:v1" });
  * ```
  *
- * @section Shipping OTEL data
- * @example Wire OTEL env vars into a Cloudflare Worker
+ * ### Shipping OTEL data
+ * **Example:** Wire OTEL env vars into a Cloudflare Worker
  * ```typescript
  * yield* Cloudflare.Worker("api", {
  *   vars: {
@@ -116,6 +128,8 @@ export type Dataset = Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Dataset = Resource<Dataset>("Axiom.Dataset");
 
@@ -151,18 +165,6 @@ const parseMarker = (
   return { stack: m[1], stage: m[2], id: m[3] };
 };
 
-const buildOtelAttrs = (apiBaseUrl: string, name: string) => {
-  const root = apiBaseUrl.replace(/\/$/, "");
-  return {
-    apiBaseUrl: root,
-    otelEndpoint: root,
-    otelTracesEndpoint: `${root}/v1/traces`,
-    otelLogsEndpoint: `${root}/v1/logs`,
-    otelMetricsEndpoint: `${root}/v1/metrics`,
-    otelHeaders: { "X-Axiom-Dataset": name } as Record<string, string>,
-  };
-};
-
 export const DatasetProvider = () =>
   Provider.effect(
     Dataset,
@@ -174,17 +176,37 @@ export const DatasetProvider = () =>
       const listDatasets = yield* Axiom.getDatasets;
       const del = yield* Axiom.deleteDataset;
 
-      const toAttrs = (dataset: Axiom.CreateDatasetOutput) => ({
-        id: dataset.id,
-        name: dataset.name,
-        kind: dataset.kind,
-        description: stripMarker(dataset.description),
-        created: dataset.created,
-        ...buildOtelAttrs(apiBaseUrl, dataset.name),
+      const toAttrs = Effect.fn(function* (dataset: Axiom.Dataset) {
+        if (!dataset.edgeDeployment || !dataset.edgeDeploymentUrl) {
+          return yield* Effect.fail(
+            new Error(
+              `Axiom dataset "${dataset.name}" is missing its edge deployment metadata`,
+            ),
+          );
+        }
+        const apiRoot = apiBaseUrl.replace(/\/$/, "");
+        const otelRoot = dataset.edgeDeploymentUrl.replace(/\/$/, "");
+        return {
+          id: dataset.id,
+          name: dataset.name,
+          kind: dataset.kind,
+          description: stripMarker(dataset.description),
+          created: dataset.created,
+          edgeDeployment: dataset.edgeDeployment,
+          edgeDeploymentUrl: dataset.edgeDeploymentUrl,
+          apiBaseUrl: apiRoot,
+          otelEndpoint: otelRoot,
+          otelTracesEndpoint: `${otelRoot}/v1/traces`,
+          otelLogsEndpoint: `${otelRoot}/v1/logs`,
+          otelMetricsEndpoint: `${otelRoot}/v1/metrics`,
+          otelHeaders: {
+            "X-Axiom-Dataset": dataset.name,
+          } as Record<string, string>,
+        };
       });
 
       return {
-        stables: ["id", "name", "kind"],
+        stables: ["id", "name", "kind", "edgeDeployment", "edgeDeploymentUrl"],
         // Enumerate every dataset in the org. Axiom exposes a single
         // account-wide `GET /v2/datasets` collection op (no pagination), so we
         // fetch it once and hydrate each row into the exact `read`/`toAttrs`
@@ -192,7 +214,7 @@ export const DatasetProvider = () =>
         list: () =>
           Effect.gen(function* () {
             const datasets = yield* listDatasets({});
-            return datasets.map(toAttrs);
+            return yield* Effect.forEach(datasets, toAttrs);
           }),
         diff: Effect.fn(function* ({ olds, news, output }) {
           if (!isResolved(news)) return undefined;
@@ -200,6 +222,13 @@ export const DatasetProvider = () =>
             return { action: "replace" } as const;
           }
           if (news.kind && output && news.kind !== output.kind) {
+            return { action: "replace" } as const;
+          }
+          if (
+            news.edgeDeployment &&
+            output &&
+            news.edgeDeployment !== output.edgeDeployment
+          ) {
             return { action: "replace" } as const;
           }
           if (
@@ -235,11 +264,12 @@ export const DatasetProvider = () =>
               create({
                 name: news.name,
                 description: augmentDescription(news.description, marker),
+                edgeDeployment: news.edgeDeployment,
                 kind: news.kind,
                 retentionDays: news.retentionDays,
                 useRetentionPeriod: news.useRetentionPeriod,
               }) as Effect.Effect<
-                Axiom.CreateDatasetOutput,
+                Axiom.Dataset,
                 { readonly _tag: string },
                 never
               >
@@ -258,7 +288,7 @@ export const DatasetProvider = () =>
                   }),
               ),
             );
-            return toAttrs(current);
+            return yield* toAttrs(current);
           }
 
           // Sync — the dataset exists. Apply mutable aspects (description,
@@ -273,7 +303,7 @@ export const DatasetProvider = () =>
             current.retentionDays !== news.retentionDays ||
             current.useRetentionPeriod !== news.useRetentionPeriod;
           if (!needsSync) {
-            return toAttrs(current);
+            return yield* toAttrs(current);
           }
           const updated = yield* update({
             dataset_id: current.id,
@@ -281,7 +311,7 @@ export const DatasetProvider = () =>
             retentionDays: news.retentionDays,
             useRetentionPeriod: news.useRetentionPeriod,
           });
-          return toAttrs(updated);
+          return yield* toAttrs(updated);
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* del({ dataset_id: output.id }).pipe(
@@ -303,7 +333,7 @@ export const DatasetProvider = () =>
             ownership.stack === stack.name &&
             ownership.stage === stage &&
             ownership.id === id;
-          const attrs = toAttrs(existing);
+          const attrs = yield* toAttrs(existing);
           return isOurs ? attrs : Unowned(attrs);
         }),
       };

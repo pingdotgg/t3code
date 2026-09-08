@@ -82,9 +82,8 @@ export interface IdentityPoolAdminClient {
  * minting. The binding grants the corresponding `cognito-identity:*` IAM
  * actions scoped to the pool's ARN and injects the pool ID into pool-scoped
  * calls.
- * @binding
- * @section Managing Identities
- * @example List and Describe Identities
+ * ### Managing Identities
+ * **Example:** List and Describe Identities
  * ```typescript
  * const identities = yield* Cognito.IdentityPoolAdmin(identityPool);
  *
@@ -97,13 +96,15 @@ export interface IdentityPoolAdminClient {
  * }
  * ```
  *
- * @section Developer-Authenticated Identities
- * @example Mint a Token for a Backend-Authenticated User
+ * ### Developer-Authenticated Identities
+ * **Example:** Mint a Token for a Backend-Authenticated User
  * ```typescript
  * const token = yield* identities.getOpenIdTokenForDeveloperIdentity({
  *   Logins: { "my.developer.provider": userId },
  * });
  * ```
+ *
+ * @binding
  */
 export interface IdentityPoolAdmin extends Binding.Service<
   IdentityPoolAdmin,

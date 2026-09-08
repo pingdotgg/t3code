@@ -1,6 +1,8 @@
 import * as kv from "@distilled.cloud/cloudflare/kv";
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import {
   makeHttpKVNamespaceBinding,
   makeKVAuth,
@@ -40,7 +42,7 @@ export const makeReadKVHttpClient = (
         authorize(
           kv.getNamespaceValue({ accountId, namespaceId, keyName: key }),
         ).pipe(
-          Effect.map((value) => decodeValue(value, type)),
+          Effect.flatMap((res) => materializeBody(res.body, type)),
           Effect.catchTag("KeyNotFound", () => Effect.succeed(null)),
         ),
       ),
@@ -77,7 +79,7 @@ export const makeReadKVHttpClient = (
           value: authorize(
             kv.getNamespaceValue({ accountId, namespaceId, keyName: key }),
           ).pipe(
-            Effect.map((value) => decodeValue(value, type)),
+            Effect.flatMap((res) => materializeBody(res.body, type)),
             Effect.catchTag("KeyNotFound", () => Effect.succeed(null)),
           ),
           metadata: authorize(
@@ -152,6 +154,27 @@ export const makeReadKVHttpClient = (
       )) as any,
   };
 };
+
+/**
+ * Materialize the raw value byte stream according to the requested type
+ * ("text" | "json" | "arrayBuffer" | "stream").
+ */
+const materializeBody = (
+  body: kv.GetNamespaceValueResponse["body"],
+  type: string,
+): Effect.Effect<unknown, Cause.UnknownError> =>
+  type === "stream"
+    ? Effect.sync(() => Stream.toReadableStream(body))
+    : Effect.tryPromise(() => {
+        const response = new Response(
+          Stream.toReadableStream(body) as BodyInit,
+        );
+        return type === "arrayBuffer"
+          ? response.arrayBuffer()
+          : type === "json"
+            ? response.json()
+            : response.text();
+      });
 
 /** Resolve the requested decode type from the overloaded second argument. */
 const readType = (typeOrOptions: unknown): string =>

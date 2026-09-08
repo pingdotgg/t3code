@@ -14,9 +14,8 @@ export interface StartMetadataGenerationRunRequest extends Omit<
  * Starts an ML metadata generation run (business description suggestions) for an asset in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.StartMetadataGenerationRunHttp)`.
- * @binding
- * @section Metadata Generation
- * @example Generate Business Descriptions
+ * ### Metadata Generation
+ * **Example:** Generate Business Descriptions
  * ```typescript
  * // init — bind the operation to the domain
  * const startMetadataGenerationRun = yield* AWS.DataZone.StartMetadataGenerationRun(domain);
@@ -28,6 +27,8 @@ export interface StartMetadataGenerationRunRequest extends Omit<
  *   owningProjectIdentifier: projectId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartMetadataGenerationRun extends Binding.Service<
   StartMetadataGenerationRun,

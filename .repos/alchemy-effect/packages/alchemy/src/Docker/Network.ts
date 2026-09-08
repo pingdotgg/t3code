@@ -9,7 +9,11 @@ import {
   hasAlchemyTags,
   stripInternalTags,
 } from "../Tags.ts";
-import { Docker, dockerPhysicalName } from "./Docker.ts";
+import {
+  Docker,
+  dockerEngineContextName,
+  dockerPhysicalName,
+} from "./Docker.ts";
 import type { Providers } from "./Providers.ts";
 
 export interface NetworkProps {
@@ -25,6 +29,13 @@ export interface NetworkProps {
   enableIPv6?: boolean;
   /** Network labels. */
   labels?: Record<string, string>;
+  /**
+   * The engine the network is created on: a Docker context name, a
+   * `Docker.Context` resource, or a `Docker.Swarm` — overlay networks
+   * require a swarm manager, and passing the swarm orders the network after
+   * the swarm is initialized.
+   */
+  context?: Docker.EngineRef;
 }
 
 export interface Network extends Resource<
@@ -54,23 +65,24 @@ export interface Network extends Resource<
  * Existing same-name networks are treated as foreign unless the engine is
  * explicitly allowed to adopt them with `--adopt` or `adopt(true)`.
  *
- * @resource
  *
- * @section Creating Networks
- * @example Basic bridge network
+ * ### Creating Networks
+ * **Example:** Basic bridge network
  * ```typescript
  * const network = yield* Docker.Network("app-network", {
  *   name: "app-network",
  * });
  * ```
  *
- * @section Adoption
- * @example Adopt a pre-existing network
+ * ### Adoption
+ * **Example:** Adopt a pre-existing network
  * ```typescript
  * const network = yield* Docker.Network("app-network", {
  *   name: "shared-app-network",
  * }).pipe(adopt(true));
  * ```
+ *
+ * @resource
  */
 export const Network = Resource<Network>("Docker.Network");
 
@@ -83,9 +95,10 @@ export const NetworkProvider = () =>
       return Network.Provider.of({
         list: () => Effect.succeed([]),
         read: Effect.fn(function* ({ id, instanceId, olds, output }) {
+          const context = dockerEngineContextName(olds?.context);
           const name = yield* dockerPhysicalName(id, olds, instanceId);
           const info = yield* docker.network
-            .inspect(name)
+            .inspect(name, context)
             .pipe(
               Effect.catchReason(
                 "PlatformError",
@@ -101,8 +114,14 @@ export const NetworkProvider = () =>
           const owned = yield* hasAlchemyTags(id, info.Labels ?? undefined);
           return owned ? attrs : Unowned(attrs);
         }),
-        diff: Effect.fn(function* ({ id, output, instanceId, news }) {
+        diff: Effect.fn(function* ({ id, output, instanceId, news, olds }) {
           if (!isResolved(news) || !output) return undefined;
+          if (
+            dockerEngineContextName(olds?.context) !==
+            dockerEngineContextName(news?.context)
+          ) {
+            return { action: "replace", deleteFirst: true };
+          }
           const args = yield* makeNetworkArgs(id, news, instanceId);
           // Auto-generated names are engine-owned: the deployed name stays
           // authoritative even if the generator would name this id differently
@@ -120,15 +139,18 @@ export const NetworkProvider = () =>
           }
         }),
         reconcile: Effect.fn(function* ({ output, id, instanceId, news }) {
+          const context = dockerEngineContextName(news?.context);
           if (output) {
-            const refreshed = yield* docker.network.inspect(output.id).pipe(
-              Effect.map(toNetworkAttributes),
-              Effect.catchReason(
-                "PlatformError",
-                "NotFound",
-                () => Effect.undefined,
-              ),
-            );
+            const refreshed = yield* docker.network
+              .inspect(output.id, context)
+              .pipe(
+                Effect.map(toNetworkAttributes),
+                Effect.catchReason(
+                  "PlatformError",
+                  "NotFound",
+                  () => Effect.undefined,
+                ),
+              );
             if (refreshed) return refreshed;
           }
           const args = yield* makeNetworkArgs(id, news, instanceId);
@@ -136,12 +158,15 @@ export const NetworkProvider = () =>
           const { stdout: createdId } = yield* docker.network.create({
             ...args,
             label: { ...internalTags, ...args.label },
+            context,
           });
-          return toNetworkAttributes(yield* docker.network.inspect(createdId));
+          return toNetworkAttributes(
+            yield* docker.network.inspect(createdId, context),
+          );
         }),
-        delete: Effect.fn(({ output }) =>
+        delete: Effect.fn(({ olds, output }) =>
           docker.network
-            .remove(output.id)
+            .remove(output.id, dockerEngineContextName(olds?.context))
             .pipe(
               Effect.catchReason(
                 "PlatformError",

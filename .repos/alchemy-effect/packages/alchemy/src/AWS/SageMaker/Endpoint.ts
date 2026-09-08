@@ -70,9 +70,8 @@ export interface Endpoint extends Resource<
  *
  * Invoke a deployed endpoint from a function with
  * `AWS.SageMakerRuntime.InvokeEndpoint`.
- * @resource
- * @section Creating Endpoints
- * @example Deploy an EndpointConfig
+ * ### Creating Endpoints
+ * **Example:** Deploy an EndpointConfig
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -81,8 +80,8 @@ export interface Endpoint extends Resource<
  * });
  * ```
  *
- * @section Invoking
- * @example Invoke from a Lambda function
+ * ### Invoking
+ * **Example:** Invoke from a Lambda function
  * ```typescript
  * // init
  * const invoke = yield* AWS.SageMakerRuntime.InvokeEndpoint(
@@ -95,6 +94,8 @@ export interface Endpoint extends Resource<
  *   Body: JSON.stringify({ instances: [[1, 2, 3, 4]] }),
  * });
  * ```
+ *
+ * @resource
  */
 export const Endpoint = Resource<Endpoint>("AWS.SageMaker.Endpoint");
 

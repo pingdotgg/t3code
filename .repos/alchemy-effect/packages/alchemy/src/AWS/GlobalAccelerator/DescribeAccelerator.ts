@@ -12,9 +12,8 @@ import type { Accelerator } from "./Accelerator.ts";
  * DNS name at runtime. The accelerator ARN is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.GlobalAccelerator.DescribeAcceleratorHttp)`.
- * @binding
- * @section Observing Accelerators
- * @example Read the Accelerator's Status and DNS Name
+ * ### Observing Accelerators
+ * **Example:** Read the Accelerator's Status and DNS Name
  * ```typescript
  * // init — bind the operation to the accelerator
  * const describeAccelerator =
@@ -24,6 +23,8 @@ import type { Accelerator } from "./Accelerator.ts";
  * const { Accelerator } = yield* describeAccelerator();
  * yield* Effect.log(`${Accelerator?.DnsName} is ${Accelerator?.Status}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeAccelerator extends Binding.Service<
   DescribeAccelerator,

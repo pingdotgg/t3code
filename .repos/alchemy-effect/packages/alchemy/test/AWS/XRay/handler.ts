@@ -27,7 +27,7 @@ const outcome = <A, E extends { _tag: string }>(effect: Effect.Effect<A, E>) =>
 export default XRayTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Active tracing: every sampled invocation of this function produces an
     // X-Ray trace whose service name is the function name.
     tracing: "Active",

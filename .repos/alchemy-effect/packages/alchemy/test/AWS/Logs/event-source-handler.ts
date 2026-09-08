@@ -40,7 +40,7 @@ export const SourceGroupAndResultQueueLive = Layer.effect(
 export default LogGroupEventSourceFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

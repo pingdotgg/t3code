@@ -165,3 +165,77 @@ test.provider("rebuilds memoized output if outdir is missing", (stack) =>
     yield* stack.destroy();
   }),
 );
+
+test.provider(
+  "memo include globs can reach outside cwd (monorepo workspace deps)",
+  (stack) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+
+      yield* stack.destroy();
+
+      // A monorepo shape: the app builds from `app/` and imports a sibling
+      // workspace package at `packages/env/` that the default memo scope
+      // (files under `cwd`) does not cover.
+      const tempDir = yield* fs.makeTempDirectoryScoped();
+      const appDir = pathe.join(tempDir, "app");
+      const siblingDir = pathe.join(tempDir, "packages", "env");
+      yield* fs.copy(FIXTURE_DIR, appDir);
+      yield* fs.makeDirectory(siblingDir, { recursive: true });
+      const siblingFile = pathe.join(siblingDir, "value.ts");
+      yield* fs.writeFileString(siblingFile, 'export const value = "a";\n');
+
+      const outputFile = pathe.join(appDir, "dist", "output.txt");
+      // Exclude `dist` from the memo hash: build.sh stamps `dist/output.txt`
+      // with $(date) (the test's rebuild detector), and the temp fixture has
+      // no .gitignore to filter it. With dist hashed, two rebuilds straddling
+      // a wall-clock second boundary would produce different "input" hashes.
+      const deploy = () =>
+        stack.deploy(
+          Command.Build("test-build", {
+            command: "bash build.sh",
+            cwd: appDir,
+            outdir: "dist",
+            memo: {
+              include: ["**/*", "../packages/env/**"],
+              exclude: ["dist/**"],
+            },
+          }),
+        );
+
+      const build1 = yield* deploy();
+      const firstOutput = yield* fs.readFileString(outputFile);
+
+      // Nothing changed (including the sibling): the build memoizes.
+      yield* Effect.sleep(1100);
+      const build2 = yield* deploy();
+      expect(build2.hash).toMatchObject(build1.hash);
+      expect(yield* fs.readFileString(outputFile)).toBe(firstOutput);
+
+      // Editing only the sibling package busts the input hash and rebuilds.
+      yield* fs.writeFileString(siblingFile, 'export const value = "b";\n');
+      const build3 = yield* deploy();
+      expect(build3.hash.input).not.toBe(build1.hash.input);
+      expect(yield* fs.readFileString(outputFile)).not.toBe(firstOutput);
+
+      // An *absolute* include glob matches the same files: its matches are
+      // normalized back to cwd-relative keys, so the input hash is identical
+      // to the `../` form — machine-specific path prefixes never leak into
+      // the hash (and the build memoizes instead of rerunning).
+      const build4 = yield* stack.deploy(
+        Command.Build("test-build", {
+          command: "bash build.sh",
+          cwd: appDir,
+          outdir: "dist",
+          memo: {
+            include: ["**/*", pathe.join(siblingDir, "**")],
+            exclude: ["dist/**"],
+          },
+        }),
+      );
+      expect(build4.hash.input).toBe(build3.hash.input);
+
+      yield* stack.destroy();
+    }),
+  { timeout: 60000 },
+);

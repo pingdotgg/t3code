@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * Copies a CloudHSM cluster backup into another region — the building block
  * of cross-region disaster-recovery automation. Provide the implementation
  * with `Effect.provide(AWS.CloudHSMV2.CopyBackupToRegionHttp)`.
- * @binding
- * @section Managing Backups
- * @example Copy A Backup For Disaster Recovery
+ * ### Managing Backups
+ * **Example:** Copy A Backup For Disaster Recovery
  * ```typescript
  * const copyBackupToRegion = yield* AWS.CloudHSMV2.CopyBackupToRegion();
  *
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // copy.DestinationBackup?.SourceBackup === backupId
  * ```
+ *
+ * @binding
  */
 export interface CopyBackupToRegion extends Binding.Service<
   CopyBackupToRegion,

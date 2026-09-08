@@ -11,14 +11,15 @@ export interface StopJobRunRequest extends Omit<
 /**
  * Runtime binding for `databrew:StopJobRun` — cancels a run of the bound
  * DataBrew job that is still starting or running.
- * @binding
- * @section Stopping Job Runs
- * @example Stop a Job Run
+ * ### Stopping Job Runs
+ * **Example:** Stop a Job Run
  * ```typescript
  * const stopJobRun = yield* AWS.DataBrew.StopJobRun(job);
  *
  * yield* stopJobRun({ RunId: runId });
  * ```
+ *
+ * @binding
  */
 export interface StopJobRun extends Binding.Service<
   StopJobRun,

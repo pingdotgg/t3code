@@ -11,9 +11,8 @@ export interface BatchGetApplicationRevisionsRequest extends Omit<
 /**
  * Runtime binding for `codedeploy:BatchGetApplicationRevisions` — reads up
  * to 25 registered revisions of the bound application in one call.
- * @binding
- * @section Managing Revisions
- * @example Read Several Revisions
+ * ### Managing Revisions
+ * **Example:** Read Several Revisions
  * ```typescript
  * const batchGetApplicationRevisions =
  *   yield* AWS.CodeDeploy.BatchGetApplicationRevisions(app);
@@ -22,6 +21,8 @@ export interface BatchGetApplicationRevisionsRequest extends Omit<
  *   revisions: [revisionLocation],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetApplicationRevisions extends Binding.Service<
   BatchGetApplicationRevisions,

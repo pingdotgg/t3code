@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.ListSensitivityInspectionTemplatesHttp)`.
- * @binding
- * @section Automated Discovery
- * @example List Inspection Templates
+ * ### Automated Discovery
+ * **Example:** List Inspection Templates
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listSensitivityInspectionTemplates = yield* AWS.Macie2.ListSensitivityInspectionTemplates();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { sensitivityInspectionTemplates } = yield* listSensitivityInspectionTemplates();
  * ```
+ *
+ * @binding
  */
 export interface ListSensitivityInspectionTemplates extends Binding.Service<
   ListSensitivityInspectionTemplates,

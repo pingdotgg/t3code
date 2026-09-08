@@ -92,8 +92,8 @@ export interface ConfigEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Config Events
- * @example Alert On Noncompliant Resources
+ * ### Consuming Config Events
+ * **Example:** Alert On Noncompliant Resources
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

@@ -12,9 +12,8 @@ export interface ListInternetEventsRequest extends im.ListInternetEventsInput {}
  *
  * Provide `InternetMonitor.ListInternetEventsHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Internet Events
- * @example List Active Internet Events
+ * ### Reading Internet Events
+ * **Example:** List Active Internet Events
  * ```typescript
  * // init — grants internetmonitor:ListInternetEvents
  * const listInternetEvents = yield* AWS.InternetMonitor.ListInternetEvents();
@@ -24,6 +23,8 @@ export interface ListInternetEventsRequest extends im.ListInternetEventsInput {}
  *   EventStatus: "ACTIVE",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListInternetEvents extends Binding.Service<
   ListInternetEvents,

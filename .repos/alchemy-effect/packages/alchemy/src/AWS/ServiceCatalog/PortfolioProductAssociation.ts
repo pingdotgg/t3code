@@ -37,9 +37,8 @@ export interface PortfolioProductAssociation extends Resource<
  * Associates a Service Catalog product with a portfolio, making the product
  * launchable by the portfolio's principals.
  *
- * @resource
- * @section Associating a Product
- * @example Add a product to a portfolio
+ * ### Associating a Product
+ * **Example:** Add a product to a portfolio
  * ```typescript
  * import * as ServiceCatalog from "alchemy/AWS/ServiceCatalog";
  *
@@ -48,6 +47,8 @@ export interface PortfolioProductAssociation extends Resource<
  *   productId: product.productId,
  * });
  * ```
+ *
+ * @resource
  */
 export const PortfolioProductAssociation =
   Resource<PortfolioProductAssociation>(

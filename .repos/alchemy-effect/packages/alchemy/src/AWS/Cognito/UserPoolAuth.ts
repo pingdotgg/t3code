@@ -173,9 +173,8 @@ export interface UserPoolAuthClient {
  * client for sign-up, sign-in, and token flows. These operations are
  * unauthenticated (Cognito does not evaluate IAM for them), so the binding
  * grants no IAM policy — it injects the app client ID into every call.
- * @binding
- * @section Authenticating Users
- * @example Username/Password Sign-In
+ * ### Authenticating Users
+ * **Example:** Username/Password Sign-In
  * ```typescript
  * const auth = yield* Cognito.UserPoolAuth(client);
  *
@@ -186,7 +185,7 @@ export interface UserPoolAuthClient {
  * const idToken = result.AuthenticationResult?.IdToken;
  * ```
  *
- * @example Sign-Up and Confirmation
+ * **Example:** Sign-Up and Confirmation
  * ```typescript
  * yield* auth.signUp({
  *   Username: "user@example.com",
@@ -199,13 +198,13 @@ export interface UserPoolAuthClient {
  * });
  * ```
  *
- * @example Read the Signed-In User
+ * **Example:** Read the Signed-In User
  * ```typescript
  * const user = yield* auth.getUser({ AccessToken: accessToken });
  * ```
  *
- * @section Self-Service Account Management
- * @example Change Password and Update Attributes
+ * ### Self-Service Account Management
+ * **Example:** Change Password and Update Attributes
  * ```typescript
  * yield* auth.changePassword({
  *   AccessToken: accessToken,
@@ -218,12 +217,14 @@ export interface UserPoolAuthClient {
  * });
  * ```
  *
- * @example Refresh Tokens
+ * **Example:** Refresh Tokens
  * ```typescript
  * const refreshed = yield* auth.getTokensFromRefreshToken({
  *   RefreshToken: refreshToken,
  * });
  * ```
+ *
+ * @binding
  */
 export interface UserPoolAuth extends Binding.Service<
   UserPoolAuth,

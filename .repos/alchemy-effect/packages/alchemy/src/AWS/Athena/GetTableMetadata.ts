@@ -10,9 +10,8 @@ import type { DataCatalog } from "./DataCatalog.ts";
  * the bound data catalog — the catalog name is injected automatically.
  * Provide the implementation with
  * `Effect.provide(AWS.Athena.GetTableMetadataHttp)`.
- * @binding
- * @section Browsing Catalog Metadata
- * @example Read a Table's Columns
+ * ### Browsing Catalog Metadata
+ * **Example:** Read a Table's Columns
  * ```typescript
  * // init — bind the operation to the data catalog
  * const getTableMetadata = yield* AWS.Athena.GetTableMetadata(catalog);
@@ -24,6 +23,8 @@ import type { DataCatalog } from "./DataCatalog.ts";
  * });
  * console.log(res.TableMetadata?.Columns?.map((c) => c.Name));
  * ```
+ *
+ * @binding
  */
 export interface GetTableMetadata extends Binding.Service<
   GetTableMetadata,

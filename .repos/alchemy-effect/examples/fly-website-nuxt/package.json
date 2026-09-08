@@ -1,0 +1,34 @@
+{
+  "name": "fly-website-nuxt",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@distilled.cloud/fly-io": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "@tailwindcss/vite": "catalog:frontend",
+    "@types/node": "^24.12.0",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "nitropack": "catalog:frontend",
+    "nuxt": "catalog:frontend",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/fly-website-nuxt"
+  }
+}

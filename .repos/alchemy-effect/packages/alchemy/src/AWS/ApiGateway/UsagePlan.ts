@@ -60,15 +60,15 @@ export interface UsagePlan extends Resource<
 /**
  * Usage plan for API stages, throttling, and quotas.
  *
- * @section Usage plans
- * @example Usage plan with stage
+ * ### Usage plans
+ * **Example:** Usage plan with stage
  * ```typescript
  * const plan = yield* ApiGateway.UsagePlan("Standard", {
  *   apiStages: [{ apiId: api.restApiId, stage: stage.stageName }],
  * });
  * ```
  *
- * @example Throttled plan with a quota and an enrolled API key
+ * **Example:** Throttled plan with a quota and an enrolled API key
  * ```typescript
  * const plan = yield* ApiGateway.UsagePlan("Partner", {
  *   throttle: { rateLimit: 10, burstLimit: 20 },

@@ -7,9 +7,8 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:GetKxConnectionString` — retrieves a signed connection string a kdb user can use to connect to a cluster in the bound environment. The returned `signedConnectionString` embeds a SigV4 signature and is surfaced as `Redacted`.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.GetKxConnectionStringHttp)`.
- * @binding
- * @section Connecting to Clusters
- * @example Connect a User to a Cluster
+ * ### Connecting to Clusters
+ * **Example:** Connect a User to a Cluster
  * ```typescript
  * const getConnectionString = yield* AWS.FinSpace.GetKxConnectionString(kdb);
  *
@@ -19,6 +18,8 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * });
  * const value = Redacted.value(signedConnectionString!);
  * ```
+ *
+ * @binding
  */
 export interface GetKxConnectionString extends Binding.Service<
   GetKxConnectionString,

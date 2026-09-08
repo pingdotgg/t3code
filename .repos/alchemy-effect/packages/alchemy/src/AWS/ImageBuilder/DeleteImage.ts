@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * up separately). Useful for pruning failed or cancelled builds at runtime.
  * Account-level binding: pass the build version's ARN. Provide the
  * implementation with `Effect.provide(AWS.ImageBuilder.DeleteImageHttp)`.
- * @binding
- * @section Running Builds
- * @example Prune a Cancelled Build
+ * ### Running Builds
+ * **Example:** Prune a Cancelled Build
  * ```typescript
  * // init — account-level binding, no resource argument
  * const deleteImage = yield* AWS.ImageBuilder.DeleteImage();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteImage({ imageBuildVersionArn });
  * ```
+ *
+ * @binding
  */
 export interface DeleteImage extends Binding.Service<
   DeleteImage,

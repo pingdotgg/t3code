@@ -99,9 +99,8 @@ export interface VolumeAttachment extends Resource<
  * `volumeId`/`instanceId`/`device` triple. Changing any of them replaces the
  * attachment.
  *
- * @resource
- * @section Attaching a Volume
- * @example Attach a Volume to an Instance
+ * ### Attaching a Volume
+ * **Example:** Attach a Volume to an Instance
  * ```typescript
  * const attachment = yield* AWS.EC2.VolumeAttachment("DataAttachment", {
  *   volumeId: volume.volumeId,
@@ -113,6 +112,8 @@ export interface VolumeAttachment extends Resource<
  * The volume appears to the instance as a block device at `device`. On modern
  * Linux AMIs the kernel may rename `/dev/sdf` to `/dev/xvdf` — check
  * `lsblk` inside the instance. The volume and instance must share an AZ.
+ *
+ * @resource
  */
 export const VolumeAttachment = Resource<VolumeAttachment>(
   "AWS.EC2.VolumeAttachment",

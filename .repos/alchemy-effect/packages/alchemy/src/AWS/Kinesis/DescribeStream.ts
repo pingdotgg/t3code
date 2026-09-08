@@ -16,9 +16,8 @@ export interface DescribeStreamRequest extends Omit<
  * counts without the shard list, prefer `AWS.Kinesis.DescribeStreamSummary`.
  * Provide the implementation with
  * `Effect.provide(AWS.Kinesis.DescribeStreamHttp)`.
- * @binding
- * @section Inspecting Streams
- * @example Describe the Bound Stream
+ * ### Inspecting Streams
+ * **Example:** Describe the Bound Stream
  * ```typescript
  * // init
  * const describeStream = yield* AWS.Kinesis.DescribeStream(stream);
@@ -28,6 +27,8 @@ export interface DescribeStreamRequest extends Omit<
  * const status = result.StreamDescription.StreamStatus;
  * const shards = result.StreamDescription.Shards;
  * ```
+ *
+ * @binding
  */
 export interface DescribeStream extends Binding.Service<
   DescribeStream,

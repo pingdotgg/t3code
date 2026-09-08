@@ -12,9 +12,8 @@ import type { Directory } from "./Directory.ts";
  * function can alert on an impaired controller. The directory id is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.DirectoryService.DescribeDomainControllersHttp)`.
- * @binding
- * @section Monitoring the Directory
- * @example Alert on Impaired Domain Controllers
+ * ### Monitoring the Directory
+ * **Example:** Alert on Impaired Domain Controllers
  * ```typescript
  * // init — bind the operation to the directory
  * const describeDomainControllers =
@@ -28,6 +27,8 @@ import type { Directory } from "./Directory.ts";
  *   }
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeDomainControllers extends Binding.Service<
   DescribeDomainControllers,

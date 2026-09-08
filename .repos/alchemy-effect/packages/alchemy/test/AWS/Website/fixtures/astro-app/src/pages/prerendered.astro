@@ -1,0 +1,17 @@
+---
+// Prerendered at build time into dist/client (served from S3 by the edge
+// router; the Lambda never sees this route).
+export const prerender = true;
+const marker = "ASTRO_AWS_PRERENDERED_MARKER";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Prerendered</title>
+  </head>
+  <body>
+    <h1>Prerendered</h1>
+    <p id="marker">{marker}</p>
+  </body>
+</html>

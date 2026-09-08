@@ -148,9 +148,8 @@ export interface EndpointGroup extends Resource<
  *
  * One endpoint group per region per listener. Everything except the
  * listener and region is updatable in place.
- * @resource
- * @section Creating Endpoint Groups
- * @example Route to an Application Load Balancer
+ * ### Creating Endpoint Groups
+ * **Example:** Route to an Application Load Balancer
  * ```typescript
  * const group = yield* GlobalAccelerator.EndpointGroup("UsWest2", {
  *   listenerArn: listener.listenerArn,
@@ -159,7 +158,7 @@ export interface EndpointGroup extends Resource<
  * });
  * ```
  *
- * @example Weighted Endpoints with HTTP Health Checks
+ * **Example:** Weighted Endpoints with HTTP Health Checks
  * ```typescript
  * const group = yield* GlobalAccelerator.EndpointGroup("UsEast1", {
  *   listenerArn: listener.listenerArn,
@@ -174,8 +173,8 @@ export interface EndpointGroup extends Resource<
  * });
  * ```
  *
- * @section Traffic Management
- * @example Canary a Region with the Traffic Dial
+ * ### Traffic Management
+ * **Example:** Canary a Region with the Traffic Dial
  * ```typescript
  * const group = yield* GlobalAccelerator.EndpointGroup("Canary", {
  *   listenerArn: listener.listenerArn,
@@ -183,6 +182,8 @@ export interface EndpointGroup extends Resource<
  *   trafficDialPercentage: 10,
  * });
  * ```
+ *
+ * @resource
  */
 export const EndpointGroup = Resource<EndpointGroup>(
   "AWS.GlobalAccelerator.EndpointGroup",

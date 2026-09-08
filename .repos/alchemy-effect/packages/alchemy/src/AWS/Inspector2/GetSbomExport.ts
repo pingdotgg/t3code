@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetSbomExportHttp)`.
- * @binding
- * @section Findings Reports & SBOM Exports
- * @example Poll an SBOM Export
+ * ### Findings Reports & SBOM Exports
+ * **Example:** Poll an SBOM Export
  * ```typescript
  * // init
  * const getSbomExport = yield* AWS.Inspector2.GetSbomExport();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { status } = yield* getSbomExport({ reportId });
  * ```
+ *
+ * @binding
  */
 export interface GetSbomExport extends Binding.Service<
   GetSbomExport,

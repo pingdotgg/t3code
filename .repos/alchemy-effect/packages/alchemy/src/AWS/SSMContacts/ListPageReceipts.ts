@@ -9,15 +9,16 @@ import * as Binding from "../../Binding.ts";
  * channel the page was sent over.
  * Provide the implementation with
  * `Effect.provide(AWS.SSMContacts.ListPageReceiptsHttp)`.
- * @binding
- * @section Working with Pages
- * @example Check Whether a Page Was Read
+ * ### Working with Pages
+ * **Example:** Check Whether a Page Was Read
  * ```typescript
  * const listPageReceipts = yield* AWS.SSMContacts.ListPageReceipts();
  *
  * const { Receipts } = yield* listPageReceipts({ PageId: pageArn });
  * // receipts with ReceiptType "READ" mean the page was acknowledged
  * ```
+ *
+ * @binding
  */
 export interface ListPageReceipts extends Binding.Service<
   ListPageReceipts,

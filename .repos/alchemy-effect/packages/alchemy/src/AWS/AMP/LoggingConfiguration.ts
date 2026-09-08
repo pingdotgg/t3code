@@ -40,9 +40,8 @@ export interface LoggingConfiguration extends Resource<
  * delivery errors to a CloudWatch Logs log group. A workspace has at most
  * one.
  *
- * @resource
- * @section Creating a Logging Configuration
- * @example Ship Rule and Alerting Logs to CloudWatch Logs
+ * ### Creating a Logging Configuration
+ * **Example:** Ship Rule and Alerting Logs to CloudWatch Logs
  * ```typescript
  * const workspace = yield* AMP.Workspace("Metrics", {});
  * const logs = yield* Logs.LogGroup("AmpLogs", {
@@ -53,6 +52,8 @@ export interface LoggingConfiguration extends Resource<
  *   logGroupArn: logs.logGroupArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const LoggingConfiguration = Resource<LoggingConfiguration>(
   "AWS.AMP.LoggingConfiguration",

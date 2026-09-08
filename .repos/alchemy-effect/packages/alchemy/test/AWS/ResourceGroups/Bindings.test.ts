@@ -214,21 +214,33 @@ describe.sequential("ResourceGroups Bindings", () => {
       "tag-sync operations reach the service and fail with typed tags",
       (_stack) =>
         Effect.gen(function* () {
-          // Tag-sync requires an application group (myApplications-only, not
-          // creatable via CreateGroup) — the typed rejection proves IAM +
-          // wiring, including the iam:PassRole grant path. Retry while the
-          // freshly attached role policy is still propagating (AccessDenied
-          // instead of the service-side validation error).
+          // Tag-sync is part of Group Lifecycle Events (GLE), which entered
+          // maintenance mode on 2026-07-30 and is closed to new customers:
+          // non-entitled accounts get ForbiddenException with the GLE notice.
+          // Entitled accounts get the application-group-only
+          // BadRequestException (application groups are myApplications-only,
+          // not creatable via CreateGroup). Either typed rejection proves
+          // IAM + wiring, including the iam:PassRole grant path. Retry while
+          // the freshly attached role policy is still propagating — resource-
+          // groups surfaces IAM denials as ForbiddenException "not
+          // authorized" (the service has no AccessDeniedException).
           const started = (yield* postJson("/start-tag-sync", {}).pipe(
             Effect.repeat({
               schedule: Schedule.spaced("3 seconds"),
               until: (r: unknown) =>
-                (r as { errorTag?: string }).errorTag !==
-                "AccessDeniedException",
+                !(r as { message?: string }).message?.includes(
+                  "not authorized",
+                ),
               times: 8,
             }),
           )) as { errorTag?: string; message?: string };
-          expect(started.errorTag, started.message).toBe("BadRequestException");
+          expect(
+            ["BadRequestException", "ForbiddenException"],
+            started.message,
+          ).toContain(started.errorTag);
+          if (started.errorTag === "ForbiddenException") {
+            expect(started.message).toContain("Group Lifecycle Events");
+          }
 
           const got = (yield* getJson(
             "/tag-sync-task?arn=arn:aws:resource-groups:us-west-2:000000000000:group/none/00000000-0000-0000-0000-000000000000",

@@ -76,11 +76,8 @@ export type Silence = Resource<
  * Note: the create API returns no id, so the provider resolves the created
  * silence by listing and matching on `(policyId, startTime, endTime)`. Two
  * silences sharing the exact same policy and window are indistinguishable.
- * @resource
- * @product Alerting
- * @category Observability & Analytics
- * @section Creating a silence
- * @example Silence a policy during a maintenance window
+ * ### Creating a silence
+ * **Example:** Silence a policy during a maintenance window
  * ```typescript
  * const policy = yield* Cloudflare.Alerting.NotificationPolicy("SslAlerts", {
  *   alertType: "universal_ssl_event_type",
@@ -94,8 +91,8 @@ export type Silence = Resource<
  * });
  * ```
  *
- * @section Updating the window
- * @example Extend the silence end time in place
+ * ### Updating the window
+ * **Example:** Extend the silence end time in place
  * Window times are mutable — changing them updates the existing silence.
  * ```typescript
  * yield* Cloudflare.Alerting.Silence("MaintenanceWindow", {
@@ -106,6 +103,10 @@ export type Silence = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/notifications/
+ *
+ * @resource
+ * @product Alerting
+ * @category Observability & Analytics
  */
 export const Silence = Resource<Silence>(TypeId);
 

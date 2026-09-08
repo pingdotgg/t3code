@@ -12,6 +12,7 @@ with that instead.
 This guide builds a Postgres-backed state store from scratch. By the
 end you'll have a `postgresState()` layer you can drop into any
 `Alchemy.Stack`, and a test that round-trips a resource through it.
+(If you just want a Postgres store, use the built-in one from `alchemy/State/PostgresState`, which adds advisory locking — this guide builds a simplified version to teach the interface.)
 
 See [State Store](/state-store) for an overview of what
 state Alchemy persists and why.

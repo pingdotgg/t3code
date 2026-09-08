@@ -22,9 +22,8 @@ export interface BatchPutDocumentRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.BatchPutDocumentHttp)`.
  *
- * @binding
- * @section Indexing Documents
- * @example Index Documents Inline
+ * ### Indexing Documents
+ * **Example:** Index Documents Inline
  * ```typescript
  * const putDocuments = yield* AWS.Kendra.BatchPutDocument(index);
  *
@@ -40,6 +39,8 @@ export interface BatchPutDocumentRequest extends Omit<
  * });
  * // result.FailedDocuments is empty on success
  * ```
+ *
+ * @binding
  */
 export interface BatchPutDocument extends Binding.Service<
   BatchPutDocument,

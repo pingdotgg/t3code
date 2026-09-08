@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * and begins replicating. The serverless counterpart of
  * {@link StartReplicationTask}. Provide the implementation with
  * `Effect.provide(AWS.DMS.StartReplicationHttp)`.
- * @binding
- * @section Orchestrating Serverless Replications
- * @example Start a Serverless Replication
+ * ### Orchestrating Serverless Replications
+ * **Example:** Start a Serverless Replication
  * ```typescript
  * // init — account-level, no target resource
  * const startReplication = yield* AWS.DMS.StartReplication();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   StartReplicationType: "start-replication",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartReplication extends Binding.Service<
   StartReplication,

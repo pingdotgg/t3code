@@ -15,9 +15,8 @@ export interface GenerateAccessLogsRequest extends Omit<
  * generates a pre-signed URL to the app's access logs for a time range —
  * e.g. an analytics function ingesting traffic data on a schedule. Provide the
  * implementation with `Effect.provide(AWS.Amplify.GenerateAccessLogsHttp)`.
- * @binding
- * @section Reading Access Logs
- * @example Pull the Last Day of Access Logs
+ * ### Reading Access Logs
+ * **Example:** Pull the Last Day of Access Logs
  * ```typescript
  * // init — bind the operation to the app
  * const generateAccessLogs = yield* AWS.Amplify.GenerateAccessLogs(app);
@@ -29,6 +28,8 @@ export interface GenerateAccessLogsRequest extends Omit<
  *   endTime: new Date(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateAccessLogs extends Binding.Service<
   GenerateAccessLogs,

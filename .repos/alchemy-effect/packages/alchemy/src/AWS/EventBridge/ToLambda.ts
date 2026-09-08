@@ -27,13 +27,12 @@ export interface LambdaRouteTargetProps extends Pick<
  * Creates a {@link Rule} targeting the function and a Lambda permission
  * allowing `events.amazonaws.com` to invoke it. Usually reached through the
  * `events(...)` builder rather than called directly.
- * @binding
- * @example Route Matching Events to a Lambda Function
+ * **Example:** Route Matching Events to a Lambda Function
  * ```typescript
  * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toLambda(fn);
  * ```
  *
- * @example Transform the Event Payload Before Invoking
+ * **Example:** Transform the Event Payload Before Invoking
  * ```typescript
  * yield* AWS.EventBridge.events(bus, { source: ["my.app"] }).toLambda(fn, {
  *   InputTransformer: {
@@ -42,6 +41,8 @@ export interface LambdaRouteTargetProps extends Pick<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export const toLambda = (
   descriptor: EventDescriptor,

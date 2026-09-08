@@ -136,18 +136,15 @@ export type Watermark = Resource<
  * by Cloudflare from the given URL at creation time.
  *
  * Requires the Stream subscription to be enabled on the account.
- * @resource
- * @product Stream
- * @category Media
- * @section Creating a watermark
- * @example Default watermark from an image URL
+ * ### Creating a watermark
+ * **Example:** Default watermark from an image URL
  * ```typescript
  * const watermark = yield* Cloudflare.Stream.Watermark("Logo", {
  *   url: "https://example.com/logo.png",
  * });
  * ```
  *
- * @example Centered semi-transparent watermark
+ * **Example:** Centered semi-transparent watermark
  * ```typescript
  * const watermark = yield* Cloudflare.Stream.Watermark("Logo", {
  *   url: "https://example.com/logo.png",
@@ -158,6 +155,10 @@ export type Watermark = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/stream/edit-videos/applying-watermarks/
+ *
+ * @resource
+ * @product Stream
+ * @category Media
  */
 export const Watermark = Resource<Watermark>(TypeId);
 

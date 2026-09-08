@@ -84,6 +84,38 @@ Output.asOutput(existingOutput);         // returns it unchanged
 
 Use this when writing helpers that should accept "anything output-y."
 
+## `fromEffect`
+
+Lifts a plan-time Effect into an `Output`. The effect runs when the
+stack resolves the Output during plan/deploy — with the stack's
+services (cloud credentials, region, ...) provided — and never inside
+a deployed runtime:
+
+```typescript
+Output.fromEffect(lookupLatestAmi());   // Output<string>
+```
+
+This is the low-level seam for lookup helpers that read cloud state to
+produce a prop value. Because constructing the Output is inert, such
+helpers are safe to call from composition code that is re-executed
+inside a deployed Function, Worker, or Instance bundle — no
+`__ALCHEMY_RUNTIME__` guard needed. The higher-level form is
+[`Capability.execute`](/infrastructure-as-effects/binding#data-sources-execute)
+— invoking a binding as a plan-time data source — which the AMI
+finders (`AWS.EC2.getAmi`, `AWS.EC2.amazonLinux2023()`,
+`AWS.EC2.ubuntu2404()`, ...) are built on:
+
+```typescript
+const instance = yield* AWS.EC2.Instance("web", {
+  imageId: AWS.EC2.amazonLinux2023(),
+  instanceType: "t3.micro",
+  subnetId: subnet.subnetId,
+});
+```
+
+The effect must not fail (`E = never`) — die with a descriptive error
+for unresolvable lookups.
+
 ## `map`
 
 `Output.map` transforms an `Output<A>` into an `Output<B>` without

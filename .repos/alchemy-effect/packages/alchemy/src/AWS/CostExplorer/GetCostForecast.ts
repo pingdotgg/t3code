@@ -13,9 +13,8 @@ export interface GetCostForecastRequest extends ce.GetCostForecastRequest {}
  * Forecast how much AWS predicts you will spend over a future time
  * period, with an optional prediction interval. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetCostForecastHttp)`.
- * @binding
- * @section Forecasting
- * @example Forecast Next Month's Spend
+ * ### Forecasting
+ * **Example:** Forecast Next Month's Spend
  * ```typescript
  * // init — account-level binding takes no resource
  * const getCostForecast = yield* AWS.CostExplorer.GetCostForecast();
@@ -28,6 +27,8 @@ export interface GetCostForecastRequest extends ce.GetCostForecastRequest {}
  * });
  * const forecast = result.Total?.Amount;
  * ```
+ *
+ * @binding
  */
 export interface GetCostForecast extends Binding.Service<
   GetCostForecast,

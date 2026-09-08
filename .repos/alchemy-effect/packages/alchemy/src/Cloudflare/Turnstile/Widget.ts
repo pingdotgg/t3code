@@ -153,11 +153,8 @@ export type Widget = Resource<
  * embed in HTML) and produces a `secret` used server-side against the
  * `/turnstile/v0/siteverify` endpoint. Name, domains, mode, and clearance
  * settings are all mutable in place; only `region` forces a replacement.
- * @resource
- * @product Turnstile
- * @category Application Security
- * @section Creating a Widget
- * @example Managed widget
+ * ### Creating a Widget
+ * **Example:** Managed widget
  * ```typescript
  * const widget = yield* Cloudflare.Turnstile.Widget("signup-form", {
  *   domains: ["example.com"],
@@ -165,7 +162,7 @@ export type Widget = Resource<
  * });
  * ```
  *
- * @example Invisible widget with an explicit name
+ * **Example:** Invisible widget with an explicit name
  * ```typescript
  * const widget = yield* Cloudflare.Turnstile.Widget("api-guard", {
  *   name: "api-guard",
@@ -174,8 +171,8 @@ export type Widget = Resource<
  * });
  * ```
  *
- * @section Using the keys
- * @example Embedding the sitekey and verifying tokens
+ * ### Using the keys
+ * **Example:** Embedding the sitekey and verifying tokens
  * ```typescript
  * // The sitekey is public — render it in your HTML:
  * const sitekey = widget.sitekey;
@@ -185,6 +182,10 @@ export type Widget = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/turnstile/
+ *
+ * @resource
+ * @product Turnstile
+ * @category Application Security
  */
 export const Widget = Resource<Widget>(TypeId);
 

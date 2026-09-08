@@ -232,9 +232,8 @@ export interface DBCluster extends Resource<
  * immutable fields (`engine`, `dbSubnetGroupName`, `storageEncrypted`,
  * `kmsKeyId`, `globalClusterIdentifier`, `availabilityZones`) force a
  * replacement.
- * @resource
- * @section Creating a Cluster
- * @example Neptune cluster with IAM auth
+ * ### Creating a Cluster
+ * **Example:** Neptune cluster with IAM auth
  * ```typescript
  * const cluster = yield* DBCluster("Graph", {
  *   dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
@@ -245,8 +244,8 @@ export interface DBCluster extends Resource<
  * });
  * ```
  *
- * @section Serverless
- * @example Serverless v2 cluster (pair with a `db.serverless` instance)
+ * ### Serverless
+ * **Example:** Serverless v2 cluster (pair with a `db.serverless` instance)
  * ```typescript
  * const cluster = yield* DBCluster("Graph", {
  *   dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
@@ -256,6 +255,8 @@ export interface DBCluster extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DBCluster = Resource<DBCluster>("AWS.Neptune.DBCluster");
 

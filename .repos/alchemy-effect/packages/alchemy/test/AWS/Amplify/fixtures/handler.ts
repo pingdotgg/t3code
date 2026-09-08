@@ -17,7 +17,7 @@ export class AmplifyTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AmplifyTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // GenerateAccessLogs can take longer than Lambda's 3s default while
     // Amplify prepares the pre-signed archive URL. Keep the invocation alive
     // long enough for the handler to return either the typed service result or

@@ -25,7 +25,7 @@ export class EcrPublicTestFunction extends Lambda.Function<Lambda.Function>()(
 export default EcrPublicTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The push-flow route performs several sequential ECR Public calls; the
     // AWS default 3s Lambda timeout is too tight.
     timeout: Duration.seconds(60),

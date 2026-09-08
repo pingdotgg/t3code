@@ -67,9 +67,8 @@ export interface KxDatabase extends Resource<
  * A kdb database inside an Amazon FinSpace Managed kdb environment — the
  * versioned, changeset-based store that kdb clusters mount and query.
  *
- * @resource
- * @section Creating kdb Databases
- * @example Basic kdb Database
+ * ### Creating kdb Databases
+ * **Example:** Basic kdb Database
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -79,6 +78,8 @@ export interface KxDatabase extends Resource<
  *   description: "tick data",
  * });
  * ```
+ *
+ * @resource
  */
 export const KxDatabase = Resource<KxDatabase>("AWS.FinSpace.KxDatabase");
 

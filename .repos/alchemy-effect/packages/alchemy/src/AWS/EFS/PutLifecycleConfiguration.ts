@@ -22,9 +22,8 @@ export interface PutLifecycleConfigurationRequest extends Omit<
  * `lifecyclePolicies` prop — this binding is for operational tooling that
  * tunes storage tiering on demand. Provide the implementation with
  * `Effect.provide(AWS.EFS.PutLifecycleConfigurationHttp)`.
- * @binding
- * @section Lifecycle Management
- * @example Tier cold files to Infrequent Access
+ * ### Lifecycle Management
+ * **Example:** Tier cold files to Infrequent Access
  * ```typescript
  * const putLifecycleConfiguration =
  *   yield* AWS.EFS.PutLifecycleConfiguration(files);
@@ -33,6 +32,8 @@ export interface PutLifecycleConfigurationRequest extends Omit<
  *   LifecyclePolicies: [{ TransitionToIA: "AFTER_30_DAYS" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutLifecycleConfiguration extends Binding.Service<
   PutLifecycleConfiguration,

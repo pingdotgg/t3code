@@ -33,7 +33,7 @@ export class CodeArtifactTestFunction extends Lambda.Function<Lambda.Function>()
 export default CodeArtifactTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The publish → copy → dispose flows fan out several SDK calls; AWS's
     // 3s default would intermittently time out.
     timeout: Duration.seconds(60),

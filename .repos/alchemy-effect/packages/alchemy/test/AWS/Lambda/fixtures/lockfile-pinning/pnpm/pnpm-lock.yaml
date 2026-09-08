@@ -1,0 +1,17 @@
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      make-dir:
+        specifier: ^3.0.0
+        version: 3.0.0
+
+snapshots:
+
+  make-dir@3.0.0:
+    dependencies:
+      semver: 6.3.0
+
+  semver@6.3.0: {}

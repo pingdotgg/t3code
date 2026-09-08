@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:GetVocabularyFilter` on `*`.
  *
- * @binding
- * @section Vocabulary Filters
- * @example Get a Vocabulary Filter
+ * ### Vocabulary Filters
+ * **Example:** Get a Vocabulary Filter
  * ```typescript
  * // init
  * const getVocabularyFilter = yield* AWS.Transcribe.GetVocabularyFilter();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   VocabularyFilterName: "profanity-filter",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetVocabularyFilter extends Binding.Service<
   GetVocabularyFilter,

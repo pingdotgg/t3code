@@ -147,11 +147,8 @@ export type Configuration = Resource<
  * before Alchemy managed them cannot be restored (Cloudflare's API has no
  * way to unset a block) — destroy leaves the last managed value and logs
  * a warning.
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section Managing Gateway settings
- * @example Enable activity logging and TLS decryption
+ * ### Managing Gateway settings
+ * **Example:** Enable activity logging and TLS decryption
  * ```typescript
  * yield* Cloudflare.Gateway.Configuration("Gateway", {
  *   settings: {
@@ -161,7 +158,7 @@ export type Configuration = Resource<
  * });
  * ```
  *
- * @example Custom block page
+ * **Example:** Custom block page
  * ```typescript
  * yield* Cloudflare.Gateway.Configuration("Gateway", {
  *   settings: {
@@ -175,8 +172,8 @@ export type Configuration = Resource<
  * });
  * ```
  *
- * @section TLS interception
- * @example Use a Gateway certificate for inspection
+ * ### TLS interception
+ * **Example:** Use a Gateway certificate for inspection
  * ```typescript
  * const cert = yield* Cloudflare.Gateway.Certificate("InspectionCa", {});
  * yield* Cloudflare.Gateway.Configuration("Gateway", {
@@ -188,6 +185,10 @@ export type Configuration = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/policies/gateway/
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const Configuration = Resource<Configuration>(TypeId);
 
@@ -323,7 +324,7 @@ const managedKeys = (
  * Cloudflare's PATCH ignores `null` blocks.
  */
 const captureBlocks = (
-  observedSettings: Record<string, unknown>,
+  observedSettings: Partial<Record<ConfigurationBlockKey, unknown>>,
   keys: ConfigurationBlockKey[],
 ): ConfigurationSnapshot => {
   const snapshot: ConfigurationSnapshot = {};

@@ -11,9 +11,8 @@ import type { WorkGroup } from "./WorkGroup.ts";
  * common run-and-decode flow, prefer the composite {@link Query} binding.
  * Provide the implementation with
  * `Effect.provide(AWS.Athena.GetQueryResultsHttp)`.
- * @binding
- * @section Reading Results
- * @example Page Through Query Results
+ * ### Reading Results
+ * **Example:** Page Through Query Results
  * ```typescript
  * // init — bind the operation to the workgroup
  * const getQueryResults = yield* AWS.Athena.GetQueryResults(workGroup);
@@ -22,6 +21,8 @@ import type { WorkGroup } from "./WorkGroup.ts";
  * const page = yield* getQueryResults({ QueryExecutionId: id, MaxResults: 100 });
  * console.log(page.ResultSet?.Rows?.length, page.NextToken);
  * ```
+ *
+ * @binding
  */
 export interface GetQueryResults extends Binding.Service<
   GetQueryResults,

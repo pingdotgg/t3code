@@ -121,9 +121,8 @@ export interface EventDestination extends Resource<
  *
  * Each configuration set holds up to five event destinations; each event
  * destination references exactly one delivery target.
- * @resource
- * @section Creating Event Destinations
- * @example Stream all events to SNS
+ * ### Creating Event Destinations
+ * **Example:** Stream all events to SNS
  * ```typescript
  * import * as PinpointSMSVoiceV2 from "alchemy/AWS/PinpointSMSVoiceV2";
  * import * as SNS from "alchemy/AWS/SNS";
@@ -137,7 +136,7 @@ export interface EventDestination extends Resource<
  * });
  * ```
  *
- * @example CloudWatch Logs destination
+ * **Example:** CloudWatch Logs destination
  * ```typescript
  * const destination = yield* PinpointSMSVoiceV2.EventDestination("Logs", {
  *   configurationSetName: configSet.configurationSetName,
@@ -149,7 +148,7 @@ export interface EventDestination extends Resource<
  * });
  * ```
  *
- * @example Disable a destination without deleting it
+ * **Example:** Disable a destination without deleting it
  * ```typescript
  * const destination = yield* PinpointSMSVoiceV2.EventDestination("Events", {
  *   configurationSetName: configSet.configurationSetName,
@@ -158,6 +157,8 @@ export interface EventDestination extends Resource<
  *   enabled: false,
  * });
  * ```
+ *
+ * @resource
  */
 export const EventDestination = Resource<EventDestination>(
   "AWS.PinpointSMSVoiceV2.EventDestination",

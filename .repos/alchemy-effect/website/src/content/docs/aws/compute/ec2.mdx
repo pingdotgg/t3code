@@ -23,13 +23,13 @@ The minimal instance is an AMI plus an instance type. AMI IDs
 are per-region, so resolve one with Alchemy's image helpers
 instead of hard-coding — `amazonLinux()` finds the latest Amazon
 Linux AMI (there are also `amazonLinux2023`, `amazonLinux2`,
-`ubuntu2404`, `ubuntu2204`, and a general `image()` finder):
+`ubuntu2404`, `ubuntu2204`, an id-only `image()` finder, and the
+underlying `getAmi()` data source returning the full image
+description). Each returns an `Output` resolved at deploy time:
 
 ```typescript
-const imageId = yield* AWS.EC2.amazonLinux();
-
 const instance = yield* AWS.EC2.Instance("AppInstance", {
-  imageId,
+  imageId: AWS.EC2.amazonLinux(),
   instanceType: "t3.micro",
   subnetId: subnet.subnetId,
 });
@@ -44,8 +44,11 @@ for every prop and attribute.
 
 Give the instance a `main` entrypoint and it becomes a runtime,
 same class pattern as Lambda and ECS. Because instance props
-(the AMI lookup, the network) are themselves resolved by
-Effects, the props slot takes an `Effect.gen` block:
+(the network, the AMI) are resolved by the stack, the props slot
+takes an `Effect.gen` block. The composition is also re-executed
+inside the deployed instance's bundle — that's safe as-is:
+resource yields resolve to references at runtime, and the AMI
+helper returns an `Output` that only resolves at deploy time:
 
 ```typescript
 // src/server.ts
@@ -57,21 +60,6 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 export default class Server extends AWS.EC2.Instance<Server>()(
   "Server",
   Effect.gen(function* () {
-    // Props run at deploy time. Inside the deployed instance only
-    // the program below matters, so short-circuit the infra
-    // lookups — the bundler folds `__ALCHEMY_RUNTIME__` to `true`
-    // and dead-code-eliminates this branch (and the AWS SDK with
-    // it) from the machine's bundle.
-    if (globalThis.__ALCHEMY_RUNTIME__) {
-      return {
-        main: import.meta.url,
-        imageId: "",
-        instanceType: "t3.small",
-        port: 3000,
-      };
-    }
-
-    const imageId = yield* AWS.EC2.amazonLinux();
     const network = yield* AWS.EC2.Network("AppNetwork", {
       cidrBlock: "10.81.0.0/16",
       availabilityZones: 1,
@@ -99,7 +87,7 @@ export default class Server extends AWS.EC2.Instance<Server>()(
 
     return {
       main: import.meta.url,
-      imageId,
+      imageId: AWS.EC2.amazonLinux(),
       instanceType: "t3.small",
       subnetId: network.publicSubnetIds[0],
       securityGroupIds: [securityGroup.groupId],

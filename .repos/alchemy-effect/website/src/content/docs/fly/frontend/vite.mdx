@@ -1,0 +1,214 @@
+---
+title: Vite
+description: Deploy a Vite SPA to Fly with Fly.Website.Vite — static assets on a Node Machine, fly.dev (or your domain) over HTTPS, and Vite's own dev server under alchemy dev.
+sidebar:
+  order: 2
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Fly.Website.Vite` deploys a [Vite](https://vite.dev) project to Fly.
+It runs `vite build` and serves the output from a tiny Node
+static-file server on a Machine: one [`Fly.App`](/fly/compute/apps)
+(created if `app` is omitted), one
+[`Fly.Service`](/fly/compute/services) on port 3000, and a shared
+IPv4 so `https://{app}.fly.dev` answers. Your `vite.config.*` loads
+natively — plugins included. There is no framework server module.
+
+React, Vue, and Solid client SPAs belong here, as do multi-page apps
+that emit one HTML file per route. SSR frameworks that wrap Vite
+deploy through their own composites —
+[`Astro`](/fly/frontend/astro), [`Nextjs`](/fly/frontend/nextjs),
+[`Nuxt`](/fly/frontend/nuxt),
+[`ReactRouter`](/fly/frontend/react-router),
+[`SolidStart`](/fly/frontend/solidstart),
+[`SvelteKit`](/fly/frontend/sveltekit),
+[`TanStackStart`](/fly/frontend/tanstack-start),
+[`Waku`](/fly/frontend/waku), [`Octane`](/fly/frontend/octane).
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/vite`
+and `/vite/node` exports from your project at deploy time. It is
+only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.*` file loads natively — React, Vue, or Solid
+plugins, Tailwind, and any other non-serializable options work
+exactly as they do outside Alchemy. Alchemy merges a programmatic
+config *over* it via the `vite` prop — see
+[Vite configuration](#vite-configuration) below.
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+});
+```
+
+Do not set a Vite SSR adapter. This composite never creates a
+framework server module — it only ships the client build.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Fly from "alchemy/Fly";
+
+export const Website = Fly.Website.Vite("Website");
+```
+
+Pass `app` to put the site on an App you already have. Omit it and
+Alchemy creates `Fly.App("App")` under the site's namespace:
+
+```typescript
+export const Site = Fly.App("Site");
+
+export const Website = Fly.Website.Vite("Website", { app: Site });
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyViteSite",
+  {
+    providers: Fly.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+On deploy, `url` is `https://{app}.fly.dev`. `app`, `service`,
+`ip`, and `certificate` are the backing resources; they are
+`undefined` under `alchemy dev`.
+
+See
+[examples/fly-website-vite](https://github.com/alchemy-run/alchemy/tree/main/examples/fly-website-vite)
+for the checked-in example.
+
+## Add environment variables
+
+`env` is process environment — set on `process.env` before
+`vite build` / `alchemy dev`, and on the Machine at deploy. It is
+not Worker bindings:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Fly.Website.Vite("Website", {
++  env: {
++    VITE_GREETING: "Hello from Alchemy!",
++  },
+});
+```
+
+Vite inlines `VITE_*` into the client bundle at build time. Other
+keys reach the hosted Node process but not the browser.
+
+## Read the environment
+
+Client code reads inlined values from `import.meta.env`:
+
+```typescript
+// src/main.ts
+const greeting = import.meta.env.VITE_GREETING ?? "hello";
+```
+
+## Single-page vs multi-page
+
+Plain Vite apps are typically SPAs, so `assets.notFoundHandling`
+defaults to `"single-page-application"`: unmatched paths get
+`index.html` with status 200 so client-side routes deep-link. Use
+`"404-page"` for multi-page sites that ship a `404.html`:
+
+```typescript
+export const Website = Fly.Website.Vite("Docs", {
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+## Vite configuration
+
+`rootDir` is the project root (the directory containing
+`package.json`). Default `"."`.
+
+`vite.outDir` and `vite.base` are serializable overrides merged *over* the
+config file:
+
+```typescript
+export const Website = Fly.Website.Vite("Website", {
+  rootDir: "./app",
+  vite: { outDir: "build", base: "/docs/" },
+});
+```
+
+`outDir` is relative to `rootDir` and defaults to the file's
+`build.outDir` (Vite's default: `"dist"`). `base` is Vite's public
+base path.
+
+## Local development
+
+`alchemy dev` runs Vite's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Fly App, Service,
+IP, or certificate is created. Wrap the site in
+`Alchemy.remote()` to deploy the real infrastructure even during
+dev.
+
+## Custom domain
+
+`domain` is a hostname string. Alchemy requests ACME
+([`Fly.Certificate`](/fly/networking)) on the App and `url` becomes
+`https://{domain}`. v1 expects the hostname's DNS to already point
+at the App:
+
+```typescript
+export const Website = Fly.Website.Vite("Website", {
+  domain: "app.example.com",
+});
+```
+
+## Where next
+
+- [`Fly.Website.Vite` API](/providers/fly/website/vite)
+- [Astro](/fly/frontend/astro), [Next.js](/fly/frontend/nextjs),
+  [Nuxt](/fly/frontend/nuxt), [SvelteKit](/fly/frontend/sveltekit),
+  [Waku](/fly/frontend/waku), [Octane](/fly/frontend/octane) — SSR
+  frameworks
+- [Services](/fly/compute/services),
+  [IPs & certificates](/fly/networking)

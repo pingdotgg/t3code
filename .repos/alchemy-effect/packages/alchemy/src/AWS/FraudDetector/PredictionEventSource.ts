@@ -70,8 +70,8 @@ export interface PredictionEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Prediction Results
- * @example React To High-Risk Predictions
+ * ### Consuming Prediction Results
+ * **Example:** React To High-Risk Predictions
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

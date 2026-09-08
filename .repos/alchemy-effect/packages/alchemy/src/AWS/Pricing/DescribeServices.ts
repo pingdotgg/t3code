@@ -19,9 +19,8 @@ export interface DescribeServicesRequest
  * Provide the implementation with
  * `Effect.provide(AWS.Pricing.DescribeServicesHttp)`.
  *
- * @binding
- * @section Discovering Services
- * @example List Filterable Attributes for EC2
+ * ### Discovering Services
+ * **Example:** List Filterable Attributes for EC2
  * ```typescript
  * // init
  * const describeServices = yield* AWS.Pricing.DescribeServices();
@@ -30,6 +29,8 @@ export interface DescribeServicesRequest
  * const result = yield* describeServices({ ServiceCode: "AmazonEC2" });
  * const attributeNames = result.Services?.[0]?.AttributeNames ?? [];
  * ```
+ *
+ * @binding
  */
 export interface DescribeServices extends Binding.Service<
   DescribeServices,

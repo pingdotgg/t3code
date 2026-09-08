@@ -99,11 +99,8 @@ export type Evaluation = Resource<
  * traffic captured by one or more datasets on a gateway. They are
  * create-only on Cloudflare's side: any prop change replaces the
  * evaluation with a fresh job.
- * @resource
- * @product AI Gateway
- * @category AI
- * @section Creating an Evaluation
- * @example Evaluate a dataset for speed and cost
+ * ### Creating an Evaluation
+ * **Example:** Evaluate a dataset for speed and cost
  * ```typescript
  * const gateway = yield* Cloudflare.AI.Gateway("Gateway");
  *
@@ -123,6 +120,10 @@ export type Evaluation = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ai-gateway/evaluations/
+ *
+ * @resource
+ * @product AI Gateway
+ * @category AI
  */
 export const Evaluation = Resource<Evaluation>(TypeId, {
   aliases: ["Cloudflare.AiGateway.Evaluation"],

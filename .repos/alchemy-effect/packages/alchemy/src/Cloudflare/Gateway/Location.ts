@@ -129,11 +129,8 @@ export type Location = Resource<
  * `https://<dohSubdomain>.cloudflare-gateway.com/dns-query` and Gateway
  * DNS policies apply to its traffic. All declared properties converge in
  * place — nothing on a location forces a replacement.
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Location
- * @example DoH-only location
+ * ### Creating a Location
+ * **Example:** DoH-only location
  * ```typescript
  * const office = yield* Cloudflare.Gateway.Location("Office", {
  *   ecsSupport: false,
@@ -142,7 +139,7 @@ export type Location = Resource<
  * const doh = office.dohSubdomain;
  * ```
  *
- * @example Location with IPv4 source networks
+ * **Example:** Location with IPv4 source networks
  * ```typescript
  * const office = yield* Cloudflare.Gateway.Location("Office", {
  *   networks: [{ network: "203.0.113.0/24" }],
@@ -156,6 +153,10 @@ export type Location = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/agentless/dns/locations/
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const Location = Resource<Location>(TypeId);
 

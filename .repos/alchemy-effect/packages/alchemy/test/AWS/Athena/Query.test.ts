@@ -21,7 +21,17 @@ let baseUrl: string;
 class TransientUpstream extends Data.TaggedError("TransientUpstream")<{
   readonly status: number;
   readonly body: string;
-}> {}
+}> {
+  // Without this the runner prints a bare `TransientUpstream:` when the retry
+  // budget is exhausted, which is unactionable — the status and the handler's
+  // body are the whole diagnosis.
+  override get message() {
+    const body = this.body.trim();
+    return `upstream returned ${this.status}: ${
+      body.length > 800 ? `${body.slice(0, 800)}… (${body.length} bytes)` : body
+    }`;
+  }
+}
 
 // Fresh Lambda role + Athena/S3 permissions propagate eventually — the first
 // queries can 500 with AccessDenied under the handler's `Effect.orDie`.
@@ -41,11 +51,13 @@ const send = (request: HttpClientRequest.HttpClientRequest) =>
     ),
     Effect.retry({
       while: (e) => e._tag === "TransientUpstream",
-      // Bounded well under the 180s test timeout (~31s of sleeps) so a
+      // Bounded well under the 180s test timeout (~63s of sleeps) so a
       // persistent 500 surfaces its body instead of an opaque timeout.
+      // 31s was not enough under a loaded full-suite run (`--concurrency 64`),
+      // where the emulator's Lambda invokes queue behind everything else.
       schedule: Schedule.max([
         Schedule.exponential("1 second"),
-        Schedule.recurs(5),
+        Schedule.recurs(6),
       ]),
     }),
   );

@@ -38,7 +38,7 @@ export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
   Stack.useSync((stack) => ({
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     memory: stack.stage === "prod" ? 1024 : 512,
   })),
   Effect.gen(function* () {

@@ -112,9 +112,8 @@ export interface CustomAction extends Resource<
  * workspace to be onboarded, though they only become usable once a Slack or
  * Microsoft Teams channel configuration exists.
  *
- * @resource
- * @section Creating Custom Actions
- * @example List Lambda functions from chat
+ * ### Creating Custom Actions
+ * **Example:** List Lambda functions from chat
  * ```typescript
  * import * as Chatbot from "alchemy/AWS/Chatbot";
  *
@@ -124,7 +123,7 @@ export interface CustomAction extends Resource<
  * });
  * ```
  *
- * @example Button on CloudWatch alarm notifications
+ * **Example:** Button on CloudWatch alarm notifications
  * ```typescript
  * const action = yield* Chatbot.CustomAction("DescribeAlarm", {
  *   commandText: "aws cloudwatch describe-alarms --alarm-names $AlarmName",
@@ -139,6 +138,8 @@ export interface CustomAction extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const CustomAction = Resource<CustomAction>("AWS.Chatbot.CustomAction");
 

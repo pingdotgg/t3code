@@ -16,9 +16,8 @@ export interface GetQueryStatusRequest extends Omit<
  *
  * Provide `InternetMonitor.GetQueryStatusHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Querying Measurements
- * @example Poll a Query Until It Completes
+ * ### Querying Measurements
+ * **Example:** Poll a Query Until It Completes
  * ```typescript
  * // init — grants internetmonitor:GetQueryStatus on the monitor
  * const getQueryStatus = yield* AWS.InternetMonitor.GetQueryStatus(monitor);
@@ -32,6 +31,8 @@ export interface GetQueryStatusRequest extends Omit<
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetQueryStatus extends Binding.Service<
   GetQueryStatus,

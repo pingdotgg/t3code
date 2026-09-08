@@ -13,9 +13,8 @@ export interface GetViolationDetailsRequest
  *
  * Returns violation details for the specified resource covered by a Firewall Manager network ACL, security group, Network Firewall, DNS Firewall, or third-party firewall policy. Provide the
  * implementation with `Effect.provide(AWS.FMS.GetViolationDetailsHttp)`.
- * @binding
- * @section Compliance and Protection Status
- * @example Read a Resource's Violation Details
+ * ### Compliance and Protection Status
+ * **Example:** Read a Resource's Violation Details
  * ```typescript
  * // init — account-level binding takes no resource
  * const getViolationDetails = yield* AWS.FMS.GetViolationDetails();
@@ -29,6 +28,8 @@ export interface GetViolationDetailsRequest
  * });
  * console.log(result.ViolationDetail?.ResourceViolations.length);
  * ```
+ *
+ * @binding
  */
 export interface GetViolationDetails extends Binding.Service<
   GetViolationDetails,

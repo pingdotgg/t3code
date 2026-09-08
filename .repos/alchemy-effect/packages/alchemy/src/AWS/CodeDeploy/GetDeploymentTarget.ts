@@ -7,9 +7,8 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
  * Runtime binding for `codedeploy:GetDeploymentTarget` — reads one
  * deployment target (instance, Lambda function, or ECS task set) of a
  * deployment, including per-lifecycle-event status.
- * @binding
- * @section Observing Deployment Targets
- * @example Read a Target's Status
+ * ### Observing Deployment Targets
+ * **Example:** Read a Target's Status
  * ```typescript
  * const getDeploymentTarget = yield* AWS.CodeDeploy.GetDeploymentTarget(group);
  *
@@ -18,6 +17,8 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
  *   targetId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetDeploymentTarget extends Binding.Service<
   GetDeploymentTarget,

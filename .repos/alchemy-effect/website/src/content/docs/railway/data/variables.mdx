@@ -1,0 +1,183 @@
+---
+title: Variables
+description: Config.redacted on a Service, Railway.Variable when Railway should own the value.
+---
+
+Most secrets in a [`Service`](/railway/compute/services) come from
+your `.env`. Yield `Config.redacted` in init. Alchemy binds the
+value onto the Service.
+
+Use [`Railway.Variable`](/providers/railway/variable) when the value
+should be shared across services and managed in one place by
+Railway. The plaintext is never stored in attributes.
+
+## Bind from `.env`
+
+```typescript
+import * as Config from "effect/Config";
+import * as Redacted from "effect/Redacted";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    port: 3000,
+  },
+  Effect.gen(function* () {
+    const apiKey = yield* Config.redacted("API_KEY");
+
+    return {
+      fetch: Effect.gen(function* () {
+        const token = Redacted.value(apiKey);
+        // ...
+      }),
+    };
+  }),
+) {}
+```
+
+`Config.redacted("API_KEY")` reads `API_KEY` from the env of whoever
+runs the deploy and writes it onto the Service. At runtime the same
+line resolves from that env var.
+
+The value is `Redacted<string>`. Unwrap with `Redacted.value` only
+where you need the raw string. Do not pass `env: { ... }` on a
+Service. Yield Config.
+
+See [Secrets & Config](/environments/secrets) for combinators and
+stages.
+
+## When Railway should own the variable
+
+`Railway.Variable` is injected as an environment variable into
+services in that environment. Use it when the value is shared and
+managed in one place, not when only this Service reads a deploy-time
+`.env` key.
+
+```typescript
+import * as Railway from "alchemy/Railway";
+import * as Redacted from "effect/Redacted";
+
+export const ApiToken = Railway.Variable("ApiToken", {
+  project: Site,
+  name: "API_TOKEN",
+  value: Redacted.make("…"),
+});
+```
+
+`name` is the env-var services see. It is stored as-is
+(case-sensitive). Omit it and Alchemy generates an ownership-stamped
+name. Updating `value` is in place via `variableUpsert`. Changing
+`project`, `environment`, `service`, or `name` replaces.
+
+The resolved resource exposes `name` and `digest`. Never the
+plaintext.
+
+Shared (no `service`) variables apply to every service in the
+environment. Pass `service` to scope one Variable to one Service.
+
+```typescript
+const token = yield* Railway.Variable("ApiToken", {
+  project: site,
+  service: api,
+  name: "API_TOKEN",
+  value: Redacted.make("sk_live_…"),
+});
+```
+
+## Read a Variable from a Service
+
+Railway injects the Variable as env. Read it with `Config` — never
+log the plaintext.
+
+```typescript
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    port: 3000,
+  },
+  Effect.gen(function* () {
+    yield* ApiToken;
+    const name = yield* Config.string("API_TOKEN").pipe(
+      Effect.orElseSucceed(() => ""),
+    );
+
+    return {
+      fetch: Effect.succeed(
+        HttpServerResponse.json({ name: "API_TOKEN", set: name.length > 0 }),
+      ),
+    };
+  }),
+) {}
+```
+
+Yield the Variable in the Stack (or from Service init) so it is
+part of the graph.
+
+## Variable references
+
+[`Railway.ref`](/providers/railway/ref) emits a Railway template
+(`${{Service.KEY}}` or `${{shared.NAME}}`). Store it as a Variable
+`value` or a `Service.env` entry. Railway keeps the template
+(`unrendered: true`) and interpolates it — it is not a resolved
+URI. Distinct from the unexported resource-prop `Ref<T>`.
+
+Use `ConnectPostgres` / `ConnectMySQL` / `ConnectMongo` for a typed
+client inside an Effect-native Service. Use `Railway.ref` when you
+want Railway's own interpolation (IaC `db.env.DATABASE_URL`,
+`ctx.shared.SENTRY_DSN`).
+
+```typescript
+const db = yield* Railway.Postgres("Db", { project: site });
+yield* Railway.Variable("DatabaseUrl", {
+  project: site,
+  service: api,
+  name: "DATABASE_URL",
+  value: Railway.ref(db, "DATABASE_URL"),
+});
+```
+
+Shared variables use the `"shared"` namespace:
+
+```typescript
+yield* Railway.Variable("ApiSentry", {
+  project: site,
+  service: api,
+  name: "SENTRY_DSN",
+  value: Railway.ref("shared", "SENTRY_DSN"),
+});
+```
+
+Railway interpolates by service **name**. Set `name` on
+Postgres/Service to the LogicalId if the template must resolve to
+that service.
+
+## Environment
+
+Defaults to the Project's primary environment. Pass a
+[Environment](/railway/compute/environments) to target another one.
+
+```typescript
+const staging = yield* Railway.Environment("Staging", { project: site });
+const token = yield* Railway.Variable("StagingToken", {
+  project: site,
+  environment: staging,
+  value: Redacted.make("sk_staging_…"),
+});
+```
+
+## Where next
+
+The [tutorial](/railway/tutorial/part-4) stores a Variable and reads
+it from a Service. [Services](/railway/compute/services) covers
+`Config.redacted` for values from `.env`. [Postgres](/railway/data/postgres),
+[MySQL](/railway/data/mysql), [Mongo](/railway/data/mongo),
+[Redis](/railway/data/redis), and [Buckets](/railway/data/buckets)
+bind typed clients (`ConnectPostgres`, `ConnectMySQL`,
+`ConnectMongo`, `ReadWriteRedis`, `PutObject`) that use Railway-owned
+variables internally. See the
+[`Variable` reference](/providers/railway/variable) and
+[`ref` reference](/providers/railway/ref).

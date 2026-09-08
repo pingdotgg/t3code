@@ -15,13 +15,14 @@ export interface UpdateFindingsRequest extends Omit<
  * Archives or reactivates findings by id or by the resource they were
  * generated for. Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.UpdateFindingsHttp)`.
- * @binding
- * @section Managing Findings
- * @example Archive Findings
+ * ### Managing Findings
+ * **Example:** Archive Findings
  * ```typescript
  * const updateFindings = yield* AWS.AccessAnalyzer.UpdateFindings(analyzer);
  * yield* updateFindings({ status: "ARCHIVED", ids: [findingId] });
  * ```
+ *
+ * @binding
  */
 export interface UpdateFindings extends Binding.Service<
   UpdateFindings,

@@ -20,9 +20,14 @@ const startSyncExecutionOnSyncEndpoint = Effect.gen(function* () {
     regionEffect,
     (region) => `https://sync-states.${region}.amazonaws.com`,
   );
-  return yield* sfn.startSyncExecution.pipe(
-    Effect.provideService(Endpoint.Endpoint, syncStatesEndpoint),
-  );
+  const op = yield* sfn.startSyncExecution;
+  // The endpoint must be pinned per call, not around the yield: the
+  // yield-time snapshot is only a fallback — the calling fiber's ambient
+  // `Endpoint` (e.g. the runtime's `Endpoint.fromEnv`) wins over it.
+  return (input: sfn.StartSyncExecutionInput) =>
+    op(input).pipe(
+      Effect.provideService(Endpoint.Endpoint, syncStatesEndpoint),
+    );
 });
 
 export const StartSyncExecutionHttp = Layer.effect(

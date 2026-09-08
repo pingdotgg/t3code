@@ -143,9 +143,8 @@ export interface Index extends Resource<
  * moment the index becomes `ACTIVE` (including the Developer edition's
  * free-tier-exhausted rate). Destroy indexes promptly.
  * :::
- * @resource
- * @section Creating Indexes
- * @example Developer-Edition Index
+ * ### Creating Indexes
+ * **Example:** Developer-Edition Index
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -176,6 +175,8 @@ export interface Index extends Resource<
  *   roleArn: role.roleArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Index = Resource<Index>("AWS.Kendra.Index");
 

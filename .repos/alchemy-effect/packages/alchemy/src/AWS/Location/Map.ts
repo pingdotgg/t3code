@@ -85,9 +85,8 @@ export interface Map extends Resource<
  * glyphs, and sprites for a chosen base style. The map style is immutable;
  * the political view and description can be updated in place.
  *
- * @resource
- * @section Creating Maps
- * @example Basic Map
+ * ### Creating Maps
+ * **Example:** Basic Map
  * ```typescript
  * import * as Location from "alchemy/AWS/Location";
  *
@@ -96,13 +95,15 @@ export interface Map extends Resource<
  * });
  * ```
  *
- * @example Map with Political View
+ * **Example:** Map with Political View
  * ```typescript
  * const map = yield* Location.Map("RegionMap", {
  *   configuration: { style: "VectorHereExplore", politicalView: "IND" },
  *   description: "Map with India political view",
  * });
  * ```
+ *
+ * @resource
  */
 export const Map = Resource<Map>("AWS.Location.Map");
 

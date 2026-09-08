@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Synthetics.DescribeCanariesLastRunHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Canary Status
- * @example Fleet-Wide Last-Run Summary
+ * ### Reading Canary Status
+ * **Example:** Fleet-Wide Last-Run Summary
  * ```typescript
  * // init — grants synthetics:DescribeCanariesLastRun
  * const describeCanariesLastRun =
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   (c) => c.LastRun?.Status?.State === "FAILED",
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeCanariesLastRun extends Binding.Service<
   DescribeCanariesLastRun,

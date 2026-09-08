@@ -16,9 +16,8 @@ export interface DisassociateLibraryItemReviewRequest extends Omit<
  *
  * Removes the calling identity's upvote from a library item. Provide the implementation with
  * `Effect.provide(AWS.QApps.DisassociateLibraryItemReviewHttp)`.
- * @binding
- * @section Library Items
- * @example Remove an Upvote
+ * ### Library Items
+ * **Example:** Remove an Upvote
  * ```typescript
  * // init — bind the operation to the Q App
  * const disassociateLibraryItemReview = yield* AWS.QApps.DisassociateLibraryItemReview(app);
@@ -26,6 +25,8 @@ export interface DisassociateLibraryItemReviewRequest extends Omit<
  * // runtime
  * yield* disassociateLibraryItemReview({ libraryItemId });
  * ```
+ *
+ * @binding
  */
 export interface DisassociateLibraryItemReview extends Binding.Service<
   DisassociateLibraryItemReview,

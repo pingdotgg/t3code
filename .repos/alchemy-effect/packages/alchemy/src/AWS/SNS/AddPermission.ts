@@ -16,9 +16,8 @@ export interface AddPermissionRequest extends Omit<
  * to the topic's access policy. The binding grants the host function
  * `sns:AddPermission` on the topic. Provide the `AddPermissionHttp` layer on
  * the Function to implement the binding.
- * @binding
- * @section Managing Topic Permissions
- * @example Allow Another Account to Publish
+ * ### Managing Topic Permissions
+ * **Example:** Allow Another Account to Publish
  * ```typescript
  * // init (provide SNS.AddPermissionHttp on the Function)
  * const addPermission = yield* SNS.AddPermission(topic);
@@ -30,6 +29,8 @@ export interface AddPermissionRequest extends Omit<
  *   ActionName: ["Publish"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface AddPermission extends Binding.Service<
   AddPermission,

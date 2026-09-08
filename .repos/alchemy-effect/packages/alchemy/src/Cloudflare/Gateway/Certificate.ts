@@ -90,17 +90,14 @@ export type Certificate = Resource<
  * To make Gateway actually intercept with this certificate, reference its
  * `certificateId` from the Gateway configuration's `certificate` setting
  * (see `Cloudflare.Gateway.Configuration`).
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Certificate
- * @example Activated certificate (default)
+ * ### Creating a Certificate
+ * **Example:** Activated certificate (default)
  * ```typescript
  * const cert = yield* Cloudflare.Gateway.Certificate("InspectionCa", {});
  * // cert.bindingStatus === "available" once deployed to the edge
  * ```
  *
- * @example Short-lived, kept inactive
+ * **Example:** Short-lived, kept inactive
  * ```typescript
  * const cert = yield* Cloudflare.Gateway.Certificate("StagedCa", {
  *   validityPeriodDays: 365,
@@ -108,8 +105,8 @@ export type Certificate = Resource<
  * });
  * ```
  *
- * @section Using the certificate for TLS interception
- * @example Wire into the Gateway configuration
+ * ### Using the certificate for TLS interception
+ * **Example:** Wire into the Gateway configuration
  * ```typescript
  * const cert = yield* Cloudflare.Gateway.Certificate("InspectionCa", {});
  * yield* Cloudflare.Gateway.Configuration("Gateway", {
@@ -121,6 +118,10 @@ export type Certificate = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/connections/connect-devices/user-side-certificates/
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const Certificate = Resource<Certificate>(TypeId);
 
@@ -224,7 +225,6 @@ export const CertificateProvider = () =>
         yield* zeroTrust.activateGatewayCertificate({
           accountId,
           certificateId,
-          body: {},
         });
       } else if (
         !wantActive &&
@@ -233,7 +233,6 @@ export const CertificateProvider = () =>
         yield* zeroTrust.deactivateGatewayCertificate({
           accountId,
           certificateId,
-          body: {},
         });
       }
       const desired = wantActive ? "available" : "inactive";
@@ -253,7 +252,7 @@ export const CertificateProvider = () =>
       const status = observed.bindingStatus ?? undefined;
       if (status === "available" || status === "pending_deployment") {
         yield* zeroTrust
-          .deactivateGatewayCertificate({ accountId, certificateId, body: {} })
+          .deactivateGatewayCertificate({ accountId, certificateId })
           .pipe(
             Effect.catchTag("GatewayCertificateNotFound", () => Effect.void),
           );

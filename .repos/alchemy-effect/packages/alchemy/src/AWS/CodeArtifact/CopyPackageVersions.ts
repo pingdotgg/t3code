@@ -20,9 +20,8 @@ export interface CopyPackageVersionsRequest extends Omit<
  * bound repository (the destination) — the standard promotion flow from a
  * staging repository to a release repository. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.CopyPackageVersionsHttp)`.
- * @binding
- * @section Promoting Packages
- * @example Promote a Version from Staging
+ * ### Promoting Packages
+ * **Example:** Promote a Version from Staging
  * ```typescript
  * const copyVersions = yield* AWS.CodeArtifact.CopyPackageVersions(releaseRepo);
  *
@@ -35,6 +34,8 @@ export interface CopyPackageVersionsRequest extends Omit<
  * });
  * console.log(res.successfulVersions);
  * ```
+ *
+ * @binding
  */
 export interface CopyPackageVersions extends Binding.Service<
   CopyPackageVersions,

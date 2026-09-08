@@ -1,0 +1,38 @@
+{
+  "name": "cloudflare-website-vocs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "react": "~19.2.6",
+    "react-dom": "~19.2.6",
+    "react-server-dom-webpack": "catalog:frontend",
+    "vocs": "catalog:frontend",
+    "waku": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@cloudflare/unenv-preset": "catalog:cloudflare-runtime",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "catalog:frontend",
+    "@vitejs/plugin-rsc": "catalog:frontend",
+    "typescript": "catalog:build",
+    "unenv": "catalog:cloudflare-runtime",
+    "vite": "catalog:build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-vocs"
+  }
+}

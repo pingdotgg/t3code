@@ -115,9 +115,8 @@ export interface Environment extends Resource<
  * ~20 minutes and bills while it exists. Live lifecycle tests are gated
  * behind `AWS_TEST_FINSPACE=1`.
  * :::
- * @resource
- * @section Creating Environments
- * @example Basic Environment
+ * ### Creating Environments
+ * **Example:** Basic Environment
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -126,7 +125,7 @@ export interface Environment extends Resource<
  * });
  * ```
  *
- * @example Federated Environment
+ * **Example:** Federated Environment
  * ```typescript
  * const env = yield* AWS.FinSpace.Environment("Analytics", {
  *   federationMode: "FEDERATED",
@@ -137,6 +136,8 @@ export interface Environment extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Environment = Resource<Environment>("AWS.FinSpace.Environment");
 

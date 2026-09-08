@@ -124,9 +124,8 @@ export interface Directory extends Resource<
  * Zones. Provisioning is SLOW: Simple AD takes roughly 10 minutes and
  * Microsoft AD 20-40 minutes, and directories bill hourly while they exist.
  * Destroy directories you are not using.
- * @resource
- * @section Creating a Directory
- * @example Simple AD Directory
+ * ### Creating a Directory
+ * **Example:** Simple AD Directory
  * ```typescript
  * const directory = yield* Directory("Corp", {
  *   name: "corp.example.com",
@@ -137,7 +136,7 @@ export interface Directory extends Resource<
  * });
  * ```
  *
- * @example Managed Microsoft AD Directory
+ * **Example:** Managed Microsoft AD Directory
  * ```typescript
  * const directory = yield* Directory("Corp", {
  *   type: "MicrosoftAD",
@@ -150,13 +149,15 @@ export interface Directory extends Resource<
  * });
  * ```
  *
- * @section Using the Directory
- * @example Read the DNS Addresses
+ * ### Using the Directory
+ * **Example:** Read the DNS Addresses
  * ```typescript
  * const directory = yield* Directory("Corp", { ... });
  * // the directory-provided DNS servers, one per Availability Zone
  * const dns = directory.dnsIpAddrs;
  * ```
+ *
+ * @resource
  */
 export const Directory = Resource<Directory>("AWS.DirectoryService.Directory");
 

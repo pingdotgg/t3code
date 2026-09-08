@@ -12,15 +12,16 @@ import type { Workspace } from "./Workspace.ts";
  * `unifiedAlerting` feature toggle) and the running Grafana version. Provide
  * the implementation with
  * `Effect.provide(AWS.Grafana.DescribeWorkspaceConfigurationHttp)`.
- * @binding
- * @section Managing Configuration
- * @example Read the Configuration JSON
+ * ### Managing Configuration
+ * **Example:** Read the Configuration JSON
  * ```typescript
  * const describeConfig = yield* Grafana.DescribeWorkspaceConfiguration(workspace);
  *
  * const { configuration, grafanaVersion } = yield* describeConfig();
  * const parsed = JSON.parse(configuration);
  * ```
+ *
+ * @binding
  */
 export interface DescribeWorkspaceConfiguration extends Binding.Service<
   DescribeWorkspaceConfiguration,

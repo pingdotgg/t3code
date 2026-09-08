@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * is governed by portfolio principal associations, so the binding takes no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.ServiceCatalog.UpdateProvisionedProductHttp)`.
- * @binding
- * @section Provisioning Products
- * @example Update a Provisioned Product to a New Version
+ * ### Provisioning Products
+ * **Example:** Update a Provisioned Product to a New Version
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateProvisionedProduct = yield* AWS.ServiceCatalog.UpdateProvisionedProduct();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  *   UpdateToken: crypto.randomUUID(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateProvisionedProduct extends Binding.Service<
   UpdateProvisionedProduct,

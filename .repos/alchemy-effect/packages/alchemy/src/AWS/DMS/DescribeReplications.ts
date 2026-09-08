@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * {@link StartReplication} / {@link StopReplication} for serverless
  * replication automation. Provide the implementation with
  * `Effect.provide(AWS.DMS.DescribeReplicationsHttp)`.
- * @binding
- * @section Orchestrating Serverless Replications
- * @example Check a Serverless Replication's Status
+ * ### Orchestrating Serverless Replications
+ * **Example:** Check a Serverless Replication's Status
  * ```typescript
  * // init — account-level, no target resource
  * const describeReplications = yield* AWS.DMS.DescribeReplications();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // Replications[0].Status: "created" | "running" | "stopped" | …
  * ```
+ *
+ * @binding
  */
 export interface DescribeReplications extends Binding.Service<
   DescribeReplications,

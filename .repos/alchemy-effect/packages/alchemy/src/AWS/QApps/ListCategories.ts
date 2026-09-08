@@ -16,9 +16,8 @@ export interface ListCategoriesRequest extends Omit<
  *
  * Lists the library categories of the bound app's Q Business application environment instance. Provide the implementation with
  * `Effect.provide(AWS.QApps.ListCategoriesHttp)`.
- * @binding
- * @section Categories
- * @example List Categories
+ * ### Categories
+ * **Example:** List Categories
  * ```typescript
  * // init — bind the operation to the Q App
  * const listCategories = yield* AWS.QApps.ListCategories(app);
@@ -27,6 +26,8 @@ export interface ListCategoriesRequest extends Omit<
  * const result = yield* listCategories();
  * console.log(result.categories?.map((c) => c.title));
  * ```
+ *
+ * @binding
  */
 export interface ListCategories extends Binding.Service<
   ListCategories,

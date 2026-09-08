@@ -14,9 +14,8 @@ export interface GetRightsizingRecommendationRequest
  * Get recommendations for idle and underutilized EC2 instances —
  * terminate or downsize suggestions with estimated savings. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetRightsizingRecommendationHttp)`.
- * @binding
- * @section Rightsizing
- * @example Get EC2 Rightsizing Recommendations
+ * ### Rightsizing
+ * **Example:** Get EC2 Rightsizing Recommendations
  * ```typescript
  * // init — account-level binding takes no resource
  * const getRightsizingRecommendation = yield* AWS.CostExplorer.GetRightsizingRecommendation();
@@ -27,6 +26,8 @@ export interface GetRightsizingRecommendationRequest
  * });
  * const recommendations = result.RightsizingRecommendations;
  * ```
+ *
+ * @binding
  */
 export interface GetRightsizingRecommendation extends Binding.Service<
   GetRightsizingRecommendation,

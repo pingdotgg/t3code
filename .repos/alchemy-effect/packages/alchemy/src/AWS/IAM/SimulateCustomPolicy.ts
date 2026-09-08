@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `iam:SimulateCustomPolicy` on `*`. Provide the
  * implementation with `Effect.provide(AWS.IAM.SimulateCustomPolicyHttp)`.
  *
- * @binding
- * @section Simulating Policies
- * @example Preview a Candidate Policy
+ * ### Simulating Policies
+ * **Example:** Preview a Candidate Policy
  * ```typescript
  * // init
  * const simulateCustomPolicy = yield* IAM.SimulateCustomPolicy();
@@ -34,6 +33,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const decisions = EvaluationResults?.map((r) => r.EvalDecision);
  * ```
+ *
+ * @binding
  */
 export interface SimulateCustomPolicy extends Binding.Service<
   SimulateCustomPolicy,

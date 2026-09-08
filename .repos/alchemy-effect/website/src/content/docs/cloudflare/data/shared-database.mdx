@@ -45,7 +45,7 @@ export const NeonDb = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("app-branch", {
     project,
-    migrationsDir: schema.out,
+    migrations: schema,
   });
 
   return { project, branch, schema };
@@ -124,7 +124,7 @@ is identical. The branch creates per-stage:
 ```typescript
 const branch = yield* Neon.Branch("app-branch", {
   project,
-  migrationsDir: schema.out,
+  migrations: schema,
 });
 ```
 
@@ -157,7 +157,7 @@ export const NeonDb = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("app-branch", {
     project,
-    migrationsDir: schema.out,
+    migrations: schema,
   });
 
   return { project, branch, schema };
@@ -204,7 +204,7 @@ const database = stage.startsWith("pr-")
 
 const branch = yield* Planetscale.PostgresBranch("app-branch", {
   database,
-  migrationsDir: schema.out,
+  migrations: schema,
 });
 ```
 

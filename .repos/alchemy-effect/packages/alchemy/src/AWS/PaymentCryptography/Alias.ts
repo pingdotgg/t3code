@@ -43,9 +43,8 @@ export interface Alias extends Resource<
  * A friendly name for an AWS Payment Cryptography {@link Key}. Aliases give
  * keys a stable, human-readable identifier that survives key rotation — the
  * alias can be repointed to a new key without touching consumers.
- * @resource
- * @section Creating Aliases
- * @example Alias attached to a key
+ * ### Creating Aliases
+ * **Example:** Alias attached to a key
  * ```typescript
  * import * as PaymentCryptography from "alchemy/AWS/PaymentCryptography";
  *
@@ -55,13 +54,15 @@ export interface Alias extends Resource<
  * });
  * ```
  *
- * @example Alias with an explicit name
+ * **Example:** Alias with an explicit name
  * ```typescript
  * const alias = yield* PaymentCryptography.Alias("DataKeyAlias", {
  *   aliasName: "alias/payments/data-encryption",
  *   keyArn: key.keyArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Alias = Resource<Alias>("AWS.PaymentCryptography.Alias");
 

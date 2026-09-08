@@ -12,9 +12,8 @@ import type { Graph } from "./Graph.ts";
  * is injected from the bound {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.UpdateDatasourcePackagesHttp)`.
- * @binding
- * @section Managing Data Source Packages
- * @example Enable EKS Audit Ingest
+ * ### Managing Data Source Packages
+ * **Example:** Enable EKS Audit Ingest
  * ```typescript
  * // init
  * const updateDatasourcePackages =
@@ -23,6 +22,8 @@ import type { Graph } from "./Graph.ts";
  * // runtime
  * yield* updateDatasourcePackages({ DatasourcePackages: ["EKS_AUDIT"] });
  * ```
+ *
+ * @binding
  */
 export interface UpdateDatasourcePackages extends Binding.Service<
   UpdateDatasourcePackages,

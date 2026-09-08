@@ -80,8 +80,8 @@ export interface DeploymentEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Deployment Events
- * @example Alert On Failed Deployments
+ * ### Consuming Deployment Events
+ * **Example:** Alert On Failed Deployments
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

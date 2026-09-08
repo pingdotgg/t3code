@@ -1,0 +1,102 @@
+---
+title: Volumes
+description: Durable network block storage for Hetzner Servers — attach with props or VolumeAttachment, mount into Services with the MountVolume binding.
+---
+
+A [`Volume`](/providers/hetzner/volume) is Hetzner's network block
+storage: a durable disk (10 GB minimum) with its own lifecycle,
+attachable to one Server at a time in the same location. Servers
+come and go; Volumes keep the data.
+
+## Create a Volume
+
+```typescript
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Data = Hetzner.Volume("data", {
+  size: 10,
+  format: "ext4",
+  location: "nbg1",
+});
+```
+
+`size` is in GB and can **grow in place** on a later deploy —
+shrinking is impossible. `format` (`ext4` or `xfs`) and `location`
+are create-only: changing either **replaces the Volume and destroys
+its data**. The location must match the Server's.
+
+## Mount into a Service (recommended)
+
+The `MountVolume` binding is the highest-level path: inside a
+[Service](/hetzner/compute/services)'s init, bind the Volume to a
+path and use it as a plain directory at runtime. Pass the `Data`
+declaration directly — no yielding required:
+
+```typescript
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+  { server: Box, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    const mount = yield* Hetzner.MountVolume(Data, { path: "/data" });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const text = yield* fs.readFileString(`${mount.path}/hello.txt`);
+        // ...
+      }),
+    };
+  }).pipe(Effect.provide(Hetzner.MountVolumeLive)),
+) {}
+```
+
+At deploy time the binding attaches the Volume to the Service's
+Server, creates the directory, mounts the device, and appends an
+`/etc/fstab` entry (`defaults,nofail`) so the mount survives
+reboots. At runtime it hands you the resolved `mount.path` and
+`mount.device`. Every step is idempotent, and two Services binding
+the same `(volume, path)` on the same Server share one attach and
+one mount.
+
+If the Server is ever replaced, the Volume is detached from the old
+machine and re-attached to the new one on the next deploy — the
+data rides along.
+
+## Attach without a Service
+
+For servers that manage their own filesystems, attach declaratively
+instead. Either from the Volume side:
+
+```typescript
+export const Data = Hetzner.Volume("data", {
+  size: 10,
+  location: "nbg1",
+  server: Box,
+  automount: true,
+});
+```
+
+Or as a standalone
+[`VolumeAttachment`](/providers/hetzner/volumeattachment) — useful
+when the Volume and Server are declared far apart:
+
+```typescript
+yield* Hetzner.VolumeAttachment("data-on-box", {
+  volume: Data,
+  server: Box,
+  automount: true,
+});
+```
+
+With `automount: true` Hetzner mounts the disk under
+`/mnt/HC_Volume_<id>`; otherwise mount `volume.linuxDevice`
+yourself (e.g. via cloud-init or `Hetzner.Ssh`).
+
+## Where next
+
+- [Tutorial part 3](/hetzner/tutorial/part-3) — mount a Volume into
+  a Service step by step.
+- [Services](/hetzner/compute/services) — the platform doing the
+  mounting.
+- [`Volume` reference](/providers/hetzner/volume) — every prop and
+  attribute.

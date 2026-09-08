@@ -58,12 +58,28 @@ const HUBS: Record<string, { href: string; blurb: string }> = {
     href: "/aws",
     blurb: "Lambda, ECS, EKS, EC2, DynamoDB, S3, SQS, Kinesis",
   },
+  Hetzner: {
+    href: "/hetzner",
+    blurb: "Servers running Services over SSH, Volumes, Load Balancers, DNS",
+  },
+  Fly: {
+    href: "/fly",
+    blurb: "Machines, Services, Volumes, Secrets, and fly.dev on Fly.io",
+  },
+  Railway: {
+    href: "/railway",
+    blurb: "Projects, Services, Postgres, Redis, Volumes, and Buckets",
+  },
   Planetscale: {
     href: "/planetscale",
     blurb: "Serverless MySQL & Postgres with branching workflows",
   },
   Neon: { href: "/neon", blurb: "Serverless Postgres with branches per PR" },
   Axiom: { href: "/axiom", blurb: "Logs, traces, dashboards, and monitors" },
+  BetterAuth: {
+    href: "/better-auth",
+    blurb: "Typed Better Auth with a database layer per platform",
+  },
   GitHub: { href: "/github", blurb: "Repos, secrets, and webhook events" },
   Docker: {
     href: "/docker",
@@ -85,7 +101,10 @@ const HUBS: Record<string, { href: string; blurb: string }> = {
 
 const BLURBS: Record<string, string> = {};
 
-const DISPLAY_LABELS: Record<string, string> = { Planetscale: "PlanetScale" };
+const DISPLAY_LABELS: Record<string, string> = {
+  Planetscale: "PlanetScale",
+  BetterAuth: "Better Auth",
+};
 
 const providers = generatedSidebar() ?? [];
 const cards = providers.map((p) => {

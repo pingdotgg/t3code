@@ -35,9 +35,8 @@ const sanitizeRouteKey = (routeKey: string) =>
  * Route, and the API Gateway invoke Permission for each registered route
  * key; at runtime it dispatches matching WebSocket proxy events to the
  * registered handler.
- * @binding
- * @section Handling WebSocket routes
- * @example Echo server
+ * ### Handling WebSocket routes
+ * **Example:** Echo server
  * ```typescript
  * const connections = yield* AWS.ApiGatewayV2.ManageConnections(stage);
  *
@@ -57,6 +56,8 @@ const sanitizeRouteKey = (routeKey: string) =>
  *     ),
  * );
  * ```
+ *
+ * @binding
  */
 export const WebSocketEventSource = Layer.effect(
   AGW2WebSocketEventSource,

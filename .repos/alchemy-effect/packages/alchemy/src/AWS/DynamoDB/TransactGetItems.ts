@@ -27,9 +27,8 @@ export interface TransactGetItemsRequest extends Omit<
  *
  * Bind this operation to one or more tables and identify each table in the
  * request with the bound table's `LogicalId`.
- * @binding
- * @section Reading Data
- * @example Read Items Transactionally
+ * ### Reading Data
+ * **Example:** Read Items Transactionally
  * ```typescript
  * const transactGetItems = yield* AWS.DynamoDB.TransactGetItems(
  *   sourceTable,
@@ -47,6 +46,8 @@ export interface TransactGetItemsRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface TransactGetItems extends Binding.Service<
   TransactGetItems,

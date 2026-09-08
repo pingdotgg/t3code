@@ -64,9 +64,8 @@ export interface BotLocale extends Resource<
  * slot types live under a locale; a locale must exist before either can be
  * created.
  *
- * @resource
- * @section Creating a Locale
- * @example US English Locale
+ * ### Creating a Locale
+ * **Example:** US English Locale
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -76,7 +75,7 @@ export interface BotLocale extends Resource<
  * });
  * ```
  *
- * @example Locale with Voice and Threshold
+ * **Example:** Locale with Voice and Threshold
  * ```typescript
  * const locale = yield* AWS.LexV2.BotLocale("En", {
  *   botId: bot.botId,
@@ -85,6 +84,8 @@ export interface BotLocale extends Resource<
  *   voiceSettings: { voiceId: "Ivy", engine: "neural" },
  * });
  * ```
+ *
+ * @resource
  */
 export const BotLocale = Resource<BotLocale>("AWS.LexV2.BotLocale");
 

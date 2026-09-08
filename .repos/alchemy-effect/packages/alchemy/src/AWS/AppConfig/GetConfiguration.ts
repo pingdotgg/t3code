@@ -45,14 +45,15 @@ export interface GetConfigurationResult {
  * Provide `AppConfig.GetConfigurationHttp` on the hosting function's Effect
  * (`Effect.provide(AppConfig.GetConfigurationHttp)`) to satisfy the binding.
  *
- * @binding
- * @section Reading Live Configuration
- * @example Fetch config from a Lambda
+ * ### Reading Live Configuration
+ * **Example:** Fetch config from a Lambda
  * ```typescript
  * const getConfig = yield* AppConfig.GetConfiguration(app, env, profile);
  * const { content, contentType } = yield* getConfig();
  * const settings = JSON.parse(content ?? "{}");
  * ```
+ *
+ * @binding
  */
 export interface GetConfiguration extends Binding.Service<
   GetConfiguration,

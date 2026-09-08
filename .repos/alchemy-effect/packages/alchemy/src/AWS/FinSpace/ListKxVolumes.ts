@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:ListKxVolumes` — lists the volumes of the bound environment, optionally filtered by volume type.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.ListKxVolumesHttp)`.
- * @binding
- * @section Managing Volumes
- * @example List NAS_1 Volumes
+ * ### Managing Volumes
+ * **Example:** List NAS_1 Volumes
  * ```typescript
  * const listVolumes = yield* AWS.FinSpace.ListKxVolumes(kdb);
  *
  * const { kxVolumeSummaries } = yield* listVolumes({ volumeType: "NAS_1" });
  * ```
+ *
+ * @binding
  */
 export interface ListKxVolumes extends Binding.Service<
   ListKxVolumes,

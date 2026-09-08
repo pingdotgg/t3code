@@ -17,9 +17,8 @@ export interface DeleteSessionRequest extends Omit<
  * Amazon Lex V2 bot alias, discarding its session state so the next user
  * input starts a fresh conversation.
  *
- * @binding
- * @section Managing Sessions
- * @example Reset a User's Conversation
+ * ### Managing Sessions
+ * **Example:** Reset a User's Conversation
  * ```typescript
  * // init
  * const deleteSession = yield* AWS.LexV2.DeleteSession(alias);
@@ -30,6 +29,8 @@ export interface DeleteSessionRequest extends Omit<
  *   sessionId: "user-123",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteSession extends Binding.Service<
   DeleteSession,

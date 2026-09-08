@@ -11,9 +11,8 @@ import type { Flow } from "./Flow.ts";
  * a scheduler that only starts a flow that is not already running. The
  * flow ARN is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MediaConnect.DescribeFlowHttp)`.
- * @binding
- * @section Observing Flows
- * @example Read the Flow's Current Status
+ * ### Observing Flows
+ * **Example:** Read the Flow's Current Status
  * ```typescript
  * // init — bind the operation to the flow
  * const describeFlow = yield* AWS.MediaConnect.DescribeFlow(flow);
@@ -22,6 +21,8 @@ import type { Flow } from "./Flow.ts";
  * const { Flow: current } = yield* describeFlow();
  * const running = current?.Status === "ACTIVE";
  * ```
+ *
+ * @binding
  */
 export interface DescribeFlow extends Binding.Service<
   DescribeFlow,

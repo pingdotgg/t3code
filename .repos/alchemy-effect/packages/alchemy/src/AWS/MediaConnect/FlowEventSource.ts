@@ -87,8 +87,8 @@ export interface FlowEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Flow Events
- * @example Page an Operator When a Flow Raises an Alert
+ * ### Consuming Flow Events
+ * **Example:** Page an Operator When a Flow Raises an Alert
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

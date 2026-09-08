@@ -13,9 +13,8 @@ export interface ListDiscoveredResourcesRequest
  *
  * Returns an array of resources in the organization's accounts that are available to be associated with a resource set. Provide the
  * implementation with `Effect.provide(AWS.FMS.ListDiscoveredResourcesHttp)`.
- * @binding
- * @section Resource Sets
- * @example Discover Associable Resources
+ * ### Resource Sets
+ * **Example:** Discover Associable Resources
  * ```typescript
  * // init — account-level binding takes no resource
  * const listDiscoveredResources = yield* AWS.FMS.ListDiscoveredResources();
@@ -27,6 +26,8 @@ export interface ListDiscoveredResourcesRequest
  * });
  * console.log(result.Items?.length);
  * ```
+ *
+ * @binding
  */
 export interface ListDiscoveredResources extends Binding.Service<
   ListDiscoveredResources,

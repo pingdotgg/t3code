@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:GetKxCluster` — reads one kdb cluster of the bound environment — status, mounted databases, code configuration, and endpoints — for runtime monitoring and orchestration.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.GetKxClusterHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Check a Cluster's Status
+ * ### Monitoring Clusters
+ * **Example:** Check a Cluster's Status
  * ```typescript
  * const getCluster = yield* AWS.FinSpace.GetKxCluster(kdb);
  *
  * const { status } = yield* getCluster({ clusterName: "hdb" });
  * ```
+ *
+ * @binding
  */
 export interface GetKxCluster extends Binding.Service<
   GetKxCluster,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.UpdateResourceProfileHttp)`.
- * @binding
- * @section Automated Discovery
- * @example Override a Bucket's Sensitivity Score
+ * ### Automated Discovery
+ * **Example:** Override a Bucket's Sensitivity Score
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateResourceProfile = yield* AWS.Macie2.UpdateResourceProfile();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* updateResourceProfile({ resourceArn: bucketArn, sensitivityScoreOverride: 100 });
  * ```
+ *
+ * @binding
  */
 export interface UpdateResourceProfile extends Binding.Service<
   UpdateResourceProfile,

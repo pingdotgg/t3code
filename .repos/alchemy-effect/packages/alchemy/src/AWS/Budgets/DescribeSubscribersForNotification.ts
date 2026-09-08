@@ -24,9 +24,8 @@ export interface DescribeSubscribersForNotificationRequest extends Omit<
  * fan-out (each subscriber's `Address` comes back `Redacted`). Provide the
  * implementation with
  * `Effect.provide(AWS.Budgets.DescribeSubscribersForNotificationHttp)`.
- * @binding
- * @section Reading Budget Alerts
- * @example List the Recipients of Each Alert
+ * ### Reading Budget Alerts
+ * **Example:** List the Recipients of Each Alert
  * ```typescript
  * // init — bind both operations to the budget
  * const notifications = yield* AWS.Budgets.DescribeNotificationsForBudget(budget);
@@ -39,6 +38,8 @@ export interface DescribeSubscribersForNotificationRequest extends Omit<
  *   const recipients = (result.Subscribers ?? []).map((s) => s.SubscriptionType);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeSubscribersForNotification extends Binding.Service<
   DescribeSubscribersForNotification,

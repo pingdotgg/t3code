@@ -72,9 +72,8 @@ export interface Repository extends Resource<
  * and can chain to upstream repositories and a single external connection to a
  * public registry.
  *
- * @resource
- * @section Creating a Repository
- * @example Basic Repository
+ * ### Creating a Repository
+ * **Example:** Basic Repository
  * ```typescript
  * const domain = yield* CodeArtifact.Domain("packages", {});
  * const repo = yield* CodeArtifact.Repository("npm-store", {
@@ -82,7 +81,7 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @example Repository with an external connection to npmjs
+ * **Example:** Repository with an external connection to npmjs
  * ```typescript
  * const repo = yield* CodeArtifact.Repository("npm-store", {
  *   domain: domain.domainName,
@@ -91,7 +90,7 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @example Repository with an upstream
+ * **Example:** Repository with an upstream
  * ```typescript
  * const shared = yield* CodeArtifact.Repository("shared", {
  *   domain: domain.domainName,
@@ -101,6 +100,8 @@ export interface Repository extends Resource<
  *   upstreams: [shared.repositoryName],
  * });
  * ```
+ *
+ * @resource
  */
 export const Repository = Resource<Repository>("AWS.CodeArtifact.Repository");
 

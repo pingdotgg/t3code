@@ -12,15 +12,16 @@ import type { ServerlessCluster } from "./ServerlessCluster.ts";
  * (`BootstrapBrokerStringSaslIam`) is the one Kafka clients connect to.
  * Provide the implementation with
  * `Effect.provide(AWS.Kafka.GetBootstrapBrokersHttp)`.
- * @binding
- * @section Connecting to a Cluster
- * @example Resolve the SASL/IAM Bootstrap Brokers
+ * ### Connecting to a Cluster
+ * **Example:** Resolve the SASL/IAM Bootstrap Brokers
  * ```typescript
  * const getBootstrapBrokers = yield* Kafka.GetBootstrapBrokers(cluster);
  *
  * const brokers = yield* getBootstrapBrokers();
  * // brokers.BootstrapBrokerStringSaslIam → "b-1.….kafka-serverless.…:9098"
  * ```
+ *
+ * @binding
  */
 export interface GetBootstrapBrokers extends Binding.Service<
   GetBootstrapBrokers,

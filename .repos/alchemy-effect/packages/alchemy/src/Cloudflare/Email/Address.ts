@@ -1,5 +1,6 @@
 import * as emailRouting from "@distilled.cloud/cloudflare/email-routing";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
@@ -41,11 +42,8 @@ export type Address = Resource<
  * Destination addresses are account-scoped (not zone-scoped). They are used
  * as forwarding targets in `Rule` actions and can also serve as the
  * `destinationAddress` on a `send_email` Worker binding.
- * @resource
- * @product Email
- * @category Email
- * @section Registering an Address
- * @example Register a destination address
+ * ### Registering an Address
+ * **Example:** Register a destination address
  * ```typescript
  * const ops = yield* Cloudflare.Email.Address("Ops", {
  *   email: "ops@example.com",
@@ -54,6 +52,10 @@ export type Address = Resource<
  *
  * Cloudflare sends a verification email when the address is first created.
  * The address must be verified before it can receive routed mail.
+ *
+ * @resource
+ * @product Email
+ * @category Email
  */
 export const Address = Resource<Address>("Cloudflare.Email.Address", {
   aliases: ["Cloudflare.EmailAddress"],
@@ -192,11 +194,27 @@ export const AddressProvider = () =>
     }),
     delete: Effect.fn(function* ({ output }) {
       if (!output?.addressId) return;
+      // Idempotent on the typed not-found; transient failures are retried
+      // bounded and a persistent failure surfaces — a swallowed failure
+      // silently leaks the destination address. Cloudflare refuses to
+      // delete an address for ~15 minutes after creation
+      // (`EmailAddressCreatedTooRecently`, code 2032) — retrying is
+      // pointless within a deploy's lifetime, so that error fails fast:
+      // either destroy later or retain the address (`RemovalPolicy.retain`).
       yield* emailRouting
         .deleteAddress({
           accountId: output.accountId,
           destinationAddressIdentifier: output.addressId,
         })
-        .pipe(Effect.catch(() => Effect.void));
+        .pipe(
+          Effect.catchTag("EmailAddressNotFound", () => Effect.void),
+          Effect.retry({
+            while: (e) => e._tag !== "EmailAddressCreatedTooRecently",
+            schedule: Schedule.max([
+              Schedule.spaced("3 seconds"),
+              Schedule.recurs(8),
+            ]),
+          }),
+        );
     }),
   });

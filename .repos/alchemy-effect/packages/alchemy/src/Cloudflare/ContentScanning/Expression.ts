@@ -65,11 +65,8 @@ export type Expression = Resource<
  * state, `read` scans the zone for an expression with the same payload text
  * and reports it as `Unowned`, so the engine refuses to take it over unless
  * `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Content Scanning
- * @category Application Security
- * @section Creating expressions
- * @example Scan a JSON-embedded file field
+ * ### Creating expressions
+ * **Example:** Scan a JSON-embedded file field
  * ```typescript
  * const scanning = yield* Cloudflare.ContentScanning.ContentScanning("UploadScanning", {
  *   zoneId: zone.zoneId,
@@ -81,7 +78,7 @@ export type Expression = Resource<
  * });
  * ```
  *
- * @example Scan a base64-encoded form field
+ * **Example:** Scan a base64-encoded form field
  * ```typescript
  * yield* Cloudflare.ContentScanning.Expression("ScanBase64Document", {
  *   zoneId: scanning.zoneId,
@@ -90,6 +87,10 @@ export type Expression = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/waf/detections/malicious-uploads/#add-custom-scan-expressions
+ *
+ * @resource
+ * @product Content Scanning
+ * @category Application Security
  */
 export const Expression = Resource<Expression>(TypeId);
 

@@ -35,6 +35,15 @@ const displayPlan = <P extends Plan>(plan: P): Effect.Effect<void> =>
   });
 
 const startApplySession = Effect.fn(function* <P extends Plan>(plan: P) {
+  // Print the plan preview once into scrollback before mounting the
+  // animated progress region (mirrors LoggingCli, which prints the plan
+  // lines at session start — `alchemy dev`/`--yes` runs never call
+  // displayPlan/approvePlan, so without this the TTY path shows no plan at
+  // all). Rendering + immediately unmounting leaves the frame behind and
+  // releases the Ink instance for PlanProgress; forwarded runtime logs then
+  // insert BETWEEN the preview and the live region instead of piling above
+  // the entire transcript.
+  yield* displayPlan(plan);
   const listeners = new Set<(event: ApplyEvent) => void>();
   const { unmount } = render(
     <PlanProgress

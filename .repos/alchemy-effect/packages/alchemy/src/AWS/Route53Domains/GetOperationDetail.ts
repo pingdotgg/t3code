@@ -20,9 +20,8 @@ export interface GetOperationDetailRequest
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.GetOperationDetailHttp)`.
  *
- * @binding
- * @section Tracking Registration Operations
- * @example Poll a Registration Until It Completes
+ * ### Tracking Registration Operations
+ * **Example:** Poll a Registration Until It Completes
  * ```typescript
  * // init
  * const getOperationDetail = yield* AWS.Route53Domains.GetOperationDetail();
@@ -36,6 +35,8 @@ export interface GetOperationDetailRequest
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetOperationDetail extends Binding.Service<
   GetOperationDetail,

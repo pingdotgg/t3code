@@ -26,6 +26,8 @@ export * from "./InvokeModelHttp.ts";
 export * from "./InvokeModelWithResponseStream.ts";
 export * from "./InvokeModelWithResponseStreamHttp.ts";
 export * from "./KnowledgeBase.ts";
+export * from "./LanguageModel.ts";
+export * from "./LanguageModelHttp.ts";
 export * from "./ListIngestionJobs.ts";
 export * from "./ListIngestionJobsHttp.ts";
 export * from "./ListKnowledgeBaseDocuments.ts";

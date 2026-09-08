@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:ListKxClusters` — lists the kdb clusters of the bound environment, optionally filtered by cluster type.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.ListKxClustersHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example List HDB Clusters
+ * ### Monitoring Clusters
+ * **Example:** List HDB Clusters
  * ```typescript
  * const listClusters = yield* AWS.FinSpace.ListKxClusters(kdb);
  *
  * const { kxClusterSummaries } = yield* listClusters({ clusterType: "HDB" });
  * ```
+ *
+ * @binding
  */
 export interface ListKxClusters extends Binding.Service<
   ListKxClusters,

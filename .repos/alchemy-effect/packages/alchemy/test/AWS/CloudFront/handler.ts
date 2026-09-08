@@ -17,7 +17,7 @@ export class CloudFrontTestFunction extends Lambda.Function<Lambda.Function>()(
 export default CloudFrontTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

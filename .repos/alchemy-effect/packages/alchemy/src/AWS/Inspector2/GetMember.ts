@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetMemberHttp)`.
- * @binding
- * @section Organization & Members
- * @example Get a Member Account
+ * ### Organization & Members
+ * **Example:** Get a Member Account
  * ```typescript
  * // init
  * const getMember = yield* AWS.Inspector2.GetMember();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { member } = yield* getMember({ accountId });
  * ```
+ *
+ * @binding
  */
 export interface GetMember extends Binding.Service<
   GetMember,

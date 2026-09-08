@@ -77,7 +77,7 @@ const errorTagged = <A, E extends { _tag: string }, R>(
  * role) and a Lambda bound to all four MWAA bindings.
  */
 export default MWAATestFunction.make(
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const { subnetIds, securityGroupIds } = yield* resolveNetwork;
 

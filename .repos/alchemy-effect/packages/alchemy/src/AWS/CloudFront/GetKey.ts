@@ -12,9 +12,8 @@ export interface GetKeyRequest extends Omit<kvs.GetKeyRequest, "KvsARN"> {}
  * Values are sensitive — distilled decodes them as `Redacted<string>`;
  * unwrap with `Redacted.value`. Provide the implementation with
  * `Effect.provide(AWS.CloudFront.GetKeyHttp)`.
- * @binding
- * @section Reading KeyValueStore Data
- * @example Read a Key
+ * ### Reading KeyValueStore Data
+ * **Example:** Read a Key
  * ```typescript
  * // init — bind the operation to the store
  * const getKey = yield* CloudFront.GetKey(store);
@@ -23,6 +22,8 @@ export interface GetKeyRequest extends Omit<kvs.GetKeyRequest, "KvsARN"> {}
  * const res = yield* getKey({ Key: "routes:/about" });
  * const value = typeof res.Value === "string" ? res.Value : Redacted.value(res.Value);
  * ```
+ *
+ * @binding
  */
 export interface GetKey extends Binding.Service<
   GetKey,

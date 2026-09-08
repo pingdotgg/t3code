@@ -15,7 +15,7 @@ export class S3TablesBindingsFunction extends Lambda.Function<Lambda.Function>()
 export default S3TablesBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Deterministic names so a crashed previous run is reconciled (observed

@@ -1,30 +1,109 @@
 ---
 title: Nuxt
-description: Nuxt is not yet supported by Cloudflare.Website.Vite. For fully static sites, an untested workaround may deploy the nuxt generate output with StaticSite.
+description: Deploy a Nuxt app to Cloudflare Workers with Cloudflare.Website.Nuxt — nitro's cloudflare_module preset, native nuxt.config.ts loading, and wrangler-free local dev.
 sidebar:
   order: 10
 ---
 
-:::caution[Nuxt is not yet supported]
-`Cloudflare.Website.Vite` cannot deploy Nuxt apps — support is a TODO. Nuxt's
-build is driven by the `nuxi` CLI, not a plain `vite build` of your project
-root, so it falls outside the
-[pure-Vite criterion](/cloudflare/frontend/vite#what-pure-vite-means) the Vite
-resource relies on. There is currently no verified Nuxt deployment with
-Alchemy of any kind.
-:::
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
-## Possible workaround (untested)
+export const devDeps = "@alchemy.run/frontend-frameworks";
 
-For fully static Nuxt sites, `nuxt generate` prerenders the app into a plain
-directory of files under `.output/public`, and
-[`Cloudflare.Website.StaticSite`](/cloudflare/frontend/static-site) deploys
-any directory produced by any build command:
+`Cloudflare.Website.Nuxt` deploys a [Nuxt](https://nuxt.com) app as
+a Cloudflare Worker. It builds the app through your project's own
+`@nuxt/kit` with nitro's `cloudflare_module` preset: the nitro server
+bundle deploys as the Worker script, and client assets plus
+prerendered pages deploy as Worker static assets. There is no
+`nitro.preset` to edit, no Wrangler file, and no build command to
+run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/nuxt`
+export from your project at deploy time. It is only used at build time,
+so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Nuxt
+
+Your `nuxt.config.ts` loads natively — modules, layers, and all —
+so configure Nuxt exactly as you would outside Alchemy:
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  modules: ["@nuxtjs/tailwindcss"],
+  routeRules: {
+    "/about": { prerender: true },
+  },
+});
+```
+
+Don't set `nitro.preset` — the Cloudflare deploy target owns the
+preset, and a foreign preset is a hard error.
+
+## Deploy-time overrides
+
+Config that only exists at deploy time — a stage-dependent base URL, a
+per-environment `runtimeConfig` — goes in the `nuxt` prop. It merges
+over `nuxt.config.ts` as the highest-priority layer, so a value here
+wins:
+
+```typescript
+export const Website = Cloudflare.Website.Nuxt("Website", {
+  nuxt: {
+    app: { baseURL: "/docs/" },
+    runtimeConfig: {
+      public: { apiBase: "https://api.example.com" },
+    },
+  },
+});
+```
+
+The bag must be JSON-serializable — no functions, plugins, or modules;
+those belong in `nuxt.config.ts`. `nitro.preset` stays owned by the
+deploy target.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.Nuxt("Website");
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+`WebsiteEnv` is the typed shape of the Worker's bindings, derived
+from the class — you'll import it into your Nuxt code in
+[Read bindings in server code](#read-bindings-in-server-code).
+
+## Add it to the Stack
+
+Yield the class from your Stack and return its URL:
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -34,25 +113,144 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const site = yield* Cloudflare.Website.StaticSite("Website", {
-      command: "nuxt generate",
-      outdir: ".output/public",
-    });
+    const site = yield* Website;
     return { url: site.url };
   }),
 );
 ```
 
-This is a suggestion, not a verified recipe. Unlike
-[Astro](/cloudflare/frontend/astro) — where the same `StaticSite` workaround
-is proven by alchemy.run itself — no Nuxt project has been deployed with
-Alchemy, so treat this shape as a starting point and verify the deployed
-output yourself.
+The server build uses nitro's hybrid workerd Node compatibility, so
+the `nodejs_compat` compatibility flag is added automatically — you
+don't need to pass it.
 
-## What this can't do
+See
+[examples/cloudflare-website-nuxt](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-website-nuxt)
+for the checked-in example.
 
-A `nuxt generate` output is static files only, so nothing that needs Nuxt's
-Nitro server survives it: no per-request server-side rendering, no
-`server/api` routes, no server middleware. If your app depends on any of
-those, there is no Alchemy deployment path for it today — and even the
-static-generation path above is unverified.
+## Add bindings
+
+The resource returns a plain `Worker`, so `env` accepts the full
+binding vocabulary — KV namespaces, R2 buckets, Durable Objects,
+secrets:
+
+```diff lang="typescript"
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export const Website = Cloudflare.Website.Nuxt("Website", {
++  env: {
++    UPLOADS: Uploads,
++    API_KEY: Config.redacted("API_KEY"),
++  },
+});
+```
+
+`Uploads` is a description, not a deploy — Alchemy provisions the
+real bucket because the Website binds it. `Config.redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
+
+## Read bindings in server code
+
+Server routes and SSR read bindings through nitro's Cloudflare
+runtime contract, `event.context.cloudflare.env`. Type it once by
+augmenting h3's event context with the inferred env type:
+
+```typescript
+// server/types.d.ts
+import type { WebsiteEnv } from "../alchemy.run.ts";
+
+declare module "h3" {
+  interface H3EventContext {
+    cloudflare: {
+      env: WebsiteEnv;
+    };
+  }
+}
+```
+
+Every server route now gets fully typed bindings:
+
+```typescript
+// server/api/upload.ts
+export default defineEventHandler(async (event) => {
+  const uploads = event.context.cloudflare.env.UPLOADS;
+  await uploads.put("hello.txt", "Hello!");
+  return { ok: true };
+});
+```
+
+`event.context.cloudflare.env.UPLOADS` is typed as an R2 bucket and
+`.API_KEY` as a string — renaming a binding in `alchemy.run.ts` is a
+type error in your routes. `event.context.cf` and
+`event.context.cloudflare.context.waitUntil` are available the same
+way.
+
+## Prerendering
+
+Routes marked for prerendering in `routeRules` (or via
+`nitro.prerender`) render at build time into `.output/public` and are
+served as static assets, with no Worker invocation. Configure them in
+your `nuxt.config.ts`, which loads natively:
+
+```typescript
+// nuxt.config.ts
+export default defineNuxtConfig({
+  routeRules: {
+    "/about": { prerender: true },
+  },
+});
+```
+
+Nitro's `isr` route rule is implemented only by the Vercel and
+Netlify presets. On Cloudflare it is silently ignored at build time,
+and the route renders on demand in the Worker like any other SSR
+route. Use `prerender` for build-time static routes, or `cache` route
+rules for runtime caching.
+
+## Custom Worker exports (Durable Objects)
+
+Nitro's entry module is the Worker's exports seam. Point `main` at
+your own module that re-exports nitro's runtime handler and adds
+extra exports — Durable Object classes must live on the deployed
+Worker for their namespace bindings to resolve:
+
+```typescript
+// worker-entry.ts
+import nitroHandler from "nitropack/presets/cloudflare/runtime/cloudflare-module";
+export class Counter extends DurableObject {}
+export default nitroHandler;
+```
+
+```typescript
+export const Website = Cloudflare.Website.Nuxt("Website", {
+  main: "worker-entry.ts",
+  env: {
+    COUNTER: Cloudflare.DurableObject("Counter", {
+      className: "Counter",
+    }),
+  },
+});
+```
+
+Every framework route keeps working through the re-exported handler.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Nuxt's own dev server (nitro dev, full HMR) with
+the Worker's real bindings served on `event.context.cloudflare` —
+wrangler-free, through the cloudflare-runtime platform proxy.
+Resource bindings (KV, R2, D1) round-trip to a local workerd
+instance, so dev state is live and shared; literal `env` values
+overlay the proxied bindings. Your server code is identical in dev
+and production.
+
+One limitation: Durable Object classes declared via a custom `main`
+entry only exist in the production build, so they are not servable in
+dev yet.

@@ -17,7 +17,7 @@ export class DevOpsGuruTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DevOpsGuruTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

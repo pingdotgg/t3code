@@ -22,14 +22,15 @@ export interface GetSeriesRequest {
  * match a selector via an AMP {@link Workspace}'s Prometheus-compatible
  * `api/v1/series` endpoint, SigV4-signed with the host Function's credentials.
  *
- * @binding
- * @section Finding Series
- * @example Match Series by Selector
+ * ### Finding Series
+ * **Example:** Match Series by Selector
  * ```typescript
  * const getSeries = yield* AMP.GetSeries(workspace);
  * const series = yield* getSeries({ match: ['{__name__="up"}'] });
  * // [{ __name__: "up", job: "api", instance: "..." }, ...]
  * ```
+ *
+ * @binding
  */
 export interface GetSeries extends Binding.Service<
   GetSeries,

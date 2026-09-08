@@ -15,10 +15,11 @@ reviewable diff, not a dashboard click.
 
 This guide wires a Worker's telemetry into Axiom two ways:
 
-1. **From the Worker** — OTLP endpoints and an ingest token as env
-   vars, your exporter ships directly.
+1. **From the Worker** — the `Axiom.Telemetry` binding layer; the
+   [built-in telemetry](/infrastructure-as-effects/telemetry) exports
+   your Effect spans, logs, and metrics directly.
 2. **From Cloudflare** — an `ObservabilityDestination` that pushes
-   Workers Logs telemetry to Axiom with zero exporter code.
+   Workers Logs telemetry to Axiom.
 
 ## Register the Axiom provider
 
@@ -42,26 +43,41 @@ If you haven't connected an Axiom account yet, run through
 
 A `Dataset` is Axiom's top-level container. Pick a `kind` per OTEL
 signal — it determines the schema and how the data renders in the
-Axiom UI:
+Axiom UI. Declare them in their own module so both the Stack and the
+Worker can import them:
 
 ```typescript
-const traces  = yield* Axiom.Dataset("traces",  { name: "app-traces",  kind: "otel:traces:v1"  });
-const logs    = yield* Axiom.Dataset("logs",    { name: "app-logs",    kind: "otel:logs:v1"    });
-const metrics = yield* Axiom.Dataset("metrics", { name: "app-metrics", kind: "otel:metrics:v1" });
+// src/observability.ts
+import * as Axiom from "alchemy/Axiom";
+
+export const Traces = Axiom.Dataset("Traces", {
+  name: "app-traces",
+  kind: "otel:traces:v1",
+});
+
+export const Logs = Axiom.Dataset("Logs", {
+  name: "app-logs",
+  kind: "otel:logs:v1",
+});
+
+export const Metrics = Axiom.Dataset("Metrics", {
+  name: "app-metrics",
+  kind: "otel:metrics:v1",
+});
 ```
 
 `kind` cannot be changed after creation — updating it triggers a
 replacement, which deletes the data — so pick it up front. Each
 dataset exposes Axiom's OTLP/HTTP endpoints as output attributes
 (`otelTracesEndpoint`, `otelLogsEndpoint`, `otelMetricsEndpoint`),
-which is what makes the next step a pure wiring exercise.
+which is what makes the binding below a pure wiring exercise.
 
 ## Set retention
 
 Retention is a prop, so a retention change is a diff in the PR:
 
 ```typescript
-const logs = yield* Axiom.Dataset("logs", {
+export const Logs = Axiom.Dataset("Logs", {
   name: "app-logs",
   kind: "otel:logs:v1",
   description: "Application logs from prod workers",
@@ -79,7 +95,8 @@ An `ApiToken` scoped with `datasetCapabilities` can ingest into
 exactly the datasets you list and nothing else:
 
 ```typescript
-const ingest = yield* Axiom.ApiToken("ingest", {
+// src/observability.ts
+export const Ingest = Axiom.ApiToken("Ingest", {
   name: "prod-ingest",
   description: "Worker OTEL ingest",
   datasetCapabilities: {
@@ -91,35 +108,51 @@ const ingest = yield* Axiom.ApiToken("ingest", {
 ```
 
 Axiom returns the bearer value exactly once, at create time. It's
-captured into `ingest.token` as a `Redacted<string>` and persisted
+captured into `Ingest.token` as a `Redacted<string>` and persisted
 in resource state — treat state as sensitive. Tokens have no update
 API: changing any prop replaces the token and mints a new bearer;
 identical props never rotate it.
 
-## Wire the OTEL env vars into the Worker
+## Bind Axiom to the Worker
 
-Pass the dataset endpoints and the token through the Worker's `env`
-prop:
+Import the datasets and token into the Worker's module and provide
+the `Axiom.Telemetry` binding layer on its init Effect, merged into
+the single `Effect.provide` with the other binding layers. That's
+the whole integration — every span, log record, and metric the
+Worker produces is exported, flushed as each request completes:
 
 ```typescript
-const worker = yield* Cloudflare.Worker("Api", {
-  main: "./src/worker.ts",
-  env: {
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: traces.otelTracesEndpoint,
-    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: logs.otelLogsEndpoint,
-    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: metrics.otelMetricsEndpoint,
-    AXIOM_TOKEN: ingest.token,
-  },
-});
+// src/worker.ts
+import * as Axiom from "alchemy/Axiom";
+import { Ingest, Logs, Metrics, Traces } from "./observability.ts";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    // ...
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Cloudflare.R2.ReadWriteBucketBinding,
+        Axiom.Telemetry({
+          token: Ingest,
+          traces: Traces,
+          logs: Logs,
+          metrics: Metrics,
+        }),
+      ),
+    ),
+  ),
+);
 ```
 
-Values are routed by shape: the endpoint strings become `plain_text`
-vars, and `ingest.token` — a `Redacted<string>` — becomes a
-`secret_text` binding, so the bearer never appears in plaintext
-Worker config. At runtime your exporter attaches
-`Authorization: Bearer ${env.AXIOM_TOKEN}` plus the dataset header
-Axiom expects — each dataset's `otelHeaders` output carries the
-required `X-Axiom-Dataset: <name>` entry.
+Building the layer binds each dataset's OTLP endpoint and the ingest
+token onto the Worker: the endpoints bind as `plain_text` vars, and
+the token's `Authorization` header — `Redacted` — binds as
+`secret_text`, so the bearer never appears in plaintext Worker
+config. Axiom routes ingest by an `X-Axiom-Dataset` header, which
+the layer composes per signal from each dataset's name.
 
 ## Alternative: let Cloudflare push it
 
@@ -130,10 +163,15 @@ external HTTPS collector via Logpush. Point one at the Axiom dataset's
 OTLP endpoint:
 
 ```typescript
+// in the Stack's generator
 import * as Output from "alchemy/Output";
 import * as Redacted from "effect/Redacted";
+import { Ingest, Traces } from "./src/observability.ts";
 
-yield* Cloudflare.Workers.ObservabilityDestination("Traces", {
+const traces = yield* Traces;
+const ingest = yield* Ingest;
+
+yield* Cloudflare.Workers.ObservabilityDestination("TracesExport", {
   url: traces.otelTracesEndpoint,
   headers: {
     authorization: Output.map(ingest.token, (t) => `Bearer ${Redacted.value(t)}`),
@@ -215,8 +253,12 @@ Two adjacent Cloudflare-native options, in brief:
 - [Axiom overview](/axiom) — dashboards, annotations, views, and the
   full resource list.
 - [Axiom setup](/axiom/setup) — credentials and profiles.
-- [Observability](/testing/observability) — the exporter-as-a-Layer
-  pattern and OTel across clouds.
+- [Telemetry](/infrastructure-as-effects/telemetry) — how the
+  built-in exporters work across every runtime.
+- [Tutorial Part 6](/cloudflare/tutorial/part-6) — the step-by-step
+  version of this setup.
+- [Observability](/testing/observability) — OTel across clouds and
+  the receiving end as resources.
 - Reference: [Dataset](/providers/axiom/dataset) ·
   [ApiToken](/providers/axiom/apitoken) ·
   [Monitor](/providers/axiom/monitor) ·

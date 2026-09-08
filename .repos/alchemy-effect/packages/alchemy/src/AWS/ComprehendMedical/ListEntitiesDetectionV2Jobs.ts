@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:ListEntitiesDetectionV2Jobs` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.ListEntitiesDetectionV2JobsHttp)`.
  *
- * @binding
- * @section Batch Entity Detection Jobs
- * @example List Submitted Jobs
+ * ### Batch Entity Detection Jobs
+ * **Example:** List Submitted Jobs
  * ```typescript
  * // init
  * const listEntitiesDetectionV2Jobs = yield* AWS.ComprehendMedical.ListEntitiesDetectionV2Jobs();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const jobs = yield* listEntitiesDetectionV2Jobs({});
  * console.log(jobs.ComprehendMedicalAsyncJobPropertiesList?.length ?? 0);
  * ```
+ *
+ * @binding
  */
 export interface ListEntitiesDetectionV2Jobs extends Binding.Service<
   ListEntitiesDetectionV2Jobs,

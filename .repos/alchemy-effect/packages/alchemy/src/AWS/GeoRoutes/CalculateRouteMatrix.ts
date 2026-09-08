@@ -15,13 +15,12 @@ import * as Binding from "../../Binding.ts";
  * `RoutingBoundary` — a geometry that contains all origins and destinations,
  * or `{ Unbounded: true }`.
  *
- * @binding
- * @section Calculating a Route Matrix
+ * ### Calculating a Route Matrix
  * Provide the `CalculateRouteMatrixHttp` implementation layer on the Function
  * effect (`.pipe(Effect.provide(AWS.GeoRoutes.CalculateRouteMatrixHttp))`),
  * bind in the init phase, then call the client at runtime.
  *
- * @example Calculate a 2x2 origin-destination matrix
+ * **Example:** Calculate a 2x2 origin-destination matrix
  * ```typescript
  * // init
  * const calculateRouteMatrix = yield* AWS.GeoRoutes.CalculateRouteMatrix();
@@ -43,6 +42,8 @@ import * as Binding from "../../Binding.ts";
  * const secondsFromFirstOriginToFirstDestination =
  *   result.RouteMatrix[0]?.[0]?.Duration;
  * ```
+ *
+ * @binding
  */
 export interface CalculateRouteMatrix extends Binding.Service<
   CalculateRouteMatrix,

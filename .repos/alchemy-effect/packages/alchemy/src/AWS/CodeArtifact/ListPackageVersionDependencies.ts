@@ -17,9 +17,8 @@ export interface ListPackageVersionDependenciesRequest extends Omit<
  *
  * Lists the direct dependencies recorded in a package version's manifest (npm `package.json`, maven `pom.xml`, …). Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.ListPackageVersionDependenciesHttp)`.
- * @binding
- * @section Inspecting Package Versions
- * @example List a Version's Dependencies
+ * ### Inspecting Package Versions
+ * **Example:** List a Version's Dependencies
  * ```typescript
  * const listDeps = yield* AWS.CodeArtifact.ListPackageVersionDependencies(repo);
  *
@@ -30,6 +29,8 @@ export interface ListPackageVersionDependenciesRequest extends Omit<
  * });
  * console.log(res.dependencies?.map((d) => d.package));
  * ```
+ *
+ * @binding
  */
 export interface ListPackageVersionDependencies extends Binding.Service<
   ListPackageVersionDependencies,

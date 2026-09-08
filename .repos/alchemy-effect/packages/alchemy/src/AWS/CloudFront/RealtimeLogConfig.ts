@@ -79,9 +79,8 @@ export interface RealtimeLogConfig extends Resource<
  * Real-time logs deliver per-request records to a Kinesis data stream within
  * seconds. Attach the configuration to a distribution's cache behavior via
  * `Distribution` (`realtimeLogConfigArn`).
- * @resource
- * @section Creating Real-Time Log Configs
- * @example Stream Viewer Requests to Kinesis
+ * ### Creating Real-Time Log Configs
+ * **Example:** Stream Viewer Requests to Kinesis
  * ```typescript
  * const stream = yield* Kinesis.Stream("EdgeLogs", {});
  *
@@ -121,6 +120,8 @@ export interface RealtimeLogConfig extends Resource<
  *   endpoints: [{ streamArn: stream.streamArn, roleArn: role.roleArn }],
  * });
  * ```
+ *
+ * @resource
  */
 export const RealtimeLogConfig = Resource<RealtimeLogConfig>(
   "AWS.CloudFront.RealtimeLogConfig",

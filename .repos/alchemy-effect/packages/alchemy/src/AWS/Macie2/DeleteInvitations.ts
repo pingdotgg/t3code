@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.DeleteInvitationsHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Delete Received Invitations
+ * ### Administrator & Invitations
+ * **Example:** Delete Received Invitations
  * ```typescript
  * // init — account-level binding, no resource argument
  * const deleteInvitations = yield* AWS.Macie2.DeleteInvitations();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteInvitations({ accountIds });
  * ```
+ *
+ * @binding
  */
 export interface DeleteInvitations extends Binding.Service<
   DeleteInvitations,

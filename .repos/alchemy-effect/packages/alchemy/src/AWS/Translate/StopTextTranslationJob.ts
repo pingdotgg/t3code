@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * job is marked `STOP_REQUESTED` and later `STOPPED`; a job that completes
  * first ends `COMPLETED`.
  *
- * @binding
- * @section Batch Translation Jobs
- * @example Stop a batch translation job
+ * ### Batch Translation Jobs
+ * **Example:** Stop a batch translation job
  * ```typescript
  * // init
  * const stopJob = yield* AWS.Translate.StopTextTranslationJob();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* stopJob({ JobId: job.JobId! });
  * // result.JobStatus === "STOP_REQUESTED"
  * ```
+ *
+ * @binding
  */
 export interface StopTextTranslationJob extends Binding.Service<
   StopTextTranslationJob,

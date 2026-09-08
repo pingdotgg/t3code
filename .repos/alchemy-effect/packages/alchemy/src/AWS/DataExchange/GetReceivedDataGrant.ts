@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * expiration.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.GetReceivedDataGrantHttp)`.
- * @binding
- * @section Data Grants
- * @example Inspect A Received Grant
+ * ### Data Grants
+ * **Example:** Inspect A Received Grant
  * ```typescript
  * const getReceivedDataGrant =
  *   yield* AWS.DataExchange.GetReceivedDataGrant();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const grant = yield* getReceivedDataGrant({ DataGrantArn: grantArn });
  * ```
+ *
+ * @binding
  */
 export interface GetReceivedDataGrant extends Binding.Service<
   GetReceivedDataGrant,

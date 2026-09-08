@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Custom policy check: verifies an updated policy grants no access beyond what
  * the existing policy allows. Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.CheckNoNewAccessHttp)`.
- * @binding
- * @section Custom Policy Checks
- * @example Compare an Updated Policy Against the Existing One
+ * ### Custom Policy Checks
+ * **Example:** Compare an Updated Policy Against the Existing One
  * ```typescript
  * const checkNoNewAccess = yield* AWS.AccessAnalyzer.CheckNoNewAccess();
  * const result = yield* checkNoNewAccess({
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   policyType: "IDENTITY_POLICY",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CheckNoNewAccess extends Binding.Service<
   CheckNoNewAccess,

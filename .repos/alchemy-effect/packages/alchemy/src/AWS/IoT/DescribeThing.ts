@@ -16,14 +16,15 @@ export interface DescribeThingRequest extends Omit<
  * thing type, version) at runtime — the thing name is injected
  * automatically. Provide the implementation with
  * `Effect.provide(AWS.IoT.DescribeThingHttp)`.
- * @binding
- * @section Registry
- * @example Read Thing Attributes
+ * ### Registry
+ * **Example:** Read Thing Attributes
  * ```typescript
  * const describeThing = yield* AWS.IoT.DescribeThing(thing);
  *
  * const { attributes } = yield* describeThing();
  * ```
+ *
+ * @binding
  */
 export interface DescribeThing extends Binding.Service<
   DescribeThing,

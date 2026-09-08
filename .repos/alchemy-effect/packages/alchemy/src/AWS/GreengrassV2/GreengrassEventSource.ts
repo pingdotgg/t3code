@@ -77,8 +77,8 @@ export interface GreengrassEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Greengrass Events
- * @example Alert When A Rollout Fails On A Device
+ * ### Consuming Greengrass Events
+ * **Example:** Alert When A Rollout Fails On A Device
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

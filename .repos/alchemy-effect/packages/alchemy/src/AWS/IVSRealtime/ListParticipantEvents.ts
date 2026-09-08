@@ -13,9 +13,8 @@ export interface ListParticipantEventsRequest extends Omit<
  * List the events (joined, left, publish started/stopped, errors) recorded
  * for a participant during a session of the bound stage.
  *
- * @binding
- * @section Inspecting Participants
- * @example Audit a participant's session events
+ * ### Inspecting Participants
+ * **Example:** Audit a participant's session events
  * ```typescript
  * // init
  * const listParticipantEvents = yield* IVSRealtime.ListParticipantEvents(stage);
@@ -26,6 +25,8 @@ export interface ListParticipantEventsRequest extends Omit<
  *   participantId: "abcDEF123",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListParticipantEvents extends Binding.Service<
   ListParticipantEvents,

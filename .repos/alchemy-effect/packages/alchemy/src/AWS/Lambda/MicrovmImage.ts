@@ -3,6 +3,7 @@ import type { Region } from "@distilled.cloud/aws/Region";
 import type * as microvms from "@distilled.cloud/aws/lambda-microvms";
 
 import * as Effect from "effect/Effect";
+import type * as Bundle from "../../Bundle/Bundle.ts";
 import { Platform } from "../../Platform.ts";
 import type { Main } from "../../Platform.ts";
 import type { Resource } from "../../Resource.ts";
@@ -85,6 +86,16 @@ export interface MicrovmImageProps {
    * Extra module ids to leave external when bundling (effectful mode).
    */
   external?: string[];
+
+  /**
+   * Bundler configuration for {@link main} (effectful mode): rolldown
+   * `input`/`output` overrides plus pure-annotation options (`pure`).
+   * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+   * `@distilled.cloud/*` are annotated as pure by default so unused code
+   * from those packages is tree-shaken; list additional packages via
+   * `pure.packages`, or disable with `pure: false`.
+   */
+  build?: Bundle.BundleConfig;
 
   /**
    * The base MicroVM image to build on top of — either its ARN or another
@@ -193,8 +204,12 @@ export interface MicrovmImage extends Resource<
     createdAt?: string;
     /** When the image was last updated (ISO 8601). */
     updatedAt?: string;
-    /** The resolved code artifact and its build identity hash. */
-    codeArtifact?: { uri?: string; hash?: string };
+    /**
+     * The resolved code artifact and its build identity hash. `contentHash`
+     * covers only the bundled program / packaged context (no props), so a
+     * content-only edit is detectable at plan time before the props resolve.
+     */
+    codeArtifact?: { uri?: string; hash?: string; contentHash?: string };
   },
   {
     env?: Record<string, any>;
@@ -213,7 +228,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * MicroVM instances from it at runtime (one per end-user/session) with the
  * {@link RunMicrovm} binding from a Lambda Function.
  *
- * ### How the build works
+ * ### How the build works <!-- api-prose -->
  *
  * The build runs **server-side on AWS** — there is no local Docker. You supply
  * a *code artifact* (a zip of a Dockerfile + your code) and a *base image*
@@ -237,7 +252,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * Re-deploys only trigger a new build when the artifact's content hash or a
  * build-affecting prop changes; otherwise the image is left untouched.
  *
- * ### Prerequisites
+ * ### Prerequisites <!-- api-prose -->
  *
  * - A **build role** (`buildRole`) Lambda assumes to read the code artifact and
  *   write build logs. Pass a {@link Role} instance and the required permissions
@@ -246,14 +261,13 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  *   external modes, which upload the artifact to S3.
  * - The account must be **onboarded to the Lambda MicroVM preview**.
  *
- * @resource
  *
- * @section Creating the Build Role
+ * ### Creating the Build Role
  * Pass a bare {@link Role} as `buildRole` and the MicroVM image grants
  * everything it needs via a binding: the trust policy (so Lambda can assume it)
  * plus the S3 (Assets bucket) and CloudWatch-logs permissions (folded into an
  * `alchemy-bindings` inline policy). You don't write any policy yourself.
- * @example Bare build role
+ * **Example:** Bare build role
  * ```typescript
  * const buildRole = yield* AWS.IAM.Role("MicrovmBuildRole", {});
  *
@@ -264,11 +278,11 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * });
  * ```
  *
- * @section Effectful MicroVMs
+ * ### Effectful MicroVMs
  * Write the in-VM server in TypeScript. Alchemy bundles `main` and bakes it into
  * the image; the server listens on `port` (default 8080), which becomes the
  * MicroVM `endpoint`.
- * @example In-VM HTTP server (single file)
+ * **Example:** In-VM HTTP server (single file)
  * ```typescript
  * export default class Sandbox extends AWS.Lambda.MicrovmImage<Sandbox>()(
  *   "Sandbox",
@@ -284,7 +298,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * ) {}
  * ```
  *
- * @example With capability bindings and env vars
+ * **Example:** With capability bindings and env vars
  * ```typescript
  * export default class Sandbox extends AWS.Lambda.MicrovmImage<Sandbox>()(
  *   "Sandbox",
@@ -307,7 +321,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * ) {}
  * ```
  *
- * @example Class + `.make()` (two files, for a Lambda orchestrator)
+ * **Example:** Class + `.make()` (two files, for a Lambda orchestrator)
  * When a Lambda Function imports the image to bind its instance operations, keep
  * the class (a typed handle) and the `.make()` runtime in separate files so the
  * orchestrator's bundle doesn't pull in the VM's runtime deps.
@@ -328,14 +342,14 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * );
  * ```
  *
- * @section Tagged RPC
+ * ### Tagged RPC
  * Beyond (or instead of) a raw `fetch` handler, an image can expose a typed
  * **RPC `Shape`** as the second type parameter. The in-VM runtime serves those
  * methods over an `/__rpc__/*` protocol and falls through to `fetch` for every
  * other request, so an image can offer BOTH a typed RPC surface and ordinary
  * HTTP routes. A caller gets a fully-typed client with {@link connectMicrovm}:
  * value methods `yield*` as `Effect`s, streaming methods pipe as `Stream`s.
- * @example Define a tagged-RPC image (RPC + fetch)
+ * **Example:** Define a tagged-RPC image (RPC + fetch)
  * ```typescript
  * // sandbox.ts — the typed handle imported by the orchestrator Lambda
  * export class Sandbox extends AWS.Lambda.MicrovmImage<
@@ -361,7 +375,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * );
  * ```
  *
- * @example Call the RPC method from a Lambda
+ * **Example:** Call the RPC method from a Lambda
  * `connectMicrovm` builds the typed stub over an `HttpClient` (provide
  * `FetchHttpClient.layer` for the request scope), pointing at the running
  * MicroVM's `endpoint` and authenticating with the `authToken` headers.
@@ -381,7 +395,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * const reply = yield* sandbox.hello("world"); // "hello, world!"
  * ```
  *
- * @example Call the same MicroVM's `fetch` route directly
+ * **Example:** Call the same MicroVM's `fetch` route directly
  * For the raw HTTP path, send the auth token as request headers via
  * {@link microvmAuthHeaders}.
  * ```typescript
@@ -392,19 +406,58 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * const body = yield* res.json;
  * ```
  *
- * @section External Images (your own Dockerfile)
+ * ### Bundling & Tree-shaking
+ * `main` is bundled with rolldown at deploy time. Top-level calls in the
+ * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+ * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
+ * default, so anything the MicroVM program doesn't use from those packages is
+ * tree-shaken out of the bundle. Any other package — including your own
+ * app — is left untouched unless you list it explicitly.
+ *
+ * **Example:** Treat additional packages as pure
+ * Pass package names (or picomatch globs) via `build.pure.packages` to
+ * annotate them in addition to the defaults.
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: {
+ *     pure: { packages: ["my-lib", "@my-scope/*"] },
+ *   },
+ * }
+ * ```
+ *
+ * Listing a package annotates calls whose result is bound (variable
+ * initializers, exports) — safe anywhere. If a listed package also
+ * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
+ * combination opts it into full annotation: top-level calls whose result
+ * is discarded (e.g. `router.on("/path", handler)` registrations) are
+ * also marked pure and deleted under minification when unused. Only list
+ * a `sideEffects: false` package if its modules really are free of
+ * meaningful top-level side effects. The `effect`, `alchemy`, and
+ * `@distilled.cloud` defaults declare exactly that, on purpose — their
+ * modules are designed to be fully tree-shakeable.
+ *
+ * **Example:** Disable pure annotations
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: { pure: false },
+ * }
+ * ```
+ *
+ * ### External Images (your own Dockerfile)
  * Bring a build context directory containing a Dockerfile (any language).
  * Alchemy zips and uploads it; AWS runs your Dockerfile. Your Dockerfile should
  * build on a MicroVM-compatible base (e.g.
  * `FROM public.ecr.aws/lambda/microvms:al2023-minimal`).
- * @example Flask app from a Dockerfile
+ * **Example:** Flask app from a Dockerfile
  * ```typescript
  * const image = yield* AWS.Lambda.MicrovmImage("Flask", {
  *   context: `${import.meta.dirname}/app`, // dir with Dockerfile + app.py
  *   buildRole,
  * });
  * ```
- * @example Custom Dockerfile path within the context
+ * **Example:** Custom Dockerfile path within the context
  * ```typescript
  * const image = yield* AWS.Lambda.MicrovmImage("Worker", {
  *   context: `${import.meta.dirname}/app`,
@@ -413,9 +466,9 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * });
  * ```
  *
- * @section Prebuilt Artifacts
+ * ### Prebuilt Artifacts
  * Skip the build entirely and point at an artifact you already produced.
- * @example From an existing S3 zip
+ * **Example:** From an existing S3 zip
  * ```typescript
  * const image = yield* AWS.Lambda.MicrovmImage("Prebuilt", {
  *   codeArtifact: { uri: "s3://my-bucket/app.zip" }, // or an ECR image URI
@@ -423,10 +476,10 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * });
  * ```
  *
- * @section Sizing and Base Image
+ * ### Sizing and Base Image
  * `baseImage` defaults to the latest AWS-managed `al2023` base (discovered
  * via `listManagedMicrovmImages`). Override it, and tune CPU/memory, explicitly.
- * @example Pin the base image and resources
+ * **Example:** Pin the base image and resources
  * ```typescript
  * const image = yield* AWS.Lambda.MicrovmImage("Sized", {
  *   main: import.meta.filename,
@@ -437,8 +490,8 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * });
  * ```
  *
- * @section Logging
- * @example Stream runtime + build logs to a custom CloudWatch group
+ * ### Logging
+ * **Example:** Stream runtime + build logs to a custom CloudWatch group
  * ```typescript
  * const image = yield* AWS.Lambda.MicrovmImage("Logged", {
  *   main: import.meta.filename,
@@ -448,10 +501,10 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * });
  * ```
  *
- * @section VPC Egress
+ * ### VPC Egress
  * Give the MicroVM a managed egress path into your VPC with a
  * {@link NetworkConnector} (reference it by ARN).
- * @example Image-level egress connector
+ * **Example:** Image-level egress connector
  * ```typescript
  * const egress = yield* AWS.Lambda.NetworkConnector("Egress", {
  *   subnetIds: [subnet.subnetId],
@@ -466,12 +519,12 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * });
  * ```
  *
- * @section Launching MicroVMs
+ * ### Launching MicroVMs
  * The image is just the template. Launch and drive instances from a Lambda
  * Function using the per-operation bindings ({@link RunMicrovm},
  * {@link GetMicrovm}, {@link CreateAuthToken}, {@link TerminateMicrovm}, …).
  * Each binding's IAM policy is scoped to this image automatically.
- * @example Run a MicroVM, call its RPC, and tear it down
+ * **Example:** Run a MicroVM, call its RPC, and tear it down
  * Always terminate the MicroVM you launched — wrap the work in
  * `Effect.ensuring` so a failure (or a client retry) never leaks a running
  * MicroVM against your account's memory quota. Give the Function a generous
@@ -479,7 +532,7 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  * ```typescript
  * export default class Api extends AWS.Lambda.Function<Api>()(
  *   "Api",
- *   { main: import.meta.filename, url: true, timeout: Duration.seconds(120) },
+ *   { main: import.meta.filename, functionUrl: true, timeout: Duration.seconds(120) },
  *   Effect.gen(function* () {
  *     const runMicrovm = yield* AWS.Lambda.RunMicrovm(Sandbox);
  *     const getMicrovm = yield* AWS.Lambda.GetMicrovm(Sandbox);
@@ -539,6 +592,8 @@ export type MicrovmImageShape = Main<MicrovmImageServices>;
  *   ),
  * ) {}
  * ```
+ *
+ * @resource
  */
 export const MicrovmImage: Platform<
   MicrovmImage,

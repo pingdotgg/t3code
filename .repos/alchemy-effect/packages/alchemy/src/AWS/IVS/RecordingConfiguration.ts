@@ -148,9 +148,8 @@ export interface RecordingConfiguration extends Resource<
  * `recordingConfigurationArn` prop; every broadcast on that channel is
  * then archived to the configured bucket. Recording configurations are
  * immutable — any settings change replaces the resource.
- * @resource
- * @section Recording Broadcasts
- * @example Record a Channel to S3
+ * ### Recording Broadcasts
+ * **Example:** Record a Channel to S3
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  * import * as IVS from "alchemy/AWS/IVS";
@@ -164,7 +163,7 @@ export interface RecordingConfiguration extends Resource<
  * });
  * ```
  *
- * @example Merge Reconnects and Record Thumbnails
+ * **Example:** Merge Reconnects and Record Thumbnails
  * ```typescript
  * const recording = yield* IVS.RecordingConfiguration("Recording", {
  *   destinationConfiguration: { s3: { bucketName: archive.bucketName } },
@@ -175,6 +174,8 @@ export interface RecordingConfiguration extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const RecordingConfiguration = Resource<RecordingConfiguration>(
   "AWS.IVS.RecordingConfiguration",

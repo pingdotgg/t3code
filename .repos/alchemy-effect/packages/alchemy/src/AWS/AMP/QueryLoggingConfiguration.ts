@@ -53,9 +53,8 @@ export interface QueryLoggingConfiguration extends Resource<
  * Prometheus workspace — ships PromQL query logs (query text, QSP cost,
  * response code) to CloudWatch Logs. A workspace has at most one.
  *
- * @resource
- * @section Creating a Query Logging Configuration
- * @example Log Expensive Queries to CloudWatch Logs
+ * ### Creating a Query Logging Configuration
+ * **Example:** Log Expensive Queries to CloudWatch Logs
  * ```typescript
  * const workspace = yield* AMP.Workspace("Metrics", {});
  * const logs = yield* Logs.LogGroup("QueryLogs", {
@@ -66,6 +65,8 @@ export interface QueryLoggingConfiguration extends Resource<
  *   destinations: [{ logGroupArn: logs.logGroupArn, qspThreshold: 1000 }],
  * });
  * ```
+ *
+ * @resource
  */
 export const QueryLoggingConfiguration = Resource<QueryLoggingConfiguration>(
   "AWS.AMP.QueryLoggingConfiguration",

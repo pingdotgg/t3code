@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:UpdateKxUser` — re-points a kdb user of the bound environment at a different IAM role.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.UpdateKxUserHttp)`.
- * @binding
- * @section Managing kdb Users
- * @example Rotate a User's Role
+ * ### Managing kdb Users
+ * **Example:** Rotate a User's Role
  * ```typescript
  * const updateUser = yield* AWS.FinSpace.UpdateKxUser(kdb);
  *
  * yield* updateUser({ userName: "analyst", iamRole: newRoleArn });
  * ```
+ *
+ * @binding
  */
 export interface UpdateKxUser extends Binding.Service<
   UpdateKxUser,

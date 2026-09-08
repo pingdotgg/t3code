@@ -14,9 +14,8 @@ import type { Server } from "./Server.ts";
  * {@link DescribeServer}. Stopping a server that is not `ONLINE` fails with
  * the typed `InvalidRequestException`. Provide the implementation with
  * `Effect.provide(AWS.Transfer.StopServerHttp)`.
- * @binding
- * @section Controlling Server Availability
- * @example Take the Server Offline
+ * ### Controlling Server Availability
+ * **Example:** Take the Server Offline
  * ```typescript
  * // init — bind the operation to the server
  * const stopServer = yield* AWS.Transfer.StopServer(server);
@@ -24,6 +23,8 @@ import type { Server } from "./Server.ts";
  * // runtime
  * yield* stopServer();
  * ```
+ *
+ * @binding
  */
 export interface StopServer extends Binding.Service<
   StopServer,

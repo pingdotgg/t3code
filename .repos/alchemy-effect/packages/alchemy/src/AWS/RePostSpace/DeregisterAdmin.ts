@@ -16,14 +16,15 @@ export interface DeregisterAdminRequest extends Omit<
  * group (by accessor id) of the bound {@link Space}.
  * Provide the implementation with
  * `Effect.provide(AWS.RePostSpace.DeregisterAdminHttp)`.
- * @binding
- * @section Managing Admins
- * @example Deregister a space administrator
+ * ### Managing Admins
+ * **Example:** Deregister a space administrator
  * ```typescript
  * const deregisterAdmin = yield* AWS.RePostSpace.DeregisterAdmin(space);
  *
  * yield* deregisterAdmin({ adminId: "94682c8d-1234-5678-9abc-e001c76e2c44" });
  * ```
+ *
+ * @binding
  */
 export interface DeregisterAdmin extends Binding.Service<
   DeregisterAdmin,

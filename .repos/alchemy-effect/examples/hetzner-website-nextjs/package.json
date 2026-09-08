@@ -1,0 +1,38 @@
+{
+  "name": "hetzner-website-nextjs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "next": "catalog:frontend",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@distilled.cloud/hetzner": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "@tailwindcss/postcss": "catalog:frontend",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:frontend"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/hetzner-website-nextjs"
+  }
+}

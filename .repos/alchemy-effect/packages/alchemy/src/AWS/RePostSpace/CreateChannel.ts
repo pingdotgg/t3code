@@ -18,9 +18,8 @@ export interface CreateChannelRequest extends Omit<
  * they are modeled as a runtime capability rather than a Resource.
  * Provide the implementation with
  * `Effect.provide(AWS.RePostSpace.CreateChannelHttp)`.
- * @binding
- * @section Managing Channels
- * @example Create a channel in the private re:Post
+ * ### Managing Channels
+ * **Example:** Create a channel in the private re:Post
  * ```typescript
  * const createChannel = yield* AWS.RePostSpace.CreateChannel(space);
  *
@@ -29,6 +28,8 @@ export interface CreateChannelRequest extends Omit<
  *   channelDescription: "VPC, DNS, and connectivity questions",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateChannel extends Binding.Service<
   CreateChannel,

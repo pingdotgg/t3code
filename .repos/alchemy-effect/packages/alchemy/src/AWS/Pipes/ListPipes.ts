@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * state, or source/target prefix — e.g. an operational console enumerating
  * the pipes it manages. Account-level: no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Pipes.ListPipesHttp)`.
- * @binding
- * @section Observing a Pipe
- * @example List Pipes by Name Prefix
+ * ### Observing a Pipe
+ * **Example:** List Pipes by Name Prefix
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listPipes = yield* AWS.Pipes.ListPipes();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { Pipes } = yield* listPipes({ NamePrefix: "orders-" });
  * // [{ Name: "orders-pipe", CurrentState: "RUNNING", ... }, ...]
  * ```
+ *
+ * @binding
  */
 export interface ListPipes extends Binding.Service<
   ListPipes,

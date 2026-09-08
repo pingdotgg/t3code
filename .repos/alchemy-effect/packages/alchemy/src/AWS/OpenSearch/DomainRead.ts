@@ -66,9 +66,8 @@ export interface ReadDomainClient {
  * domain's endpoint, made with the host Function's own credentials — the
  * domain's access policy must allow the function's role. Provide the
  * implementation with `Effect.provide(AWS.OpenSearch.DomainReadHttp)`.
- * @binding
- * @section Searching a Domain
- * @example Search Documents
+ * ### Searching a Domain
+ * **Example:** Search Documents
  * ```typescript
  * // init — grants es:ESHttpGet/es:ESHttpHead on the domain
  * const search = yield* AWS.OpenSearch.DomainRead(domain);
@@ -81,11 +80,13 @@ export interface ReadDomainClient {
  * const titles = result.hits.hits.map((hit) => hit._source.title);
  * ```
  *
- * @example Fetch One Document
+ * **Example:** Fetch One Document
  * ```typescript
  * const doc = yield* search.getDocument<{ title: string }>("songs", "1");
  * if (doc.found) yield* Effect.log(doc._source?.title);
  * ```
+ *
+ * @binding
  */
 export interface DomainRead extends Binding.Service<
   DomainRead,

@@ -13,9 +13,8 @@ export interface GetRetrievedTracesGraphRequest
  * provide the implementation with `Effect.provide(XRay.GetRetrievedTracesGraphHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetRetrievedTracesGraph`, so the binding grants it on `*`.
- * @binding
- * @section Transaction Search
- * @example Graph a retrieval job's traces
+ * ### Transaction Search
+ * **Example:** Graph a retrieval job's traces
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -26,6 +25,8 @@ export interface GetRetrievedTracesGraphRequest
  * const graph = yield* getRetrievedTracesGraph({ RetrievalToken: token });
  * const services = graph.Services ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetRetrievedTracesGraph extends Binding.Service<
   GetRetrievedTracesGraph,

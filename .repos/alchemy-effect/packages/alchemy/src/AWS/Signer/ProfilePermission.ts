@@ -66,9 +66,8 @@ export interface ProfilePermission extends Resource<
  * the same statement id (revision-checked, so concurrent policy edits are
  * retried); changing `profileName` or `statementId` replaces the permission.
  *
- * @resource
- * @section Sharing a Signing Profile
- * @example Allow Another Account to Sign
+ * ### Sharing a Signing Profile
+ * **Example:** Allow Another Account to Sign
  * ```typescript
  * const profile = yield* Signer.SigningProfile("ReleaseProfile", {
  *   platformId: "AWSLambda-SHA384-ECDSA",
@@ -81,7 +80,7 @@ export interface ProfilePermission extends Resource<
  * });
  * ```
  *
- * @example Pin the Permission to a Profile Version
+ * **Example:** Pin the Permission to a Profile Version
  * ```typescript
  * const permission = yield* Signer.ProfilePermission("CiAccountCanSign", {
  *   profileName: profile.profileName,
@@ -90,6 +89,8 @@ export interface ProfilePermission extends Resource<
  *   profileVersion: profile.profileVersion,
  * });
  * ```
+ *
+ * @resource
  */
 export const ProfilePermission = Resource<ProfilePermission>(
   "AWS.Signer.ProfilePermission",

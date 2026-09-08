@@ -22,7 +22,7 @@ export class InternetMonitorBindingsFunction extends Lambda.Function<Lambda.Func
 export default InternetMonitorBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(120),
   },
   Effect.gen(function* () {

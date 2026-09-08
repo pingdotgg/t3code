@@ -1,0 +1,305 @@
+---
+title: "Part 2: Deploy a Service"
+description: Bundle an Effect HTTP server, deploy it to your Hetzner Server as a systemd unit, and serve requests on a public URL.
+sidebar:
+  order: 2
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+In [Part 1](/hetzner/tutorial/part-1) you deployed a Server. Now
+you'll put code on it: a `Hetzner.Service` — an Effect program that
+Alchemy bundles, copies over SSH, and runs as a systemd unit. No
+Dockerfile, no unit files, no scp scripts.
+
+## Move the Server to a module
+
+So far the resources live inside the Stack's generator. To let other
+files reference them, declare them at **module scope** instead — a
+resource declared this way is an Effect you can import and `yield*`
+anywhere. Create `src/server.ts` and move the key and Server from
+Part 1 into it:
+
+```typescript
+// src/server.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Key = Hetzner.SshKey("laptop", {
+  publicKey: "ssh-ed25519 AAAA... you@laptop",
+});
+
+export const Box = Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  location: "nbg1",
+  sshKeys: [Key],
+});
+```
+
+Notice `sshKeys: [Key]` passes the declaration directly, without
+yielding — resource-valued props accept the resource or an Effect
+producing it. The logical ids are still `laptop` and `box`, so
+Alchemy recognizes them as the same resources you deployed in
+Part 1 — moving declarations between files doesn't recreate
+anything.
+
+## Update the Stack
+
+Import the Server and yield it from the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
++import { Box } from "./src/server.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+-    const key = yield* Hetzner.SshKey("laptop", {
+-      publicKey: "ssh-ed25519 AAAA... you@laptop",
+-    });
+-
+-    const server = yield* Hetzner.Server("box", {
+-      serverType: "cx22",
+-      image: "ubuntu-24.04",
+-      location: "nbg1",
+-      sshKeys: [key],
+-    });
++    const server = yield* Box;
+
+    return {
+      ipv4: server.ipv4,
+      ipv6: server.ipv6,
+    };
+  }),
+);
+```
+
+The key is still part of the graph — it's registered when the
+Server's `sshKeys` reference resolves.
+
+## Create the Service file
+
+A Service in Alchemy is a class — it has both an infrastructure
+definition and a runtime implementation expressed as an Effect.
+Create `src/api.ts` with the smallest possible declaration:
+
+```typescript
+// src/api.ts
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
+import { Box } from "./server.ts";
+
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+  { server: Box, main: import.meta.url },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+The `<Api>` type argument plus the empty `()` is a one-time bit of
+ceremony — it lets TypeScript reason about `Api` as a typed handle.
+`server: Box` says which machine this Service runs on, and
+`main: import.meta.url` tells Alchemy this same file is the bundle
+entrypoint: at deploy time it's bundled with Rolldown and shipped to
+the Server.
+
+## Serve HTTP with `fetch`
+
+Add a `fetch` field — Alchemy treats anything returned from the
+`Effect.gen` block as the runtime API, and `fetch` specifically is
+wired to an HTTP server listening on the Service's port:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
++import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Box } from "./server.ts";
+
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+  { server: Box, main: import.meta.url },
+  Effect.gen(function* () {
+-    return {};
++    return {
++      fetch: Effect.succeed(HttpServerResponse.text("Hello from Hetzner!")),
++    };
+  }),
+) {}
+```
+
+`HttpServerResponse` is the same `effect/unstable/http` API used on
+every other Alchemy runtime — the handler you write here would run
+unchanged on Cloudflare Workers or AWS Lambda.
+
+:::note
+Notice the "Effect returning an Effect" pattern. The outer generator
+is the **Init phase** — it runs at deploy time and at process
+startup. The inner `fetch` generator is the **Runtime phase** — it
+runs per request.
+:::
+
+## Set the port
+
+Give the Service an explicit port so we know where to reach it:
+
+```diff lang="typescript"
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+-  { server: Box, main: import.meta.url },
++  { server: Box, main: import.meta.url, port: 3000 },
+```
+
+The port is written to the process environment as `PORT` and used to
+build the Service's `url` attribute (`http://<server-ipv4>:<port>`).
+
+## Add a health route
+
+When a Service declares a `port`, the deploy doesn't just start the
+unit and hope — it polls `http://127.0.0.1:<port>/health` on the
+Server until it answers, and fails the deploy (with the unit's
+journal in the output) if it never does. Add the route:
+
+```diff lang="typescript"
+// src/api.ts
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+// ...
+    return {
+-      fetch: Effect.succeed(HttpServerResponse.text("Hello from Hetzner!")),
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        const url = new URL(request.url, "http://service");
++        if (url.pathname === "/health") {
++          return HttpServerResponse.json({ ok: true });
++        }
++        return HttpServerResponse.text("Hello from Hetzner!");
++      }),
+    };
+```
+
+## Wire the Service into the Stack
+
+The `Api` class is just a typed identifier — yielding it inside the
+Stack's Effect is what registers the resource and starts the deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
++import Api from "./src/api.ts";
+import { Box } from "./src/server.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const server = yield* Box;
++    const api = yield* Api;
+
+    return {
+      ipv4: server.ipv4,
+-      ipv6: server.ipv6,
++      url: api.url,
+    };
+  }),
+);
+```
+
+Yielding `Api` returns the resolved Service outputs — the systemd
+unit name, the port, and the public `url` we surface from the Stack.
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
+
+[g]+[/g] [b]Api[/b] [d](Hetzner.Service)[/d]
+[d]•[/d] [b]box[/b] [d](Hetzner.Server)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Api[/b] [d](Hetzner.Service)[/d] [g]created[/g]
+{
+[s2]ipv4: "203.0.113.10",
+[s2]url: "http://203.0.113.10:3000",
+}`} />
+
+A lot just happened over one SSH connection:
+
+1. `src/api.ts` was bundled with Rolldown into a single ESM file.
+2. Alchemy connected to the Server using the **deploy key** it
+   injected when the Server was created — no SSH configuration on
+   your side.
+3. It unpacked the bundle to `/opt/<unit>/` and wrote an
+   `EnvironmentFile` with `PORT` and the stack metadata. The
+   [Bun](https://bun.sh) runtime is already there — Alchemy's
+   cloud-init bootstrap installed it when the Server was created.
+4. It wrote a systemd unit (`Restart=always`), enabled it, and
+   waited for `/health` to answer.
+
+## Try it out
+
+```sh
+curl http://203.0.113.10:3000
+# → Hello from Hetzner!
+```
+
+The port is reachable because a fresh Hetzner server has **no
+firewall** — every port is open until you apply one. In
+[Part 4](/hetzner/tutorial/part-4) we'll lock this down.
+
+## Ship a change
+
+Edit the greeting in `src/api.ts` and deploy again:
+
+<Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
+
+[y]~[/y] [b]Api[/b] [d](Hetzner.Service)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Api[/b] [d](Hetzner.Service)[/d] [y]updated[/y]`} />
+
+Alchemy hashes the bundle: if your code didn't change, the Service
+is a no-op; if it did, the new bundle is copied up and the unit
+restarted — a few seconds end to end.
+
+## Recap
+
+You now have:
+
+- An HTTP Service running on your Server as a systemd unit, with
+  `Restart=always` supervision
+- A public URL serving requests, verified healthy at deploy time
+- A code-hash-based update loop — edit, deploy, restarted
+
+In [Part 3](/hetzner/tutorial/part-3), you'll attach a Volume and
+persist data across deploys.

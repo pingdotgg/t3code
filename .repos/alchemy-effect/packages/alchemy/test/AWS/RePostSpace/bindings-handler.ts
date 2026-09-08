@@ -29,7 +29,7 @@ export class RePostSpaceBindingsFunction extends Lambda.Function<Lambda.Function
 export default RePostSpaceBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const space = yield* RePostSpace.Space("BindingsSpace", {

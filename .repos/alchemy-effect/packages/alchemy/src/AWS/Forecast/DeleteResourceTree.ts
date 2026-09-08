@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * and grants `forecast:DeleteResourceTree` on `*`. Provide the implementation
  * with `Effect.provide(AWS.Forecast.DeleteResourceTreeHttp)`.
  *
- * @binding
- * @section Cleaning Up
- * @example Delete a Predictor's Artifact Tree
+ * ### Cleaning Up
+ * **Example:** Delete a Predictor's Artifact Tree
  * ```typescript
  * // init
  * const deleteResourceTree = yield* AWS.Forecast.DeleteResourceTree();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteResourceTree({ ResourceArn: predictorArn });
  * ```
+ *
+ * @binding
  */
 export interface DeleteResourceTree extends Binding.Service<
   DeleteResourceTree,

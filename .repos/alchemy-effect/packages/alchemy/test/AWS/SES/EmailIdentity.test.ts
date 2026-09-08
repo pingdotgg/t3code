@@ -12,7 +12,14 @@ const { test } = Test.make({ providers: AWS.providers() });
 // Deterministic identity names — never verified, creation alone is the test.
 const TEST_DOMAIN = "ses-identity.alchemy-test.example.com";
 const TEST_DOMAIN_B = "ses-identity-b.alchemy-test.example.com";
+const TEST_DOMAIN_TOGGLES = "ses-identity-toggles.alchemy-test.example.com";
 const TEST_EMAIL = "alchemy-ses-test@example.com";
+
+// A custom MAIL FROM domain only takes effect on a domain we actually own,
+// with MX and SPF records published for the subdomain. Point these at such a
+// pair to exercise the mailFrom sync.
+const MAIL_FROM_IDENTITY = process.env.AWS_TEST_SES_MAIL_FROM_IDENTITY;
+const MAIL_FROM_DOMAIN = process.env.AWS_TEST_SES_MAIL_FROM_DOMAIN;
 
 class IdentityStillExists extends Data.TaggedError("IdentityStillExists")<{
   readonly name: string;
@@ -161,6 +168,115 @@ test.provider(
         EmailIdentity: identity.emailIdentity,
       });
       expect(afterRemoval.ConfigurationSetName).toBeUndefined();
+
+      yield* stack.destroy();
+      yield* assertIdentityDeleted(identity.emailIdentity);
+    }),
+  { timeout: 120_000 },
+);
+
+// The DKIM-signing and feedback-forwarding toggles apply to any identity, so
+// this runs ungated on the standing (never-verified) test domain.
+test.provider(
+  "syncs DKIM signing and feedback forwarding in place",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const identity = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* EmailIdentity("TogglesIdentity", {
+            emailIdentity: TEST_DOMAIN_TOGGLES,
+            dkimSigningEnabled: true,
+            feedbackForwardingEnabled: true,
+          });
+        }),
+      );
+
+      const created = yield* sesv2.getEmailIdentity({
+        EmailIdentity: identity.emailIdentity,
+      });
+      expect(created.DkimAttributes?.SigningEnabled).toBe(true);
+      expect(created.FeedbackForwardingStatus).toBe(true);
+
+      // flip both off in place — no replacement
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* EmailIdentity("TogglesIdentity", {
+            emailIdentity: TEST_DOMAIN_TOGGLES,
+            dkimSigningEnabled: false,
+            feedbackForwardingEnabled: false,
+          });
+        }),
+      );
+      const toggled = yield* sesv2.getEmailIdentity({
+        EmailIdentity: identity.emailIdentity,
+      });
+      expect(toggled.DkimAttributes?.SigningEnabled).toBe(false);
+      expect(toggled.FeedbackForwardingStatus).toBe(false);
+
+      // omitting the props must leave SES's current setting untouched
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* EmailIdentity("TogglesIdentity", {
+            emailIdentity: TEST_DOMAIN_TOGGLES,
+          });
+        }),
+      );
+      const afterOmit = yield* sesv2.getEmailIdentity({
+        EmailIdentity: identity.emailIdentity,
+      });
+      expect(afterOmit.DkimAttributes?.SigningEnabled).toBe(false);
+      expect(afterOmit.FeedbackForwardingStatus).toBe(false);
+
+      yield* stack.destroy();
+      yield* assertIdentityDeleted(identity.emailIdentity);
+    }),
+  { timeout: 120_000 },
+);
+
+// A custom MAIL FROM domain must be a subdomain of a real identity with MX and
+// SPF published, so the sync is only observable on a domain we control.
+test.provider.skipIf(!MAIL_FROM_DOMAIN || !MAIL_FROM_IDENTITY)(
+  "syncs a custom MAIL FROM domain (AWS_TEST_SES_MAIL_FROM_IDENTITY + _DOMAIN)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const identity = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* EmailIdentity("MailFromIdentity", {
+            emailIdentity: MAIL_FROM_IDENTITY!,
+            mailFromDomain: MAIL_FROM_DOMAIN,
+            mailFromBehaviorOnMxFailure: "USE_DEFAULT_VALUE",
+          });
+        }),
+      );
+
+      const created = yield* sesv2.getEmailIdentity({
+        EmailIdentity: identity.emailIdentity,
+      });
+      expect(created.MailFromAttributes?.MailFromDomain).toBe(MAIL_FROM_DOMAIN);
+      expect(created.MailFromAttributes?.BehaviorOnMxFailure).toBe(
+        "USE_DEFAULT_VALUE",
+      );
+
+      // change only the MX-failure behavior — applied in place
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* EmailIdentity("MailFromIdentity", {
+            emailIdentity: MAIL_FROM_IDENTITY!,
+            mailFromDomain: MAIL_FROM_DOMAIN,
+            mailFromBehaviorOnMxFailure: "REJECT_MESSAGE",
+          });
+        }),
+      );
+      const updated = yield* sesv2.getEmailIdentity({
+        EmailIdentity: identity.emailIdentity,
+      });
+      expect(updated.MailFromAttributes?.BehaviorOnMxFailure).toBe(
+        "REJECT_MESSAGE",
+      );
 
       yield* stack.destroy();
       yield* assertIdentityDeleted(identity.emailIdentity);

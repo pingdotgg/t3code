@@ -72,20 +72,21 @@ export interface ServiceNetwork extends Resource<
  * services and VPCs into one application network. Cheap control-plane resource
  * with no per-hour charge until VPCs or services are associated.
  *
- * @resource
- * @section Creating Service Networks
- * @example Basic Service Network
+ * ### Creating Service Networks
+ * **Example:** Basic Service Network
  * ```typescript
  * const network = yield* ServiceNetwork("AppNetwork", {});
  * ```
  *
- * @example IAM-Authorized Network
+ * **Example:** IAM-Authorized Network
  * ```typescript
  * const network = yield* ServiceNetwork("SecureNetwork", {
  *   authType: "AWS_IAM",
  *   tags: { Environment: "prod" },
  * });
  * ```
+ *
+ * @resource
  */
 export const ServiceNetwork = Resource<ServiceNetwork>(
   "AWS.VpcLattice.ServiceNetwork",

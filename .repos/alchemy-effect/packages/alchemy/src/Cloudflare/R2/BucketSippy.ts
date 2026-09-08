@@ -147,11 +147,8 @@ export type BucketSippy = Resource<
  * One Sippy configuration exists per bucket (it is a singleton
  * sub-resource of the bucket). Destroying the resource disables Sippy;
  * objects already migrated stay in the R2 bucket.
- * @resource
- * @product R2
- * @category Storage & Databases
- * @section Migrating from AWS S3
- * @example Enable Sippy on a bucket with an S3 source
+ * ### Migrating from AWS S3
+ * **Example:** Enable Sippy on a bucket with an S3 source
  * ```typescript
  * const bucket = yield* Cloudflare.R2.Bucket("Media");
  *
@@ -161,18 +158,18 @@ export type BucketSippy = Resource<
  *     provider: "aws",
  *     bucket: "legacy-media",
  *     region: "us-east-1",
- *     accessKeyId: alchemy.secret.env.AWS_ACCESS_KEY_ID,
- *     secretAccessKey: alchemy.secret.env.AWS_SECRET_ACCESS_KEY,
+ *     accessKeyId: yield* Config.redacted("AWS_ACCESS_KEY_ID"),
+ *     secretAccessKey: yield* Config.redacted("AWS_SECRET_ACCESS_KEY"),
  *   },
  *   destination: {
- *     accessKeyId: alchemy.secret.env.R2_ACCESS_KEY_ID,
- *     secretAccessKey: alchemy.secret.env.R2_SECRET_ACCESS_KEY,
+ *     accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
+ *     secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
  *   },
  * });
  * ```
  *
- * @section Migrating from Google Cloud Storage
- * @example Enable Sippy with a GCS source
+ * ### Migrating from Google Cloud Storage
+ * **Example:** Enable Sippy with a GCS source
  * ```typescript
  * yield* Cloudflare.R2.BucketSippy("MediaMigration", {
  *   bucketName: bucket.bucketName,
@@ -180,16 +177,20 @@ export type BucketSippy = Resource<
  *     provider: "gcs",
  *     bucket: "legacy-media",
  *     clientEmail: "sippy@my-project.iam.gserviceaccount.com",
- *     privateKey: alchemy.secret.env.GCS_PRIVATE_KEY,
+ *     privateKey: yield* Config.redacted("GCS_PRIVATE_KEY"),
  *   },
  *   destination: {
- *     accessKeyId: alchemy.secret.env.R2_ACCESS_KEY_ID,
- *     secretAccessKey: alchemy.secret.env.R2_SECRET_ACCESS_KEY,
+ *     accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
+ *     secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
  *   },
  * });
  * ```
  *
  * @see https://developers.cloudflare.com/r2/data-migration/sippy/
+ *
+ * @resource
+ * @product R2
+ * @category Storage & Databases
  */
 export const BucketSippy = Resource<BucketSippy>(TypeId);
 
@@ -209,7 +210,7 @@ export declare namespace BucketSippy {
    * ID is returned, never the secret.
    */
   export type DestinationAttributes = {
-    provider: "r2" | undefined;
+    provider: "r2" | (string & {}) | undefined;
     account: string | undefined;
     bucket: string | undefined;
     accessKeyId: string | undefined;

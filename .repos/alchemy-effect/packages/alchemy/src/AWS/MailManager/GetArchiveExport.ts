@@ -9,15 +9,16 @@ import type { Archive } from "./Archive.ts";
  * Fetches the parameters and status of an archive export (by
  * `ExportId`). IAM access is granted on the bound archive's ARN. Provide the implementation with
  * `Effect.provide(AWS.MailManager.GetArchiveExportHttp)`.
- * @binding
- * @section Exporting from the Archive
- * @example Poll an Export
+ * ### Exporting from the Archive
+ * **Example:** Poll an Export
  * ```typescript
  * const getExport = yield* MailManager.GetArchiveExport(archive);
  *
  * // runtime
  * const status = yield* getExport({ ExportId });
  * ```
+ *
+ * @binding
  */
 export interface GetArchiveExport extends Binding.Service<
   GetArchiveExport,

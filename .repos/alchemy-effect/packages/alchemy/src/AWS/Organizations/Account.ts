@@ -101,9 +101,8 @@ export interface Account extends Resource<
  * until the account ID is assigned. Must be deployed from the organization's
  * management account. Changing `email` replaces the account; changing `name`
  * updates it in place.
- * @resource
- * @section Creating Member Accounts
- * @example Account Under the Organization Root
+ * ### Creating Member Accounts
+ * **Example:** Account Under the Organization Root
  * ```typescript
  * const root = yield* Root("Root", {});
  *
@@ -114,7 +113,7 @@ export interface Account extends Resource<
  * });
  * ```
  *
- * @example Account Inside an Organizational Unit
+ * **Example:** Account Inside an Organizational Unit
  * ```typescript
  * const workloads = yield* OrganizationalUnit("Workloads", {
  *   parentId: root.rootId,
@@ -129,6 +128,8 @@ export interface Account extends Resource<
  *   tags: { environment: "prod" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Account = Resource<Account>("AWS.Organizations.Account");
 

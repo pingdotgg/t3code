@@ -7,9 +7,8 @@ import * as Binding from "../../Binding.ts";
  * properties of an asynchronous batch translation job (status, language
  * pair, input/output locations, document counts).
  *
- * @binding
- * @section Batch Translation Jobs
- * @example Describe a batch translation job
+ * ### Batch Translation Jobs
+ * **Example:** Describe a batch translation job
  * ```typescript
  * // init
  * const describeJob = yield* AWS.Translate.DescribeTextTranslationJob();
@@ -18,6 +17,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* describeJob({ JobId: job.JobId! });
  * // result.TextTranslationJobProperties?.JobStatus
  * ```
+ *
+ * @binding
  */
 export interface DescribeTextTranslationJob extends Binding.Service<
   DescribeTextTranslationJob,

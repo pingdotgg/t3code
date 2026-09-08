@@ -84,11 +84,8 @@ export type Configuration = Resource<
  *
  * Requires an API Shield entitlement (Enterprise) — on other plans every
  * operation fails with Cloudflare's `NotEntitled` error (code 10403).
- * @resource
- * @product API Shield
- * @category Application Security
- * @section Configuring session identifiers
- * @example Identify sessions by an Authorization header
+ * ### Configuring session identifiers
+ * **Example:** Identify sessions by an Authorization header
  * ```typescript
  * yield* Cloudflare.ApiShield.Configuration("SessionIds", {
  *   zoneId: zone.zoneId,
@@ -96,7 +93,7 @@ export type Configuration = Resource<
  * });
  * ```
  *
- * @example Identify sessions by a cookie and a JWT claim
+ * **Example:** Identify sessions by a cookie and a JWT claim
  * ```typescript
  * yield* Cloudflare.ApiShield.Configuration("SessionIds", {
  *   zoneId: zone.zoneId,
@@ -108,6 +105,10 @@ export type Configuration = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api-shield/get-started/#session-identifiers
+ *
+ * @resource
+ * @product API Shield
+ * @category Application Security
  */
 export const Configuration = Resource<Configuration>(TypeId);
 

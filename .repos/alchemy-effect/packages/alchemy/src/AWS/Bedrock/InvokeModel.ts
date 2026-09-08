@@ -42,9 +42,8 @@ export interface InvokeModelRequest extends Omit<
  * console (Model access) before invoking, otherwise calls fail with
  * `AccessDeniedException`.
  *
- * @binding
- * @section Invoking a Model
- * @example Invoke with a Model-Native Payload
+ * ### Invoking a Model
+ * **Example:** Invoke with a Model-Native Payload
  * ```typescript
  * // init
  * const invokeModel = yield* Bedrock.InvokeModel("us.amazon.nova-micro-v1:0");
@@ -63,6 +62,8 @@ export interface InvokeModelRequest extends Omit<
  *   yield* Stream.mkString(Stream.decodeText(result.body)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface InvokeModel extends Binding.Service<
   InvokeModel,

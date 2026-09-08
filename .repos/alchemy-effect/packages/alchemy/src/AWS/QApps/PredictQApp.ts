@@ -16,9 +16,8 @@ export interface PredictQAppRequest extends Omit<
  *
  * Generates a Q App definition from a natural-language problem statement or a Q Business conversation. Provide the implementation with
  * `Effect.provide(AWS.QApps.PredictQAppHttp)`.
- * @binding
- * @section Generation
- * @example Generate an App Definition from a Prompt
+ * ### Generation
+ * **Example:** Generate an App Definition from a Prompt
  * ```typescript
  * // init — bind the operation to the Q App
  * const predictQApp = yield* AWS.QApps.PredictQApp(app);
@@ -31,6 +30,8 @@ export interface PredictQAppRequest extends Omit<
  * });
  * console.log(predicted.app.title);
  * ```
+ *
+ * @binding
  */
 export interface PredictQApp extends Binding.Service<
   PredictQApp,

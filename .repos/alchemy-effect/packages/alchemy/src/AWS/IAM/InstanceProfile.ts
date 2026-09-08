@@ -61,9 +61,8 @@ export interface InstanceProfile extends Resource<
  *
  * `InstanceProfile` bridges IAM roles into EC2 so compute instances can assume
  * the attached role through the instance metadata service.
- * @resource
- * @section Attaching Roles to EC2
- * @example Create an Instance Profile
+ * ### Attaching Roles to EC2
+ * **Example:** Create an Instance Profile
  * ```typescript
  * const role = yield* Role("InstanceRole", {
  *   assumeRolePolicyDocument: {
@@ -80,6 +79,8 @@ export interface InstanceProfile extends Resource<
  *   roleName: role.roleName,
  * });
  * ```
+ *
+ * @resource
  */
 export const InstanceProfile = Resource<InstanceProfile>(
   "AWS.IAM.InstanceProfile",

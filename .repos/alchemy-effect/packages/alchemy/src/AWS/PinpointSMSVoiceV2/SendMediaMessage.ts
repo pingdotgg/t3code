@@ -22,9 +22,8 @@ export interface SendMediaMessageRequest extends Omit<
  * `OriginationIdentity`. The bound number must carry the `MMS` capability.
  * Provide the implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.SendMediaMessageHttp)`.
- * @binding
- * @section Sending Media Messages
- * @example Send an MMS with an S3 Attachment
+ * ### Sending Media Messages
+ * **Example:** Send an MMS with an S3 Attachment
  * ```typescript
  * // init
  * const sendMedia = yield* AWS.PinpointSMSVoiceV2.SendMediaMessage(number);
@@ -36,6 +35,8 @@ export interface SendMediaMessageRequest extends Omit<
  *   MediaUrls: ["s3://my-bucket/receipts/1234.png"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface SendMediaMessage extends Binding.Service<
   SendMediaMessage,

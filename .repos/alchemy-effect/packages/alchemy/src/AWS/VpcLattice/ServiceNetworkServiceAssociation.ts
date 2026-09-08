@@ -76,15 +76,16 @@ export interface ServiceNetworkServiceAssociation extends Resource<
  * Associates a VPC Lattice service with a service network, making the
  * service reachable from every VPC associated with that network.
  *
- * @resource
- * @section Associating a Service
- * @example Basic Association
+ * ### Associating a Service
+ * **Example:** Basic Association
  * ```typescript
  * const assoc = yield* ServiceNetworkServiceAssociation("PaymentsLink", {
  *   serviceNetworkIdentifier: network.serviceNetworkId,
  *   serviceIdentifier: service.serviceId,
  * });
  * ```
+ *
+ * @resource
  */
 export const ServiceNetworkServiceAssociation =
   Resource<ServiceNetworkServiceAssociation>(

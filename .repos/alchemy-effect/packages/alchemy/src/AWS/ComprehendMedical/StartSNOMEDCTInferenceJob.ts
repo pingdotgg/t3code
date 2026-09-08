@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:StartSNOMEDCTInferenceJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.StartSNOMEDCTInferenceJobHttp)`.
  *
- * @binding
- * @section Batch SNOMED CT Inference Jobs
- * @example Start a Batch Job
+ * ### Batch SNOMED CT Inference Jobs
+ * **Example:** Start a Batch Job
  * ```typescript
  * // init
  * const startSNOMEDCTInferenceJob = yield* AWS.ComprehendMedical.StartSNOMEDCTInferenceJob();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   LanguageCode: "en",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartSNOMEDCTInferenceJob extends Binding.Service<
   StartSNOMEDCTInferenceJob,

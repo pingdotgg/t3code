@@ -11,9 +11,8 @@ import type { Channel } from "./Channel.ts";
  * programming a fresh broadcast rundown with {@link BatchUpdateSchedule}.
  * The channel id is injected from the binding. Provide the implementation
  * with `Effect.provide(AWS.MediaLive.DeleteScheduleHttp)`.
- * @binding
- * @section Driving the Channel Schedule
- * @example Reset the Channel's Schedule
+ * ### Driving the Channel Schedule
+ * **Example:** Reset the Channel's Schedule
  * ```typescript
  * // init — bind the operation to the channel
  * const deleteSchedule = yield* AWS.MediaLive.DeleteSchedule(channel);
@@ -21,6 +20,8 @@ import type { Channel } from "./Channel.ts";
  * // runtime
  * yield* deleteSchedule();
  * ```
+ *
+ * @binding
  */
 export interface DeleteSchedule extends Binding.Service<
   DeleteSchedule,

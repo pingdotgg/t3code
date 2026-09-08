@@ -14,9 +14,8 @@ import type { Lexicon } from "./Lexicon.ts";
  * the point of use. Provide the implementation with
  * `Effect.provide(AWS.Polly.GetLexiconHttp)`.
  *
- * @binding
- * @section Managing Lexicons
- * @example Read a lexicon's content at runtime
+ * ### Managing Lexicons
+ * **Example:** Read a lexicon's content at runtime
  * ```typescript
  * // init
  * const getLexicon = yield* AWS.Polly.GetLexicon(lexicon);
@@ -31,6 +30,8 @@ import type { Lexicon } from "./Lexicon.ts";
  *       ? Redacted.value(content)
  *       : content;
  * ```
+ *
+ * @binding
  */
 export interface GetLexicon extends Binding.Service<
   GetLexicon,

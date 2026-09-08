@@ -50,20 +50,38 @@ event store — for anything that isn't OTLP.
 ## OTLP endpoints as outputs
 
 Each dataset exposes Axiom's OTLP/HTTP endpoints as output
-attributes, so wiring an exporter is a matter of passing outputs
-into your runtime's env:
+attributes, and alchemy runtimes have
+[telemetry built in](/infrastructure-as-effects/telemetry) — wiring
+an exporter is providing the `Axiom.Telemetry` binding layer on the
+Function/Worker:
 
 ```typescript
-yield* Cloudflare.Worker("api", {
-  vars: {
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: traces.otelTracesEndpoint,
-    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:   logs.otelLogsEndpoint,
-    // Bearer token must come from a secret store, not the dataset state.
-    OTEL_EXPORTER_OTLP_HEADERS:
-      `Authorization=Bearer ${env.AXIOM_TOKEN},X-Axiom-Dataset=${traces.name}`,
+// src/observability.ts — declared at module scope so the Worker can import them
+export const Traces = Axiom.Dataset("Traces", { name: "app-traces", kind: "otel:traces:v1" });
+export const Logs   = Axiom.Dataset("Logs",   { name: "app-logs",   kind: "otel:logs:v1"   });
+export const Ingest = Axiom.ApiToken("Ingest", {
+  name: "app-ingest",
+  datasetCapabilities: {
+    "app-traces": { ingest: ["create"] },
+    "app-logs":   { ingest: ["create"] },
   },
 });
+
+// src/worker.ts — on the Worker's init Effect, merged with its other binding layers:
+Effect.provide(
+  Layer.mergeAll(
+    Cloudflare.R2.ReadWriteBucketBinding,
+    Axiom.Telemetry({ token: Ingest, traces: Traces, logs: Logs }),
+  ),
+)
 ```
+
+Building the layer binds each dataset's endpoint and the ingest
+token's `Authorization` header (as a secret) onto the host; at
+runtime the built-in exporter ships each signal to its dataset,
+flushed per request. See the
+[end-to-end guide](/cloudflare/observability/axiom-observability)
+for the full pattern.
 
 - `otelTracesEndpoint` / `otelLogsEndpoint` / `otelMetricsEndpoint` —
   the per-signal OTLP/HTTP URLs.
@@ -154,7 +172,7 @@ tearing down a preview stage deletes its data with it. See
   zero-exporter Cloudflare push path.
 - [Alerting](/axiom/guides/alerting) — monitors and notifiers over
   the data you just ingested.
-- [Observability](/testing/observability) — the exporter-as-a-Layer
-  pattern and OTel across clouds.
+- [Telemetry](/infrastructure-as-effects/telemetry) — the built-in
+  OTel exporters and how they flush per request.
 - Reference: [Dataset](/providers/axiom/dataset) ·
   [ApiToken](/providers/axiom/apitoken)

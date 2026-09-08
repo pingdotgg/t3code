@@ -34,13 +34,13 @@ export interface Graph extends Resource<
  * resource is a capture-and-restore singleton: adopting a pre-existing graph
  * that Alchemy did not create requires `--adopt`.
  *
- * @section Enabling Detective
- * @example Enable a behavior graph
+ * ### Enabling Detective
+ * **Example:** Enable a behavior graph
  * ```typescript
  * const graph = yield* Detective.Graph("Graph", {});
  * ```
  *
- * @example Enable with tags
+ * **Example:** Enable with tags
  * ```typescript
  * const graph = yield* Detective.Graph("Graph", {
  *   tags: { team: "security" },

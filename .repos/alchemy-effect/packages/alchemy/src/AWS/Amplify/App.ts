@@ -104,9 +104,8 @@ export interface App extends Resource<
  * bindings. For a fully code-driven static/SSR site on AWS, prefer Alchemy's
  * own `Website` composites (S3 + CloudFront).
  *
- * @resource
- * @section Creating Amplify Apps
- * @example Basic App
+ * ### Creating Amplify Apps
+ * **Example:** Basic App
  * ```typescript
  * const app = yield* App("MyApp", {
  *   description: "Marketing site",
@@ -114,7 +113,7 @@ export interface App extends Resource<
  * });
  * ```
  *
- * @example App with Build Config and Redirects
+ * **Example:** App with Build Config and Redirects
  * ```typescript
  * const app = yield* App("MyApp", {
  *   platform: "WEB_COMPUTE",
@@ -126,8 +125,8 @@ export interface App extends Resource<
  * });
  * ```
  *
- * @section Deploying and Observing From a Function
- * @example Manual Deploy Pipeline (CreateDeployment + StartDeployment)
+ * ### Deploying and Observing From a Function
+ * **Example:** Manual Deploy Pipeline (CreateDeployment + StartDeployment)
  * ```typescript
  * // init — bind the deployment operations to the app
  * const createDeployment = yield* AWS.Amplify.CreateDeployment(app);
@@ -141,7 +140,7 @@ export interface App extends Resource<
  * yield* startDeployment({ branchName: "main", jobId });
  * ```
  *
- * @example React to Deployment Status Changes
+ * **Example:** React to Deployment Status Changes
  * ```typescript
  * yield* AWS.Amplify.consumeDeploymentStatusChanges(
  *   { jobStatus: ["FAILED"] },
@@ -151,6 +150,8 @@ export interface App extends Resource<
  *     ),
  * );
  * ```
+ *
+ * @resource
  */
 export const App = Resource<App>("AWS.Amplify.App");
 

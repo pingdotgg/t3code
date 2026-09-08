@@ -14,13 +14,14 @@ export interface GetEvidenceFoldersByAssessmentRequest extends Omit<
  *
  * Lists the evidence folders in the bound assessment. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.GetEvidenceFoldersByAssessmentHttp)`.
- * @binding
- * @section Reading Evidence
- * @example List the Assessment's Evidence Folders
+ * ### Reading Evidence
+ * **Example:** List the Assessment's Evidence Folders
  * ```typescript
  * const getEvidenceFoldersByAssessment = yield* AWS.AuditManager.GetEvidenceFoldersByAssessment(assessment);
  * const result = yield* getEvidenceFoldersByAssessment({ maxResults: 20 });
  * ```
+ *
+ * @binding
  */
 export interface GetEvidenceFoldersByAssessment extends Binding.Service<
   GetEvidenceFoldersByAssessment,

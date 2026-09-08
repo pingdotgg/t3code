@@ -75,16 +75,15 @@ export interface Stream extends Resource<
  * stream to become `ACTIVE` before returning. `deviceName` and `mediaType`
  * are updated in place; `dataRetention` converges via `UpdateDataRetention`;
  * changing `streamName` or `kmsKeyId` replaces the stream.
- * @resource
- * @section Creating Streams
- * @example Basic Video Stream
+ * ### Creating Streams
+ * **Example:** Basic Video Stream
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
  * const stream = yield* AWS.KinesisVideo.Stream("Camera");
  * ```
  *
- * @example Stream with Retention and Media Type
+ * **Example:** Stream with Retention and Media Type
  * ```typescript
  * const stream = yield* AWS.KinesisVideo.Stream("Camera", {
  *   mediaType: "video/h264",
@@ -93,12 +92,12 @@ export interface Stream extends Resource<
  * });
  * ```
  *
- * @section Reading Media
+ * ### Reading Media
  * Bind data-plane read operations in the init phase and use them in
  * runtime handlers. The bindings resolve the per-stream data endpoint
  * (`GetDataEndpoint`) automatically.
  *
- * @example HLS Playback URL
+ * **Example:** HLS Playback URL
  * ```typescript
  * // init
  * const getHls = yield* AWS.KinesisVideo.GetHLSStreamingSessionURL(stream);
@@ -107,7 +106,7 @@ export interface Stream extends Resource<
  * const { HLSStreamingSessionURL } = yield* getHls({ PlaybackMode: "LIVE" });
  * ```
  *
- * @example Raw Media
+ * **Example:** Raw Media
  * ```typescript
  * // init
  * const getMedia = yield* AWS.KinesisVideo.GetMedia(stream);
@@ -117,6 +116,8 @@ export interface Stream extends Resource<
  *   StartSelector: { StartSelectorType: "EARLIEST" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Stream = Resource<Stream>("AWS.KinesisVideo.Stream");
 
@@ -332,6 +333,10 @@ export const StreamProvider = () =>
           ).pipe(
             Effect.catchTag("ResourceNotFoundException", () => Effect.void),
           );
+          // DeleteStream is accepted immediately; the name stays reserved
+          // until the stream is fully purged. Wait it out so destroy (and
+          // the suite's out-of-band list) don't race a still-ACTIVE row.
+          yield* waitForStreamGone(output.streamName);
         }),
       });
     }),

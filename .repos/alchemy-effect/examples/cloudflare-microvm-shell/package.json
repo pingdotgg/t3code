@@ -1,0 +1,27 @@
+{
+  "name": "cloudflare-microvm-shell-example",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-microvm-shell"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@distilled.cloud/aws": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect"
+  },
+  "devDependencies": {
+    "typescript": "catalog:build"
+  }
+}

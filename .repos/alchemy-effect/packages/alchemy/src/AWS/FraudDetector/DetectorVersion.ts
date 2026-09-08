@@ -98,9 +98,8 @@ export interface DetectorVersion extends Resource<
  * `getEventPrediction`. Rules and the version are cheap, rule-based
  * configuration objects — no model training is involved.
  *
- * @resource
- * @section Creating a Detector Version
- * @example Active Version with One Rule
+ * ### Creating a Detector Version
+ * **Example:** Active Version with One Rule
  * ```typescript
  * const version = yield* FraudDetector.DetectorVersion("v1", {
  *   detectorId: detector.detectorId,
@@ -115,6 +114,8 @@ export interface DetectorVersion extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const DetectorVersion = Resource<DetectorVersion>(
   "AWS.FraudDetector.DetectorVersion",

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.GetSecurityControlDefinitionHttp)`.
- * @binding
- * @section Standards & Controls
- * @example Read a Control Definition
+ * ### Standards & Controls
+ * **Example:** Read a Control Definition
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getSecurityControlDefinition = yield* AWS.SecurityHub.GetSecurityControlDefinition();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   SecurityControlId: "IAM.1",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetSecurityControlDefinition extends Binding.Service<
   GetSecurityControlDefinition,

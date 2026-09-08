@@ -11,9 +11,8 @@ import type { Certificate } from "./Certificate.ts";
  * PEM-encoded). The certificate must be issued — a certificate that is still
  * pending validation fails with the typed `RequestInProgressException`.
  * Provide the implementation with `Effect.provide(AWS.ACM.GetCertificateHttp)`.
- * @binding
- * @section Reading Certificates
- * @example Fetch the PEM Certificate Chain
+ * ### Reading Certificates
+ * **Example:** Fetch the PEM Certificate Chain
  * ```typescript
  * // init — bind the operation to the certificate
  * const getCertificate = yield* AWS.ACM.GetCertificate(certificate);
@@ -24,7 +23,7 @@ import type { Certificate } from "./Certificate.ts";
  * const chain = result.CertificateChain;
  * ```
  *
- * @example Handle a Certificate That Is Not Issued Yet
+ * **Example:** Handle a Certificate That Is Not Issued Yet
  * ```typescript
  * const pem = yield* getCertificate().pipe(
  *   Effect.map((result) => result.Certificate),
@@ -33,6 +32,8 @@ import type { Certificate } from "./Certificate.ts";
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetCertificate extends Binding.Service<
   GetCertificate,

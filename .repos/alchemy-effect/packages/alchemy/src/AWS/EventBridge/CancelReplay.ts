@@ -11,9 +11,8 @@ export interface CancelReplayRequest extends eventbridge.CancelReplayRequest {}
  * with `StartReplay`. Cancelling a replay that already completed fails with
  * the typed `IllegalStatusException`. Provide the `CancelReplayHttp` layer
  * on the Function to satisfy the binding.
- * @binding
- * @section Replaying Events
- * @example Cancel a Running Replay
+ * ### Replaying Events
+ * **Example:** Cancel a Running Replay
  * ```typescript
  * // init — bind the operation (provide AWS.EventBridge.CancelReplayHttp on the Function)
  * const cancelReplay = yield* AWS.EventBridge.CancelReplay();
@@ -21,6 +20,8 @@ export interface CancelReplayRequest extends eventbridge.CancelReplayRequest {}
  * // runtime — abort the replay
  * yield* cancelReplay({ ReplayName: "backfill-2026-07-14" });
  * ```
+ *
+ * @binding
  */
 export interface CancelReplay extends Binding.Service<
   CancelReplay,

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:DeleteMedicalVocabulary` on `*`.
  *
- * @binding
- * @section Medical Vocabularies
- * @example Delete a Medical Vocabulary
+ * ### Medical Vocabularies
+ * **Example:** Delete a Medical Vocabulary
  * ```typescript
  * // init
  * const deleteMedicalVocabulary = yield* AWS.Transcribe.DeleteMedicalVocabulary();
@@ -18,6 +17,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteMedicalVocabulary({ VocabularyName: "clinic-vocabulary" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteMedicalVocabulary extends Binding.Service<
   DeleteMedicalVocabulary,

@@ -15,9 +15,8 @@ export interface GetParameterRequest extends Omit<
  * callable that automatically injects the parameter name. For `SecureString`
  * parameters the binding also grants `kms:Decrypt` on the parameter's
  * encryption key so `WithDecryption: true` works out of the box.
- * @binding
- * @section Reading a Parameter
- * @example Read a String Parameter
+ * ### Reading a Parameter
+ * **Example:** Read a String Parameter
  * ```typescript
  * const getParameter = yield* SSM.GetParameter(config);
  *
@@ -25,12 +24,14 @@ export interface GetParameterRequest extends Omit<
  * const value = result.Parameter?.Value;
  * ```
  *
- * @example Read a SecureString Parameter with Decryption
+ * **Example:** Read a SecureString Parameter with Decryption
  * ```typescript
  * const getSecret = yield* SSM.GetParameter(apiKey);
  *
  * const result = yield* getSecret({ WithDecryption: true });
  * ```
+ *
+ * @binding
  */
 export interface GetParameter extends Binding.Service<
   GetParameter,

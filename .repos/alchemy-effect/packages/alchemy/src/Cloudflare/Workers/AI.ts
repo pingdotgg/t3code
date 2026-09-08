@@ -43,12 +43,9 @@ export class WorkersAIError extends Data.TaggedError("WorkersAIError")<{
  * routed through an AI Gateway (caching, rate limiting, logs); use `AI` when
  * you just want to call Workers AI models.
  *
- * @binding
- * @product Workers AI
- * @category AI
  *
- * @section Effect-style Worker (recommended)
- * @example Run a Workers AI model
+ * ### Effect-style Worker (recommended)
+ * **Example:** Run a Workers AI model
  * ```typescript
  * Cloudflare.Worker("AiWorker", { main: import.meta.url },
  *   Effect.gen(function* () {
@@ -65,8 +62,8 @@ export class WorkersAIError extends Data.TaggedError("WorkersAIError")<{
  * );
  * ```
  *
- * @section Effect AI LanguageModel
- * @example `ai.model(...)` -> Effect AI `LanguageModel`
+ * ### Effect AI LanguageModel
+ * **Example:** `ai.model(...)` -> Effect AI `LanguageModel`
  * `model(options)` produces a `Layer<LanguageModel, never, RuntimeContext>`
  * that translates `LanguageModel.generateText` / `streamText` calls
  * (including tool calls) into `ai.run(...)` against the bound Workers AI
@@ -85,8 +82,8 @@ export class WorkersAIError extends Data.TaggedError("WorkersAIError")<{
  * );
  * ```
  *
- * @section Binding to an Async Worker
- * @example
+ * ### Binding to an Async Worker
+ * **Example:** Example
  * ```typescript
  * export const Worker = Cloudflare.Worker("Worker", {
  *   main: "./src/worker.ts",
@@ -98,6 +95,10 @@ export class WorkersAIError extends Data.TaggedError("WorkersAIError")<{
  * ```
  *
  * @see https://developers.cloudflare.com/workers-ai/
+ *
+ * @binding
+ * @product Workers AI
+ * @category AI
  */
 export interface AI extends Binding.Service<AI, TypeId, AIClient> {
   /**

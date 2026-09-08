@@ -1,0 +1,63 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "cacheDir": ".turbo/cache",
+  "globalDependencies": [
+    "bun.lock",
+    "tsconfig.base.json",
+    "tsconfig.cloudflare.json"
+  ],
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        "dist/**",
+        "**/dist/**",
+        "lib/**",
+        "**/lib/**",
+        "bin/**",
+        "**/bin/**",
+        ".cache/**/*.tsbuildinfo",
+        "**/.cache/**/*.tsbuildinfo"
+      ]
+    },
+    "dev": {
+      "persistent": true,
+      "cache": false
+    },
+    "format": {
+      "cache": false
+    },
+    "lint": {
+      "cache": false
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": [".cache/**/*.tsbuildinfo", "**/.cache/**/*.tsbuildinfo"]
+    },
+    "@alchemy.run/cloudflare-runtime#typecheck": {
+      "dependsOn": ["build", "^build"],
+      "outputs": [".cache/**/*.tsbuildinfo", "**/.cache/**/*.tsbuildinfo"]
+    },
+    "@alchemy.run/frontend-frameworks#typecheck": {
+      "dependsOn": ["build", "^build"],
+      "outputs": [".cache/**/*.tsbuildinfo", "**/.cache/**/*.tsbuildinfo"]
+    },
+    "@alchemy.run/cloudflare-test-tools#typecheck": {
+      "dependsOn": ["build", "^build"],
+      "outputs": [".cache/**/*.tsbuildinfo", "**/.cache/**/*.tsbuildinfo"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "env": ["TEST_MYSQL_URL", "TEST_POSTGRES_URL"],
+      "cache": false,
+      "outputs": []
+    },
+    "@alchemy.run/cloudflare-runtime#test": {
+      "dependsOn": ["build", "^build"],
+      "env": ["TEST_MYSQL_URL", "TEST_POSTGRES_URL"],
+      "cache": false,
+      "outputs": []
+    }
+  }
+}

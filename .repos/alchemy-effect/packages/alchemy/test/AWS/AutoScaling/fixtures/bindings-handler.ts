@@ -23,7 +23,9 @@ import {
   TerminateInstanceInAutoScalingGroupHttp,
 } from "@/AWS/AutoScaling";
 import { amazonLinux2023 } from "@/AWS/EC2";
+import * as Output from "@/Output";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -43,9 +45,9 @@ export class AsgBindingsFunction extends AWS.Lambda.Function<AWS.Lambda.Function
 
 /**
  * Shared fleet for the bindings E2E: a launch template + Auto Scaling Group
- * sized to zero (no instances launch). Subnet/AMI are resolved only at deploy
- * time — at runtime the ASG resolves to a reference, so the lookups are
- * guarded off inside the deployed Lambda.
+ * sized to zero (no instances launch). Subnet/AMI are `Output`s resolved at
+ * deploy time only, so this composition is safe to re-execute inside the
+ * deployed Lambda without runtime guards.
  */
 export class BindingsFleet extends Context.Service<
   BindingsFleet,
@@ -55,13 +57,10 @@ export class BindingsFleet extends Context.Service<
 export const BindingsFleetLive = Layer.effect(
   BindingsFleet,
   Effect.gen(function* () {
-    const isDeploy = !globalThis.__ALCHEMY_RUNTIME__;
-    const imageId = isDeploy
-      ? ((yield* amazonLinux2023()) ?? "ami-00000000000000000")
-      : "ami-00000000000000000";
-    const subnetId = isDeploy
-      ? yield* getAutoScalingTestSubnetId.pipe(Effect.orDie)
-      : ("subnet-0" as `subnet-${string}`);
+    const imageId = amazonLinux2023();
+    const subnetId = Output.fromEffect(
+      getAutoScalingTestSubnetId.pipe(Effect.orDie),
+    );
 
     const template = yield* LaunchTemplate("BindingsTemplate", {
       imageId,
@@ -82,7 +81,12 @@ export const BindingsFleetLive = Layer.effect(
 export default AsgBindingsFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
+    // The AWS defaults (128 MB / 3s) are too tight for the AutoScaling
+    // client: cold routes time out at exactly 3s (the function URL turns
+    // that into a 502) with memory pegged at 127/128 MB.
+    timeout: Duration.seconds(30),
+    memorySize: 512,
   },
   Effect.gen(function* () {
     const { group } = yield* BindingsFleet;

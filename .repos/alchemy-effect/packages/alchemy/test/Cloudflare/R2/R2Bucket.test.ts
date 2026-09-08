@@ -21,6 +21,7 @@ test.provider(
       const bucket = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* Cloudflare.R2.Bucket("ListResource", {
+            forceDestroy: true,
             name: "alchemy-r2bucket-list-test",
           });
         }),

@@ -29,7 +29,7 @@ export class LicenseManagerSellerFunction extends Lambda.Function<Lambda.Functio
 export default LicenseManagerSellerFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
   },
   Effect.gen(function* () {

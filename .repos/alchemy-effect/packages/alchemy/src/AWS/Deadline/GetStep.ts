@@ -10,9 +10,8 @@ import type { Queue } from "./Queue.ts";
  * status, task run status counts, dependency counts, parameter space. The
  * queue's `farmId`/`queueId` are injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.Deadline.GetStepHttp)`.
- * @binding
- * @section Monitoring Steps
- * @example Inspect A Step
+ * ### Monitoring Steps
+ * **Example:** Inspect A Step
  * ```typescript
  * // init — bind the operation to the queue
  * const getStep = yield* AWS.Deadline.GetStep(queue);
@@ -20,6 +19,8 @@ import type { Queue } from "./Queue.ts";
  * // runtime
  * const step = yield* getStep({ jobId, stepId });
  * ```
+ *
+ * @binding
  */
 export interface GetStep extends Binding.Service<
   GetStep,

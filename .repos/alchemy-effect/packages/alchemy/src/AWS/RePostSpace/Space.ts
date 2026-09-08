@@ -1,6 +1,7 @@
 import * as repostspace from "@distilled.cloud/aws/repostspace";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -168,9 +169,8 @@ export interface Space extends Resource<
  * AWS IAM Identity Center to be enabled in the account. Space provisioning
  * is asynchronous and can take tens of minutes; the provider waits for the
  * space to reach `CREATE_COMPLETED` before returning.
- * @resource
- * @section Creating a Space
- * @example Basic Space
+ * ### Creating a Space
+ * **Example:** Basic Space
  * ```typescript
  * import * as RePostSpace from "alchemy/AWS/RePostSpace";
  *
@@ -180,7 +180,7 @@ export interface Space extends Resource<
  * });
  * ```
  *
- * @example Space with Description and Tags
+ * **Example:** Space with Description and Tags
  * ```typescript
  * const space = yield* RePostSpace.Space("Engineering", {
  *   name: "Engineering Knowledge Base",
@@ -191,14 +191,16 @@ export interface Space extends Resource<
  * });
  * ```
  *
- * @section Encryption
- * @example Space with a Customer-Managed KMS Key
+ * ### Encryption
+ * **Example:** Space with a Customer-Managed KMS Key
  * ```typescript
  * const space = yield* RePostSpace.Space("Secure", {
  *   subdomain: "my-org-secure",
  *   userKMSKey: key.keyArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Space = Resource<Space>("AWS.RePostSpace.Space");
 
@@ -366,9 +368,7 @@ export const SpaceProvider = () =>
                 ),
               { concurrency: 4 },
             );
-            return items.filter(
-              (item): item is Space["Attributes"] => item !== undefined,
-            );
+            return items.filter(Predicate.isNotUndefined);
           }),
 
         read: Effect.fn(function* ({ id, olds, output }) {

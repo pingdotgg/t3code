@@ -1,12 +1,28 @@
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { KV } from "./KV.ts";
 import NotifyWorkflow from "./NotifyWorkflow.ts";
 import SandboxDO from "./SandboxDO.ts";
+
+/**
+ * Analytics Engine dataset — a plain binding value, not a cloud resource.
+ * In local dev `writeDataPoint` is accepted and discarded (Miniflare
+ * parity); on a live deploy the points land in the real dataset.
+ */
+export const Events = Cloudflare.AnalyticsEngine.Dataset("Events", {
+  dataset: "cloudflare_dev_events",
+});
+
+/**
+ * Checked-in HMAC key material for the `secret_key` binding (32 bytes,
+ * base64) — never generate key material at deploy time.
+ */
+const HMAC_KEY_BASE64 = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
 interface AddInstance {
   exports: {
@@ -33,12 +49,31 @@ export default class EffectWorker extends Cloudflare.Worker<EffectWorker>()(
     },
   },
   Effect.gen(function* () {
+    const publicUrl = yield* Cloudflare.Worker.URL;
     const kv = yield* Cloudflare.KV.ReadWriteNamespace(KV);
     const queue = yield* Cloudflare.Queues.Queue("EffectWorkerQueue");
     const queueBinding = yield* Cloudflare.Queues.WriteQueue(queue);
     const sandbox = yield* SandboxDO;
     const queueMessages = yield* QueueMessages;
     const workflow = yield* NotifyWorkflow;
+    const cronFires = yield* CronFires;
+    const analytics = yield* Cloudflare.AnalyticsEngine.WriteDataset(Events);
+    // `secret_key` binding: workerd imports the key material as a
+    // non-extractable CryptoKey. The accessor is deferred — `yield*` it
+    // again inside the handler to get the CryptoKey.
+    const hmacKey = yield* Cloudflare.Workers.SecretKey("HMAC_KEY", {
+      format: "raw",
+      algorithm: { name: "HMAC", hash: "SHA-256" },
+      usages: ["sign", "verify"],
+      keyBase64: Redacted.make(HMAC_KEY_BASE64),
+    });
+
+    // Cron trigger: registered at init; locally you can fire it on demand
+    // via `POST /cdn-cgi/handler/scheduled?cron=* * * * *&time=<ms>` instead
+    // of waiting for the minute boundary.
+    yield* Cloudflare.Workers.cron("* * * * *", (controller) =>
+      cronFires.getByName("default").record(controller.scheduledTime),
+    );
 
     yield* Cloudflare.Queues.consumeQueueMessages<Message["body"]>(
       queue,
@@ -100,6 +135,42 @@ export default class EffectWorker extends Cloudflare.Worker<EffectWorker>()(
         } else if (url.pathname.startsWith("/queue/messages")) {
           const messages = yield* queueMessages.getByName("global").list();
           return yield* HttpServerResponse.json(messages);
+        } else if (url.pathname.startsWith("/url")) {
+          return yield* HttpServerResponse.json({ url: yield* publicUrl });
+        } else if (url.pathname.startsWith("/cron/times")) {
+          const snapshot = yield* cronFires.getByName("default").snapshot();
+          return yield* HttpServerResponse.json(snapshot);
+        } else if (url.pathname.startsWith("/secret-key")) {
+          const key = yield* hmacKey;
+          const data = new TextEncoder().encode(
+            url.searchParams.get("message") ?? "hello",
+          );
+          const signature = yield* Effect.promise(() =>
+            crypto.subtle.sign("HMAC", key, data),
+          );
+          const verified = yield* Effect.promise(() =>
+            crypto.subtle.verify("HMAC", key, signature, data),
+          );
+          return yield* HttpServerResponse.json({
+            verified,
+            algorithm: key.algorithm.name,
+            // Bound keys are never extractable — local lowering matches.
+            extractable: key.extractable,
+            signatureBase64: btoa(
+              String.fromCharCode(...new Uint8Array(signature)),
+            ),
+          });
+        } else if (url.pathname.startsWith("/analytics")) {
+          // A documented no-op in local dev — the write succeeding (not
+          // throwing) is the observable behavior.
+          yield* analytics
+            .writeDataPoint({
+              indexes: ["example"],
+              blobs: ["visit"],
+              doubles: [1],
+            })
+            .pipe(Effect.orDie);
+          return yield* HttpServerResponse.json({ ok: true });
         }
         const value = yield* kv.list().pipe(Effect.orDie);
         return yield* HttpServerResponse.json(value);
@@ -110,7 +181,32 @@ export default class EffectWorker extends Cloudflare.Worker<EffectWorker>()(
       Cloudflare.KV.ReadWriteNamespaceBinding,
       Cloudflare.Queues.WriteQueueBinding,
       Cloudflare.Queues.EventSourceLive,
+      Cloudflare.Workers.CronEventSourceLive,
+      Cloudflare.Workers.SecretKeyBinding,
+      Cloudflare.AnalyticsEngine.WriteDatasetBinding,
     ]),
+  ),
+) {}
+
+/**
+ * Records each `scheduledTime` the cron handler observes; the integ test
+ * fires the trigger route and polls `GET /cron/times` until it shows up.
+ */
+export class CronFires extends Cloudflare.DurableObject<CronFires>()(
+  "CronFires",
+  Effect.succeed(
+    Effect.gen(function* () {
+      const state = yield* Cloudflare.DurableObjectState;
+      return {
+        record: Effect.fn(function* (time: number) {
+          const times = (yield* state.storage.get<number[]>("times")) ?? [];
+          yield* state.storage.put("times", [...times, time]);
+        }),
+        snapshot: Effect.fn(function* () {
+          return { times: (yield* state.storage.get<number[]>("times")) ?? [] };
+        }),
+      };
+    }),
   ),
 ) {}
 

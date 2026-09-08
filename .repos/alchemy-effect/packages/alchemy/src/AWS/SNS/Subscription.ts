@@ -63,9 +63,8 @@ export interface Subscription extends Resource<
  * `Subscription` keeps the lifecycle of the subscription itself separate from the
  * topic, which lets Lambda event sources and manually managed subscriptions share
  * the same canonical resource model.
- * @resource
- * @section Creating Subscriptions
- * @example Lambda Subscription
+ * ### Creating Subscriptions
+ * **Example:** Lambda Subscription
  * ```typescript
  * const subscription = yield* Subscription("TopicSubscription", {
  *   topicArn: topic.topicArn,
@@ -74,7 +73,7 @@ export interface Subscription extends Resource<
  * });
  * ```
  *
- * @example Fan Out a Topic to an SQS Queue
+ * **Example:** Fan Out a Topic to an SQS Queue
  * ```typescript
  * const topic = yield* SNS.Topic("Events");
  * const queue = yield* SQS.Queue("Notifications");
@@ -87,7 +86,7 @@ export interface Subscription extends Resource<
  * });
  * ```
  *
- * @example Filtered Subscription
+ * **Example:** Filtered Subscription
  * ```typescript
  * const subscription = yield* Subscription("OrderSubscription", {
  *   topicArn: topic.topicArn,
@@ -98,6 +97,8 @@ export interface Subscription extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Subscription = Resource<Subscription>("AWS.SNS.Subscription");
 

@@ -9,9 +9,8 @@ import type { MatchingWorkflow } from "./MatchingWorkflow.ts";
  * Reads the status, metrics, and errors of a matching job run of the bound
  * workflow. Provide the implementation with
  * `Effect.provide(AWS.EntityResolution.GetMatchingJobHttp)`.
- * @binding
- * @section Running Matching Jobs
- * @example Poll a Job's Status
+ * ### Running Matching Jobs
+ * **Example:** Poll a Job's Status
  * ```typescript
  * // init — bind the operation to the workflow
  * const getMatchingJob = yield* AWS.EntityResolution.GetMatchingJob(workflow);
@@ -20,6 +19,8 @@ import type { MatchingWorkflow } from "./MatchingWorkflow.ts";
  * const job = yield* getMatchingJob({ jobId });
  * console.log(job.status, job.metrics?.matchIDs);
  * ```
+ *
+ * @binding
  */
 export interface GetMatchingJob extends Binding.Service<
   GetMatchingJob,

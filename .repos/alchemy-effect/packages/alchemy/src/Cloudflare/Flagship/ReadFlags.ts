@@ -13,7 +13,7 @@ import type { App } from "./App.ts";
  * Context tag, its type, and the callable —
  * `yield* Cloudflare.Flagship.ReadFlags(app)`.
  *
- * @example Evaluating a flag inside a Worker
+ * **Example:** Evaluating a flag inside a Worker
  * ```typescript
  * const flags = yield* Cloudflare.Flagship.ReadFlags(MyApp);
  * const enabled = yield* flags.getBooleanValue("new-checkout", false);

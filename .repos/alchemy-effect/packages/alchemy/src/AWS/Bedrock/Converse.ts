@@ -35,9 +35,8 @@ export interface ConverseRequest extends Omit<
  * `AccessDeniedException`. Many newer models are only invocable through a
  * cross-region inference profile id, not their bare foundation-model id.
  *
- * @binding
- * @section Conversing with a Model
- * @example Send a Single Prompt
+ * ### Conversing with a Model
+ * **Example:** Send a Single Prompt
  * ```typescript
  * // init
  * const converse = yield* Bedrock.Converse("us.amazon.nova-micro-v1:0");
@@ -50,7 +49,7 @@ export interface ConverseRequest extends Omit<
  * const text = result.output.message.content[0]?.text;
  * ```
  *
- * @example Bind Multiple Models and Pick Per Call
+ * **Example:** Bind Multiple Models and Pick Per Call
  * ```typescript
  * const converse = yield* Bedrock.Converse(
  *   "us.amazon.nova-micro-v1:0",
@@ -63,7 +62,7 @@ export interface ConverseRequest extends Omit<
  * });
  * ```
  *
- * @example System Prompt and Inference Config
+ * **Example:** System Prompt and Inference Config
  * ```typescript
  * const result = yield* converse({
  *   system: [{ text: "You answer in exactly one word." }],
@@ -71,6 +70,8 @@ export interface ConverseRequest extends Omit<
  *   inferenceConfig: { maxTokens: 16, temperature: 0 },
  * });
  * ```
+ *
+ * @binding
  */
 export interface Converse extends Binding.Service<
   Converse,

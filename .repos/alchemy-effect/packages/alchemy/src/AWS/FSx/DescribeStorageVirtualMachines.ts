@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * SVM's endpoints before opening an iSCSI/NFS session. Provide the
  * implementation with
  * `Effect.provide(AWS.FSx.DescribeStorageVirtualMachinesHttp)`.
- * @binding
- * @section Inspecting File Systems
- * @example List a file system's SVMs
+ * ### Inspecting File Systems
+ * **Example:** List a file system's SVMs
  * ```typescript
  * const describeStorageVirtualMachines =
  *   yield* AWS.FSx.DescribeStorageVirtualMachines();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *   `${response.StorageVirtualMachines?.length ?? 0} SVMs`,
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeStorageVirtualMachines extends Binding.Service<
   DescribeStorageVirtualMachines,

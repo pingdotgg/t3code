@@ -14,9 +14,8 @@ export interface GetTimeSeriesServiceStatisticsRequest
  * provide the implementation with `Effect.provide(XRay.GetTimeSeriesServiceStatisticsHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetTimeSeriesServiceStatistics`, so the binding grants it on `*`.
- * @binding
- * @section Service Graphs & Statistics
- * @example Time-series statistics for one service
+ * ### Service Graphs & Statistics
+ * **Example:** Time-series statistics for one service
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -34,6 +33,8 @@ export interface GetTimeSeriesServiceStatisticsRequest
  * });
  * const points = stats.TimeSeriesServiceStatistics ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetTimeSeriesServiceStatistics extends Binding.Service<
   GetTimeSeriesServiceStatistics,

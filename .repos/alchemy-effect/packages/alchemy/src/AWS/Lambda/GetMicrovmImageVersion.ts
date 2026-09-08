@@ -13,8 +13,9 @@ export interface GetMicrovmImageVersionRequest extends Omit<
  *
  * Bind it to a {@link MicrovmImage} to read the configuration and state of a
  * specific image version (the `imageIdentifier` is injected).
+ * ### Image Reads
+ *
  * @binding
- * @section Image Reads
  */
 export interface GetMicrovmImageVersion extends Binding.Service<
   GetMicrovmImageVersion,

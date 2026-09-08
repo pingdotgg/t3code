@@ -195,9 +195,8 @@ export interface Canary extends Resource<
  * chosen runtime. Unless you pass `executionRoleArn`, an IAM execution role
  * is created with least-privilege access to the artifact bucket, CloudWatch
  * Logs, and Synthetics metrics.
- * @resource
- * @section Creating Canaries
- * @example Heartbeat Canary (created stopped)
+ * ### Creating Canaries
+ * **Example:** Heartbeat Canary (created stopped)
  * ```typescript
  * import * as Synthetics from "alchemy/AWS/Synthetics";
  *
@@ -212,7 +211,7 @@ export interface Canary extends Resource<
  * });
  * ```
  *
- * @example Started Canary on a Schedule
+ * **Example:** Started Canary on a Schedule
  * ```typescript
  * const canary = yield* Synthetics.Canary("ApiMonitor", {
  *   script: myCanaryScript,
@@ -222,8 +221,8 @@ export interface Canary extends Resource<
  * });
  * ```
  *
- * @section Configuration
- * @example Custom Runtime, Timeout and Environment
+ * ### Configuration
+ * **Example:** Custom Runtime, Timeout and Environment
  * ```typescript
  * const canary = yield* Synthetics.Canary("Checkout", {
  *   script: checkoutScript,
@@ -238,7 +237,7 @@ export interface Canary extends Resource<
  * });
  * ```
  *
- * @example Bring Your Own Execution Role
+ * **Example:** Bring Your Own Execution Role
  * ```typescript
  * const canary = yield* Synthetics.Canary("Probe", {
  *   script: probeScript,
@@ -246,6 +245,8 @@ export interface Canary extends Resource<
  *   executionRoleArn: role.roleArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Canary = Resource<Canary>("AWS.Synthetics.Canary");
 

@@ -83,9 +83,8 @@ export interface PodIdentityAssociation extends Resource<
  *
  * `PodIdentityAssociation` is the canonical workload-identity resource for EKS
  * clusters that use EKS Pod Identity instead of IRSA.
- * @resource
- * @section Managing Pod Identity
- * @example Bind a Service Account to a Role
+ * ### Managing Pod Identity
+ * **Example:** Bind a Service Account to a Role
  * ```typescript
  * const association = yield* PodIdentityAssociation("ApiIdentity", {
  *   clusterName: cluster.clusterName,
@@ -94,6 +93,8 @@ export interface PodIdentityAssociation extends Resource<
  *   roleArn: podRole.roleArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const PodIdentityAssociation = Resource<PodIdentityAssociation>(
   "AWS.EKS.PodIdentityAssociation",

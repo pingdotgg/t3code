@@ -116,7 +116,7 @@ export const makeWriteR2HttpClient = (
                   cfR2Jurisdiction,
                   body: keys,
                 }),
-              )
+              ).pipe(Effect.asVoid, Effect.mapError(toR2Error))
             : authorize(
                 r2.deleteObject({
                   accountId,
@@ -124,10 +124,15 @@ export const makeWriteR2HttpClient = (
                   objectName: keys,
                   cfR2Jurisdiction,
                 }),
+              ).pipe(
+                Effect.asVoid,
+                // The native binding's `delete` is idempotent — deleting a
+                // key that isn't there resolves. Keep the HTTP client at
+                // parity instead of surfacing R2's `NoSuchKey`.
+                Effect.catchTag("NoSuchKey", () => Effect.void),
+                Effect.mapError(toR2Error),
               ),
         ),
-        Effect.mapError(toR2Error),
-        Effect.asVoid,
       ),
     createMultipartUpload: () =>
       Effect.die(

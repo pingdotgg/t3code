@@ -20,9 +20,8 @@ export interface PutGroupRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.PutGroupHttp)`.
  *
- * @binding
- * @section Principal Mapping
- * @example Map a Group's Members
+ * ### Principal Mapping
+ * **Example:** Map a Group's Members
  * ```typescript
  * const putGroup = yield* AWS.QBusiness.PutGroup(index);
  *
@@ -34,6 +33,8 @@ export interface PutGroupRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutGroup extends Binding.Service<
   PutGroup,

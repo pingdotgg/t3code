@@ -14,9 +14,8 @@ import * as Binding from "../../Binding.ts";
  * response's `error` field. Provide `AppSync.EvaluateMappingTemplateHttp`
  * on the hosting function's Effect to implement the binding.
  *
- * @binding
- * @section Evaluating Mapping Templates
- * @example Render a VTL template against a mock context
+ * ### Evaluating Mapping Templates
+ * **Example:** Render a VTL template against a mock context
  * ```typescript
  * // init — account-level binding takes no resource
  * const evaluateTemplate = yield* AppSync.EvaluateMappingTemplate();
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // JSON.parse(result.evaluationResult!) → { sum: 5 }
  * ```
+ *
+ * @binding
  */
 export interface EvaluateMappingTemplate extends Binding.Service<
   EvaluateMappingTemplate,

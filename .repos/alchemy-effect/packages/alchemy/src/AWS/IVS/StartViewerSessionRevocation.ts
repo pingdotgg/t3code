@@ -17,9 +17,8 @@ export interface StartViewerSessionRevocationRequest extends Omit<
  * every session at or below a token version. The channel ARN is injected
  * from the binding. Provide the implementation with
  * `Effect.provide(AWS.IVS.StartViewerSessionRevocationHttp)`.
- * @binding
- * @section Revoking Viewer Sessions
- * @example Eject a Banned Viewer
+ * ### Revoking Viewer Sessions
+ * **Example:** Eject a Banned Viewer
  * ```typescript
  * // init — bind the operation to the channel
  * const revokeViewerSession = yield* AWS.IVS.StartViewerSessionRevocation(channel);
@@ -27,6 +26,8 @@ export interface StartViewerSessionRevocationRequest extends Omit<
  * // runtime
  * yield* revokeViewerSession({ viewerId: "user-123" });
  * ```
+ *
+ * @binding
  */
 export interface StartViewerSessionRevocation extends Binding.Service<
   StartViewerSessionRevocation,

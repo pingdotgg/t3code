@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * automated retention window — e.g. an archival job that preserves the
  * nightly snapshot before a risky migration. Provide the implementation with
  * `Effect.provide(AWS.Redshift.CopyClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Preserve an Automated Snapshot
+ * ### Managing Snapshots
+ * **Example:** Preserve an Automated Snapshot
  * ```typescript
  * const copyClusterSnapshot = yield* AWS.Redshift.CopyClusterSnapshot();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   TargetSnapshotIdentifier: `archive-${runId}`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CopyClusterSnapshot extends Binding.Service<
   CopyClusterSnapshot,

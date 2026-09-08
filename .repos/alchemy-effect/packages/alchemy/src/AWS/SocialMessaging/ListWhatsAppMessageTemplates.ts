@@ -23,9 +23,8 @@ export interface ListWhatsAppMessageTemplatesRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.ListWhatsAppMessageTemplatesHttp)`.
- * @binding
- * @section Managing Message Templates
- * @example List Templates
+ * ### Managing Message Templates
+ * **Example:** List Templates
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const listTemplates = yield* AWS.SocialMessaging.ListWhatsAppMessageTemplates(account);
@@ -33,6 +32,8 @@ export interface ListWhatsAppMessageTemplatesRequest extends Omit<
  * // runtime
  * const { templates } = yield* listTemplates({ maxResults: 25 });
  * ```
+ *
+ * @binding
  */
 export interface ListWhatsAppMessageTemplates extends Binding.Service<
   ListWhatsAppMessageTemplates,

@@ -18,15 +18,16 @@ export interface DescribeCustomDomainsRequest extends Omit<
  * Provide `AppRunner.DescribeCustomDomainsHttp` on the hosting function's
  * Effect to implement the binding.
  *
- * @binding
- * @section Custom Domains
- * @example Check a domain's validation status
+ * ### Custom Domains
+ * **Example:** Check a domain's validation status
  * ```typescript
  * const describeCustomDomains = yield* AppRunner.DescribeCustomDomains(service);
  * const { CustomDomains, DNSTarget } = yield* describeCustomDomains();
  * const domain = CustomDomains.find((d) => d.DomainName === "app.customer.com");
  * // domain?.Status -> "pending_certificate_dns_validation" | "active" | ...
  * ```
+ *
+ * @binding
  */
 export interface DescribeCustomDomains extends Binding.Service<
   DescribeCustomDomains,

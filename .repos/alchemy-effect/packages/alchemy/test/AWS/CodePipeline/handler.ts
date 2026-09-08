@@ -48,7 +48,7 @@ const errorTagged = <A, E extends { _tag: string; message?: string }, R>(
 export default CodePipelineTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Pipeline state reads fan out SDK calls — AWS's 3s default
     // intermittently times out under cold starts.
     timeout: Duration.seconds(30),

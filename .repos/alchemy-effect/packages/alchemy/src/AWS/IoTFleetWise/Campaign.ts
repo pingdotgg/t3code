@@ -309,9 +309,8 @@ export interface Campaign extends Resource<
  * Only the description and extra dimensions are mutable — every other
  * change replaces the campaign. AWS IoT FleetWise is allowlist-gated and
  * offered in `us-east-1`/`eu-central-1` only.
- * @resource
- * @section Creating a Campaign
- * @example Time-Based Collection to S3
+ * ### Creating a Campaign
+ * **Example:** Time-Based Collection to S3
  * ```typescript
  * const campaign = yield* Campaign("SpeedTelemetry", {
  *   signalCatalogArn: catalog.signalCatalogArn,
@@ -327,7 +326,7 @@ export interface Campaign extends Resource<
  * });
  * ```
  *
- * @example Condition-Based Collection
+ * **Example:** Condition-Based Collection
  * ```typescript
  * const campaign = yield* Campaign("HardBraking", {
  *   signalCatalogArn: catalog.signalCatalogArn,
@@ -348,6 +347,8 @@ export interface Campaign extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const Campaign = Resource<Campaign>("AWS.IoTFleetWise.Campaign");
 

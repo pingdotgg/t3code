@@ -14,9 +14,8 @@ export interface GetSavingsPlanPurchaseRecommendationDetailsRequest
  * Retrieve the hourly data points behind one Savings Plans
  * recommendation — the cost, coverage, and utilization charts. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetSavingsPlanPurchaseRecommendationDetailsHttp)`.
- * @binding
- * @section Savings Plans
- * @example Read One Recommendation's Details
+ * ### Savings Plans
+ * **Example:** Read One Recommendation's Details
  * ```typescript
  * // init — account-level binding takes no resource
  * const getSavingsPlanPurchaseRecommendationDetails = yield* AWS.CostExplorer.GetSavingsPlanPurchaseRecommendationDetails();
@@ -26,6 +25,8 @@ export interface GetSavingsPlanPurchaseRecommendationDetailsRequest
  *   RecommendationDetailId: detailId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetSavingsPlanPurchaseRecommendationDetails extends Binding.Service<
   GetSavingsPlanPurchaseRecommendationDetails,

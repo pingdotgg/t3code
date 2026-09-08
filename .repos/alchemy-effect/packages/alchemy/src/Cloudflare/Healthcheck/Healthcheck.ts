@@ -241,11 +241,8 @@ export type Healthcheck = Resource<TypeId, Props, Attributes, never, Providers>;
  * prior state `read` matches by deterministic name and reports an
  * existing check as `Unowned` — the engine refuses to take it over
  * unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Health Checks
- * @category Performance & Reliability
- * @section Creating a Health Check
- * @example Basic HTTP health check
+ * ### Creating a Health Check
+ * **Example:** Basic HTTP health check
  * ```typescript
  * const check = yield* Cloudflare.Healthcheck.Healthcheck("origin-check", {
  *   zoneId: zone.zoneId,
@@ -253,7 +250,7 @@ export type Healthcheck = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @example HTTPS health check with custom path and expected codes
+ * **Example:** HTTPS health check with custom path and expected codes
  * ```typescript
  * const check = yield* Cloudflare.Healthcheck.Healthcheck("api-health", {
  *   zoneId: zone.zoneId,
@@ -270,8 +267,8 @@ export type Healthcheck = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @section TCP health checks
- * @example Probe a TCP port
+ * ### TCP health checks
+ * **Example:** Probe a TCP port
  * ```typescript
  * const check = yield* Cloudflare.Healthcheck.Healthcheck("db-port", {
  *   zoneId: zone.zoneId,
@@ -281,8 +278,8 @@ export type Healthcheck = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @section Suspending a check
- * @example Temporarily stop probing the origin
+ * ### Suspending a check
+ * **Example:** Temporarily stop probing the origin
  * ```typescript
  * const check = yield* Cloudflare.Healthcheck.Healthcheck("origin-check", {
  *   zoneId: zone.zoneId,
@@ -292,6 +289,10 @@ export type Healthcheck = Resource<TypeId, Props, Attributes, never, Providers>;
  * ```
  *
  * @see https://developers.cloudflare.com/health-checks/
+ *
+ * @resource
+ * @product Health Checks
+ * @category Performance & Reliability
  */
 export const Healthcheck = Resource<Healthcheck>(TypeId, {
   aliases: ["Cloudflare.Healthcheck"],

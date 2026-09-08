@@ -1,0 +1,3 @@
+# nuxt-aws-robots-marker
+User-agent: *
+Allow: /

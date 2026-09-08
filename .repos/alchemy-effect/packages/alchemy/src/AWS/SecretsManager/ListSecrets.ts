@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * get a callable that lists the account's secrets (metadata only, never
  * values). Provide the implementation with
  * `Effect.provide(AWS.SecretsManager.ListSecretsHttp)`.
- * @binding
- * @section Listing Secrets
- * @example List Secrets by Name
+ * ### Listing Secrets
+ * **Example:** List Secrets by Name
  * ```typescript
  * // init — account-level, no resource argument
  * const listSecrets = yield* AWS.SecretsManager.ListSecrets();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const names = (result.SecretList ?? []).map((entry) => entry.Name);
  * ```
+ *
+ * @binding
  */
 export interface ListSecrets extends Binding.Service<
   ListSecrets,

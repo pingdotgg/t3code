@@ -145,9 +145,8 @@ export interface Cluster extends Resource<
  * billed per node-hour while they exist. Place them in a {@link SubnetGroup}
  * and give them an IAM role that DAX assumes to reach DynamoDB. Destroy
  * clusters you are not using.
- * @resource
- * @section Creating a Cluster
- * @example Single-Node Development Cluster
+ * ### Creating a Cluster
+ * **Example:** Single-Node Development Cluster
  * ```typescript
  * const role = yield* IAM.Role("DaxRole", {
  *   assumeRolePolicyDocument: {
@@ -171,8 +170,8 @@ export interface Cluster extends Resource<
  * });
  * ```
  *
- * @section Encryption
- * @example Cluster with Encryption At Rest and In Transit
+ * ### Encryption
+ * **Example:** Cluster with Encryption At Rest and In Transit
  * ```typescript
  * const cluster = yield* Cluster("SecureCache", {
  *   nodeType: "dax.t3.small",
@@ -183,6 +182,8 @@ export interface Cluster extends Resource<
  *   clusterEndpointEncryptionType: "TLS",
  * });
  * ```
+ *
+ * @resource
  */
 export const Cluster = Resource<Cluster>("AWS.DAX.Cluster");
 

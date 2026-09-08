@@ -1,0 +1,29 @@
+---
+// Shared shell with the sitemap-ish nav: every page links every other page,
+// so the suite can crawl the whole site through anchors alone.
+interface Props {
+  title: string;
+}
+const { title } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <nav id="site-nav">
+      <a href="/" id="nav-home">Home</a>
+      <a href="/about/" id="nav-about">About</a>
+      <a href="/blog/" id="nav-blog">Blog</a>
+      <a href="/blog/first-post/" id="nav-first-post">First post</a>
+      <a href="/blog/second-post/" id="nav-second-post">Second post</a>
+      <a href="/counter/" id="nav-counter">Counter</a>
+    </nav>
+    <main>
+      <slot />
+    </main>
+  </body>
+</html>

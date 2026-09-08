@@ -16,9 +16,8 @@ export interface DescribeAlarmContributorsRequest extends Omit<
  *
  * Provide `CloudWatch.DescribeAlarmContributorsHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Alarm State
- * @example List an Alarm's Contributors
+ * ### Reading Alarm State
+ * **Example:** List an Alarm's Contributors
  * ```typescript
  * // init — grants cloudwatch:DescribeAlarmContributors on the alarm
  * const describeAlarmContributors =
@@ -34,6 +33,8 @@ export interface DescribeAlarmContributorsRequest extends Omit<
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeAlarmContributors extends Binding.Service<
   DescribeAlarmContributors,

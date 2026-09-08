@@ -1,4 +1,5 @@
 import * as Axiom from "@/Axiom";
+import * as Output from "@/Output";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -32,14 +33,17 @@ test.provider.skipIf(!hasAxiomCreds)(
 
       const deployed = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* Axiom.Dataset("ListDataset", {
+          const dataset = yield* Axiom.Dataset("ListDataset", {
             name: DATASET_NAME,
           });
           return yield* Axiom.Monitor("ListMonitor", {
             name: MONITOR_NAME,
             description: "alchemy list() lifecycle op test",
             type: "Threshold",
-            aplQuery: `['${DATASET_NAME}'] | summarize count()`,
+            // Reference the dataset's OUTPUT so the monitor create waits for
+            // the dataset create (a bare name string carries no graph edge —
+            // Axiom rejects a monitor whose APL targets a missing dataset).
+            aplQuery: Output.interpolate`['${dataset.name}'] | summarize count()`,
             intervalMinutes: 5,
             rangeMinutes: 5,
             operator: "Above",

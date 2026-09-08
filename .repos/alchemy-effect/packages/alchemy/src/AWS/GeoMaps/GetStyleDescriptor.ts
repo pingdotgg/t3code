@@ -12,13 +12,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-maps:GetStyleDescriptor`. Requests and responses are raw distilled
  * types; the descriptor payload is returned as `Blob` (`Uint8Array` of JSON).
  *
- * @binding
- * @section Fetching Style Descriptors
+ * ### Fetching Style Descriptors
  * Provide the `GetStyleDescriptorHttp` implementation layer on the Function
  * effect (`.pipe(Effect.provide(AWS.GeoMaps.GetStyleDescriptorHttp))`), bind
  * in the init phase, then call the client at runtime.
  *
- * @example Fetch the Standard style descriptor
+ * **Example:** Fetch the Standard style descriptor
  * ```typescript
  * // init
  * const getStyleDescriptor = yield* AWS.GeoMaps.GetStyleDescriptor();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  * const descriptor = yield* getStyleDescriptor({ Style: "Standard" });
  * const json = new TextDecoder().decode(descriptor.Blob); // MapLibre style JSON
  * ```
+ *
+ * @binding
  */
 export interface GetStyleDescriptor extends Binding.Service<
   GetStyleDescriptor,

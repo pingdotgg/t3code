@@ -15,9 +15,8 @@ export interface GetRecordRequest extends Omit<
  * Bind this operation to a `FeatureGroup` inside a function runtime to get a
  * callable that automatically injects the feature group name. If no record
  * exists for the identifier, the response's `Record` is empty.
- * @binding
- * @section Reading Records
- * @example Get a Record
+ * ### Reading Records
+ * **Example:** Get a Record
  * ```typescript
  * // init
  * const getRecord = yield* AWS.SageMaker.GetRecord(featureGroup);
@@ -27,6 +26,8 @@ export interface GetRecordRequest extends Omit<
  *   RecordIdentifierValueAsString: "user-123",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetRecord extends Binding.Service<
   GetRecord,

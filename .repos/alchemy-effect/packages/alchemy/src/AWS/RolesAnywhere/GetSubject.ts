@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — subjects are chosen per request at runtime, so
  * the binding takes no resource argument. Provide the implementation with
  * `Effect.provide(AWS.RolesAnywhere.GetSubjectHttp)`.
- * @binding
- * @section Auditing Certificate Identities
- * @example Inspect a Subject's Credentials
+ * ### Auditing Certificate Identities
+ * **Example:** Inspect a Subject's Credentials
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getSubject = yield* AWS.RolesAnywhere.GetSubject();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const { subject } = yield* getSubject({ subjectId });
  * const lastSeen = subject?.lastSeenAt;
  * ```
+ *
+ * @binding
  */
 export interface GetSubject extends Binding.Service<
   GetSubject,

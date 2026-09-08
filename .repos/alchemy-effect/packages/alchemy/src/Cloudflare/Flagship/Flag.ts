@@ -213,11 +213,8 @@ export type Flag = Resource<
  * endpoint); changing variations, rules, enablement, or the default
  * variation takes effect without redeploying code. Everything except the
  * flag key and the parent app is mutable in place.
- * @resource
- * @product Flagship
- * @category Developer Platform
- * @section Creating a Flag
- * @example Boolean flag
+ * ### Creating a Flag
+ * **Example:** Boolean flag
  * ```typescript
  * const app = yield* Cloudflare.Flagship.App("Flags", {});
  *
@@ -229,7 +226,7 @@ export type Flag = Resource<
  * });
  * ```
  *
- * @example String flag with multiple variations
+ * **Example:** String flag with multiple variations
  * ```typescript
  * const flag = yield* Cloudflare.Flagship.Flag("CheckoutFlow", {
  *   appId: app.appId,
@@ -239,8 +236,8 @@ export type Flag = Resource<
  * });
  * ```
  *
- * @section Targeting Rules
- * @example Serve a variation to a specific country
+ * ### Targeting Rules
+ * **Example:** Serve a variation to a specific country
  * ```typescript
  * const flag = yield* Cloudflare.Flagship.Flag("DarkMode", {
  *   appId: app.appId,
@@ -259,7 +256,7 @@ export type Flag = Resource<
  * });
  * ```
  *
- * @example Percentage rollout
+ * **Example:** Percentage rollout
  * ```typescript
  * const flag = yield* Cloudflare.Flagship.Flag("NewSearch", {
  *   appId: app.appId,
@@ -277,8 +274,8 @@ export type Flag = Resource<
  * });
  * ```
  *
- * @section Toggling a Flag
- * @example Disable a flag without removing its rules
+ * ### Toggling a Flag
+ * **Example:** Disable a flag without removing its rules
  * ```typescript
  * const flag = yield* Cloudflare.Flagship.Flag("NewCheckout", {
  *   appId: app.appId,
@@ -291,6 +288,10 @@ export type Flag = Resource<
  *
  * @see https://developers.cloudflare.com/flagship/
  * @see https://developers.cloudflare.com/api/resources/flagship/
+ *
+ * @resource
+ * @product Flagship
+ * @category Developer Platform
  */
 export const Flag = Resource<Flag>(TypeId);
 

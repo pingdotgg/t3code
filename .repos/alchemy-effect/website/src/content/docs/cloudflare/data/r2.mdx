@@ -125,6 +125,51 @@ Your runtime code depends only on the capability
 (`ReadBucket(Bucket)` etc.) — swapping the implementation layer
 doesn't touch the handlers.
 
+## Public development URL
+
+Buckets are private by default. Set `publicAccess: true` to serve
+objects from Cloudflare's managed `r2.dev` domain — useful for
+preview stacks and anywhere a signed S3 URL or a custom domain
+isn't an option. The hostname lands on `publicDomain`:
+
+```typescript
+const bucket = yield* Cloudflare.R2.Bucket("Assets", {
+  publicAccess: true,
+});
+// https://pub-….r2.dev/photo.jpg
+```
+
+This endpoint is rate-limited and intended for non-production use.
+For production traffic, attach a hostname you control with
+`domains`.
+
+## Destroying a bucket
+
+R2 refuses to delete a bucket that still has objects in it, and
+alchemy does not bypass that refusal: destroying a non-empty bucket
+fails with `BucketNotEmpty`, leaving the bucket and its objects
+intact. For buckets whose contents are disposable, opt into emptying
+them first:
+
+```typescript
+const cache = yield* Cloudflare.R2.Bucket("Cache", {
+  forceDestroy: true,
+});
+```
+
+To keep a bucket even when its declaration goes away, mark it
+`retain` — alchemy drops it from state and never calls delete:
+
+```typescript
+import * as RemovalPolicy from "alchemy/RemovalPolicy";
+
+const uploads = yield* Cloudflare.R2.Bucket("Uploads").pipe(
+  RemovalPolicy.retain(),
+);
+```
+
+See [Resource lifecycle › Removal policy](/infrastructure-as-code/resource-lifecycle#removal-policy).
+
 ## Where next
 
 - [Tutorial part 1](/cloudflare/tutorial/part-1) — deploy your first

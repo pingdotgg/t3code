@@ -88,11 +88,8 @@ export type Prefix = Resource<
  *
  * Only `description` is mutable; `cidr`, `asn`, and the LOA settings force
  * a replacement.
- * @resource
- * @product Addressing
- * @category Network
- * @section Creating a Prefix
- * @example Onboard a prefix with a pre-uploaded LOA
+ * ### Creating a Prefix
+ * **Example:** Onboard a prefix with a pre-uploaded LOA
  * ```typescript
  * const prefix = yield* Cloudflare.Addressing.Prefix("byoip", {
  *   cidr: "192.0.2.0/24",
@@ -102,7 +99,7 @@ export type Prefix = Resource<
  * });
  * ```
  *
- * @example Delegate LOA creation to Cloudflare
+ * **Example:** Delegate LOA creation to Cloudflare
  * ```typescript
  * const prefix = yield* Cloudflare.Addressing.Prefix("byoip", {
  *   cidr: "192.0.2.0/24",
@@ -111,8 +108,8 @@ export type Prefix = Resource<
  * });
  * ```
  *
- * @section Advertising the Prefix
- * @example Advertise via a BGP prefix
+ * ### Advertising the Prefix
+ * **Example:** Advertise via a BGP prefix
  * ```typescript
  * const bgp = yield* Cloudflare.Addressing.BgpPrefix("advertise", {
  *   prefixId: prefix.prefixId,
@@ -122,6 +119,10 @@ export type Prefix = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/byoip/
+ *
+ * @resource
+ * @product Addressing
+ * @category Network
  */
 export const Prefix = Resource<Prefix>(TypeId);
 

@@ -96,8 +96,8 @@ export interface FarmEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Farm Events
- * @example Alert When A Job Finishes
+ * ### Consuming Farm Events
+ * **Example:** Alert When A Job Finishes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -118,7 +118,7 @@ export interface FarmEventSourceProps extends EventRouteProps {
  * );
  * ```
  *
- * @example Stop The Farm On A Budget Threshold
+ * **Example:** Stop The Farm On A Budget Threshold
  * ```typescript
  * yield* AWS.Deadline.consumeFarmEvents(
  *   { kinds: ["budget-threshold"], farmIds: [farm.farmId] },

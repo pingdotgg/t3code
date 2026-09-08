@@ -43,9 +43,8 @@ export interface LoginProfile extends Resource<
  *
  * `LoginProfile` manages AWS Management Console access for an IAM user. The
  * password is write-only, so AWS never returns it during later reads.
- * @resource
- * @section Managing Console Access
- * @example Create a Console Login Profile
+ * ### Managing Console Access
+ * **Example:** Create a Console Login Profile
  * ```typescript
  * const user = yield* User("ConsoleUser", {
  *   userName: "console-user",
@@ -57,6 +56,8 @@ export interface LoginProfile extends Resource<
  *   passwordResetRequired: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const LoginProfile = Resource<LoginProfile>("AWS.IAM.LoginProfile");
 

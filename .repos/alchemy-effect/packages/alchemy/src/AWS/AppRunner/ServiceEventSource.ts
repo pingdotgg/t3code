@@ -87,8 +87,8 @@ export interface OperationStatusChangeEventSourceProps extends EventRouteProps {
  * multiple services share the Function. Provide `AWS.Lambda.EventSource` on
  * the Function effect to implement the subscription.
  *
- * @section Reacting To Status Changes
- * @example Alert when a Service Pauses
+ * ### Reacting To Status Changes
+ * **Example:** Alert when a Service Pauses
  * ```typescript
  * yield* AWS.AppRunner.consumeServiceStatusChanges(
  *   { currentStatus: ["PAUSED"] },
@@ -134,8 +134,8 @@ export const consumeServiceStatusChanges = <StreamReq = never, Req = never>(
  * `AWS.Lambda.EventSource` on the Function effect to implement the
  * subscription.
  *
- * @section Reacting To Deployments
- * @example Alert on Failed Deployments
+ * ### Reacting To Deployments
+ * **Example:** Alert on Failed Deployments
  * ```typescript
  * yield* AWS.AppRunner.consumeOperationStatusChanges(
  *   { operationStatus: ["DeploymentFailed"] },

@@ -1,0 +1,786 @@
+{
+  "name": "@alchemy.run/cloudflare-runtime",
+  "version": "2.0.0-beta.76",
+  "description": "Cloudflare Workers local runtime and build plugins for Alchemy.",
+  "homepage": "https://alchemy.run",
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "cloudflare",
+    "effect",
+    "infrastructure-as-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "packages/cloudflare-runtime"
+  },
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "src",
+    "dist",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown && bun ../../scripts/copy-package-files.ts cloudflare-runtime",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:rolldown": "vitest run --project rolldown",
+    "test:core": "vitest run --project core",
+    "test:vite": "vitest run --project vite",
+    "test:workers-shared": "vitest run --project 'workers-shared-*'",
+    "test:workflows-shared": "vitest run --project workflows-shared",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@alchemy.run/node-utils": "workspace:*",
+    "@cloudflare/unenv-preset": "catalog:cloudflare-runtime",
+    "@puppeteer/browsers": "catalog:cloudflare-runtime",
+    "capnp-es": "catalog:cloudflare-runtime",
+    "magic-string": "catalog:cloudflare-runtime",
+    "sharp": "catalog:cloudflare-runtime",
+    "unenv": "catalog:cloudflare-runtime",
+    "workerd": "catalog:cloudflare-runtime",
+    "yauzl": "catalog:cloudflare-runtime"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@cloudflare/vitest-pool-workers": "catalog:cloudflare-runtime",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/vitest": "catalog:effect",
+    "@types/http-cache-semantics": "catalog:cloudflare-runtime",
+    "@types/node": "catalog:tooling",
+    "@types/ws": "catalog:cloudflare-runtime",
+    "capnweb": "catalog:cloudflare-runtime",
+    "http-cache-semantics": "catalog:cloudflare-runtime",
+    "heap-js": "catalog:cloudflare-runtime",
+    "itty-time": "catalog:cloudflare-runtime",
+    "mime": "catalog:cloudflare-runtime",
+    "mysql2": "catalog:cloudflare-runtime",
+    "postal-mime": "catalog:cloudflare-runtime",
+    "rolldown": "catalog:build",
+    "tsdown": "catalog:build",
+    "toucan-js": "catalog:cloudflare-runtime",
+    "vite": "catalog:build",
+    "vitest": "catalog:testing",
+    "ws": "catalog:cloudflare-runtime"
+  },
+  "peerDependencies": {
+    "@distilled.cloud/cloudflare": "workspace:*",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "effect": "catalog:effect",
+    "rolldown": "catalog:build",
+    "vite": "catalog:cloudflare-runtime"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "rolldown": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    }
+  },
+  "imports": {
+    "#cloudflare-runtime-core-worker/*": "./dist/core/workers/*.mjs",
+    "#cloudflare-runtime-vite-worker/*": "./dist/vite/workers/*.mjs"
+  },
+  "exports": {
+    "./core": {
+      "types": "./dist/core/node/index.d.mts",
+      "bun": "./src/core/index.ts",
+      "worker": "./src/core/index.ts",
+      "import": "./dist/core/node/index.mjs"
+    },
+    "./core/bindings": {
+      "types": "./dist/core/node/bindings/index.d.mts",
+      "bun": "./src/core/bindings/index.ts",
+      "worker": "./src/core/bindings/index.ts",
+      "import": "./dist/core/node/bindings/index.mjs"
+    },
+    "./core/bindings/Ai": {
+      "types": "./dist/core/node/bindings/Ai.d.mts",
+      "bun": "./src/core/bindings/Ai.ts",
+      "worker": "./src/core/bindings/Ai.ts",
+      "import": "./dist/core/node/bindings/Ai.mjs"
+    },
+    "./core/bindings/AiSearch": {
+      "types": "./dist/core/node/bindings/AiSearch.d.mts",
+      "bun": "./src/core/bindings/AiSearch.ts",
+      "worker": "./src/core/bindings/AiSearch.ts",
+      "import": "./dist/core/node/bindings/AiSearch.mjs"
+    },
+    "./core/bindings/analytics-engine": {
+      "types": "./dist/core/node/bindings/analytics-engine/index.d.mts",
+      "bun": "./src/core/bindings/analytics-engine/index.ts",
+      "worker": "./src/core/bindings/analytics-engine/index.ts",
+      "import": "./dist/core/node/bindings/analytics-engine/index.mjs"
+    },
+    "./core/bindings/analytics-engine/AnalyticsEngine": {
+      "types": "./dist/core/node/bindings/analytics-engine/AnalyticsEngine.d.mts",
+      "bun": "./src/core/bindings/analytics-engine/AnalyticsEngine.ts",
+      "worker": "./src/core/bindings/analytics-engine/AnalyticsEngine.ts",
+      "import": "./dist/core/node/bindings/analytics-engine/AnalyticsEngine.mjs"
+    },
+    "./core/bindings/Artifacts": {
+      "types": "./dist/core/node/bindings/Artifacts.d.mts",
+      "bun": "./src/core/bindings/Artifacts.ts",
+      "worker": "./src/core/bindings/Artifacts.ts",
+      "import": "./dist/core/node/bindings/Artifacts.mjs"
+    },
+    "./core/bindings/assets/Assets": {
+      "types": "./dist/core/node/bindings/assets/Assets.d.mts",
+      "bun": "./src/core/bindings/assets/Assets.ts",
+      "worker": "./src/core/bindings/assets/Assets.ts",
+      "import": "./dist/core/node/bindings/assets/Assets.mjs"
+    },
+    "./core/bindings/browser": {
+      "types": "./dist/core/node/bindings/browser/index.d.mts",
+      "bun": "./src/core/bindings/browser/index.ts",
+      "worker": "./src/core/bindings/browser/index.ts",
+      "import": "./dist/core/node/bindings/browser/index.mjs"
+    },
+    "./core/bindings/browser/Browser": {
+      "types": "./dist/core/node/bindings/browser/Browser.d.mts",
+      "bun": "./src/core/bindings/browser/Browser.ts",
+      "worker": "./src/core/bindings/browser/Browser.ts",
+      "import": "./dist/core/node/bindings/browser/Browser.mjs"
+    },
+    "./core/bindings/browser/BrowserOptions": {
+      "types": "./dist/core/node/bindings/browser/BrowserOptions.shared.d.mts",
+      "bun": "./src/core/bindings/browser/BrowserOptions.shared.ts",
+      "worker": "./src/core/bindings/browser/BrowserOptions.shared.ts",
+      "import": "./dist/core/node/bindings/browser/BrowserOptions.shared.mjs"
+    },
+    "./core/bindings/cache": {
+      "types": "./dist/core/node/bindings/cache/index.d.mts",
+      "bun": "./src/core/bindings/cache/index.ts",
+      "worker": "./src/core/bindings/cache/index.ts",
+      "import": "./dist/core/node/bindings/cache/index.mjs"
+    },
+    "./core/bindings/cache/Cache": {
+      "types": "./dist/core/node/bindings/cache/Cache.d.mts",
+      "bun": "./src/core/bindings/cache/Cache.ts",
+      "worker": "./src/core/bindings/cache/Cache.ts",
+      "import": "./dist/core/node/bindings/cache/Cache.mjs"
+    },
+    "./core/bindings/cache/CacheOptions": {
+      "types": "./dist/core/node/bindings/cache/CacheOptions.shared.d.mts",
+      "bun": "./src/core/bindings/cache/CacheOptions.shared.ts",
+      "worker": "./src/core/bindings/cache/CacheOptions.shared.ts",
+      "import": "./dist/core/node/bindings/cache/CacheOptions.shared.mjs"
+    },
+    "./core/bindings/cache/parse-http": {
+      "types": "./dist/core/node/bindings/cache/parse-http.shared.d.mts",
+      "bun": "./src/core/bindings/cache/parse-http.shared.ts",
+      "worker": "./src/core/bindings/cache/parse-http.shared.ts",
+      "import": "./dist/core/node/bindings/cache/parse-http.shared.mjs"
+    },
+    "./core/bindings/d1": {
+      "types": "./dist/core/node/bindings/d1/index.d.mts",
+      "bun": "./src/core/bindings/d1/index.ts",
+      "worker": "./src/core/bindings/d1/index.ts",
+      "import": "./dist/core/node/bindings/d1/index.mjs"
+    },
+    "./core/bindings/d1/D1": {
+      "types": "./dist/core/node/bindings/d1/D1.d.mts",
+      "bun": "./src/core/bindings/d1/D1.ts",
+      "worker": "./src/core/bindings/d1/D1.ts",
+      "import": "./dist/core/node/bindings/d1/D1.mjs"
+    },
+    "./core/bindings/d1/D1Options": {
+      "types": "./dist/core/node/bindings/d1/D1Options.shared.d.mts",
+      "bun": "./src/core/bindings/d1/D1Options.shared.ts",
+      "worker": "./src/core/bindings/d1/D1Options.shared.ts",
+      "import": "./dist/core/node/bindings/d1/D1Options.shared.mjs"
+    },
+    "./core/bindings/Data": {
+      "types": "./dist/core/node/bindings/Data.d.mts",
+      "bun": "./src/core/bindings/Data.ts",
+      "worker": "./src/core/bindings/Data.ts",
+      "import": "./dist/core/node/bindings/Data.mjs"
+    },
+    "./core/bindings/dispatch-namespace": {
+      "types": "./dist/core/node/bindings/dispatch-namespace/index.d.mts",
+      "bun": "./src/core/bindings/dispatch-namespace/index.ts",
+      "worker": "./src/core/bindings/dispatch-namespace/index.ts",
+      "import": "./dist/core/node/bindings/dispatch-namespace/index.mjs"
+    },
+    "./core/bindings/dispatch-namespace/DispatchNamespace": {
+      "types": "./dist/core/node/bindings/dispatch-namespace/DispatchNamespace.d.mts",
+      "bun": "./src/core/bindings/dispatch-namespace/DispatchNamespace.ts",
+      "worker": "./src/core/bindings/dispatch-namespace/DispatchNamespace.ts",
+      "import": "./dist/core/node/bindings/dispatch-namespace/DispatchNamespace.mjs"
+    },
+    "./core/bindings/DurableObjectNamespace": {
+      "types": "./dist/core/node/bindings/DurableObjectNamespace.d.mts",
+      "bun": "./src/core/bindings/DurableObjectNamespace.ts",
+      "worker": "./src/core/bindings/DurableObjectNamespace.ts",
+      "import": "./dist/core/node/bindings/DurableObjectNamespace.mjs"
+    },
+    "./core/bindings/Flagship": {
+      "types": "./dist/core/node/bindings/Flagship.d.mts",
+      "bun": "./src/core/bindings/Flagship.ts",
+      "worker": "./src/core/bindings/Flagship.ts",
+      "import": "./dist/core/node/bindings/Flagship.mjs"
+    },
+    "./core/bindings/hyperdrive": {
+      "types": "./dist/core/node/bindings/hyperdrive/index.d.mts",
+      "bun": "./src/core/bindings/hyperdrive/index.ts",
+      "worker": "./src/core/bindings/hyperdrive/index.ts",
+      "import": "./dist/core/node/bindings/hyperdrive/index.mjs"
+    },
+    "./core/bindings/hyperdrive/Hyperdrive": {
+      "types": "./dist/core/node/bindings/hyperdrive/Hyperdrive.d.mts",
+      "bun": "./src/core/bindings/hyperdrive/Hyperdrive.ts",
+      "worker": "./src/core/bindings/hyperdrive/Hyperdrive.ts",
+      "import": "./dist/core/node/bindings/hyperdrive/Hyperdrive.mjs"
+    },
+    "./core/bindings/hyperdrive/HyperdriveOrigin": {
+      "types": "./dist/core/node/bindings/hyperdrive/HyperdriveOrigin.shared.d.mts",
+      "bun": "./src/core/bindings/hyperdrive/HyperdriveOrigin.shared.ts",
+      "worker": "./src/core/bindings/hyperdrive/HyperdriveOrigin.shared.ts",
+      "import": "./dist/core/node/bindings/hyperdrive/HyperdriveOrigin.shared.mjs"
+    },
+    "./core/bindings/images": {
+      "types": "./dist/core/node/bindings/images/index.d.mts",
+      "bun": "./src/core/bindings/images/index.ts",
+      "worker": "./src/core/bindings/images/index.ts",
+      "import": "./dist/core/node/bindings/images/index.mjs"
+    },
+    "./core/bindings/images/Images": {
+      "types": "./dist/core/node/bindings/images/Images.d.mts",
+      "bun": "./src/core/bindings/images/Images.ts",
+      "worker": "./src/core/bindings/images/Images.ts",
+      "import": "./dist/core/node/bindings/images/Images.mjs"
+    },
+    "./core/bindings/images/ImagesOptions": {
+      "types": "./dist/core/node/bindings/images/ImagesOptions.shared.d.mts",
+      "bun": "./src/core/bindings/images/ImagesOptions.shared.ts",
+      "worker": "./src/core/bindings/images/ImagesOptions.shared.ts",
+      "import": "./dist/core/node/bindings/images/ImagesOptions.shared.mjs"
+    },
+    "./core/bindings/Json": {
+      "types": "./dist/core/node/bindings/Json.d.mts",
+      "bun": "./src/core/bindings/Json.ts",
+      "worker": "./src/core/bindings/Json.ts",
+      "import": "./dist/core/node/bindings/Json.mjs"
+    },
+    "./core/bindings/kv-namespace": {
+      "types": "./dist/core/node/bindings/kv-namespace/index.d.mts",
+      "bun": "./src/core/bindings/kv-namespace/index.ts",
+      "worker": "./src/core/bindings/kv-namespace/index.ts",
+      "import": "./dist/core/node/bindings/kv-namespace/index.mjs"
+    },
+    "./core/bindings/kv-namespace/KvNamespace": {
+      "types": "./dist/core/node/bindings/kv-namespace/KvNamespace.d.mts",
+      "bun": "./src/core/bindings/kv-namespace/KvNamespace.ts",
+      "worker": "./src/core/bindings/kv-namespace/KvNamespace.ts",
+      "import": "./dist/core/node/bindings/kv-namespace/KvNamespace.mjs"
+    },
+    "./core/bindings/kv-namespace/KvNamespaceOptions": {
+      "types": "./dist/core/node/bindings/kv-namespace/KvNamespaceOptions.shared.d.mts",
+      "bun": "./src/core/bindings/kv-namespace/KvNamespaceOptions.shared.ts",
+      "worker": "./src/core/bindings/kv-namespace/KvNamespaceOptions.shared.ts",
+      "import": "./dist/core/node/bindings/kv-namespace/KvNamespaceOptions.shared.mjs"
+    },
+    "./core/bindings/Loopback": {
+      "types": "./dist/core/node/bindings/Loopback.d.mts",
+      "bun": "./src/core/bindings/Loopback.ts",
+      "worker": "./src/core/bindings/Loopback.ts",
+      "import": "./dist/core/node/bindings/Loopback.mjs"
+    },
+    "./core/bindings/Media": {
+      "types": "./dist/core/node/bindings/Media.d.mts",
+      "bun": "./src/core/bindings/Media.ts",
+      "worker": "./src/core/bindings/Media.ts",
+      "import": "./dist/core/node/bindings/Media.mjs"
+    },
+    "./core/bindings/MtlsCertificate": {
+      "types": "./dist/core/node/bindings/MtlsCertificate.d.mts",
+      "bun": "./src/core/bindings/MtlsCertificate.ts",
+      "worker": "./src/core/bindings/MtlsCertificate.ts",
+      "import": "./dist/core/node/bindings/MtlsCertificate.mjs"
+    },
+    "./core/bindings/Pipelines": {
+      "types": "./dist/core/node/bindings/Pipelines.d.mts",
+      "bun": "./src/core/bindings/Pipelines.ts",
+      "worker": "./src/core/bindings/Pipelines.ts",
+      "import": "./dist/core/node/bindings/Pipelines.mjs"
+    },
+    "./core/bindings/queue": {
+      "types": "./dist/core/node/bindings/queue/index.d.mts",
+      "bun": "./src/core/bindings/queue/index.ts",
+      "worker": "./src/core/bindings/queue/index.ts",
+      "import": "./dist/core/node/bindings/queue/index.mjs"
+    },
+    "./core/bindings/queue/Queue": {
+      "types": "./dist/core/node/bindings/queue/Queue.d.mts",
+      "bun": "./src/core/bindings/queue/Queue.ts",
+      "worker": "./src/core/bindings/queue/Queue.ts",
+      "import": "./dist/core/node/bindings/queue/Queue.mjs"
+    },
+    "./core/bindings/queue/QueueOptions": {
+      "types": "./dist/core/node/bindings/queue/QueueOptions.shared.d.mts",
+      "bun": "./src/core/bindings/queue/QueueOptions.shared.ts",
+      "worker": "./src/core/bindings/queue/QueueOptions.shared.ts",
+      "import": "./dist/core/node/bindings/queue/QueueOptions.shared.mjs"
+    },
+    "./core/bindings/r2-bucket": {
+      "types": "./dist/core/node/bindings/r2-bucket/index.d.mts",
+      "bun": "./src/core/bindings/r2-bucket/index.ts",
+      "worker": "./src/core/bindings/r2-bucket/index.ts",
+      "import": "./dist/core/node/bindings/r2-bucket/index.mjs"
+    },
+    "./core/bindings/r2-bucket/R2Bucket": {
+      "types": "./dist/core/node/bindings/r2-bucket/R2Bucket.d.mts",
+      "bun": "./src/core/bindings/r2-bucket/R2Bucket.ts",
+      "worker": "./src/core/bindings/r2-bucket/R2Bucket.ts",
+      "import": "./dist/core/node/bindings/r2-bucket/R2Bucket.mjs"
+    },
+    "./core/bindings/r2-bucket/R2BucketOptions": {
+      "types": "./dist/core/node/bindings/r2-bucket/R2BucketOptions.shared.d.mts",
+      "bun": "./src/core/bindings/r2-bucket/R2BucketOptions.shared.ts",
+      "worker": "./src/core/bindings/r2-bucket/R2BucketOptions.shared.ts",
+      "import": "./dist/core/node/bindings/r2-bucket/R2BucketOptions.shared.mjs"
+    },
+    "./core/bindings/rate-limit": {
+      "types": "./dist/core/node/bindings/rate-limit/index.d.mts",
+      "bun": "./src/core/bindings/rate-limit/index.ts",
+      "worker": "./src/core/bindings/rate-limit/index.ts",
+      "import": "./dist/core/node/bindings/rate-limit/index.mjs"
+    },
+    "./core/bindings/rate-limit/RateLimit": {
+      "types": "./dist/core/node/bindings/rate-limit/RateLimit.d.mts",
+      "bun": "./src/core/bindings/rate-limit/RateLimit.ts",
+      "worker": "./src/core/bindings/rate-limit/RateLimit.ts",
+      "import": "./dist/core/node/bindings/rate-limit/RateLimit.mjs"
+    },
+    "./core/bindings/rate-limit/RateLimitProps": {
+      "types": "./dist/core/node/bindings/rate-limit/RateLimitProps.shared.d.mts",
+      "bun": "./src/core/bindings/rate-limit/RateLimitProps.shared.ts",
+      "worker": "./src/core/bindings/rate-limit/RateLimitProps.shared.ts",
+      "import": "./dist/core/node/bindings/rate-limit/RateLimitProps.shared.mjs"
+    },
+    "./core/bindings/SecretKey": {
+      "types": "./dist/core/node/bindings/SecretKey.d.mts",
+      "bun": "./src/core/bindings/SecretKey.ts",
+      "worker": "./src/core/bindings/SecretKey.ts",
+      "import": "./dist/core/node/bindings/SecretKey.mjs"
+    },
+    "./core/bindings/secrets-store": {
+      "types": "./dist/core/node/bindings/secrets-store/index.d.mts",
+      "bun": "./src/core/bindings/secrets-store/index.ts",
+      "worker": "./src/core/bindings/secrets-store/index.ts",
+      "import": "./dist/core/node/bindings/secrets-store/index.mjs"
+    },
+    "./core/bindings/secrets-store/SecretsStore": {
+      "types": "./dist/core/node/bindings/secrets-store/SecretsStore.d.mts",
+      "bun": "./src/core/bindings/secrets-store/SecretsStore.ts",
+      "worker": "./src/core/bindings/secrets-store/SecretsStore.ts",
+      "import": "./dist/core/node/bindings/secrets-store/SecretsStore.mjs"
+    },
+    "./core/bindings/secrets-store/SecretsStoreOptions": {
+      "types": "./dist/core/node/bindings/secrets-store/SecretsStoreOptions.shared.d.mts",
+      "bun": "./src/core/bindings/secrets-store/SecretsStoreOptions.shared.ts",
+      "worker": "./src/core/bindings/secrets-store/SecretsStoreOptions.shared.ts",
+      "import": "./dist/core/node/bindings/secrets-store/SecretsStoreOptions.shared.mjs"
+    },
+    "./core/bindings/send-email": {
+      "types": "./dist/core/node/bindings/send-email/index.d.mts",
+      "bun": "./src/core/bindings/send-email/index.ts",
+      "worker": "./src/core/bindings/send-email/index.ts",
+      "import": "./dist/core/node/bindings/send-email/index.mjs"
+    },
+    "./core/bindings/send-email/SendEmail": {
+      "types": "./dist/core/node/bindings/send-email/SendEmail.d.mts",
+      "bun": "./src/core/bindings/send-email/SendEmail.ts",
+      "worker": "./src/core/bindings/send-email/SendEmail.ts",
+      "import": "./dist/core/node/bindings/send-email/SendEmail.mjs"
+    },
+    "./core/bindings/send-email/SendEmailOptions": {
+      "types": "./dist/core/node/bindings/send-email/SendEmailOptions.shared.d.mts",
+      "bun": "./src/core/bindings/send-email/SendEmailOptions.shared.ts",
+      "worker": "./src/core/bindings/send-email/SendEmailOptions.shared.ts",
+      "import": "./dist/core/node/bindings/send-email/SendEmailOptions.shared.mjs"
+    },
+    "./core/bindings/Service": {
+      "types": "./dist/core/node/bindings/Service.d.mts",
+      "bun": "./src/core/bindings/Service.ts",
+      "worker": "./src/core/bindings/Service.ts",
+      "import": "./dist/core/node/bindings/Service.mjs"
+    },
+    "./core/bindings/stream": {
+      "types": "./dist/core/node/bindings/stream/index.d.mts",
+      "bun": "./src/core/bindings/stream/index.ts",
+      "worker": "./src/core/bindings/stream/index.ts",
+      "import": "./dist/core/node/bindings/stream/index.mjs"
+    },
+    "./core/bindings/stream/Stream": {
+      "types": "./dist/core/node/bindings/stream/Stream.d.mts",
+      "bun": "./src/core/bindings/stream/Stream.ts",
+      "worker": "./src/core/bindings/stream/Stream.ts",
+      "import": "./dist/core/node/bindings/stream/Stream.mjs"
+    },
+    "./core/bindings/stream/StreamOptions": {
+      "types": "./dist/core/node/bindings/stream/StreamOptions.shared.d.mts",
+      "bun": "./src/core/bindings/stream/StreamOptions.shared.ts",
+      "worker": "./src/core/bindings/stream/StreamOptions.shared.ts",
+      "import": "./dist/core/node/bindings/stream/StreamOptions.shared.mjs"
+    },
+    "./core/bindings/Text": {
+      "types": "./dist/core/node/bindings/Text.d.mts",
+      "bun": "./src/core/bindings/Text.ts",
+      "worker": "./src/core/bindings/Text.ts",
+      "import": "./dist/core/node/bindings/Text.mjs"
+    },
+    "./core/bindings/UnsafeEval": {
+      "types": "./dist/core/node/bindings/UnsafeEval.d.mts",
+      "bun": "./src/core/bindings/UnsafeEval.ts",
+      "worker": "./src/core/bindings/UnsafeEval.ts",
+      "import": "./dist/core/node/bindings/UnsafeEval.mjs"
+    },
+    "./core/bindings/Vectorize": {
+      "types": "./dist/core/node/bindings/Vectorize.d.mts",
+      "bun": "./src/core/bindings/Vectorize.ts",
+      "worker": "./src/core/bindings/Vectorize.ts",
+      "import": "./dist/core/node/bindings/Vectorize.mjs"
+    },
+    "./core/bindings/VersionMetadata": {
+      "types": "./dist/core/node/bindings/VersionMetadata.d.mts",
+      "bun": "./src/core/bindings/VersionMetadata.ts",
+      "worker": "./src/core/bindings/VersionMetadata.ts",
+      "import": "./dist/core/node/bindings/VersionMetadata.mjs"
+    },
+    "./core/bindings/VpcNetwork": {
+      "types": "./dist/core/node/bindings/VpcNetwork.d.mts",
+      "bun": "./src/core/bindings/VpcNetwork.ts",
+      "worker": "./src/core/bindings/VpcNetwork.ts",
+      "import": "./dist/core/node/bindings/VpcNetwork.mjs"
+    },
+    "./core/bindings/VpcService": {
+      "types": "./dist/core/node/bindings/VpcService.d.mts",
+      "bun": "./src/core/bindings/VpcService.ts",
+      "worker": "./src/core/bindings/VpcService.ts",
+      "import": "./dist/core/node/bindings/VpcService.mjs"
+    },
+    "./core/bindings/WasmModule": {
+      "types": "./dist/core/node/bindings/WasmModule.d.mts",
+      "bun": "./src/core/bindings/WasmModule.ts",
+      "worker": "./src/core/bindings/WasmModule.ts",
+      "import": "./dist/core/node/bindings/WasmModule.mjs"
+    },
+    "./core/bindings/WorkerLoader": {
+      "types": "./dist/core/node/bindings/WorkerLoader.d.mts",
+      "bun": "./src/core/bindings/WorkerLoader.ts",
+      "worker": "./src/core/bindings/WorkerLoader.ts",
+      "import": "./dist/core/node/bindings/WorkerLoader.mjs"
+    },
+    "./core/bindings/workflows": {
+      "types": "./dist/core/node/bindings/workflows/index.d.mts",
+      "bun": "./src/core/bindings/workflows/index.ts",
+      "worker": "./src/core/bindings/workflows/index.ts",
+      "import": "./dist/core/node/bindings/workflows/index.mjs"
+    },
+    "./core/bindings/workflows/Workflows": {
+      "types": "./dist/core/node/bindings/workflows/Workflows.d.mts",
+      "bun": "./src/core/bindings/workflows/Workflows.ts",
+      "worker": "./src/core/bindings/workflows/Workflows.ts",
+      "import": "./dist/core/node/bindings/workflows/Workflows.mjs"
+    },
+    "./core/Docker": {
+      "types": "./dist/core/node/Docker.d.mts",
+      "bun": "./src/core/Docker.ts",
+      "worker": "./src/core/Docker.ts",
+      "import": "./dist/core/node/Docker.mjs"
+    },
+    "./core/globals": {
+      "types": "./dist/core/node/globals/index.d.mts",
+      "bun": "./src/core/globals/index.ts",
+      "worker": "./src/core/globals/index.ts",
+      "import": "./dist/core/node/globals/index.mjs"
+    },
+    "./core/globals/Cf": {
+      "types": "./dist/core/node/globals/Cf.d.mts",
+      "bun": "./src/core/globals/Cf.ts",
+      "worker": "./src/core/globals/Cf.ts",
+      "import": "./dist/core/node/globals/Cf.mjs"
+    },
+    "./core/globals/CfOptions": {
+      "types": "./dist/core/node/globals/CfOptions.shared.d.mts",
+      "bun": "./src/core/globals/CfOptions.shared.ts",
+      "worker": "./src/core/globals/CfOptions.shared.ts",
+      "import": "./dist/core/node/globals/CfOptions.shared.mjs"
+    },
+    "./core/globals/EmailOptions": {
+      "types": "./dist/core/node/globals/EmailOptions.shared.d.mts",
+      "bun": "./src/core/globals/EmailOptions.shared.ts",
+      "worker": "./src/core/globals/EmailOptions.shared.ts",
+      "import": "./dist/core/node/globals/EmailOptions.shared.mjs"
+    },
+    "./core/globals/EntryOptions": {
+      "types": "./dist/core/node/globals/EntryOptions.shared.d.mts",
+      "bun": "./src/core/globals/EntryOptions.shared.ts",
+      "worker": "./src/core/globals/EntryOptions.shared.ts",
+      "import": "./dist/core/node/globals/EntryOptions.shared.mjs"
+    },
+    "./core/globals/Globals": {
+      "types": "./dist/core/node/globals/Globals.d.mts",
+      "bun": "./src/core/globals/Globals.ts",
+      "worker": "./src/core/globals/Globals.ts",
+      "import": "./dist/core/node/globals/Globals.mjs"
+    },
+    "./core/globals/Internet": {
+      "types": "./dist/core/node/globals/Internet.d.mts",
+      "bun": "./src/core/globals/Internet.ts",
+      "worker": "./src/core/globals/Internet.ts",
+      "import": "./dist/core/node/globals/Internet.mjs"
+    },
+    "./core/globals/Loopback": {
+      "types": "./dist/core/node/globals/Loopback.d.mts",
+      "bun": "./src/core/globals/Loopback.ts",
+      "worker": "./src/core/globals/Loopback.ts",
+      "import": "./dist/core/node/globals/Loopback.mjs"
+    },
+    "./core/globals/LoopbackServer": {
+      "types": "./dist/core/node/globals/LoopbackServer.d.mts",
+      "bun": "./src/core/globals/LoopbackServer.ts",
+      "worker": "./src/core/globals/LoopbackServer.ts",
+      "import": "./dist/core/node/globals/LoopbackServer.mjs"
+    },
+    "./core/globals/ScheduledOptions": {
+      "types": "./dist/core/node/globals/ScheduledOptions.shared.d.mts",
+      "bun": "./src/core/globals/ScheduledOptions.shared.ts",
+      "worker": "./src/core/globals/ScheduledOptions.shared.ts",
+      "import": "./dist/core/node/globals/ScheduledOptions.shared.mjs"
+    },
+    "./core/globals/Storage": {
+      "types": "./dist/core/node/globals/Storage.d.mts",
+      "bun": "./src/core/globals/Storage.ts",
+      "worker": "./src/core/globals/Storage.ts",
+      "import": "./dist/core/node/globals/Storage.mjs"
+    },
+    "./core/internal/internal-worker": {
+      "types": "./dist/core/node/internal/internal-worker.d.mts",
+      "bun": "./src/core/internal/internal-worker.ts",
+      "worker": "./src/core/internal/internal-worker.ts",
+      "import": "./dist/core/node/internal/internal-worker.mjs"
+    },
+    "./core/internal/Port": {
+      "types": "./dist/core/node/internal/Port.d.mts",
+      "bun": "./src/core/internal/Port.ts",
+      "worker": "./src/core/internal/Port.ts",
+      "import": "./dist/core/node/internal/Port.mjs"
+    },
+    "./core/platform-proxy": {
+      "types": "./dist/core/node/platform-proxy/index.d.mts",
+      "bun": "./src/core/platform-proxy/index.ts",
+      "worker": "./src/core/platform-proxy/index.ts",
+      "import": "./dist/core/node/platform-proxy/index.mjs"
+    },
+    "./core/platform-proxy/connect": {
+      "types": "./dist/core/node/platform-proxy/connect.d.mts",
+      "bun": "./src/core/platform-proxy/connect.ts",
+      "worker": "./src/core/platform-proxy/connect.ts",
+      "import": "./dist/core/node/platform-proxy/connect.mjs"
+    },
+    "./core/platform-proxy/getPlatformProxy": {
+      "types": "./dist/core/node/platform-proxy/getPlatformProxy.d.mts",
+      "bun": "./src/core/platform-proxy/getPlatformProxy.ts",
+      "worker": "./src/core/platform-proxy/getPlatformProxy.ts",
+      "import": "./dist/core/node/platform-proxy/getPlatformProxy.mjs"
+    },
+    "./core/platform-proxy/PlatformProxy": {
+      "types": "./dist/core/node/platform-proxy/PlatformProxy.d.mts",
+      "bun": "./src/core/platform-proxy/PlatformProxy.ts",
+      "worker": "./src/core/platform-proxy/PlatformProxy.ts",
+      "import": "./dist/core/node/platform-proxy/PlatformProxy.mjs"
+    },
+    "./core/platform-proxy/PlatformProxyProtocol": {
+      "types": "./dist/core/node/platform-proxy/PlatformProxyProtocol.shared.d.mts",
+      "bun": "./src/core/platform-proxy/PlatformProxyProtocol.shared.ts",
+      "worker": "./src/core/platform-proxy/PlatformProxyProtocol.shared.ts",
+      "import": "./dist/core/node/platform-proxy/PlatformProxyProtocol.shared.mjs"
+    },
+    "./core/Plugin": {
+      "types": "./dist/core/node/Plugin.d.mts",
+      "bun": "./src/core/Plugin.ts",
+      "worker": "./src/core/Plugin.ts",
+      "import": "./dist/core/node/Plugin.mjs"
+    },
+    "./core/PluginContext": {
+      "types": "./dist/core/node/PluginContext.d.mts",
+      "bun": "./src/core/PluginContext.ts",
+      "worker": "./src/core/PluginContext.ts",
+      "import": "./dist/core/node/PluginContext.mjs"
+    },
+    "./core/proxy": {
+      "types": "./dist/core/node/proxy/index.d.mts",
+      "bun": "./src/core/proxy/index.ts",
+      "worker": "./src/core/proxy/index.ts",
+      "import": "./dist/core/node/proxy/index.mjs"
+    },
+    "./core/proxy/WorkerProxy": {
+      "types": "./dist/core/node/proxy/WorkerProxy.d.mts",
+      "bun": "./src/core/proxy/WorkerProxy.ts",
+      "worker": "./src/core/proxy/WorkerProxy.ts",
+      "import": "./dist/core/node/proxy/WorkerProxy.mjs"
+    },
+    "./core/registry": {
+      "types": "./dist/core/node/registry/index.d.mts",
+      "bun": "./src/core/registry/index.ts",
+      "worker": "./src/core/registry/index.ts",
+      "import": "./dist/core/node/registry/index.mjs"
+    },
+    "./core/registry/Registry": {
+      "types": "./dist/core/node/registry/Registry.d.mts",
+      "bun": "./src/core/registry/Registry.ts",
+      "worker": "./src/core/registry/Registry.ts",
+      "import": "./dist/core/node/registry/Registry.mjs"
+    },
+    "./core/registry/RegistryProxy": {
+      "types": "./dist/core/node/registry/RegistryProxy.d.mts",
+      "bun": "./src/core/registry/RegistryProxy.ts",
+      "worker": "./src/core/registry/RegistryProxy.ts",
+      "import": "./dist/core/node/registry/RegistryProxy.mjs"
+    },
+    "./core/registry/RegistryTypes": {
+      "types": "./dist/core/node/registry/RegistryTypes.shared.d.mts",
+      "bun": "./src/core/registry/RegistryTypes.shared.ts",
+      "worker": "./src/core/registry/RegistryTypes.shared.ts",
+      "import": "./dist/core/node/registry/RegistryTypes.shared.mjs"
+    },
+    "./core/remote-bindings": {
+      "types": "./dist/core/node/remote-bindings/index.d.mts",
+      "bun": "./src/core/remote-bindings/index.ts",
+      "worker": "./src/core/remote-bindings/index.ts",
+      "import": "./dist/core/node/remote-bindings/index.mjs"
+    },
+    "./core/remote-bindings/Access": {
+      "types": "./dist/core/node/remote-bindings/Access.d.mts",
+      "bun": "./src/core/remote-bindings/Access.ts",
+      "worker": "./src/core/remote-bindings/Access.ts",
+      "import": "./dist/core/node/remote-bindings/Access.mjs"
+    },
+    "./core/remote-bindings/RemoteBindings": {
+      "types": "./dist/core/node/remote-bindings/RemoteBindings.d.mts",
+      "bun": "./src/core/remote-bindings/RemoteBindings.ts",
+      "worker": "./src/core/remote-bindings/RemoteBindings.ts",
+      "import": "./dist/core/node/remote-bindings/RemoteBindings.mjs"
+    },
+    "./core/remote-bindings/RemoteWorker": {
+      "types": "./dist/core/node/remote-bindings/RemoteWorker.d.mts",
+      "bun": "./src/core/remote-bindings/RemoteWorker.ts",
+      "worker": "./src/core/remote-bindings/RemoteWorker.ts",
+      "import": "./dist/core/node/remote-bindings/RemoteWorker.mjs"
+    },
+    "./core/remote-bindings/RemoteWorkerConfig": {
+      "types": "./dist/core/node/remote-bindings/RemoteWorkerConfig.shared.d.mts",
+      "bun": "./src/core/remote-bindings/RemoteWorkerConfig.shared.ts",
+      "worker": "./src/core/remote-bindings/RemoteWorkerConfig.shared.ts",
+      "import": "./dist/core/node/remote-bindings/RemoteWorkerConfig.shared.mjs"
+    },
+    "./core/Runtime": {
+      "types": "./dist/core/node/Runtime.d.mts",
+      "bun": "./src/core/Runtime.ts",
+      "worker": "./src/core/Runtime.ts",
+      "import": "./dist/core/node/Runtime.mjs"
+    },
+    "./core/RuntimeError": {
+      "types": "./dist/core/node/RuntimeError.shared.d.mts",
+      "bun": "./src/core/RuntimeError.shared.ts",
+      "worker": "./src/core/RuntimeError.shared.ts",
+      "import": "./dist/core/node/RuntimeError.shared.mjs"
+    },
+    "./core/RuntimeServices": {
+      "types": "./dist/core/node/RuntimeServices.d.mts",
+      "bun": "./src/core/RuntimeServices.ts",
+      "worker": "./src/core/RuntimeServices.ts",
+      "import": "./dist/core/node/RuntimeServices.mjs"
+    },
+    "./core/RuntimeWorker": {
+      "types": "./dist/core/node/RuntimeWorker.d.mts",
+      "bun": "./src/core/RuntimeWorker.ts",
+      "worker": "./src/core/RuntimeWorker.ts",
+      "import": "./dist/core/node/RuntimeWorker.mjs"
+    },
+    "./core/workerd": {
+      "types": "./dist/core/node/workerd/index.d.mts",
+      "bun": "./src/core/workerd/index.ts",
+      "worker": "./src/core/workerd/index.ts",
+      "import": "./dist/core/node/workerd/index.mjs"
+    },
+    "./core/workerd/Config": {
+      "types": "./dist/core/node/workerd/Config.d.mts",
+      "bun": "./src/core/workerd/Config.ts",
+      "worker": "./src/core/workerd/Config.ts",
+      "import": "./dist/core/node/workerd/Config.mjs"
+    },
+    "./core/workerd/Workerd": {
+      "types": "./dist/core/node/workerd/Workerd.d.mts",
+      "bun": "./src/core/workerd/Workerd.ts",
+      "worker": "./src/core/workerd/Workerd.ts",
+      "import": "./dist/core/node/workerd/Workerd.mjs"
+    },
+    "./rolldown": {
+      "types": "./dist/rolldown/plugin.d.ts",
+      "bun": "./src/rolldown/plugin.ts",
+      "worker": "./src/rolldown/plugin.ts",
+      "import": "./dist/rolldown/plugin.js"
+    },
+    "./rolldown/plugins": {
+      "types": "./dist/rolldown/plugins/index.d.ts",
+      "bun": "./src/rolldown/plugins/index.ts",
+      "worker": "./src/rolldown/plugins/index.ts",
+      "import": "./dist/rolldown/plugins/index.js"
+    },
+    "./rolldown/export-types": {
+      "types": "./dist/rolldown/export-types.d.ts",
+      "bun": "./src/rolldown/export-types.ts",
+      "worker": "./src/rolldown/export-types.ts",
+      "import": "./dist/rolldown/export-types.js"
+    },
+    "./rolldown/options": {
+      "types": "./dist/rolldown/options.d.ts",
+      "bun": "./src/rolldown/options.ts",
+      "worker": "./src/rolldown/options.ts",
+      "import": "./dist/rolldown/options.js"
+    },
+    "./rolldown/utils": {
+      "types": "./dist/rolldown/utils.d.ts",
+      "bun": "./src/rolldown/utils.ts",
+      "worker": "./src/rolldown/utils.ts",
+      "import": "./dist/rolldown/utils.js"
+    },
+    "./vite": {
+      "types": "./dist/vite/node/plugin.d.mts",
+      "bun": "./src/vite/plugin.ts",
+      "worker": "./src/vite/plugin.ts",
+      "import": "./dist/vite/node/plugin.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "inlinedDependencies": {
+    "capnp-es": "0.0.14",
+    "capnweb": "0.8.0",
+    "effect": "catalog:effect",
+    "http-cache-semantics": "4.2.0",
+    "postal-mime": "2.7.5"
+  }
+}

@@ -11,9 +11,8 @@ import type { OriginEndpoint } from "./OriginEndpoint.ts";
  * channel's content was reset or replaced. The endpoint's group, channel,
  * and name are injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MediaPackageV2.ResetOriginEndpointStateHttp)`.
- * @binding
- * @section Resetting Ingest State
- * @example Reset an Endpoint After Resetting Its Channel
+ * ### Resetting Ingest State
+ * **Example:** Reset an Endpoint After Resetting Its Channel
  * ```typescript
  * // init — bind the operation to the endpoint
  * const resetEndpoint =
@@ -22,6 +21,8 @@ import type { OriginEndpoint } from "./OriginEndpoint.ts";
  * // runtime
  * const { ResetAt } = yield* resetEndpoint();
  * ```
+ *
+ * @binding
  */
 export interface ResetOriginEndpointState extends Binding.Service<
   ResetOriginEndpointState,

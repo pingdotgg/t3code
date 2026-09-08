@@ -12,9 +12,8 @@ import type { Stack } from "./Stack.ts";
  * e.g. a function that performs out-of-band initialization and unblocks the
  * stack when done. Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.SignalResourceHttp)`.
- * @binding
- * @section Signaling Resources
- * @example Signal a Wait Condition
+ * ### Signaling Resources
+ * **Example:** Signal a Wait Condition
  * ```typescript
  * const signalResource = yield* AWS.CloudFormation.SignalResource(stack);
  *
@@ -24,6 +23,8 @@ import type { Stack } from "./Stack.ts";
  *   Status: "SUCCESS",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SignalResource extends Binding.Service<
   SignalResource,

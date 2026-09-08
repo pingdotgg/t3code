@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * after a restore-test job completes, the Lambda inspects the restored
  * resource, then reports the verdict. Provide the implementation with
  * `Effect.provide(AWS.Backup.GetRestoreJobMetadataHttp)`.
- * @binding
- * @section Restore Testing Validation
- * @example Inspect A Restore Test's Metadata
+ * ### Restore Testing Validation
+ * **Example:** Inspect A Restore Test's Metadata
  * ```typescript
  * const getRestoreJobMetadata = yield* AWS.Backup.GetRestoreJobMetadata();
  *
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`restored resource metadata: ${JSON.stringify(Metadata)}`);
  * ```
+ *
+ * @binding
  */
 export interface GetRestoreJobMetadata extends Binding.Service<
   GetRestoreJobMetadata,

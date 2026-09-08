@@ -20,7 +20,7 @@ const sharedStack = Core.scratchStack(testOptions, "CloudFormationBindings");
 // over 60s on a fresh deploy under parallel-suite load.
 const readinessPolicy = Schedule.max([
   Schedule.fixed("2 seconds"),
-  Schedule.recurs(75),
+  Schedule.recurs(120),
 ]);
 
 let baseUrl: string;
@@ -88,7 +88,7 @@ describe.sequential("CloudFormation Bindings", () => {
         Effect.retry({ schedule: readinessPolicy }),
       );
     }),
-    { timeout: 300_000 },
+    { timeout: 420_000 },
   );
 
   afterAll.skipIf(!!process.env.NO_DESTROY)(sharedStack.destroy(), {

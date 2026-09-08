@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.ListAccountPermissionsHttp)`.
- * @binding
- * @section Account Settings & Usage
- * @example List Granted Permissions
+ * ### Account Settings & Usage
+ * **Example:** List Granted Permissions
  * ```typescript
  * // init
  * const listAccountPermissions = yield* AWS.Inspector2.ListAccountPermissions();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { permissions } = yield* listAccountPermissions();
  * ```
+ *
+ * @binding
  */
 export interface ListAccountPermissions extends Binding.Service<
   ListAccountPermissions,

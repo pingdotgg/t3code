@@ -102,9 +102,8 @@ export interface DataIntegration extends Resource<
  * The KMS key, source URI, schedule, file configuration, and object
  * configuration are immutable; changing any of them replaces the data
  * integration. Only the name and description can be updated in place.
- * @resource
- * @section Creating a Data Integration
- * @example S3 Data Integration
+ * ### Creating a Data Integration
+ * **Example:** S3 Data Integration
  * ```typescript
  * import * as AppIntegrations from "alchemy/AWS/AppIntegrations";
  * import * as KMS from "alchemy/AWS/KMS";
@@ -119,7 +118,7 @@ export interface DataIntegration extends Resource<
  * });
  * ```
  *
- * @example Scheduled SaaS Data Integration
+ * **Example:** Scheduled SaaS Data Integration
  * ```typescript
  * const integration = yield* AppIntegrations.DataIntegration("Salesforce", {
  *   kmsKey: key.keyArn,
@@ -131,6 +130,8 @@ export interface DataIntegration extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataIntegration = Resource<DataIntegration>(
   "AWS.AppIntegrations.DataIntegration",

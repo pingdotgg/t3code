@@ -1,0 +1,8 @@
+{
+  // Playwright 1.62 resolves directory-style project references as
+  // `<path>.json`, so fixture transforms must not inherit the monorepo's
+  // solution config or the Distilled references beneath it.
+  "compilerOptions": {
+    "allowJs": true
+  }
+}

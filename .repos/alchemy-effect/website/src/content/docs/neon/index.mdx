@@ -30,18 +30,18 @@ const branch = yield* Neon.Branch("app-branch", {
 Branches can fork from any parent, pin to a point in time, copy
 schema only, and expire on their own — see [Branching](/neon/data/branching).
 
-Both resources accept a `migrationsDir` of SQL files applied in
+Both resources accept a `migrations` folder of SQL files applied in
 order on deploy:
 
 ```typescript
 const featureBranch = yield* Neon.Branch("feature", {
   project,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
-Migrations are ordered, hashed, and tracked in a `neon_migrations`
-table so each file runs exactly once — see
+Migrations are ordered, hashed, and tracked in Alchemy's
+`__alchemy_migrations` table so each file runs exactly once — see
 [Migrations](/neon/data/migrations).
 
 ## Pooled vs direct

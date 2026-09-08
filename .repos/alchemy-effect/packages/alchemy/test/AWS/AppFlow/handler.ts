@@ -108,7 +108,7 @@ export const FlowFixtureLive = Layer.effect(
 export const AppFlowApiFunctionLive = AppFlowApiFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

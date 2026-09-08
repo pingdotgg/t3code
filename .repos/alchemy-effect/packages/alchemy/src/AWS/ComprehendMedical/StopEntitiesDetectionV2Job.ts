@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:StopEntitiesDetectionV2Job` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.StopEntitiesDetectionV2JobHttp)`.
  *
- * @binding
- * @section Batch Entity Detection Jobs
- * @example Stop a Running Job
+ * ### Batch Entity Detection Jobs
+ * **Example:** Stop a Running Job
  * ```typescript
  * // init
  * const stopEntitiesDetectionV2Job = yield* AWS.ComprehendMedical.StopEntitiesDetectionV2Job();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* stopEntitiesDetectionV2Job({ JobId: jobId });
  * ```
+ *
+ * @binding
  */
 export interface StopEntitiesDetectionV2Job extends Binding.Service<
   StopEntitiesDetectionV2Job,

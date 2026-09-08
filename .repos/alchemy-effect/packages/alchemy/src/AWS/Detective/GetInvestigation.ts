@@ -12,9 +12,8 @@ import type { Graph } from "./Graph.ts";
  * {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.GetInvestigationHttp)`.
- * @binding
- * @section Running Investigations
- * @example Poll An Investigation
+ * ### Running Investigations
+ * **Example:** Poll An Investigation
  * ```typescript
  * // init
  * const getInvestigation = yield* AWS.Detective.GetInvestigation(graph);
@@ -25,6 +24,8 @@ import type { Graph } from "./Graph.ts";
  *   yield* Effect.log(`severity: ${detail.Severity}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetInvestigation extends Binding.Service<
   GetInvestigation,

@@ -21,9 +21,8 @@ export interface ListSignalCatalogNodesRequest extends Omit<
  * signal catalog. Provide the implementation with
  * `Effect.provide(AWS.IoTFleetWise.ListSignalCatalogNodesHttp)`.
  *
- * @binding
- * @section Inspecting Signal Definitions
- * @example List the Catalog's Sensors
+ * ### Inspecting Signal Definitions
+ * **Example:** List the Catalog's Sensors
  * ```typescript
  * const listSignalCatalogNodes =
  *   yield* IoTFleetWise.ListSignalCatalogNodes(catalog);
@@ -32,6 +31,8 @@ export interface ListSignalCatalogNodesRequest extends Omit<
  *   signalNodeType: "SENSOR",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListSignalCatalogNodes extends Binding.Service<
   ListSignalCatalogNodes,

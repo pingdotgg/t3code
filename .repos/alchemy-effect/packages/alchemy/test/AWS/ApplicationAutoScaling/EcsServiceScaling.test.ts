@@ -1,7 +1,5 @@
 import * as AWS from "@/AWS";
 import { ScalableTarget, ScalingPolicy } from "@/AWS/ApplicationAutoScaling";
-import { Subnet } from "@/AWS/EC2/Subnet.ts";
-import { Vpc } from "@/AWS/EC2/Vpc.ts";
 import { Cluster } from "@/AWS/ECS/Cluster.ts";
 import { Service } from "@/AWS/ECS/Service.ts";
 import * as Output from "@/Output";
@@ -20,13 +18,15 @@ const clusterName = "alchemy-test-aas-ecs";
 // The flagship ECS-service scaling flow: register the service's DesiredCount
 // dimension (min 1 / max 3), attach a CPU target-tracking policy, verify both
 // out-of-band, update the policy target in place, and destroy in dependency
-// order (policy -> target -> service -> cluster -> networking).
+// order (policy -> target -> service -> cluster).
 //
 // To stay inside the speed budget we avoid building/pushing a Docker image
 // and register a minimal task definition against a public image out of band
-// (the same pattern as test/AWS/ECS/Service.test.ts). `createService` returns
-// without waiting for Fargate placement, so the suite never blocks on task
-// startup; the scalable target and policy only require the service to exist.
+// (the same pattern as test/AWS/ECS/Service.test.ts). The Service provider
+// waits for the deployment to stabilize, so the task must actually be able
+// to start: run in the account's default VPC (public subnets +
+// `assignPublicIp`, the provider's fallback) so Fargate can pull the public
+// nginx image without a NAT.
 test.provider(
   "ecs service DesiredCount target + CPU target tracking policy",
   (stack) =>
@@ -63,18 +63,13 @@ test.provider(
       const deploy = (targetValue: number) =>
         stack.deploy(
           Effect.gen(function* () {
-            const vpc = yield* Vpc("AasEcsVpc", { cidrBlock: "10.76.0.0/16" });
-            const subnet = yield* Subnet("AasEcsSubnet", {
-              vpcId: vpc.vpcId,
-              cidrBlock: "10.76.1.0/24",
-            });
             const cluster = yield* Cluster("AasEcsCluster", { clusterName });
+            // No vpcId/subnets: fall back to the default VPC's public
+            // subnets with assignPublicIp so the task can pull its image.
             const service = yield* Service("AasEcsService", {
               cluster,
               task: { taskDefinitionArn, containerName: "app", port: 80 },
               desiredCount: 1,
-              vpcId: vpc.vpcId,
-              subnets: [subnet.subnetId],
             });
             const target = yield* ScalableTarget("AasEcsTarget", {
               serviceNamespace: "ecs",

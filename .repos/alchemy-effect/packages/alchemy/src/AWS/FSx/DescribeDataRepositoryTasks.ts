@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * poll an export/import task until it reaches `SUCCEEDED`. Provide the
  * implementation with
  * `Effect.provide(AWS.FSx.DescribeDataRepositoryTasksHttp)`.
- * @binding
- * @section Data Repository Tasks
- * @example Poll a task until it finishes
+ * ### Data Repository Tasks
+ * **Example:** Poll a task until it finishes
  * ```typescript
  * const describeDataRepositoryTasks =
  *   yield* AWS.FSx.DescribeDataRepositoryTasks();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(response.DataRepositoryTasks?.[0]?.Lifecycle);
  * ```
+ *
+ * @binding
  */
 export interface DescribeDataRepositoryTasks extends Binding.Service<
   DescribeDataRepositoryTasks,

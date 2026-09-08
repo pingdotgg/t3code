@@ -22,7 +22,7 @@ export class CurTestFunction extends Lambda.Function<Lambda.Function>()(
 export default CurTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

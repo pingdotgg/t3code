@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * typed `NotFoundException` tag when the address is not on the list.
  * Account-level operation. Provide the implementation with
  * `Effect.provide(AWS.SES.DeleteSuppressedDestinationHttp)`.
- * @binding
- * @section Suppression List
- * @example Unsuppress an Address
+ * ### Suppression List
+ * **Example:** Unsuppress an Address
  * ```typescript
  * // init — account-level binding, no resource argument
  * const unsuppress = yield* SES.DeleteSuppressedDestination();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Effect.catchTag("NotFoundException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DeleteSuppressedDestination extends Binding.Service<
   DeleteSuppressedDestination,

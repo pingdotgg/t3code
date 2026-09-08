@@ -15,9 +15,8 @@ export interface GetManagedNotificationConfigurationRequest
  * Security/Operations/Issue/Billing categories) by its ARN. Provide the
  * implementation with
  * `Effect.provide(AWS.Notifications.GetManagedNotificationConfigurationHttp)`.
- * @binding
- * @section Reading AWS-Managed Notifications
- * @example Fetch a Managed Notification Configuration
+ * ### Reading AWS-Managed Notifications
+ * **Example:** Fetch a Managed Notification Configuration
  * ```typescript
  * // init — account-level binding takes no resource
  * const getManagedNotificationConfiguration =
@@ -28,6 +27,8 @@ export interface GetManagedNotificationConfigurationRequest
  *   arn: managedConfigArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetManagedNotificationConfiguration extends Binding.Service<
   GetManagedNotificationConfiguration,

@@ -11,15 +11,16 @@ import type { Archive } from "./Archive.ts";
  * used to download each message. IAM access is granted on the bound
  * archive's ARN. Provide the implementation with
  * `Effect.provide(AWS.MailManager.GetArchiveSearchResultsHttp)`.
- * @binding
- * @section Searching the Archive
- * @example Read Search Results
+ * ### Searching the Archive
+ * **Example:** Read Search Results
  * ```typescript
  * const getSearchResults = yield* MailManager.GetArchiveSearchResults(archive);
  *
  * // runtime
  * const { Rows } = yield* getSearchResults({ SearchId });
  * ```
+ *
+ * @binding
  */
 export interface GetArchiveSearchResults extends Binding.Service<
   GetArchiveSearchResults,

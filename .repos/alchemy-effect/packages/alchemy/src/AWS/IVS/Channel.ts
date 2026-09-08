@@ -113,16 +113,15 @@ export interface Channel extends Resource<
  * A channel stores configuration for broadcasting live streams: broadcast
  * software sends video to the channel's `ingestEndpoint` (authenticated
  * with a `StreamKey`) and viewers watch via the channel's `playbackUrl`.
- * @resource
- * @section Creating Channels
- * @example Basic Channel
+ * ### Creating Channels
+ * **Example:** Basic Channel
  * ```typescript
  * import * as IVS from "alchemy/AWS/IVS";
  *
  * const channel = yield* IVS.Channel("LiveChannel");
  * ```
  *
- * @example Basic Low-Cost Channel
+ * **Example:** Basic Low-Cost Channel
  * ```typescript
  * const channel = yield* IVS.Channel("LiveChannel", {
  *   type: "BASIC",
@@ -130,16 +129,16 @@ export interface Channel extends Resource<
  * });
  * ```
  *
- * @section Private Channels
- * @example Channel with Playback Authorization
+ * ### Private Channels
+ * **Example:** Channel with Playback Authorization
  * ```typescript
  * const channel = yield* IVS.Channel("PrivateChannel", {
  *   authorized: true,
  * });
  * ```
  *
- * @section Streaming
- * @example Channel with a Stream Key
+ * ### Streaming
+ * **Example:** Channel with a Stream Key
  * ```typescript
  * const channel = yield* IVS.Channel("LiveChannel");
  * const streamKey = yield* IVS.StreamKey("LiveKey", {
@@ -147,6 +146,8 @@ export interface Channel extends Resource<
  * });
  * // broadcast to rtmps://{channel.ingestEndpoint}:443/app/ with streamKey.value
  * ```
+ *
+ * @resource
  */
 export const Channel = Resource<Channel>("AWS.IVS.Channel");
 

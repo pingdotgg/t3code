@@ -15,15 +15,16 @@ export interface DeleteReferenceRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.DeleteReferenceHttp)`.
- * @binding
- * @section References
- * @example Bind DeleteReference to a ReferenceStore
+ * ### References
+ * **Example:** Bind DeleteReference to a ReferenceStore
  * ```typescript
  * // init
  * const deleteReference = yield* AWS.Omics.DeleteReference(store);
  * // runtime
  * const result = yield* deleteReference({});
  * ```
+ *
+ * @binding
  */
 export interface DeleteReference extends Binding.Service<
   DeleteReference,

@@ -186,14 +186,13 @@ export interface SecurityGroup extends Resource<
  * If no `egress` rules are specified, all outbound traffic is allowed by
  * default. Changing the `vpcId` or `groupName` replaces the security group.
  *
- * @resource
- * @section Creating a Security Group
+ * ### Creating a Security Group
  * Every security group belongs to a VPC. `groupName` and `description` are
  * optional — alchemy generates a deterministic name and a default description
  * when they are omitted. Both the VPC and the name are immutable, so changing
  * either replaces the group.
  *
- * @example Empty Security Group
+ * **Example:** Empty Security Group
  * ```typescript
  * const sg = yield* AWS.EC2.SecurityGroup("AppSg", {
  *   vpcId: vpc.vpcId,
@@ -204,7 +203,7 @@ export interface SecurityGroup extends Resource<
  * given) allows all outbound. It's a useful starting point you attach rules to
  * later, or a target other groups can reference.
  *
- * @example Named group with a description
+ * **Example:** Named group with a description
  * ```typescript
  * const sg = yield* AWS.EC2.SecurityGroup("AppSg", {
  *   vpcId: vpc.vpcId,
@@ -217,12 +216,12 @@ export interface SecurityGroup extends Resource<
  * (for example to reference the group by name elsewhere). The `description` is
  * shown in the EC2 console and cannot be changed after creation.
  *
- * @section Ingress Rules
+ * ### Ingress Rules
  * Inbound rules are declared inline via `ingress`. Each rule specifies an
  * `ipProtocol` (`tcp`, `udp`, `icmp`, or `-1` for all), an optional port range
  * (`fromPort`/`toPort`), and a source — most commonly an IPv4 `cidrIpv4`.
  *
- * @example Allow HTTP and HTTPS from anywhere
+ * **Example:** Allow HTTP and HTTPS from anywhere
  * ```typescript
  * const webSg = yield* AWS.EC2.SecurityGroup("WebSecurityGroup", {
  *   vpcId: vpc.vpcId,
@@ -251,13 +250,13 @@ export interface SecurityGroup extends Resource<
  * Setting `fromPort` equal to `toPort` opens a single port; widen the range to
  * open a contiguous span.
  *
- * @section Egress Rules
+ * ### Egress Rules
  * Outbound traffic is governed by `egress`. If you omit it entirely, the group
  * keeps AWS's default "allow all outbound" rule. Supplying `egress` replaces
  * that default with exactly the rules you list — so you must re-add an
  * allow-all rule if you still want unrestricted outbound.
  *
- * @example Restrict outbound to HTTPS only
+ * **Example:** Restrict outbound to HTTPS only
  * ```typescript
  * const lockedSg = yield* AWS.EC2.SecurityGroup("LockedSg", {
  *   vpcId: vpc.vpcId,
@@ -278,13 +277,13 @@ export interface SecurityGroup extends Resource<
  * only call out to HTTPS APIs. Any other outbound traffic (DNS, NTP, etc.) would
  * need explicit rules added here.
  *
- * @section Referencing Other Groups
+ * ### Referencing Other Groups
  * Instead of a CIDR, a rule's source can be another security group via
  * `referencedGroupId`. This is the idiomatic way to express tier-to-tier trust
  * ("the database accepts connections from anything in the app tier") without
  * pinning IP addresses.
  *
- * @example Database tier allowing traffic from the web tier
+ * **Example:** Database tier allowing traffic from the web tier
  * ```typescript
  * const dbSg = yield* AWS.EC2.SecurityGroup("DbSecurityGroup", {
  *   vpcId: vpc.vpcId,
@@ -306,12 +305,12 @@ export interface SecurityGroup extends Resource<
  * their IPs. As the web tier scales up and down, the rule keeps working without
  * any change.
  *
- * @section IPv6, Prefix Lists & ICMP
+ * ### IPv6, Prefix Lists & ICMP
  * Beyond IPv4 CIDRs, a rule source can be an IPv6 range (`cidrIpv6`) or a managed
  * prefix list (`prefixListId`). For ICMP, set `ipProtocol: "icmp"` and use
  * `fromPort`/`toPort` as the ICMP type and code (`-1` for all).
  *
- * @example Mixed IPv6, prefix-list, and ICMP rules
+ * **Example:** Mixed IPv6, prefix-list, and ICMP rules
  * ```typescript
  * const sg = yield* AWS.EC2.SecurityGroup("EdgeSg", {
  *   vpcId: vpc.vpcId,
@@ -346,6 +345,8 @@ export interface SecurityGroup extends Resource<
  * corporate egress IPs) by ID, so the rule updates automatically as the list
  * changes. The ICMP rule with type/code `-1` permits ping and other ICMP within
  * the VPC.
+ *
+ * @resource
  */
 export const SecurityGroup = Resource<SecurityGroup>("AWS.EC2.SecurityGroup");
 

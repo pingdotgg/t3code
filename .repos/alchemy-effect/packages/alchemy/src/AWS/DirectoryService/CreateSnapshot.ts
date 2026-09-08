@@ -13,9 +13,8 @@ import type { Directory } from "./Directory.ts";
  * {@link GetSnapshotLimits}). The directory id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DirectoryService.CreateSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Snapshot the Directory Before a Change
+ * ### Managing Snapshots
+ * **Example:** Snapshot the Directory Before a Change
  * ```typescript
  * // init — bind the operation to the directory
  * const createSnapshot = yield* AWS.DirectoryService.CreateSnapshot(directory);
@@ -23,6 +22,8 @@ import type { Directory } from "./Directory.ts";
  * // runtime
  * const { SnapshotId } = yield* createSnapshot({ Name: "pre-migration" });
  * ```
+ *
+ * @binding
  */
 export interface CreateSnapshot extends Binding.Service<
   CreateSnapshot,

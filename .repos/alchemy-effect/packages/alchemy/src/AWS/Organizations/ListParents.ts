@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.ListParentsHttp)`.
- * @binding
- * @section Reading the Organization Tree
- * @example Find an Account's Parent
+ * ### Reading the Organization Tree
+ * **Example:** Find an Account's Parent
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listParents = yield* AWS.Organizations.ListParents();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Parents } = yield* listParents({ ChildId: accountId });
  * ```
+ *
+ * @binding
  */
 export interface ListParents extends Binding.Service<
   ListParents,

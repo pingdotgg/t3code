@@ -7,9 +7,8 @@ import * as Binding from "../../Binding.ts";
  * AWS default value of a quota (the value that applies when no account
  * override exists) from inside a Function.
  *
- * @binding
- * @section Reading Quotas
- * @example Read the default VPCs-per-region quota
+ * ### Reading Quotas
+ * **Example:** Read the default VPCs-per-region quota
  * ```typescript
  * // init
  * const getAWSDefaultServiceQuota =
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const defaultValue = Quota?.Value;
  * ```
+ *
+ * @binding
  */
 export interface GetAWSDefaultServiceQuota extends Binding.Service<
   GetAWSDefaultServiceQuota,

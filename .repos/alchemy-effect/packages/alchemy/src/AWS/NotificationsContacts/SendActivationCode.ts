@@ -11,9 +11,8 @@ import type { EmailContact } from "./EmailContact.ts";
  * the contact (directly via the emailed link, or through your app via
  * {@link ActivateEmailContact}). Provide the implementation with
  * `Effect.provide(AWS.NotificationsContacts.SendActivationCodeHttp)`.
- * @binding
- * @section Activating a Contact
- * @example Re-send the Activation Email
+ * ### Activating a Contact
+ * **Example:** Re-send the Activation Email
  * ```typescript
  * // init — bind the operation to the contact
  * const sendActivationCode =
@@ -22,6 +21,8 @@ import type { EmailContact } from "./EmailContact.ts";
  * // runtime — e.g. behind a "resend confirmation email" button
  * yield* sendActivationCode();
  * ```
+ *
+ * @binding
  */
 export interface SendActivationCode extends Binding.Service<
   SendActivationCode,

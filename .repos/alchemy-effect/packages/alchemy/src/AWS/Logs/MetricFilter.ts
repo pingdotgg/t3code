@@ -57,9 +57,8 @@ export interface MetricFilter extends Resource<
 /**
  * A CloudWatch Logs metric filter — extracts CloudWatch metrics from log
  * events matching a filter pattern.
- * @resource
- * @section Extracting Metrics
- * @example Count Error Log Lines
+ * ### Extracting Metrics
+ * **Example:** Count Error Log Lines
  * ```typescript
  * const errors = yield* MetricFilter("ErrorCount", {
  *   logGroupName: logGroup.logGroupName,
@@ -75,7 +74,7 @@ export interface MetricFilter extends Resource<
  * });
  * ```
  *
- * @example Extract a Latency Value from JSON Logs
+ * **Example:** Extract a Latency Value from JSON Logs
  * ```typescript
  * const latency = yield* MetricFilter("RequestLatency", {
  *   logGroupName: logGroup.logGroupName,
@@ -90,6 +89,8 @@ export interface MetricFilter extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const MetricFilter = Resource<MetricFilter>("AWS.Logs.MetricFilter");
 

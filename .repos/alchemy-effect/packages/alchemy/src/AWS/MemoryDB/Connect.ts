@@ -75,9 +75,8 @@ export interface ConnectOptions {
  *    the cluster's `securityGroupIds`.
  *
  * Provide the implementation with `Effect.provide(AWS.MemoryDB.ConnectHttp)`.
- * @binding
- * @section Connecting to a Cluster
- * @example Resolve Connection Info inside a Function
+ * ### Connecting to a Cluster
+ * **Example:** Resolve Connection Info inside a Function
  * ```typescript
  * // init — publishes env vars, grants memorydb:Connect, attaches the VPC
  * const connect = yield* AWS.MemoryDB.Connect(cluster, {
@@ -89,6 +88,8 @@ export interface ConnectOptions {
  * // inside a handler:
  * const { host, port, tls } = yield* connect;
  * ```
+ *
+ * @binding
  */
 export interface Connect extends Binding.Service<
   Connect,

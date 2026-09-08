@@ -19,15 +19,16 @@ export interface GetMapTileRequest extends Omit<
  * `geo:GetMapTile`), scoped to one {@link LocationMap | Map}. Provide the implementation with
  * `Effect.provide(AWS.Location.GetMapTileHttp)`.
  *
- * @binding
- * @section Serving Map Assets
- * @example Serve a Tile
+ * ### Serving Map Assets
+ * **Example:** Serve a Tile
  * ```typescript
  * const getTile = yield* Location.GetMapTile(map);
  *
  * const tile = yield* getTile({ Z: "0", X: "0", Y: "0" });
  * // tile.Blob → tile bytes, tile.ContentType → e.g. "application/vnd.mapbox-vector-tile"
  * ```
+ *
+ * @binding
  */
 export interface GetMapTile extends Binding.Service<
   GetMapTile,

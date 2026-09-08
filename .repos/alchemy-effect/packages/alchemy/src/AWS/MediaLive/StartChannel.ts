@@ -12,9 +12,8 @@ import type { Channel } from "./Channel.ts";
  * scheduler Lambda that runs the channel only during broadcast windows).
  * The channel id is injected from the binding. Provide the implementation
  * with `Effect.provide(AWS.MediaLive.StartChannelHttp)`.
- * @binding
- * @section Controlling Channels
- * @example Start the Channel for a Broadcast Window
+ * ### Controlling Channels
+ * **Example:** Start the Channel for a Broadcast Window
  * ```typescript
  * // init — bind the operation to the channel
  * const startChannel = yield* AWS.MediaLive.StartChannel(channel);
@@ -22,6 +21,8 @@ import type { Channel } from "./Channel.ts";
  * // runtime
  * const { State } = yield* startChannel();
  * ```
+ *
+ * @binding
  */
 export interface StartChannel extends Binding.Service<
   StartChannel,

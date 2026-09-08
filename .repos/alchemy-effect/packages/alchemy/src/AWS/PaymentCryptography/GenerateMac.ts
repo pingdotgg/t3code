@@ -13,9 +13,8 @@ export interface GenerateMacRequest extends Omit<
  * Message Authentication Code over hex-encoded message data under a
  * {@link Key}. Provide `GenerateMacHttp` on the Function to satisfy this
  * service.
- * @binding
- * @section Generating MACs
- * @example Generate an HMAC over message data
+ * ### Generating MACs
+ * **Example:** Generate an HMAC over message data
  * ```typescript
  * // init
  * const generateMac = yield* PaymentCryptography.GenerateMac(macKey);
@@ -26,6 +25,8 @@ export interface GenerateMacRequest extends Omit<
  *   GenerationAttributes: { Algorithm: "HMAC" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateMac extends Binding.Service<
   GenerateMac,

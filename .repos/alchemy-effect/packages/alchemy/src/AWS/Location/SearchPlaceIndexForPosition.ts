@@ -19,9 +19,8 @@ export interface SearchPlaceIndexForPositionRequest extends Omit<
  * `geo:SearchPlaceIndexForPosition`), scoped to one {@link PlaceIndex}. Provide the implementation with
  * `Effect.provide(AWS.Location.SearchPlaceIndexForPositionHttp)`.
  *
- * @binding
- * @section Searching Places
- * @example Reverse-Geocode a Coordinate
+ * ### Searching Places
+ * **Example:** Reverse-Geocode a Coordinate
  * ```typescript
  * const searchPosition = yield* Location.SearchPlaceIndexForPosition(index);
  *
@@ -31,6 +30,8 @@ export interface SearchPlaceIndexForPositionRequest extends Omit<
  * });
  * // results.Results[0].Place.Label → nearest address
  * ```
+ *
+ * @binding
  */
 export interface SearchPlaceIndexForPosition extends Binding.Service<
   SearchPlaceIndexForPosition,

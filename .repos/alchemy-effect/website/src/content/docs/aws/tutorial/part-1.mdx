@@ -9,7 +9,7 @@ import Terminal from "../../../../components/Terminal.astro";
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 import { effectVersion } from "../../../../versions";
 
-export const pkgs = `"alchemy@next" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
 
 In this first part you'll install Alchemy and Effect, create a Stack
 with an AWS S3 Bucket, and deploy it — all in under five minutes.
@@ -41,7 +41,7 @@ Start with an empty directory and initialize a `package.json`:
 
 ## Install dependencies
 
-Install <code>alchemy@next</code> and <code>effect@{effectVersion}</code>:
+Install <code>alchemy@latest</code> and <code>effect@{effectVersion}</code>:
 
 <Tabs syncKey="pkgManager">
   <TabItem label="bun" icon="bun">

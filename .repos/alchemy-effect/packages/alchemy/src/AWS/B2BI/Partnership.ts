@@ -73,9 +73,8 @@ export interface Partnership extends Resource<
  * An AWS B2B Data Interchange (B2BI) partnership. A partnership connects a
  * customer {@link Profile} to a trading partner and enables a set of
  * {@link Capability | capabilities} for exchanging EDI documents.
- * @resource
- * @section Creating a Partnership
- * @example Basic Partnership
+ * ### Creating a Partnership
+ * **Example:** Basic Partnership
  * ```typescript
  * const partnership = yield* B2BI.Partnership("AcmeToPartner", {
  *   profileId: profile.profileId,
@@ -84,6 +83,8 @@ export interface Partnership extends Resource<
  *   capabilities: [capability.capabilityId],
  * });
  * ```
+ *
+ * @resource
  */
 export const Partnership = Resource<Partnership>("AWS.B2BI.Partnership");
 

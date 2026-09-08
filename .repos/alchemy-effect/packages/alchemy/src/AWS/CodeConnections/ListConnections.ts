@@ -16,9 +16,8 @@ export interface ListConnectionsRequest
  * Useful for governance sweeps that audit which source providers are wired
  * up. Provide the implementation with
  * `Effect.provide(AWS.CodeConnections.ListConnectionsHttp)`.
- * @binding
- * @section Inspecting a Connection
- * @example List Connections by Provider
+ * ### Inspecting a Connection
+ * **Example:** List Connections by Provider
  * ```typescript
  * // init — account-level binding takes no resource
  * const listConnections = yield* AWS.CodeConnections.ListConnections();
@@ -27,6 +26,8 @@ export interface ListConnectionsRequest
  * const result = yield* listConnections({ ProviderTypeFilter: "GitHub" });
  * const names = (result.Connections ?? []).map((c) => c.ConnectionName);
  * ```
+ *
+ * @binding
  */
 export interface ListConnections extends Binding.Service<
   ListConnections,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * to await completion (`SUCCESS` / `FAIL`) before relying on the
  * registration. Provide the implementation with
  * `Effect.provide(AWS.CloudMap.GetOperationHttp)`.
- * @binding
- * @section Registering Instances
- * @example Await a Registration Operation
+ * ### Registering Instances
+ * **Example:** Await a Registration Operation
  * ```typescript
  * const registerInstance = yield* AWS.CloudMap.RegisterInstance(service);
  * const getOperation = yield* AWS.CloudMap.GetOperation();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * const { Operation } = yield* getOperation({ OperationId: OperationId! });
  * console.log(Operation?.Status); // "SUBMITTED" | "PENDING" | "SUCCESS" | "FAIL"
  * ```
+ *
+ * @binding
  */
 export interface GetOperation extends Binding.Service<
   GetOperation,

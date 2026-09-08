@@ -21,7 +21,7 @@ export class Route53BindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default Route53BindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // /record/roundtrip polls GetChange until INSYNC (typically ~20-60s).
     timeout: Duration.minutes(3),
   },

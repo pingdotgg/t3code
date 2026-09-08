@@ -1,0 +1,38 @@
+{
+  "name": "cloudflare-website-tanstack-start",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-tanstack-start"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "catalog:frontend",
+    "@tanstack/react-start": "catalog:frontend",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@tailwindcss/vite": "catalog:frontend",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
+  }
+}

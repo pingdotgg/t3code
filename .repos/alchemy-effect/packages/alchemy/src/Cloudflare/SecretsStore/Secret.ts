@@ -1,16 +1,30 @@
+import type { RuntimeServices } from "@alchemy.run/cloudflare-runtime/core";
 import * as secretsStore from "@distilled.cloud/cloudflare/secrets-store";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/unstable/http/HttpClient";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
+import * as ProviderLayer from "../../Local/ProviderLayer.ts";
+import * as RpcProvider from "../../Local/RpcProvider.ts";
 import * as Provider from "../../Provider.ts";
 import { isResourceOfType, Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import {
+  generateLocalId,
+  LOCAL_ENTRY_URL,
+  localRuntimeServices,
+} from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
+import {
+  deleteLocalSecret,
+  seedLocalSecret,
+} from "./LocalSecretsStoreGateway.ts";
 
 export type StoreSecretProps = {
   /**
@@ -71,11 +85,8 @@ const asSecretStatus = (status: string): SecretStatus => status as SecretStatus;
  * The secret value is treated as redacted and is only ever sent to
  * Cloudflare at create time. Updating `scopes` or `comment` issues a
  * PATCH; changing `value` or `name` replaces the secret.
- * @resource
- * @product Secrets Store
- * @category Storage & Databases
- * @section Creating a Secret
- * @example Basic Secret
+ * ### Creating a Secret
+ * **Example:** Basic Secret
  * ```typescript
  * const store = yield* Cloudflare.SecretsStore.Store("MyStore");
  * const apiKey = yield* Cloudflare.SecretsStore.Secret("ApiKey", {
@@ -84,8 +95,8 @@ const asSecretStatus = (status: string): SecretStatus => status as SecretStatus;
  * });
  * ```
  *
- * @section Binding to a Worker
- * @example Reading a secret at runtime
+ * ### Binding to a Worker
+ * **Example:** Reading a secret at runtime
  * ```typescript
  * const apiKey = yield* Cloudflare.SecretsStore.ReadSecret(ApiKey);
  * // `apiKey` is itself an Effect that resolves to the secret value:
@@ -93,10 +104,14 @@ const asSecretStatus = (status: string): SecretStatus => status as SecretStatus;
  * // Or call `.get()` explicitly:
  * const value = yield* apiKey.get();
  * ```
+ *
+ * @resource
+ * @product Secrets Store
+ * @category Storage & Databases
  */
 export const Secret = Resource<Secret>("Cloudflare.SecretsStore.Secret");
 
-export const StoreSecretProvider = () =>
+export const SecretProviderLive = () =>
   Provider.succeed(Secret, {
     stables: ["secretId", "secretName", "storeId", "accountId"],
     diff: Effect.fn(function* ({ id, olds = {} as any, news, output }) {
@@ -276,7 +291,12 @@ export const StoreSecretProvider = () =>
             Effect.catchTag("StoreNotFound", () => Effect.succeed(undefined)),
           );
       }
-      if (!olds?.store) return undefined;
+      // An interrupted first deploy can persist `creating` props whose
+      // parent Outputs were stripped to holes (see stripUnresolved), so
+      // `olds.store` can survive as `{}`. Treat an unresolved parent
+      // reference like a missing one — the plan falls through to the
+      // create path instead of handing `undefined` to the API (#995).
+      if (!olds?.store?.storeId || !olds.store.accountId) return undefined;
       const name = resolveName(id, olds.name);
       const match = yield* secretsStore.listStoreSecrets
         .items({
@@ -348,6 +368,110 @@ export const StoreSecretProvider = () =>
       );
       return rows.flat();
     }),
+  });
+
+/**
+ * Local (dev) provider — the secret's identity is virtual (a `dev:` id) but
+ * its VALUE is real: reconcile seeds it into the local workerd Secrets
+ * Store simulator (through the `SecretsStore.admin` gateway, see
+ * `LocalSecretsStoreGateway.ts`) so a dev worker's `env.SECRET.get()`
+ * returns it, and delete removes the key again. Data lands in the same
+ * `.alchemy/local/secrets-store` directory the worker's lowered
+ * `secrets_store_secret` binding reads.
+ *
+ * RPC-backed: under `alchemy dev` (an `RpcProviderProxy` in context) the
+ * whole lifecycle runs in the Cloudflare sidecar process — where
+ * `localRuntimeServices()` is real and shared with the Worker/Queue/D1
+ * local providers — instead of in the user's process where that layer is
+ * gated empty (the class of bug behind #1007). In-process runs (no proxy:
+ * `sidecar: false` tests, a plain deploy deleting a local-mode row) build
+ * the provider directly with the un-gated runtime from the `dual`
+ * registration.
+ */
+export const SecretProviderLocal = () =>
+  RpcProvider.effect(
+    Secret,
+    LOCAL_ENTRY_URL,
+    Effect.gen(function* () {
+      // The local runtime services (workerd `Runtime`, binding plugins) and
+      // the HTTP client are resolved once at layer build and closed over —
+      // lifecycle effects run with the engine's call-time context, which
+      // doesn't include them.
+      const runtimeContext = yield* Effect.context<
+        RuntimeServices | HttpClient.HttpClient
+      >();
+
+      return {
+        stables: ["accountId"],
+        diff: Effect.fn(function* ({ id, olds, news, output }) {
+          if (!output?.secretId) return { action: "update" } as const;
+          if (!isResolved(news)) return undefined;
+          // Mirror the live provider's rules: a new store or name replaces
+          // the secret; a new value updates it in place (re-seed).
+          const oldStoreId = output.storeId;
+          const oldName = output.secretName;
+          const newName = resolveName(id, news.name);
+          if (oldStoreId !== news.store.storeId || oldName !== newName) {
+            return { action: "replace" } as const;
+          }
+          const oldValue = olds?.value ? Redacted.value(olds.value) : undefined;
+          if (oldValue !== Redacted.value(news.value)) {
+            return { action: "update" } as const;
+          }
+          // Fall through to the engine's default prop diff (scopes/comment
+          // changes update in place).
+        }),
+        read: Effect.fn(function* ({ output }) {
+          // Virtual identity — the persisted state row is the source of
+          // truth (the seeded value converges on every reconcile).
+          return output ?? undefined;
+        }),
+        reconcile: Effect.fn(function* ({ id, news, output }) {
+          const name = resolveName(id, news.name);
+          const storeId = news.store.storeId;
+
+          // Seed — write the value into the local simulator so the dev
+          // worker's `env.<binding>.get()` returns it. An overwrite is
+          // idempotent, so re-running after a crash converges.
+          yield* seedLocalSecret(
+            storeId,
+            name,
+            Redacted.value(news.value),
+          ).pipe(Effect.provideContext(runtimeContext));
+
+          return {
+            secretId: output?.secretId ?? generateLocalId(),
+            secretName: name,
+            storeId,
+            accountId: news.store.accountId,
+            status: "active" as const,
+            scopes: resolveScopes(news.scopes),
+            comment: news.comment,
+          };
+        }),
+        delete: Effect.fn(function* ({ output }) {
+          // Remove the seeded value (idempotent — deleting a missing key is
+          // a no-op). A create-first replacement's old generation deletes a
+          // different key than its successor seeded, so this never races.
+          yield* deleteLocalSecret(output.storeId, output.secretName).pipe(
+            Effect.provideContext(runtimeContext),
+          );
+        }),
+      };
+    }),
+  );
+
+export const StoreSecretProvider = () =>
+  ProviderLayer.dual(Secret, {
+    // The local provider's reconcile/delete boot an ephemeral workerd
+    // gateway to seed the simulator, so it needs the shared local runtime
+    // layer. Under `alchemy dev` the provider is an RPC stub (this gated
+    // layer is empty and unused) and the sidecar entry (`../Local.ts`)
+    // supplies the real runtime; without the proxy the provider builds
+    // in-process and this layer is real.
+    local: () =>
+      SecretProviderLocal().pipe(Layer.provide(localRuntimeServices())),
+    live: () => SecretProviderLive(),
   });
 
 /**

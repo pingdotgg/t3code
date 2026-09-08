@@ -26,7 +26,7 @@ export class AccountTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AccountTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // --- account-level bindings (Account Management is an account

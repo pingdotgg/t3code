@@ -59,30 +59,31 @@ export type SigningKey = Resource<
  *
  * Requires the Cloudflare Images subscription; accounts without it receive
  * the typed `ImagesAccessNotEnabled` error.
- * @resource
- * @product Images
- * @category Media
- * @section Creating a Signing Key
- * @example Key with a generated name
+ * ### Creating a Signing Key
+ * **Example:** Key with a generated name
  * ```typescript
  * const key = yield* Cloudflare.Images.SigningKey("UrlSigner", {});
  * ```
  *
- * @example Key with an explicit name
+ * **Example:** Key with an explicit name
  * ```typescript
  * const key = yield* Cloudflare.Images.SigningKey("UrlSigner", {
  *   name: "my-app-signer",
  * });
  * ```
  *
- * @section Using the key
- * @example Signing image delivery URLs server-side
+ * ### Using the key
+ * **Example:** Signing image delivery URLs server-side
  * ```typescript
  * // The key material is redacted — pass it to your URL signer:
  * const secret = key.value; // Redacted<string>
  * ```
  *
  * @see https://developers.cloudflare.com/images/manage-images/serve-images/serve-private-images/
+ *
+ * @resource
+ * @product Images
+ * @category Media
  */
 export const SigningKey = Resource<SigningKey>(TypeId);
 

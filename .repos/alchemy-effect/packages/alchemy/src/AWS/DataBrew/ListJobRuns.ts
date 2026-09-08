@@ -11,14 +11,15 @@ export interface ListJobRunsRequest extends Omit<
 /**
  * Runtime binding for `databrew:ListJobRuns` — lists the previous runs of
  * the bound DataBrew job (newest first, paginated via `NextToken`).
- * @binding
- * @section Observing Job Runs
- * @example List Recent Runs
+ * ### Observing Job Runs
+ * **Example:** List Recent Runs
  * ```typescript
  * const listJobRuns = yield* AWS.DataBrew.ListJobRuns(job);
  *
  * const { JobRuns } = yield* listJobRuns();
  * ```
+ *
+ * @binding
  */
 export interface ListJobRuns extends Binding.Service<
   ListJobRuns,

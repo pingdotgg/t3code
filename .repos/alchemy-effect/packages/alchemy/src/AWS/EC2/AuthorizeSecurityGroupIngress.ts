@@ -22,9 +22,8 @@ export interface AuthorizeSecurityGroupIngressRequest extends Omit<
  * Pair with {@link RevokeSecurityGroupIngress} to remove the rule afterwards.
  * Provide the implementation with
  * `Effect.provide(AWS.EC2.AuthorizeSecurityGroupIngressHttp)`.
- * @binding
- * @section Dynamic Security Group Rules
- * @example Allowlist an address for SSH
+ * ### Dynamic Security Group Rules
+ * **Example:** Allowlist an address for SSH
  * ```typescript
  * // init — bind the operation to the security group
  * const authorizeIngress = yield* AWS.EC2.AuthorizeSecurityGroupIngress(group);
@@ -37,6 +36,8 @@ export interface AuthorizeSecurityGroupIngressRequest extends Omit<
  *   CidrIp: "203.0.113.7/32",
  * });
  * ```
+ *
+ * @binding
  */
 export interface AuthorizeSecurityGroupIngress extends Binding.Service<
   AuthorizeSecurityGroupIngress,

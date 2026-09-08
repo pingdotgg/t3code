@@ -99,11 +99,8 @@ export type Operation = Resource<
  * Endpoint paths may contain `{placeholder}` templates; Cloudflare
  * normalizes the variable names left-to-right to `{var1}`, `{var2}`, … and
  * the normalized form is what is stored and diffed.
- * @resource
- * @product API Shield
- * @category Application Security
- * @section Registering an Operation
- * @example Register a GET endpoint
+ * ### Registering an Operation
+ * **Example:** Register a GET endpoint
  * ```typescript
  * const op = yield* Cloudflare.ApiShield.Operation("GetUser", {
  *   zoneId: zone.zoneId,
@@ -114,7 +111,7 @@ export type Operation = Resource<
  * // op.endpoint === "/api/v1/users/{var1}"
  * ```
  *
- * @example Register a POST endpoint
+ * **Example:** Register a POST endpoint
  * ```typescript
  * yield* Cloudflare.ApiShield.Operation("CreateUser", {
  *   zoneId: zone.zoneId,
@@ -125,6 +122,10 @@ export type Operation = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api-shield/management-and-monitoring/endpoint-management/
+ *
+ * @resource
+ * @product API Shield
+ * @category Application Security
  */
 export const Operation = Resource<Operation>(TypeId);
 

@@ -32,7 +32,9 @@ test.provider(
 
       const out = yield* stack.deploy(
         Effect.gen(function* () {
-          const bucket = yield* Cloudflare.R2.Bucket("SeedBucket");
+          const bucket = yield* Cloudflare.R2.Bucket("SeedBucket", {
+            forceDestroy: true,
+          });
 
           const Seed = Action(
             "Seed",

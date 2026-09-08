@@ -3,7 +3,7 @@ import * as Planetscale from "@/Planetscale";
 import * as Provider from "@/Provider";
 import * as RemovalPolicy from "@/RemovalPolicy.ts";
 import * as Test from "@/Test/Alchemy";
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import { describe, expect } from "alchemy-test";
 import { Data, Schedule } from "effect";
 import * as Cause from "effect/Cause";
@@ -345,7 +345,7 @@ describe
                 "PostgresDatabaseMigrations",
                 {
                   clusterSize: "PS_10",
-                  migrationsDir: `${fixturesDir}/migrations`,
+                  migrations: `${fixturesDir}/migrations`,
                   importFiles: [importFile],
                 },
               );
@@ -522,7 +522,7 @@ describe
           );
 
           // Verify database still exists (was not deleted via API)
-          const live = yield* ops.getDatabase({
+          const live = yield* ps.getDatabase({
             organization: database.organization,
             database: database.name,
           });
@@ -533,7 +533,7 @@ describe
           expect(live.kind).toEqual("postgresql");
 
           // Clean up manually for the test
-          yield* ops
+          yield* ps
             .deleteDatabase({
               organization: database.organization,
               database: database.name,
@@ -548,7 +548,7 @@ const waitForDatabaseToBeDeleted = Effect.fn(function* (
   database: string,
   organization: string,
 ) {
-  yield* ops
+  yield* ps
     .getDatabase({
       organization,
       database,

@@ -6,8 +6,8 @@ import * as S from "effect/Schema";
 
 export const sql = AI.Parameter("sql", S.String)`The SQL query to execute.`;
 
-export class Sql extends AI.Tool<Sql>()("sql")`
-Execute a ${sql} query on the database and return the result.` {}
+export class Sql extends (AI.Tool<Sql>()("sql")`
+Execute a ${sql} query on the database and return the result.`) {}
 
 export const SqlDurableObjectLive = Layer.effect(
   Sql,

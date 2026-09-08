@@ -50,8 +50,8 @@ export interface TranslationJobEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Job Events
- * @example React to finished batch translation jobs
+ * ### Consuming Job Events
+ * **Example:** React to finished batch translation jobs
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

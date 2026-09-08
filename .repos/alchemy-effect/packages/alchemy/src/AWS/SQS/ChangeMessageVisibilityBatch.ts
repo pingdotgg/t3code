@@ -17,9 +17,8 @@ export interface ChangeMessageVisibilityBatchRequest extends Omit<
  * `sqs:ChangeMessageVisibility` on the queue. Provide the
  * `ChangeMessageVisibilityBatchHttp` layer on the Function to implement the
  * binding.
- * @binding
- * @section Changing Message Visibility
- * @example Release a Batch of Messages Back to the Queue
+ * ### Changing Message Visibility
+ * **Example:** Release a Batch of Messages Back to the Queue
  * ```typescript
  * // init (provide SQS.ChangeMessageVisibilityBatchHttp on the Function)
  * const changeMessageVisibilityBatch =
@@ -35,6 +34,8 @@ export interface ChangeMessageVisibilityBatchRequest extends Omit<
  * });
  * // result.Successful / result.Failed
  * ```
+ *
+ * @binding
  */
 export interface ChangeMessageVisibilityBatch extends Binding.Service<
   ChangeMessageVisibilityBatch,

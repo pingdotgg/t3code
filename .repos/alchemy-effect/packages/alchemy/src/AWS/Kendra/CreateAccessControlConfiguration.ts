@@ -23,9 +23,8 @@ export interface CreateAccessControlConfigurationRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.CreateAccessControlConfigurationHttp)`.
  *
- * @binding
- * @section Access Control Configurations
- * @example Create a Runtime ACL
+ * ### Access Control Configurations
+ * **Example:** Create a Runtime ACL
  * ```typescript
  * const createAcl =
  *   yield* AWS.Kendra.CreateAccessControlConfiguration(index);
@@ -37,6 +36,8 @@ export interface CreateAccessControlConfigurationRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateAccessControlConfiguration extends Binding.Service<
   CreateAccessControlConfiguration,

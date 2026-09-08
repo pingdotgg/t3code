@@ -13,9 +13,8 @@ export interface ListThirdPartyFirewallFirewallPoliciesRequest
  *
  * Retrieves a list of all of the third-party firewall policies that are associated with the third-party firewall administrator's account. Provide
  * the implementation with `Effect.provide(AWS.FMS.ListThirdPartyFirewallFirewallPoliciesHttp)`.
- * @binding
- * @section Third-Party Firewalls
- * @example List Third-Party Firewall Policies
+ * ### Third-Party Firewalls
+ * **Example:** List Third-Party Firewall Policies
  * ```typescript
  * // init — account-level binding takes no resource
  * const listThirdPartyFirewallFirewallPolicies =
@@ -28,6 +27,8 @@ export interface ListThirdPartyFirewallFirewallPoliciesRequest
  * });
  * console.log(result.ThirdPartyFirewallFirewallPolicies);
  * ```
+ *
+ * @binding
  */
 export interface ListThirdPartyFirewallFirewallPolicies extends Binding.Service<
   ListThirdPartyFirewallFirewallPolicies,

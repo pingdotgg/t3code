@@ -8,12 +8,14 @@ import * as Test from "@/Test/Alchemy";
 import * as cloudfront from "@distilled.cloud/aws/cloudfront";
 import * as S3 from "@distilled.cloud/aws/s3";
 import { describe, expect } from "alchemy-test";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
-const runLive = process.env.ALCHEMY_RUN_LIVE_AWS_WEBSITE_TESTS === "true";
+const runLive = !process.env.FAST;
 
 describe("AWS.CloudFront.Distribution", () => {
   test.provider.skipIf(!runLive)(
@@ -293,6 +295,107 @@ describe("AWS.CloudFront.Distribution", () => {
 
         yield* stack.destroy();
         yield* assertDistributionDeleted(deployed.distribution.distributionId);
+      }),
+    { timeout: 600_000 },
+  );
+
+  // Regression for the UpdateDistribution full-config-replacement failure:
+  // members the props don't express (DefaultRootObject, per-origin
+  // CustomHeaders) are set on the live distribution out-of-band, then an
+  // alchemy update is deployed. Before `mergeWithObservedConfig`, the update
+  // request omitted those members and CloudFront rejected it with
+  // `IllegalUpdate` ("Default root object is missing for the resource",
+  // "The 'OriginCustomHeaders' field is missing"). Now they are carried over
+  // from the observed config while the declared props still win.
+  test.provider.skipIf(!runLive)(
+    "update preserves config members set out-of-band",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.destroy();
+
+        // A plain custom origin keeps the fixture to a single resource — the
+        // regression under test lives entirely in the distribution's config
+        // update, so no bucket/OAC is needed.
+        const program = (defaultTtl: Duration.Input) =>
+          Effect.gen(function* () {
+            return yield* Distribution("MergeDistribution", {
+              origins: [
+                {
+                  id: "site",
+                  domainName: "example.com",
+                },
+              ],
+              defaultCacheBehavior: {
+                targetOriginId: "site",
+                viewerProtocolPolicy: "redirect-to-https",
+                compress: true,
+                forwardedValues: {
+                  QueryString: false,
+                  Cookies: {
+                    Forward: "none",
+                  },
+                },
+                minTtl: 0,
+                defaultTtl,
+                maxTtl: "1 hour",
+              },
+            });
+          });
+
+        const deployed = yield* stack.deploy(program("5 minutes"));
+
+        // Out-of-band read-modify-write: enrich the live config with members
+        // the props above don't express.
+        const live = yield* cloudfront.getDistributionConfig({
+          Id: deployed.distributionId,
+        });
+        const liveConfig = live.DistributionConfig!;
+        yield* cloudfront.updateDistribution({
+          Id: deployed.distributionId,
+          IfMatch: live.ETag,
+          DistributionConfig: {
+            ...liveConfig,
+            DefaultRootObject: "index.html",
+            Origins: {
+              ...liveConfig.Origins,
+              Items: liveConfig.Origins.Items.map((origin) => ({
+                ...origin,
+                CustomHeaders: {
+                  Quantity: 1,
+                  Items: [{ HeaderName: "x-out-of-band", HeaderValue: "kept" }],
+                },
+              })),
+            },
+          },
+        });
+
+        // Update via alchemy with a changed prop. The props still don't
+        // express the members set above — pre-fix this deploy failed with
+        // `IllegalUpdate`.
+        yield* stack.deploy(program("10 minutes"));
+
+        const updated = yield* cloudfront.getDistributionConfig({
+          Id: deployed.distributionId,
+        });
+        const config = updated.DistributionConfig;
+        // Desired wins: the prop change went through.
+        expect(config?.DefaultCacheBehavior?.DefaultTTL).toEqual(600);
+        // Members the props don't express carried over from the observed
+        // config instead of being dropped (or rejected) by the update.
+        expect(config?.DefaultRootObject).toEqual("index.html");
+        const headers = config?.Origins?.Items?.[0]?.CustomHeaders?.Items?.map(
+          (header) => ({
+            name: header.HeaderName,
+            value:
+              typeof header.HeaderValue === "string"
+                ? header.HeaderValue
+                : Redacted.value(header.HeaderValue),
+          }),
+        );
+        expect(headers).toEqual([{ name: "x-out-of-band", value: "kept" }]);
+
+        yield* stack.destroy();
+        yield* assertDistributionDeleted(deployed.distributionId);
       }),
     { timeout: 600_000 },
   );

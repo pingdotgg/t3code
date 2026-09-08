@@ -22,9 +22,8 @@ export interface GetImageFrameRequest extends Omit<
  * {@link GetImageSetMetadata}. Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.GetImageFrameHttp)`.
  *
- * @binding
- * @section Reading Image Frames
- * @example Fetch an Image Frame's Pixel Data
+ * ### Reading Image Frames
+ * **Example:** Fetch an Image Frame's Pixel Data
  * ```typescript
  * const getImageFrame = yield* MedicalImaging.GetImageFrame(datastore);
  *
@@ -34,6 +33,8 @@ export interface GetImageFrameRequest extends Omit<
  * });
  * // frame.imageFrameBlob (streaming body), frame.contentType
  * ```
+ *
+ * @binding
  */
 export interface GetImageFrame extends Binding.Service<
   GetImageFrame,

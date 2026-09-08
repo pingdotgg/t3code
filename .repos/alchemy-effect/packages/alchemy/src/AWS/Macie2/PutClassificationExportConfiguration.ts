@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.PutClassificationExportConfigurationHttp)`.
- * @binding
- * @section Classification Jobs & Export
- * @example Export Results to S3
+ * ### Classification Jobs & Export
+ * **Example:** Export Results to S3
  * ```typescript
  * // init — account-level binding, no resource argument
  * const putClassificationExportConfiguration = yield* AWS.Macie2.PutClassificationExportConfiguration();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutClassificationExportConfiguration extends Binding.Service<
   PutClassificationExportConfiguration,

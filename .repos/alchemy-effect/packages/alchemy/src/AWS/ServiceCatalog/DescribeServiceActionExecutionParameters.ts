@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * is governed by portfolio principal associations, so the binding takes no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.ServiceCatalog.DescribeServiceActionExecutionParametersHttp)`.
- * @binding
- * @section Service Actions
- * @example Read a Service Action's Parameters
+ * ### Service Actions
+ * **Example:** Read a Service Action's Parameters
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeServiceActionExecutionParameters = yield* AWS.ServiceCatalog.DescribeServiceActionExecutionParameters();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *     ServiceActionId: "act-abc123",
  *   });
  * ```
+ *
+ * @binding
  */
 export interface DescribeServiceActionExecutionParameters extends Binding.Service<
   DescribeServiceActionExecutionParameters,

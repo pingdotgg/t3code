@@ -72,9 +72,8 @@ export interface AnomalyMonitor extends Resource<
  * regardless of the stack region. Monitors are free and take effect
  * immediately.
  *
- * @resource
- * @section Creating Anomaly Monitors
- * @example Custom monitor scoped by a cost allocation tag
+ * ### Creating Anomaly Monitors
+ * **Example:** Custom monitor scoped by a cost allocation tag
  * ```typescript
  * import * as CostExplorer from "alchemy/AWS/CostExplorer";
  *
@@ -86,13 +85,15 @@ export interface AnomalyMonitor extends Resource<
  * });
  * ```
  *
- * @example Dimensional monitor across all AWS services
+ * **Example:** Dimensional monitor across all AWS services
  * ```typescript
  * const monitor = yield* CostExplorer.AnomalyMonitor("ServiceSpend", {
  *   monitorType: "DIMENSIONAL",
  *   monitorDimension: "SERVICE",
  * });
  * ```
+ *
+ * @resource
  */
 export const AnomalyMonitor = Resource<AnomalyMonitor>(
   "AWS.CostExplorer.AnomalyMonitor",

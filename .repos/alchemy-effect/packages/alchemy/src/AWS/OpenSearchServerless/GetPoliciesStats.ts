@@ -12,15 +12,16 @@ import * as Binding from "../../Binding.ts";
  * dashboards (each policy type has an account quota). Provide the
  * implementation with
  * `Effect.provide(AWS.OpenSearchServerless.GetPoliciesStatsHttp)`.
- * @binding
- * @section Account Settings
- * @example Count the account's policies
+ * ### Account Settings
+ * **Example:** Count the account's policies
  * ```typescript
  * const getPoliciesStats = yield* AWS.OpenSearchServerless.GetPoliciesStats();
  *
  * const stats = yield* getPoliciesStats();
  * yield* Effect.log(`total policies: ${stats.TotalPolicyCount}`);
  * ```
+ *
+ * @binding
  */
 export interface GetPoliciesStats extends Binding.Service<
   GetPoliciesStats,

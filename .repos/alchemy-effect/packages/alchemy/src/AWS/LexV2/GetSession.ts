@@ -18,9 +18,8 @@ export interface GetSessionRequest extends Omit<
  * intent, slots, session attributes, interpretations) of a conversation
  * with an Amazon Lex V2 bot alias.
  *
- * @binding
- * @section Managing Sessions
- * @example Inspect a User's Session
+ * ### Managing Sessions
+ * **Example:** Inspect a User's Session
  * ```typescript
  * // init
  * const getSession = yield* AWS.LexV2.GetSession(alias);
@@ -32,6 +31,8 @@ export interface GetSessionRequest extends Omit<
  * });
  * const intent = session.sessionState?.intent?.name;
  * ```
+ *
+ * @binding
  */
 export interface GetSession extends Binding.Service<
   GetSession,

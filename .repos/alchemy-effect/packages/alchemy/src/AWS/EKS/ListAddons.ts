@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:ListAddons` is granted on the cluster's ARN.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.ListAddonsHttp)`.
- * @binding
- * @section Inspecting Add-ons
- * @example List Installed Add-ons
+ * ### Inspecting Add-ons
+ * **Example:** List Installed Add-ons
  * ```typescript
  * // init
  * const listAddons = yield* AWS.EKS.ListAddons(cluster);
@@ -20,6 +19,8 @@ import type { Cluster } from "./Cluster.ts";
  * // runtime
  * const { addons } = yield* listAddons();
  * ```
+ *
+ * @binding
  */
 export interface ListAddons extends Binding.Service<
   ListAddons,

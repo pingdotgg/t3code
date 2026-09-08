@@ -18,9 +18,8 @@ export interface RevokeCertificateRequest extends Omit<
  * certificate. Provide `ACMPCA.RevokeCertificateHttp` on the Function
  * effect to implement the binding.
  *
- * @binding
- * @section Revoking Certificates
- * @example Revoke a Compromised Certificate
+ * ### Revoking Certificates
+ * **Example:** Revoke a Compromised Certificate
  * ```typescript
  * // init
  * const revokeCertificate = yield* ACMPCA.RevokeCertificate(ca);
@@ -31,6 +30,8 @@ export interface RevokeCertificateRequest extends Omit<
  *   RevocationReason: "KEY_COMPROMISE",
  * });
  * ```
+ *
+ * @binding
  */
 export interface RevokeCertificate extends Binding.Service<
   RevokeCertificate,

@@ -49,8 +49,8 @@ export interface VpcLink extends Resource<
 /**
  * VPC link for private integrations (`connectionType: "VPC_LINK"` on a method integration).
  *
- * @section Private integrations
- * @example Create a VPC link
+ * ### Private integrations
+ * **Example:** Create a VPC link
  * ```typescript
  * const link = yield* ApiGateway.VpcLink("NlbLink", {
  *   description: "Link to internal NLB",

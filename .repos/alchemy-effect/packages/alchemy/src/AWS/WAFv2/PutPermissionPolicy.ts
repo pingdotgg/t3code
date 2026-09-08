@@ -17,9 +17,8 @@ export interface PutPermissionPolicyRequest extends Omit<
  *
  * Provide `WAFv2.PutPermissionPolicyHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Sharing Rule Groups
- * @example Share the Rule Group with Another Account
+ * ### Sharing Rule Groups
+ * **Example:** Share the Rule Group with Another Account
  * ```typescript
  * // init — grants wafv2:PutPermissionPolicy on the rule group
  * const putPermissionPolicy = yield* AWS.WAFv2.PutPermissionPolicy(group);
@@ -39,6 +38,8 @@ export interface PutPermissionPolicyRequest extends Omit<
  *   }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutPermissionPolicy extends Binding.Service<
   PutPermissionPolicy,

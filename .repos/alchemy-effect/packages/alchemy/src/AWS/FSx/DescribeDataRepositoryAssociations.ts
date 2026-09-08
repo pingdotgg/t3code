@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * e.g. to discover the S3 prefix a {@link CreateDataRepositoryTask} export
  * will land in. Provide the implementation with
  * `Effect.provide(AWS.FSx.DescribeDataRepositoryAssociationsHttp)`.
- * @binding
- * @section Data Repository Tasks
- * @example List a file system's data repository associations
+ * ### Data Repository Tasks
+ * **Example:** List a file system's data repository associations
  * ```typescript
  * const describeDataRepositoryAssociations =
  *   yield* AWS.FSx.DescribeDataRepositoryAssociations();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(response.Associations?.[0]?.DataRepositoryPath);
  * ```
+ *
+ * @binding
  */
 export interface DescribeDataRepositoryAssociations extends Binding.Service<
   DescribeDataRepositoryAssociations,

@@ -11,9 +11,8 @@ import type { Namespace } from "./Namespace.ts";
  * {@link Namespace} under a new name — undo for a bad table mutation
  * without rolling back the whole namespace. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.RestoreTableFromSnapshotHttp)`.
- * @binding
- * @section Restoring Data
- * @example Restore One Table from a Snapshot
+ * ### Restoring Data
+ * **Example:** Restore One Table from a Snapshot
  * ```typescript
  * // init — resolve the runtime client
  * const restoreTable = yield* AWS.RedshiftServerless.RestoreTableFromSnapshot(namespace);
@@ -26,6 +25,8 @@ import type { Namespace } from "./Namespace.ts";
  *   newTableName: "orders_restored",
  * });
  * ```
+ *
+ * @binding
  */
 export interface RestoreTableFromSnapshot extends Binding.Service<
   RestoreTableFromSnapshot,

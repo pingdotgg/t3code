@@ -347,8 +347,11 @@ export const evalStack = <A, B, StackErr, Err, Req>(
 
     return yield* fn(stack).pipe(
       provideFreshArtifactStore,
-      Effect.provide(stack.services),
-      Effect.provide(Layer.succeed(ConfigProvider, configProvider)),
+      Effect.provide(
+        Layer.succeedContext(stack.services).pipe(
+          Layer.provideMerge(Layer.succeed(ConfigProvider, configProvider)),
+        ),
+      ),
     );
   }).pipe(
     Effect.provide(

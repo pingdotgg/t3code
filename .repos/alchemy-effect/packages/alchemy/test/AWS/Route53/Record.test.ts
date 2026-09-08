@@ -257,6 +257,70 @@ test.provider(
   { timeout: 240_000 },
 );
 
+const inferredRecordName = `inferred-record.${zoneName}`;
+const inferredRecordValue = '"alchemy-inference-test"';
+
+test.provider(
+  "infers the hosted zone from the record name when hostedZoneId is omitted",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const hostedZoneId = yield* ensureZone;
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Record("InferredRecord", {
+            // No `hostedZoneId` — the provider walks the name's parent
+            // domains to the most specific public zone (the standing test
+            // zone) via ListHostedZonesByName.
+            name: inferredRecordName,
+            type: "TXT",
+            ttl: "60 seconds",
+            records: [inferredRecordValue],
+          });
+        }),
+      );
+      // Attributes carry the RESOLVED zone id.
+      expect(normalizeId(deployed.hostedZoneId as string)).toBe(
+        normalizeId(hostedZoneId),
+      );
+
+      // Out-of-band: the record actually landed in the standing zone.
+      const live = yield* route53.listResourceRecordSets({
+        HostedZoneId: hostedZoneId,
+        StartRecordName: inferredRecordName,
+        StartRecordType: "TXT",
+        MaxItems: 5,
+      });
+      expect(
+        (live.ResourceRecordSets ?? []).some(
+          (set) => set.Name === inferredRecordName && set.Type === "TXT",
+        ),
+      ).toBe(true);
+
+      // Destroy resolves the zone from the stored attributes.
+      yield* stack.destroy();
+      const gone = yield* route53
+        .listResourceRecordSets({
+          HostedZoneId: hostedZoneId,
+          StartRecordName: inferredRecordName,
+          StartRecordType: "TXT",
+          MaxItems: 5,
+        })
+        .pipe(
+          Effect.map(
+            (r) =>
+              !(r.ResourceRecordSets ?? []).some(
+                (set) => set.Name === inferredRecordName && set.Type === "TXT",
+              ),
+          ),
+        );
+      expect(gone).toBe(true);
+    }),
+  { timeout: 240_000 },
+);
+
 // Regression test for https://github.com/alchemy-run/alchemy/issues/736.
 //
 // An interrupted first deploy persists the record as `status: "creating"`

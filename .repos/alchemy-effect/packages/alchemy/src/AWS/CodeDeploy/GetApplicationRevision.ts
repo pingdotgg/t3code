@@ -12,9 +12,8 @@ export interface GetApplicationRevisionRequest extends Omit<
  * Runtime binding for `codedeploy:GetApplicationRevision` — reads a
  * registered revision's metadata (description, deployment groups it was
  * deployed to, first-seen time).
- * @binding
- * @section Managing Revisions
- * @example Read a Revision
+ * ### Managing Revisions
+ * **Example:** Read a Revision
  * ```typescript
  * const getApplicationRevision =
  *   yield* AWS.CodeDeploy.GetApplicationRevision(app);
@@ -26,6 +25,8 @@ export interface GetApplicationRevisionRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetApplicationRevision extends Binding.Service<
   GetApplicationRevision,

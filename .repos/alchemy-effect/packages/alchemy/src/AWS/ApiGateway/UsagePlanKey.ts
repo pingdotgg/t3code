@@ -35,8 +35,8 @@ export interface UsagePlanKey extends Resource<
 /**
  * Associates an API key with a usage plan.
  *
- * @section Usage plan keys
- * @example Associate key with plan
+ * ### Usage plan keys
+ * **Example:** Associate key with plan
  * ```typescript
  * yield* ApiGateway.UsagePlanKey("PlanKey", {
  *   usagePlanId: plan.id,

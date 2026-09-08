@@ -16,9 +16,8 @@ export interface BatchImportEvidenceToAssessmentControlRequest extends Omit<
  * bound assessment — free-form text, an S3 object, or a file uploaded via
  * {@link GetEvidenceFileUploadUrl}. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.BatchImportEvidenceToAssessmentControlHttp)`.
- * @binding
- * @section Manual Evidence
- * @example Attach Manual Evidence to a Control
+ * ### Manual Evidence
+ * **Example:** Attach Manual Evidence to a Control
  * ```typescript
  * const batchImportEvidenceToAssessmentControl = yield* AWS.AuditManager.BatchImportEvidenceToAssessmentControl(assessment);
  * const result = yield* batchImportEvidenceToAssessmentControl({
@@ -27,6 +26,8 @@ export interface BatchImportEvidenceToAssessmentControlRequest extends Omit<
  *   manualEvidence: [{ textResponse: "Reviewed 2026-Q3: no findings" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchImportEvidenceToAssessmentControl extends Binding.Service<
   BatchImportEvidenceToAssessmentControl,

@@ -39,6 +39,51 @@ test(
 );
 
 /**
+ * Better Auth on D1 (auto-migrated at deploy): sign-up + sign-in through
+ * the `/auth/*` routes served by `auth.fetch`, asserting a session cookie
+ * comes back. The assets auth panel (`index.html`) drives the same routes
+ * from the browser.
+ */
+test(
+  "better auth: sign-up and sign-in on D1",
+  Effect.gen(function* () {
+    const { url } = yield* stack;
+    const email = "auth-integ@example.com";
+    const password = "password1234";
+
+    const post = (path: string, body: unknown) =>
+      Effect.tryPromise(async (signal) => {
+        const response = await fetch(`${url}${path}`, {
+          method: "POST",
+          signal,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return {
+          status: response.status,
+          body: await response.text(),
+          cookies: response.headers.getSetCookie(),
+        };
+      });
+
+    // A leftover user from a prior NO_DESTROY run is fine — sign-in is the
+    // real assertion. Retries ride out workers.dev propagation.
+    yield* post("/auth/sign-up/email", { email, password, name: "Integ" }).pipe(
+      Effect.filterOrFail(
+        (r) => r.status === 200 || r.body.includes("USER_ALREADY_EXISTS"),
+        (r) => new Error(`sign-up failed: ${r.status} ${r.body.slice(0, 200)}`),
+      ),
+      Effect.retry({ schedule: Schedule.exponential("1 second"), times: 8 }),
+    );
+
+    const signIn = yield* post("/auth/sign-in/email", { email, password });
+    expect(signIn.status).toBe(200);
+    expect(signIn.cookies.length).toBeGreaterThan(0);
+  }),
+  { timeout: 120_000 },
+);
+
+/**
  * Regression guard for https://github.com/alchemy-run/alchemy/pull/172
  *
  * The stack now includes two Workers (`Api` and `SecondaryApi`) that both
@@ -142,8 +187,14 @@ test(
       return lastStatus;
     });
 
+    // Cloudflare can briefly route workflow invocations to a worker version
+    // that predates the final upload (e.g. the pre-create stub), which
+    // errors instances with "The entrypoint name Notifier was not found in
+    // this worker" until the deployed version propagates. Each errored
+    // attempt terminates within a few seconds, so give propagation a
+    // bounded ~45s of fresh instances rather than 3 swings in 16s.
     const lastStatus = yield* runOnce.pipe(
-      Effect.retry({ schedule: Schedule.spaced("3 seconds"), times: 2 }),
+      Effect.retry({ schedule: Schedule.spaced("3 seconds"), times: 6 }),
     );
 
     expect(lastStatus.status).toBe("complete");
@@ -153,7 +204,9 @@ test(
     // way through to the workflow body's runtime read. The workflow body
     // unwraps `Redacted.value(secret)` and embeds it in the returned
     // `processed` payload.
-    expect(lastStatus.output?.secret).toBe(Redacted.value(WORKFLOW_SECRET_VALUE));
+    expect(lastStatus.output?.secret).toBe(
+      Redacted.value(WORKFLOW_SECRET_VALUE),
+    );
   }),
   { timeout: 120_000 },
 );

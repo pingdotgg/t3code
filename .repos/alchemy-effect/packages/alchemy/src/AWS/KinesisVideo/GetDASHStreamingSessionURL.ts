@@ -16,9 +16,8 @@ export interface GetDASHStreamingSessionURLRequest extends Omit<
  * Bind this operation to a `Stream` inside a function runtime to get a
  * callable that resolves the per-stream data endpoint (`GetDataEndpoint`)
  * and returns a short-lived MPEG-DASH playback URL.
- * @binding
- * @section Reading Media
- * @example Live DASH Playback URL
+ * ### Reading Media
+ * **Example:** Live DASH Playback URL
  * ```typescript
  * // init
  * const getDash = yield* AWS.KinesisVideo.GetDASHStreamingSessionURL(stream);
@@ -28,6 +27,8 @@ export interface GetDASHStreamingSessionURLRequest extends Omit<
  *   PlaybackMode: "LIVE",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetDASHStreamingSessionURL extends Binding.Service<
   GetDASHStreamingSessionURL,

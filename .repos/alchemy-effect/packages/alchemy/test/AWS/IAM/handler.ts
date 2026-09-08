@@ -34,7 +34,7 @@ const CUSTOM_POLICY = JSON.stringify({
 export default IamTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Credential-report + access-advisor routes poll (bounded) for report
     // generation; the AWS default 3s Lambda timeout is far too tight.
     timeout: Duration.seconds(30),

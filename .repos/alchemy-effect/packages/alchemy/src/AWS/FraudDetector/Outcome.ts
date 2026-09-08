@@ -44,15 +44,16 @@ export interface Outcome extends Resource<
  * (e.g. `approve`, `review`, `block`). Detector rules reference outcomes; they
  * are cheap metadata objects.
  *
- * @resource
- * @section Creating an Outcome
- * @example Approve and Review Outcomes
+ * ### Creating an Outcome
+ * **Example:** Approve and Review Outcomes
  * ```typescript
  * const approve = yield* FraudDetector.Outcome("approve", {
  *   description: "let the transaction through",
  * });
  * const review = yield* FraudDetector.Outcome("review", {});
  * ```
+ *
+ * @resource
  */
 export const Outcome = Resource<Outcome>("AWS.FraudDetector.Outcome");
 

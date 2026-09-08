@@ -151,9 +151,8 @@ export interface Application extends Resource<
  * requires an IAM Identity Center instance in the account (pass its ARN as
  * `identityCenterInstanceArn`).
  * :::
- * @resource
- * @section Creating Applications
- * @example Identity Center Application
+ * ### Creating Applications
+ * **Example:** Identity Center Application
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -163,12 +162,14 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @example Anonymous Application
+ * **Example:** Anonymous Application
  * ```typescript
  * const app = yield* AWS.QBusiness.Application("PublicAssistant", {
  *   identityType: "ANONYMOUS",
  * });
  * ```
+ *
+ * @resource
  */
 export const Application = Resource<Application>("AWS.QBusiness.Application");
 

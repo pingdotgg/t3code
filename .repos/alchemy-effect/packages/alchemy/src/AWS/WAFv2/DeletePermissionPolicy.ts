@@ -11,9 +11,8 @@ import type { RuleGroup } from "./RuleGroup.ts";
  *
  * Provide `WAFv2.DeletePermissionPolicyHttp` on the hosting Lambda Function
  * to satisfy the requirement.
- * @binding
- * @section Sharing Rule Groups
- * @example Stop Sharing the Rule Group
+ * ### Sharing Rule Groups
+ * **Example:** Stop Sharing the Rule Group
  * ```typescript
  * // init — grants wafv2:DeletePermissionPolicy on the rule group
  * const deletePermissionPolicy = yield* AWS.WAFv2.DeletePermissionPolicy(group);
@@ -21,6 +20,8 @@ import type { RuleGroup } from "./RuleGroup.ts";
  * // runtime
  * yield* deletePermissionPolicy();
  * ```
+ *
+ * @binding
  */
 export interface DeletePermissionPolicy extends Binding.Service<
   DeletePermissionPolicy,

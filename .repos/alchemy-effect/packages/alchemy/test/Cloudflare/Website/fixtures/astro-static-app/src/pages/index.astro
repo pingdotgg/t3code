@@ -1,0 +1,17 @@
+---
+// Fully static: `astro: { output: "static" }` (passed via props) prerenders
+// every page at build time — the deploy must be assets-only, no Worker
+// script. This page imports nothing server-side.
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Astro Static Fixture</title>
+  </head>
+  <body>
+    <h1>Astro Static Fixture</h1>
+    <p id="mode">static-home</p>
+    <p><a href="/about/">about</a></p>
+  </body>
+</html>

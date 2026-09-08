@@ -18,14 +18,13 @@ export interface GetEventRequest extends Omit<
  * Task. Events are stored by `SendEvent` or by predictions on an event type
  * with ingestion enabled.
  *
- * @binding
- * @section Reading Stored Events
+ * ### Reading Stored Events
  * Provide the `GetEventHttp` implementation layer on the Function effect,
  * bind the event type in the init phase, then call the returned client at
  * runtime. The binding grants `frauddetector:GetEvent` on the event type and
  * injects its `eventTypeName` automatically.
  *
- * @example Read from a Lambda
+ * **Example:** Read from a Lambda
  * ```typescript
  * // init
  * const getEvent = yield* FraudDetector.GetEvent(eventType);
@@ -40,6 +39,8 @@ export interface GetEventRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.GetEventHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetEvent extends Binding.Service<
   GetEvent,

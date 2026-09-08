@@ -1,5 +1,5 @@
 ---
-title: Deploy a static site
+title: Static sites
 description: Ship a static site to S3 + CloudFront with AWS.Website.StaticSite — build-step support, Router composition, and cache invalidation on deploy.
 sidebar:
   order: 4
@@ -26,7 +26,7 @@ export default Alchemy.Stack(
   "MyStaticSite",
   {
     providers: AWS.providers(),
-    state: Alchemy.localState(),
+    state: AWS.state(),
   },
   Effect.gen(function* () {
     const site = yield* AWS.Website.StaticSite("MarketingSite", {
@@ -66,9 +66,9 @@ const site = yield* AWS.Website.StaticSite("Web", {
   build: {
     command: "bun run build",
     output: "dist",
-  },
-  environment: {
-    VITE_API_URL: api.url,
+    env: {
+      VITE_API_URL: api.url,
+    },
   },
 });
 ```
@@ -79,9 +79,34 @@ memoized, so unchanged inputs skip the build
 files under `path` (filtered by your gitignore rules) plus the nearest
 package-manager lockfile. Tune the hash with `build.include`, `build.exclude`, and
 `build.lockfile` — e.g. `include: ["src/**", "package.json"]` to re-run only
-when source files change. `environment` variables are passed to the build
+when source files change. `build.env` variables are passed to the build
 command, so outputs from other resources (like an API URL) flow straight into
 the frontend bundle.
+
+## SPAs and 404 pages
+
+A miss — a request that matches no uploaded file — can be answered two ways,
+and they are mutually exclusive:
+
+```typescript
+// Single-page app: misses serve index.html with a 200 so the
+// client-side router takes over.
+const app = yield* AWS.Website.StaticSite("App", {
+  path: "./app",
+  build: { command: "bun run build", output: "dist" },
+  spa: true,
+});
+
+// Static site: misses return a real 404 status with your error page.
+const docs = yield* AWS.Website.StaticSite("Docs", {
+  path: "./docs/dist",
+  errorPage: "404.html",
+});
+```
+
+Pretty URLs work in both modes: `/about` serves `about.html` or
+`about/index.html` when one was uploaded, resolved at the edge from the file
+manifest.
 
 ## Compose sites with a Router
 
@@ -92,13 +117,14 @@ distribution:
 
 ```typescript
 const router = yield* AWS.Website.Router("WebsiteRouter", {
-  domain: { name: "example.com", hostedZoneId },
+  // hosted zone inferred from the hostname; pass hostedZoneId to pin it
+  domain: { name: "example.com" },
 });
 
 const site = yield* AWS.Website.StaticSite("Docs", {
   path: "./docs",
-  router: {
-    instance: router,
+  domain: {
+    router,
     path: "/docs",
   },
 });
@@ -106,8 +132,10 @@ const site = yield* AWS.Website.StaticSite("Docs", {
 
 The site registers itself by writing its file manifest and metadata into the
 router's KV store — no distribution redeploy is needed to add or remove a
-site. When attaching to a router, put `domain` and `edge` on the `Router`, not
-the `StaticSite`; passing either alongside `router` is an error.
+site. In router mode, `domain.name` is an optional host pattern (exact
+hostname or `*.example.com`) matched at the edge; the hostname must also be
+covered by the Router's own `domain`. `edge` and `cloudfrontUrl` live on the
+`Router` — setting them on an attached site is an error.
 
 ## Route to non-site origins
 
@@ -153,6 +181,39 @@ const site = yield* AWS.Website.StaticSite("MarketingSite", {
 - `wait: true` — block the deploy until CloudFront reports the invalidation
   complete
 - `invalidation: false` — skip invalidation entirely
+
+## Local dev
+
+During `alchemy dev`, the `dev` prop replaces the build (and the whole
+S3 + CloudFront deployment) with your framework's own dev server:
+
+```typescript
+const site = yield* AWS.Website.StaticSite("Web", {
+  path: "./frontend",
+  build: { command: "bun run build", output: "dist" },
+  dev: { command: "bun run dev" },
+});
+```
+
+`dev.command` is spawned as a long-lived sidecar process tied to the
+stack's scope — the build is skipped, no AWS resources are created, and
+`site.url` is the dev server's local address, detected from the
+command's stdout. `dev` also accepts `cwd` and `env` overrides for the
+dev process, and `dev.url` to pin the URL explicitly when stdout
+detection fails. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## When to use a framework resource instead
+
+`StaticSite` is the general fallback for any directory of files (with or
+without a build command). Frameworks with dedicated resources have a
+better path: [Astro](/aws/frontend/astro),
+[Next.js](/aws/frontend/nextjs), [Nuxt](/aws/frontend/nuxt),
+[SvelteKit](/aws/frontend/sveltekit), and [Waku](/aws/frontend/waku)
+run the framework's own programmatic build, deploy server-rendered
+routes on a streaming Lambda, and skip the build contract entirely.
+Reach for `StaticSite` when there is no dedicated resource — Zola,
+Hugo, or any other generator, or a pre-built SPA.
 
 ## Where next
 

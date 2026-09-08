@@ -21,9 +21,8 @@ export type StartWorkflowRunInput = Omit<
  * binding; the caller can override workflow parameters or pin a specific
  * workflow version. Provide the implementation with
  * `Effect.provide(AWS.MWAAServerless.StartWorkflowRunHttp)`.
- * @binding
- * @section Running Workflows
- * @example Start An On-Demand Run
+ * ### Running Workflows
+ * **Example:** Start An On-Demand Run
  * ```typescript
  * // init — bind the operation to the workflow
  * const startWorkflowRun = yield* AWS.MWAAServerless.StartWorkflowRun(workflow);
@@ -34,6 +33,8 @@ export type StartWorkflowRunInput = Omit<
  * });
  * yield* Effect.log(`started run ${run.RunId} (${run.Status})`);
  * ```
+ *
+ * @binding
  */
 export interface StartWorkflowRun extends Binding.Service<
   StartWorkflowRun,

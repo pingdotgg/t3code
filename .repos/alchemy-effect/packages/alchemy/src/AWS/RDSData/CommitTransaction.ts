@@ -21,9 +21,8 @@ export interface CommitTransactionRequest extends Omit<
  * Bind it to the same `DBCluster` and credentials secret as the rest of the
  * transaction; provide the implementation with
  * `Effect.provide(AWS.RDSData.CommitTransactionHttp)`.
- * @binding
- * @section Transactions
- * @example Commit a Transaction
+ * ### Transactions
+ * **Example:** Commit a Transaction
  * ```typescript
  * // init
  * const commitTransaction = yield* AWS.RDSData.CommitTransaction(db.cluster, {
@@ -34,6 +33,8 @@ export interface CommitTransactionRequest extends Omit<
  * const commit = yield* commitTransaction({ transactionId: tx.transactionId! });
  * // commit.transactionStatus === "Transaction Committed"
  * ```
+ *
+ * @binding
  */
 export interface CommitTransaction extends Binding.Service<
   CommitTransaction,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.DisassociateFromAdministratorAccountHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Leave the Administrator Account
+ * ### Administrator & Invitations
+ * **Example:** Leave the Administrator Account
  * ```typescript
  * // init — account-level binding, no resource argument
  * const disassociateFromAdministratorAccount = yield* AWS.Macie2.DisassociateFromAdministratorAccount();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* disassociateFromAdministratorAccount();
  * ```
+ *
+ * @binding
  */
 export interface DisassociateFromAdministratorAccount extends Binding.Service<
   DisassociateFromAdministratorAccount,

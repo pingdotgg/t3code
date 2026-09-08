@@ -18,9 +18,8 @@ export interface GetAttributeValuesRequest
  * API. Provide the implementation with
  * `Effect.provide(AWS.Pricing.GetAttributeValuesHttp)`.
  *
- * @binding
- * @section Listing Attribute Values
- * @example List EC2 Volume Types
+ * ### Listing Attribute Values
+ * **Example:** List EC2 Volume Types
  * ```typescript
  * // init
  * const getAttributeValues = yield* AWS.Pricing.GetAttributeValues();
@@ -32,6 +31,8 @@ export interface GetAttributeValuesRequest
  * });
  * const volumeTypes = (result.AttributeValues ?? []).map((v) => v.Value);
  * ```
+ *
+ * @binding
  */
 export interface GetAttributeValues extends Binding.Service<
   GetAttributeValues,

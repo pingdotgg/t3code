@@ -14,8 +14,11 @@ everything else.
 - [D1](/cloudflare/data/d1) — Cloudflare's serverless SQLite, bound
   natively into a Worker.
 - [Hyperdrive](/cloudflare/data/hyperdrive) — edge connection pooling
-  for any Postgres: [Neon](/neon), [PlanetScale](/planetscale), RDS,
-  or a database you already run.
+  for any Postgres or MySQL: [Neon](/neon),
+  [PlanetScale](/planetscale), RDS, or a database you already run.
+- [Fly Postgres](/fly/data/postgres) — billed Managed Postgres.
+  Bind `ConnectPostgres` on a Service; `migrations` is the same
+  surface as Neon.
 - AWS-side connections — DSQL, RDS, and Redshift bindings in the
   [API reference](/providers).
 
@@ -23,9 +26,15 @@ everything else.
 
 `alchemy/SQL/*` is the low-level home: tagged-template queries with
 typed errors, no ORM — one subpath per backend (`alchemy/SQL/D1`,
-`alchemy/SQL/Postgres`), so you only load the driver you use.
+`alchemy/SQL/Postgres`, `alchemy/SQL/MySQL`), so you only load the
+driver you use.
 `alchemy/Drizzle` is the ORM sibling: a typed schema and relational
-queries. Both wrap the same
+queries. `Drizzle.Schema`, `Drizzle.providers()`, and `Drizzle.D1`
+come from the `alchemy/Drizzle` entry; the Postgres and MySQL
+clients live on their own subpaths (`alchemy/Drizzle/Postgres`,
+`alchemy/Drizzle/MySQL`) so their drivers only load when you use
+them, and the Durable Object client lives at
+`alchemy/Drizzle/Cloudflare`. Both wrap the same
 [`@effect/sql`](https://effect.website) drivers and share one
 lifecycle.
 
@@ -52,26 +61,27 @@ explains why.
 | Goal | Reach for |
 | --- | --- |
 | Raw SQL on Postgres | [Effect SQL: Postgres](/sql/effect-sql/postgres) |
+| Raw SQL on MySQL | [Effect SQL: MySQL](/sql/effect-sql/mysql) |
 | Raw SQL on D1 | [Effect SQL: D1](/sql/effect-sql/d1) |
 | Typed schema + queries on Postgres | [Drizzle: Postgres](/sql/drizzle/postgres) |
+| Typed schema + queries on MySQL | [Drizzle: MySQL](/sql/drizzle/mysql) |
 | Typed schema + queries on D1 | [Drizzle: D1](/sql/drizzle/d1) |
 | Schema changes applied on deploy | [Drizzle migrations](/sql/drizzle/migrations) |
 | Hand-written `.sql` migrations | [Effect SQL migrations](/sql/effect-sql/migrations) |
 | A service that runs on any database | `SqlClient` + Layers — see [Provide as a service](/sql/effect-sql/postgres#provide-as-a-service) |
 
-MySQL support is in flight: drizzle's `effect-mysql2` driver and
-Hyperdrive's text-protocol requirements are being reconciled upstream
-in `@effect/sql-mysql2`. Postgres and D1 are the supported paths
-today.
-
 ## Where next
 
 - [Effect SQL: Postgres](/sql/effect-sql/postgres) /
-  [D1](/sql/effect-sql/d1) — the raw clients.
+  [MySQL](/sql/effect-sql/mysql) / [D1](/sql/effect-sql/d1) — the
+  raw clients.
 - [Drizzle: Postgres](/sql/drizzle/postgres) /
-  [D1](/sql/drizzle/d1) — schema to queries, end to end.
+  [MySQL](/sql/drizzle/mysql) / [D1](/sql/drizzle/d1) — schema to
+  queries, end to end.
 - [Add Drizzle ORM](/cloudflare/data/drizzle) — full Worker wiring on
   Postgres via Hyperdrive.
+- [Fly Postgres](/fly/data/postgres) — Managed Postgres on a Fly
+  Service with `ConnectPostgres`.
 - [Drizzle on D1](/cloudflare/data/d1-drizzle) — full Worker wiring
   on D1.
 - [API reference](/providers) — every SQL and Drizzle export.

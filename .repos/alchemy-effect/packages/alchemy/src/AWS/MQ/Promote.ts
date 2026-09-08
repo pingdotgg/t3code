@@ -13,14 +13,15 @@ import type { Broker } from "./Broker.ts";
  * primary is unreachable. Only meaningful for brokers created with
  * `dataReplicationMode: "CRDR"`. Provide the implementation with
  * `Effect.provide(AWS.MQ.PromoteHttp)`.
- * @binding
- * @section Disaster Recovery
- * @example Fail Over to the Replica
+ * ### Disaster Recovery
+ * **Example:** Fail Over to the Replica
  * ```typescript
  * const promote = yield* MQ.Promote(replica);
  *
  * yield* promote({ Mode: "FAILOVER" });
  * ```
+ *
+ * @binding
  */
 export interface Promote extends Binding.Service<
   Promote,

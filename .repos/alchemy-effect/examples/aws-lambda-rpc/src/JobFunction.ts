@@ -9,7 +9,7 @@ export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
   "JobFunction",
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   JobRpcHttpEffect.pipe(
     Effect.map((fetch) => ({ fetch })),

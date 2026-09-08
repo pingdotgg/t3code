@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `WAFv2.DescribeManagedRuleGroupHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Managed Rule Group Catalog
- * @example Describe the AWS Common Rule Set
+ * ### Managed Rule Group Catalog
+ * **Example:** Describe the AWS Common Rule Set
  * ```typescript
  * // init — grants wafv2:DescribeManagedRuleGroup
  * const describeManagedRuleGroup = yield* AWS.WAFv2.DescribeManagedRuleGroup();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Scope: "REGIONAL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeManagedRuleGroup extends Binding.Service<
   DescribeManagedRuleGroup,
@@ -48,9 +49,8 @@ export const DescribeManagedRuleGroup =
  *
  * Provide `WAFv2.ListAvailableManagedRuleGroupsHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Managed Rule Group Catalog
- * @example List Available Managed Rule Groups
+ * ### Managed Rule Group Catalog
+ * **Example:** List Available Managed Rule Groups
  * ```typescript
  * // init — grants wafv2:ListAvailableManagedRuleGroups
  * const listManagedRuleGroups = yield* AWS.WAFv2.ListAvailableManagedRuleGroups();
@@ -60,6 +60,8 @@ export const DescribeManagedRuleGroup =
  *   Scope: "REGIONAL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListAvailableManagedRuleGroups extends Binding.Service<
   ListAvailableManagedRuleGroups,
@@ -85,9 +87,8 @@ export const ListAvailableManagedRuleGroups =
  *
  * Provide `WAFv2.ListAvailableManagedRuleGroupVersionsHttp` on the hosting
  * Lambda Function to satisfy the requirement.
- * @binding
- * @section Managed Rule Group Catalog
- * @example List Versions of the Common Rule Set
+ * ### Managed Rule Group Catalog
+ * **Example:** List Versions of the Common Rule Set
  * ```typescript
  * // init — grants wafv2:ListAvailableManagedRuleGroupVersions
  * const listVersions = yield* AWS.WAFv2.ListAvailableManagedRuleGroupVersions();
@@ -99,6 +100,8 @@ export const ListAvailableManagedRuleGroups =
  *   Scope: "REGIONAL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListAvailableManagedRuleGroupVersions extends Binding.Service<
   ListAvailableManagedRuleGroupVersions,
@@ -124,9 +127,8 @@ export const ListAvailableManagedRuleGroupVersions =
  *
  * Provide `WAFv2.DescribeAllManagedProductsHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Managed Rule Group Catalog
- * @example List All Managed Products
+ * ### Managed Rule Group Catalog
+ * **Example:** List All Managed Products
  * ```typescript
  * // init — grants wafv2:DescribeAllManagedProducts
  * const describeAllManagedProducts = yield* AWS.WAFv2.DescribeAllManagedProducts();
@@ -136,6 +138,8 @@ export const ListAvailableManagedRuleGroupVersions =
  *   Scope: "REGIONAL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeAllManagedProducts extends Binding.Service<
   DescribeAllManagedProducts,
@@ -161,9 +165,8 @@ export const DescribeAllManagedProducts =
  *
  * Provide `WAFv2.DescribeManagedProductsByVendorHttp` on the hosting
  * Lambda Function to satisfy the requirement.
- * @binding
- * @section Managed Rule Group Catalog
- * @example List AWS-Vended Managed Products
+ * ### Managed Rule Group Catalog
+ * **Example:** List AWS-Vended Managed Products
  * ```typescript
  * // init — grants wafv2:DescribeManagedProductsByVendor
  * const describeByVendor = yield* AWS.WAFv2.DescribeManagedProductsByVendor();
@@ -174,6 +177,8 @@ export const DescribeAllManagedProducts =
  *   Scope: "REGIONAL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeManagedProductsByVendor extends Binding.Service<
   DescribeManagedProductsByVendor,

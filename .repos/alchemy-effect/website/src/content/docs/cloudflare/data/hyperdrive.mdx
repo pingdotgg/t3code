@@ -387,7 +387,10 @@ inside a deployed Worker — the binding resolves it at runtime — so
 anything else that talks to the database (CI jobs, a container,
 `psql` on your laptop) should connect to the pooled URI directly:
 `branch.pooledConnectionUri` on Neon, `role.connectionUrlPooled` on
-PlanetScale. Just don't do the reverse — `origin` deliberately
+PlanetScale. For a container that means passing the pooled URI in as
+an environment variable — see
+[Connect to a SQL database](/cloudflare/compute/containers#connect-to-a-sql-database).
+Just don't do the reverse — `origin` deliberately
 points Hyperdrive at the *direct* endpoint, because Hyperdrive
 already pools, and stacking it on top of the provider's pooler
 means two poolers fighting over the same connections.

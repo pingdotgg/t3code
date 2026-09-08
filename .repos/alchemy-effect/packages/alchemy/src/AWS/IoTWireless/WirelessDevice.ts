@@ -192,9 +192,8 @@ export interface WirelessDevice extends Resource<
  * The device's radio identity (`type`, `DevEui`, activation keys) is
  * immutable — changing it replaces the device. The name, description,
  * destination, positioning, profile references, and tags update in place.
- * @resource
- * @section Creating Devices
- * @example OTAA v1.0.x LoRaWAN Device
+ * ### Creating Devices
+ * **Example:** OTAA v1.0.x LoRaWAN Device
  * ```typescript
  * import * as IoTWireless from "alchemy/AWS/IoTWireless";
  *
@@ -213,7 +212,7 @@ export interface WirelessDevice extends Resource<
  * });
  * ```
  *
- * @example Repoint a device at a different destination
+ * **Example:** Repoint a device at a different destination
  * ```typescript
  * const device = yield* IoTWireless.WirelessDevice("Sensor", {
  *   type: "LoRaWAN",
@@ -221,6 +220,8 @@ export interface WirelessDevice extends Resource<
  *   loRaWAN: { ... },
  * });
  * ```
+ *
+ * @resource
  */
 export const WirelessDevice = Resource<WirelessDevice>(
   "AWS.IoTWireless.WirelessDevice",

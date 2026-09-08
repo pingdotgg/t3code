@@ -1,0 +1,275 @@
+---
+title: "Part 6: Observability"
+description: Ship your Worker traces and logs to Axiom — datasets, an ingest token, and the Axiom.Telemetry binding layer declared in the same Stack as the Worker they observe.
+sidebar:
+  order: 6
+---
+
+In [Part 5](/cloudflare/tutorial/part-5) you set up CI/CD. Now you'll watch
+your Worker run in production. Every Alchemy runtime ships with
+OpenTelemetry built in: each request is wrapped in an `http.server`
+span and every `Effect.log` is a log record. Exporting them is
+configured like everything else in Alchemy — a Layer, wired to
+resources through the binding infrastructure. In this part you'll
+provision the receiving end — an [Axiom](/axiom) dataset per signal
+and a least-privilege ingest token — in the same Stack as the
+Worker, then bind them with `Axiom.Telemetry`.
+
+:::note
+Cloudflare also has built-in tracing for Workers (automatic runtime
+spans, exported via
+[ObservabilityDestination](/providers/cloudflare/workers/observabilitydestination)).
+That system ingests spans only from the workerd runtime itself — it
+has no OTLP ingest endpoint — so your application-level Effect spans
+export directly to an OTLP backend instead. Axiom is the one we'll
+use here; any OTLP endpoint works the same way.
+:::
+
+## Add the Axiom provider
+
+Axiom resources deploy alongside your Cloudflare ones. Merge the
+provider layers in `alchemy.run.ts`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
++import * as Axiom from "alchemy/Axiom";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+-    providers: Cloudflare.providers(),
++    providers: Layer.mergeAll(Cloudflare.providers(), Axiom.providers()),
+    state: Cloudflare.state(),
+  },
+  // ...
+);
+```
+
+If you haven't connected an Axiom account yet, run through
+[Axiom setup](/axiom/setup) first — `alchemy login` picks up
+`AXIOM_TOKEN` or a stored credential.
+
+## Create a dataset for traces
+
+A `Dataset` is Axiom's storage container. Following the same
+one-resource-per-file pattern as the Bucket, create
+`src/observability.ts`:
+
+```typescript
+// src/observability.ts
+import * as Axiom from "alchemy/Axiom";
+
+export const Traces = Axiom.Dataset("Traces", {
+  name: "myapp-traces",
+  kind: "otel:traces:v1",
+});
+```
+
+The `kind` tells Axiom this dataset stores OTel trace data — it
+determines the schema and how spans render in the Axiom UI.
+
+## Add one for logs
+
+Each OTel signal gets its own dataset:
+
+```diff lang="typescript"
+// src/observability.ts
+import * as Axiom from "alchemy/Axiom";
+
+export const Traces = Axiom.Dataset("Traces", {
+  name: "myapp-traces",
+  kind: "otel:traces:v1",
+});
+
++export const Logs = Axiom.Dataset("Logs", {
++  name: "myapp-logs",
++  kind: "otel:logs:v1",
++});
+```
+
+:::note
+Dataset names are global to your Axiom org, and renaming one is a
+replacement that deletes its data. If you deploy multiple stages
+(like the PR previews from Part 5), give each stage its own dataset —
+see [per-stage datasets](/axiom/data/ingest#per-stage-datasets).
+:::
+
+## Mint an ingest token
+
+An `ApiToken` scoped with `datasetCapabilities` can ingest into
+exactly the datasets you list and nothing else:
+
+```diff lang="typescript"
+// src/observability.ts
++export const Ingest = Axiom.ApiToken("Ingest", {
++  name: "myapp-ingest",
++  datasetCapabilities: {
++    "myapp-traces": { ingest: ["create"] },
++    "myapp-logs": { ingest: ["create"] },
++  },
++});
+```
+
+Axiom returns the bearer value exactly once, at create time. Alchemy
+captures it into `Ingest.token` as a `Redacted<string>` so it can be
+wired into consumers without ever appearing in plaintext.
+
+## Bind Axiom to the Worker
+
+`Axiom.Telemetry` is a binding layer, provided exactly like the R2
+binding from Part 2. Merge it into the Worker's `Effect.provide`:
+
+```diff lang="typescript"
+// src/worker.ts
+import * as Cloudflare from "alchemy/Cloudflare";
++import * as Axiom from "alchemy/Axiom";
+import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Bucket } from "./bucket.ts";
++import { Ingest, Logs, Traces } from "./observability.ts";
+
+export default Cloudflare.Worker(
+  "Worker",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    // ...
+-  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
++  }).pipe(
++    Effect.provide(
++      Layer.mergeAll(
++        Cloudflare.R2.ReadWriteBucketBinding,
++        Axiom.Telemetry({ token: Ingest, traces: Traces, logs: Logs }),
++      ),
++    ),
++  ),
+);
+```
+
+Building the layer at deploy time *binds* each dataset's OTLP
+endpoint and the ingest token onto the Worker — the token travels as
+a secret binding, and because the values are resource Outputs, the
+datasets and token deploy before the Worker, automatically.
+
+## Deploy and generate a trace
+
+Deploy, then hit the Worker to produce telemetry:
+
+```sh
+bun alchemy deploy
+
+curl -X PUT https://myapp-worker-dev-you-abc123.workers.dev/hello.txt \
+  -d 'Hello, observability!'
+curl https://myapp-worker-dev-you-abc123.workers.dev/hello.txt
+```
+
+Nothing in the handler code changed: the runtime builds the OTLP
+exporters from the bound configuration for each request, and flushes
+them when the request's scope closes — after the response is sent,
+via `waitUntil`, so export never adds latency.
+
+## See it in Axiom
+
+Open your Axiom org and query the `myapp-traces` dataset. Each
+request appears as an `http.server` span carrying the method, URL,
+status, and headers, with `service.name` set to the Worker's deployed
+name. The `myapp-logs` dataset has a log record for every
+`Effect.log` your handler ran, linked to its span.
+
+## Add a custom span
+
+The root span shows *that* a request happened. To see *where the
+time went*, wrap the R2 read in its own span:
+
+```diff lang="typescript"
+// src/worker.ts
+        if (request.method === "PUT") {
+          // ...
+        }
+
+-        const object = yield* bucket.get(key);
++        const object = yield* bucket
++          .get(key)
++          .pipe(Effect.withSpan("bucket.get", { attributes: { key } }));
+```
+
+`Effect.withSpan` opens a child span under whatever span is current —
+here, the request's `http.server` root — so the R2 read shows up as
+a nested bar in the trace waterfall, with the object key attached as
+an attribute.
+
+## Log with context
+
+Logs emitted inside a span are exported with that span's trace and
+span IDs, so Axiom can jump from a log line to its trace:
+
+```diff lang="typescript"
+// src/worker.ts
+        const text = yield* object.text();
++        yield* Effect.log("served object", { key });
+        return HttpServerResponse.text(text);
+```
+
+Deploy again, make a few requests, and the waterfall in Axiom now
+shows the nested `bucket.get` span with your log line attached.
+
+## Swapping, stacking, or removing exporters
+
+Telemetry is just a Layer, so turning it off is removing
+`Axiom.Telemetry` from the `Layer.mergeAll` — without an exporter
+Layer, Effect's no-op tracer makes every span free. Because the
+Axiom layer is sugar over the generic `Alchemy.Telemetry.layerOtlp`
+binding layer, any OTLP backend slots into the same position — and
+exporters *compose*, so shipping to Axiom and a second backend at
+once is just another entry in the merge:
+
+```typescript
+import * as Alchemy from "alchemy";
+
+Effect.provide(
+  Layer.mergeAll(
+    Cloudflare.R2.ReadWriteBucketBinding,
+    Axiom.Telemetry({ token: Ingest, traces: Traces, logs: Logs }),
+    Alchemy.Telemetry.layerOtlp({
+      url: "https://collector.example.com",
+      headers: { "x-api-key": apiKey },
+    }),
+  ),
+)
+```
+
+Spans are serialized once and fanned out, so both backends see the
+same trace and span ids. `Alchemy.Telemetry.layer(...)` goes one
+step further and installs any custom exporter Layer. See
+[Telemetry](/infrastructure-as-effects/telemetry) for the full
+mechanics.
+
+## Recap
+
+You've completed the tutorial. You now know how to:
+
+- **Part 1** — Create a Stack and deploy a resource
+- **Part 2** — Add a Worker with bindings to other resources
+- **Part 3** — Write integration tests against deployed stacks
+- **Part 4** — Run locally with `alchemy dev`
+- **Part 5** — Mint scoped CI credentials and deploy from Actions
+- **Part 6** — Ship traces and logs to Axiom with datasets, an
+  ingest token, and the Axiom.Telemetry binding layer declared next
+
+## What's next
+
+- [Telemetry](/infrastructure-as-effects/telemetry) — how the
+  built-in telemetry works across every runtime (Workers, Durable
+  Objects, Workflows, Lambda, containers)
+- [Alerting](/axiom/guides/alerting) — monitors and notifiers over
+  the data you just ingested, as resources in the same Stack
+- [Dashboards](/axiom/guides/dashboards) — charts over your traces
+  and logs, declared in code
+- [Ship Worker telemetry to Axiom](/cloudflare/observability/axiom-observability) —
+  the reference version of this setup, including the
+  Cloudflare-native push path

@@ -65,8 +65,8 @@ export interface TaskEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Task Events
- * @example React When A Transfer Finishes
+ * ### Consuming Task Events
+ * **Example:** React When A Transfer Finishes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

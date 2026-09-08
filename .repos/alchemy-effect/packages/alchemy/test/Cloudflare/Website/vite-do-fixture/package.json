@@ -8,7 +8,7 @@
   },
   "devDependencies": {
     "alchemy": "workspace:*",
-    "effect": "catalog:",
-    "vite": "catalog:"
+    "effect": "catalog:effect",
+    "vite": "catalog:build"
   }
 }

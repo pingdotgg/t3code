@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * `eks:DescribeClusterVersions` is granted on `*` — the operation is account-scoped and takes no resource.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeClusterVersionsHttp)`.
- * @binding
- * @section Version Catalogs
- * @example Find the Default Kubernetes Version
+ * ### Version Catalogs
+ * **Example:** Find the Default Kubernetes Version
  * ```typescript
  * // init
  * const describeClusterVersions = yield* AWS.EKS.DescribeClusterVersions();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   defaultOnly: true,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeClusterVersions extends Binding.Service<
   DescribeClusterVersions,

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:DescribeLanguageModel` on `*`.
  *
- * @binding
- * @section Custom Language Models
- * @example Describe a Custom Language Model
+ * ### Custom Language Models
+ * **Example:** Describe a Custom Language Model
  * ```typescript
  * // init
  * const describeLanguageModel = yield* AWS.Transcribe.DescribeLanguageModel();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   ModelName: "my-domain-model",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeLanguageModel extends Binding.Service<
   DescribeLanguageModel,

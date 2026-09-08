@@ -99,11 +99,8 @@ export type Policy = Resource<
  * error ("exceeded the maximum number of rules in the phase
  * http_response_page_shield: 1 out of 0"). Page Shield itself should be
  * enabled on the zone first — see `Cloudflare.PageShield.Settings`.
- * @resource
- * @product Page Shield
- * @category Application Security
- * @section Creating a Policy
- * @example Log-only CSP policy
+ * ### Creating a Policy
+ * **Example:** Log-only CSP policy
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -119,7 +116,7 @@ export type Policy = Resource<
  * });
  * ```
  *
- * @example Enforcing CSP policy with a description
+ * **Example:** Enforcing CSP policy with a description
  * ```typescript
  * yield* Cloudflare.PageShield.Policy("EnforceScripts", {
  *   zoneId: zone.zoneId,
@@ -131,6 +128,10 @@ export type Policy = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/page-shield/policies/
+ *
+ * @resource
+ * @product Page Shield
+ * @category Application Security
  */
 export const Policy = Resource<Policy>(TypeId);
 

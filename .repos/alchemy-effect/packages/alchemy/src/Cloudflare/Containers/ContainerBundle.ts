@@ -13,7 +13,6 @@ import { Docker } from "../../Docker/Docker.ts";
 import { isInlineDockerfile } from "../../Docker/Dockerfile.ts";
 import * as Output from "../../Output.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
-import { Self } from "../../Self.ts";
 import { Stack } from "../../Stack.ts";
 import { sha256Object } from "../../Util/sha256.ts";
 import type { AnyContainerApplicationProps } from "./ContainerApplication.ts";
@@ -40,13 +39,30 @@ import type { AnyContainerApplicationProps } from "./ContainerApplication.ts";
  * (mirroring the Worker runtime) so the container bootstrap can build
  * `CloudflareEnvironment` for HTTP capability bindings (R2/KV/Queue `*Http`).
  *
- * Explicit `props.environmentVariables` win on a name collision.
+ * `bindings` carries the resource's binding contract — the `{ env }` a
+ * `Binding.Service` attaches with ``host.bind`${resource}`({ env })`` when the
+ * container is the host (`Prisma.Connect`, and any other capability whose
+ * runtime config travels as environment variables). Bindings are resolved by
+ * the engine before `reconcile`, so they land here already evaluated. They are
+ * applied FIRST, at the lowest precedence: an explicitly declared `env` or
+ * `environmentVariables` entry always wins over a capability-injected one.
  */
 export const makeContainerEnv = (
   props: AnyContainerApplicationProps,
   accountId: string,
+  bindings: readonly {
+    data?: { env?: Record<string, any> } | undefined;
+  }[] = [],
 ) => {
   const env: Record<string, string | Redacted.Redacted<string>> = {};
+  for (const binding of bindings) {
+    for (const [name, value] of Object.entries(binding.data?.env ?? {})) {
+      if (Output.isOutput(value) || value === undefined) {
+        continue;
+      }
+      env[name] = value;
+    }
+  }
   for (const [name, value] of Object.entries(props.env ?? {})) {
     if (Output.isOutput(value) || value === undefined) {
       continue;
@@ -268,6 +284,7 @@ export const bundleContainerProgram = Effect.fn(function* ({
   isExternal = false,
   external = [],
   outdir,
+  build,
 }: {
   id: string;
   main: string;
@@ -276,6 +293,7 @@ export const bundleContainerProgram = Effect.fn(function* ({
   isExternal?: boolean;
   external?: string[];
   outdir?: string;
+  build?: Bundle.BundleConfig;
 }) {
   const stack = yield* Stack;
   const virtualEntryPlugin = yield* Bundle.virtualEntryPlugin;
@@ -289,6 +307,7 @@ export const bundleContainerProgram = Effect.fn(function* ({
   ) {
     return yield* Bundle.build(
       {
+        ...build?.input,
         input: entry,
         cwd,
         external: [
@@ -296,24 +315,28 @@ export const bundleContainerProgram = Effect.fn(function* ({
           "cloudflare:workflows",
           ...(runtime === "bun" ? ["bun", "bun:*"] : []),
           ...external,
+          ...((build?.input?.external as string[] | undefined) ?? []),
         ],
         platform: "node",
         resolve: {
           conditionNames:
             runtime === "bun"
-              ? ["bun", "import", "module", "default"]
-              : ["node", "import", "module", "default"],
+              ? [...Bundle.BUN_CONDITION_NAMES]
+              : [...Bundle.NODE_CONDITION_NAMES],
+          ...build?.input?.resolve,
         },
-        plugins,
+        plugins: [build?.input?.plugins, plugins],
         treeshake: true,
       },
       {
+        ...build?.output,
         format: "esm",
-        sourcemap: false,
-        minify: false,
+        sourcemap: build?.output?.sourcemap ?? false,
+        minify: build?.output?.minify ?? false,
         dir: outdir,
         entryFileNames: "index.mjs",
       },
+      build,
     );
   });
 
@@ -323,96 +346,17 @@ export const bundleContainerProgram = Effect.fn(function* ({
         realMain,
         virtualEntryPlugin(
           (importPath) => `
-${
-  runtime === "bun"
-    ? `
-import { BunServices } from "@effect/platform-bun";
-import { BunHttpServer } from "alchemy/Http";
-const HttpServer = BunHttpServer;
-`
-    : `
-import { NodeServices } from "@effect/platform-node";
-import { NodeHttpServer } from "alchemy/Http";
-const HttpServer = NodeHttpServer;
-`
-}
-import { Stack } from "alchemy/Stack";
-import { makeEntrypointLayer, reifyBoundConfigProvider } from "alchemy/Runtime";
-import { CloudflareEnvironment } from "alchemy/Cloudflare";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
-import * as Context from "effect/Context";
-import { MinimumLogLevel } from "effect/References";
-
+import { bootstrap } from ${JSON.stringify(
+            runtime === "bun"
+              ? "alchemy/Runtime/Bootstrap/CloudflareContainerBun"
+              : "alchemy/Runtime/Bootstrap/CloudflareContainerNode",
+          )};
 import ${handler === "default" ? "entrypoint" : `{ ${handler} as entrypoint }`} from ${JSON.stringify(importPath)};
 
-const tag = Context.Service("${Self.key}")
-const layer = makeEntrypointLayer(tag, entrypoint);
-
-const platform = Layer.mergeAll(
-  ${runtime === "bun" ? "BunServices.layer" : "NodeServices.layer"},
-  FetchHttpClient.layer,
-  // TODO(sam): wire this up to telemetry more directly
-  Logger.layer([Logger.consolePretty()]),
-);
-
-const stack = Layer.succeed(Stack, {
-  name: ${JSON.stringify(stack.name)},
-  stage: ${JSON.stringify(stack.stage)},
-  bindings: {},
-  resources: {}
-});
-
-const serverEffect = tag.pipe(
-  Effect.flatMap(func => func.RuntimeContext.exports),
-  Effect.flatMap(exports => exports.default),
-  Effect.provide(
-    layer.pipe(
-      Layer.provideMerge(stack),
-      Layer.provideMerge(HttpServer()),
-      // Capability bindings that talk to Cloudflare's HTTP API from inside the
-      // container (e.g. R2/KV/Queue \`*Http\` bindings) resolve their account via
-      // \`CloudflareEnvironment\` at runtime, exactly like the Worker bridge does
-      // (the service value is an \`Effect\` of the resolved credentials). The
-      // per-operation account/token are read from the container's env (the bound
-      // token outputs), so an absent account id here is harmless.
-      Layer.provideMerge(
-        Layer.succeed(
-          CloudflareEnvironment,
-          Effect.succeed({
-            account: process.env.ALCHEMY_CLOUDFLARE_ACCOUNT_ID,
-          }),
-        )
-      ),
-      Layer.provideMerge(platform),
-      Layer.provideMerge(
-        Layer.succeed(
-          ConfigProvider.ConfigProvider,
-          // Auto-bound \`Config\` values arrive in the env as
-          // \`{"_tag":"Redacted","value":...}\` markers; reify them so a
-          // \`Config\` re-read inside a handler decodes the raw source value.
-          reifyBoundConfigProvider(ConfigProvider.fromEnv(), process.env)
-        )
-      ),
-      Layer.provideMerge(
-        Layer.succeed(
-          MinimumLogLevel,
-          process.env.DEBUG ? "Debug" : "Info",
-        )
-      ),
-    )
-  ),
-  Effect.scoped
-);
-
-console.log("Container bootstrap starting...");
-await Effect.runPromise(serverEffect).catch((err) => {
-  console.error("Container bootstrap failed:", err);
-  process.exit(1);
-})`,
+await bootstrap(entrypoint, ${JSON.stringify({
+            stack: { name: stack.name, stage: stack.stage },
+          })});
+`,
         ),
       );
 
@@ -439,7 +383,7 @@ await Effect.runPromise(serverEffect).catch((err) => {
  * return the paths + content hash of that context.
  *
  * This is the local-dev image shape (`ContainerImage.Build`) that
- * `@distilled.cloud/cloudflare-runtime` consumes: it `docker build`s the
+ * `@alchemy.run/cloudflare-runtime/core` consumes: it `docker build`s the
  * `dockerfile` against the `context` directory. Shared between the local
  * provider (which serves this context to the runtime as the `dev` image) and
  * the live provider (which persists the same deterministic context path as
@@ -487,6 +431,7 @@ export const prepareContainerBuildContext = Effect.fn(function* (
         isExternal: news.isExternal,
         external: news.external,
         outdir: context,
+        build: news.build,
       }),
       docker.materialize({
         context,

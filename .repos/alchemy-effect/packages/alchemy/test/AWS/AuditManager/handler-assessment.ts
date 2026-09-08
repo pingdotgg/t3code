@@ -29,7 +29,7 @@ export class AuditManagerAssessmentTestFunction extends Lambda.Function<Lambda.F
 export default AuditManagerAssessmentTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const control = yield* AuditManager.Control("BindingsControl", {

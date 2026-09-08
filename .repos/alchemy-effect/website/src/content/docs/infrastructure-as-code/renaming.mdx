@@ -1,0 +1,172 @@
+---
+title: Renaming Resources
+description: Migrate a resource's state across a logical ID change instead of replacing it.
+---
+
+Changing a [logical ID](/infrastructure-as-code/resource#logical-id)
+normally plans a **replacement**: a new resource is created under the
+new ID and the old one — including its physical resource, data, and
+attachments — is deleted. When you actually just renamed the
+resource, declare the rename with `Alchemy.renamedFrom` and alchemy
+migrates the state row instead:
+
+```diff lang="typescript"
+-const bucket = yield* Cloudflare.R2.Bucket("Bucket");
++const bucket = yield* Cloudflare.R2.Bucket("Assets").pipe(
++  Alchemy.renamedFrom("Bucket"),
++);
+```
+
+The next deploy finds the state persisted under `Bucket`, moves it to
+`Assets`, and plans a single re-branding **update** — same instance
+ID, same physical name, nothing created or deleted in the cloud. The
+plan shows what's happening:
+
+```text
+Plan: 1 to update
+[Assets] update (renamed from Bucket)
+```
+
+Keep the decoration around; once no state row exists under the old
+ID it does nothing.
+
+## Namespaces
+
+A bare-string former id behaves exactly like the `id` argument: it
+resolves against the surrounding namespace (`Namespace.push`).
+Declared inside `Namespace.push("Site")`, `renamedFrom("Worker")`
+claims the former FQN `Site/Worker` — write the former id exactly
+as you would have written the `id` in the same position:
+
+```typescript
+// this Worker's FQN used to be `<id>/Worker`; now it is `<id>`
+// (what Cloudflare.Website.StaticSite does internally)
+yield* Worker(id, props).pipe(Alchemy.renamedFrom(`${id}/Worker`));
+```
+
+When a resource moved **between** namespaces, a relative id can't
+express the old location — pass the absolute form, the full FQN
+exactly as it appears in state:
+
+```typescript
+yield* Cloudflare.R2.Bucket("Assets").pipe(
+  Alchemy.renamedFrom({ fqn: "LegacySite/Assets" }),
+  Namespace.push("NewSite"),
+);
+```
+
+## Renamed more than once
+
+List every former id, **most recent first** — alchemy checks them in
+order and migrates from the first matching row:
+
+```typescript
+yield* Cloudflare.R2.Bucket("Assets").pipe(
+  Alchemy.renamedFrom("StaticAssets", "Bucket"),
+);
+```
+
+## Reusing the old ID
+
+The old ID can be reused by a **new** resource in the same deploy.
+The rename claim wins the state row — it's an explicit statement
+that the row was the renamed resource's — and the reusing resource
+is created fresh:
+
+```typescript
+// `Assets` keeps the physical resource previously known as
+// `Bucket`; this `Bucket` is a brand-new one.
+const assets = yield* Cloudflare.R2.Bucket("Assets").pipe(
+  Alchemy.renamedFrom("Bucket"),
+);
+const bucket = yield* Cloudflare.R2.Bucket("Bucket");
+```
+
+The migration deploy plans one **update** for the renamed resource
+(not a noop) — the reconcile re-brands the physical resource's
+ownership tags under the new logical ID, so the reused ID can never
+accidentally adopt the wrong cloud resource.
+
+## Safety semantics
+
+The migration is deliberately conservative.
+
+**Identity is proven, not assumed.** Only a migration ever copies an
+instance ID, so a leftover row from an interrupted move is provably
+a copy — it's dropped state-only, the physical resource untouched:
+
+```diff lang="typescript"
+-const bucket = yield* Cloudflare.R2.Bucket("Bucket");
++// a crashed deploy left rows at BOTH ids with the SAME instance id;
++// re-deploying drops the leftover copy — the cloud is never touched
++const bucket = yield* Cloudflare.R2.Bucket("Assets").pipe(
++  Alchemy.renamedFrom("Bucket"),
++);
+```
+
+A former row with a *different* instance ID is someone else's — the
+old name was reused after the rename shipped — so the alias is
+ignored and the row follows normal lifecycle rules:
+
+```diff lang="typescript"
+ // deployed long after the rename: `Bucket` is its own resource now,
+ // with its own instance id — `renamedFrom` never adopts it
+ const assets = yield* Cloudflare.R2.Bucket("Assets").pipe(
+   Alchemy.renamedFrom("Bucket"),
+ );
+ const bucket = yield* Cloudflare.R2.Bucket("Bucket");
+```
+
+**Types must match.** A former row written by a different resource
+type can't be this resource's state, whatever its FQN says — nothing
+migrates, and the orphaned row follows its own lifecycle:
+
+```diff lang="typescript"
+-const cache = yield* Cloudflare.KV.Namespace("Store");
++// the row at `Store` belongs to a KV.Namespace — it is never adopted;
++// `Assets` is created fresh and `Store` is a normal orphan delete
++const assets = yield* Cloudflare.R2.Bucket("Assets").pipe(
++  Alchemy.renamedFrom("Store"),
++);
+```
+
+And a different-typed row sitting at the *new* ID fails the plan —
+migrating over it would silently abandon its cloud resource:
+
+```diff lang="typescript"
+-const cache = yield* Cloudflare.KV.Namespace("Assets");
+-const bucket = yield* Cloudflare.R2.Bucket("Bucket");
++// ✗ a state row of a different type already occupies 'Assets' —
++//   delete or rename the KV namespace first, then re-deploy
++const bucket = yield* Cloudflare.R2.Bucket("Assets").pipe(
++  Alchemy.renamedFrom("Bucket"),
++);
+```
+
+**Ambiguity fails loudly.** Two resources claiming the same former
+ID fail instead of racing for the row:
+
+```typescript
+yield* Cloudflare.R2.Bucket("Assets").pipe(Alchemy.renamedFrom("Bucket"));
+yield* Cloudflare.R2.Bucket("Files").pipe(Alchemy.renamedFrom("Bucket"));
+// ✗ 'Assets' and 'Files' both claim former FQN 'Bucket'
+```
+
+**Shifts work.** Renames may pass through each other in one deploy —
+each row follows its resource, and pending replacement cleanup rides
+along:
+
+```typescript
+yield* Cloudflare.R2.Bucket("B").pipe(Alchemy.renamedFrom("A")); // row at A → B
+yield* Cloudflare.R2.Bucket("C").pipe(Alchemy.renamedFrom("B")); // row at B → C
+```
+
+**Swaps fail.** Exchanging two live IDs is a rename cycle — the two
+migrations would overwrite each other's rows — so the plan fails;
+rename through a temporary ID across two deploys instead:
+
+```typescript
+yield* Cloudflare.R2.Bucket("A").pipe(Alchemy.renamedFrom("B"));
+yield* Cloudflare.R2.Bucket("B").pipe(Alchemy.renamedFrom("A"));
+// ✗ rename cycle detected among ['A', 'B']
+```

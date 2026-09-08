@@ -139,9 +139,8 @@ export interface Cluster extends Resource<
  * Elastic clusters take roughly 8-10 minutes to provision and bill per
  * shard-vCPU-hour while they exist. They are reachable only from inside a
  * VPC. Destroy clusters you are not using.
- * @resource
- * @section Creating a Cluster
- * @example Minimal Elastic Cluster
+ * ### Creating a Cluster
+ * **Example:** Minimal Elastic Cluster
  * ```typescript
  * const cluster = yield* Cluster("Documents", {
  *   adminUserName: "admin",
@@ -151,7 +150,7 @@ export interface Cluster extends Resource<
  * });
  * ```
  *
- * @example Cluster Pinned to Specific Subnets
+ * **Example:** Cluster Pinned to Specific Subnets
  * ```typescript
  * const cluster = yield* Cluster("Documents", {
  *   adminUserName: "admin",
@@ -163,6 +162,8 @@ export interface Cluster extends Resource<
  *   backupRetentionPeriod: "1 day",
  * });
  * ```
+ *
+ * @resource
  */
 export const Cluster = Resource<Cluster>("AWS.DocDBElastic.Cluster");
 

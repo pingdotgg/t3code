@@ -57,9 +57,8 @@ export interface ScraperLoggingConfiguration extends Resource<
  * collection, export) to a CloudWatch Logs log group. A scraper has at most
  * one.
  *
- * @resource
- * @section Creating a Scraper Logging Configuration
- * @example Ship Scraper Logs to CloudWatch Logs
+ * ### Creating a Scraper Logging Configuration
+ * **Example:** Ship Scraper Logs to CloudWatch Logs
  * ```typescript
  * const logs = yield* Logs.LogGroup("ScraperLogs", {
  *   logGroupName: "/aws/vendedlogs/prometheus/scraper",
@@ -69,6 +68,8 @@ export interface ScraperLoggingConfiguration extends Resource<
  *   logGroupArn: logs.logGroupArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const ScraperLoggingConfiguration =
   Resource<ScraperLoggingConfiguration>("AWS.AMP.ScraperLoggingConfiguration");

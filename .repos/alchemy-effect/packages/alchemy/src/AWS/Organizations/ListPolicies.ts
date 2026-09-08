@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.ListPoliciesHttp)`.
- * @binding
- * @section Policies & Effective Policy
- * @example List Service Control Policies
+ * ### Policies & Effective Policy
+ * **Example:** List Service Control Policies
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listPolicies = yield* AWS.Organizations.ListPolicies();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Policies } = yield* listPolicies({ Filter: "SERVICE_CONTROL_POLICY" });
  * ```
+ *
+ * @binding
  */
 export interface ListPolicies extends Binding.Service<
   ListPolicies,

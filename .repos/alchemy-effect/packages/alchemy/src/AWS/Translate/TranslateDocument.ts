@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * content and the translated result are sensitive blobs — the response's
  * `TranslatedDocument.Content` decodes as `Redacted<Uint8Array>`.
  *
- * @binding
- * @section Translating Documents
- * @example Translate a plain-text document
+ * ### Translating Documents
+ * **Example:** Translate a plain-text document
  * ```typescript
  * // init
  * const translateDocument = yield* AWS.Translate.TranslateDocument();
@@ -30,6 +29,8 @@ import * as Binding from "../../Binding.ts";
  * const bytes = Redacted.value(result.TranslatedDocument.Content as Redacted.Redacted<Uint8Array>);
  * // new TextDecoder().decode(bytes) === "¡Buenos días!"
  * ```
+ *
+ * @binding
  */
 export interface TranslateDocument extends Binding.Service<
   TranslateDocument,

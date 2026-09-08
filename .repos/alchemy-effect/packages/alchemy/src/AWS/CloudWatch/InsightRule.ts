@@ -85,9 +85,8 @@ export interface InsightRule extends Resource<
  * A CloudWatch Contributor Insights rule — analyzes log group entries to
  * surface the top-N contributors (IPs, user IDs, …) to a metric derived
  * from structured logs.
- * @resource
- * @section Creating Insight Rules
- * @example Rule Definition
+ * ### Creating Insight Rules
+ * **Example:** Rule Definition
  * ```typescript
  * const rule = yield* InsightRule("TopContributors", {
  *   RuleState: "ENABLED",
@@ -106,8 +105,8 @@ export interface InsightRule extends Resource<
  * });
  * ```
  *
- * @section Reading Reports at Runtime
- * @example Fetch the Rule's Top Contributors from a Function
+ * ### Reading Reports at Runtime
+ * **Example:** Fetch the Rule's Top Contributors from a Function
  * ```typescript
  * // init — bind the rule to the function (see GetInsightRuleReport)
  * const getInsightRuleReport = yield* AWS.CloudWatch.GetInsightRuleReport(rule);
@@ -120,6 +119,8 @@ export interface InsightRule extends Resource<
  *   Period: 300,
  * });
  * ```
+ *
+ * @resource
  */
 export const InsightRule = Resource<InsightRule>("AWS.CloudWatch.InsightRule");
 

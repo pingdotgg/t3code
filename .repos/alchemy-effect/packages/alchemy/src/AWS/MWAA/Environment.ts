@@ -232,9 +232,8 @@ export interface Environment extends Resource<
  * execution role, and two private subnets in distinct Availability Zones with
  * outbound internet access (via NAT gateway or VPC endpoints). Destroy
  * environments you are not using.
- * @resource
- * @section Creating an Environment
- * @example Basic Environment
+ * ### Creating an Environment
+ * **Example:** Basic Environment
  * ```typescript
  * const environment = yield* Environment("Airflow", {
  *   executionRoleArn: role.roleArn,
@@ -247,7 +246,7 @@ export interface Environment extends Resource<
  * });
  * ```
  *
- * @example Public Webserver with Logging
+ * **Example:** Public Webserver with Logging
  * ```typescript
  * const environment = yield* Environment("Airflow", {
  *   executionRoleArn: role.roleArn,
@@ -265,6 +264,8 @@ export interface Environment extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Environment = Resource<Environment>("AWS.MWAA.Environment");
 

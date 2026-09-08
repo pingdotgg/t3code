@@ -16,7 +16,7 @@ export class ServerlessConnectFunction extends Lambda.Function<Lambda.Function>(
 export default ServerlessConnectFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
   },
   Effect.gen(function* () {

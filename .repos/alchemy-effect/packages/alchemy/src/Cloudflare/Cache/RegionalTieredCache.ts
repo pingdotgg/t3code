@@ -75,11 +75,8 @@ export type RegionalTieredCache = Resource<
  *
  * Only one `RegionalTieredCache` resource per zone makes sense — two
  * instances managing the same zone would fight over the singleton.
- * @resource
- * @product Cache
- * @category Performance & Reliability
- * @section Managing Regional Tiered Cache
- * @example Enable Regional Tiered Cache on an Enterprise zone
+ * ### Managing Regional Tiered Cache
+ * **Example:** Enable Regional Tiered Cache on an Enterprise zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -88,7 +85,7 @@ export type RegionalTieredCache = Resource<
  * });
  * ```
  *
- * @example Explicitly disable Regional Tiered Cache
+ * **Example:** Explicitly disable Regional Tiered Cache
  * ```typescript
  * yield* Cloudflare.Cache.RegionalTieredCache("RegionalCache", {
  *   zoneId: zone.zoneId,
@@ -97,6 +94,10 @@ export type RegionalTieredCache = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cache/how-to/tiered-cache/#regional-tiered-cache
+ *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  */
 export const RegionalTieredCache = Resource<RegionalTieredCache>(TypeId);
 

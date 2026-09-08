@@ -1,0 +1,216 @@
+---
+title: Bedrock & Effect AI
+description: Drive Effect's LanguageModel service with Amazon Bedrock models from a Lambda Function — IAM-scoped bindings, streaming, and tool calling over the Converse API.
+sidebar:
+  order: 1
+---
+
+Effect's AI surface gives you a single `LanguageModel` service that
+every model provider ships as a `Layer`. Once that layer is in scope,
+the rest of the surface (`generateText`, `streamText`, `Toolkit`,
+`Chat`, …) is provider-agnostic.
+
+`AWS.Bedrock.LanguageModel` builds that layer on top of Amazon
+Bedrock. It speaks Bedrock's [Converse
+API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html)
+— the unified messages API that works across all conversational
+foundation models (Amazon Nova, Anthropic Claude, Meta Llama,
+Mistral, …) — so one binding covers every model on Bedrock. Requests
+are signed with the Function's IAM role: there is no API key to
+provision, store, or rotate.
+
+## Bind a model
+
+`yield* AWS.Bedrock.LanguageModel(model)` in the Function's init
+phase returns a `LanguageModel` `Layer` and grants the Function
+`bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream`
+scoped to exactly that model:
+
+```typescript
+// src/Api.ts
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import { LanguageModel } from "effect/unstable/ai";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  { main: import.meta.url, functionUrl: true },
+  Effect.gen(function* () {
+    const model = yield* AWS.Bedrock.LanguageModel(
+      "us.amazon.nova-micro-v1:0",
+      { parameters: { maxTokens: 1024, temperature: 0.7 } },
+    );
+
+    return {
+      fetch: Effect.gen(function* () {
+        const response = yield* LanguageModel.generateText({
+          prompt: "Say hello.",
+        }).pipe(Effect.orDie);
+        return yield* HttpServerResponse.json({ text: response.text });
+      }).pipe(Effect.provide(model)),
+    };
+  }).pipe(Effect.provide(AWS.Bedrock.LanguageModelHttp)),
+) {}
+```
+
+`AWS.Bedrock.LanguageModelHttp` is the binding's implementation
+layer. Provide it once at the bottom of the init chain — it composes
+the `Converse` and `ConverseStream` bindings, so it is bundled into
+the Lambda and signs requests with the invocation role's credentials.
+
+A model reference may be a foundation-model id
+(`anthropic.claude-sonnet-4-20250514-v1:0`), a cross-region inference
+profile id (`us.amazon.nova-micro-v1:0`), or a full Bedrock ARN.
+Model access is an account entitlement — enable the model in the
+Bedrock console (Model access) before invoking, otherwise calls fail
+with `AccessDeniedException`. Many newer models are only invocable
+through their cross-region inference profile id, not the bare
+foundation-model id.
+
+## Stream text
+
+`streamText` maps Bedrock's `ConverseStream` events onto Effect AI's
+stream parts (`text-start`, `text-delta`, …, `finish`), one part per
+Bedrock event:
+
+```typescript
+import * as Stream from "effect/Stream";
+
+const parts = LanguageModel.streamText({
+  prompt: "Write a haiku about infrastructure.",
+}).pipe(Stream.provide(model));
+
+yield* parts.pipe(
+  Stream.runForEach((part) =>
+    part.type === "text-delta"
+      ? Effect.sync(() => process.stdout.write(part.delta))
+      : Effect.void,
+  ),
+);
+```
+
+The terminal `finish` part carries the mapped stop reason
+(`end_turn` → `stop`, `tool_use` → `tool-calls`, `max_tokens` →
+`length`, …) and real token usage from the stream's `metadata` event,
+including prompt-cache read/write counts.
+
+## Call tools
+
+Effect AI toolkits work unchanged — tool schemas are translated to
+Converse `toolConfig` and Bedrock's structured tool-use blocks are
+decoded back into typed tool calls and results:
+
+```typescript
+import * as Schema from "effect/Schema";
+import { Tool, Toolkit } from "effect/unstable/ai";
+
+const GetWeather = Tool.make("get_weather", {
+  description: "Get the current weather for a city.",
+  parameters: Schema.Struct({ city: Schema.String }),
+  success: Schema.Struct({ temperatureF: Schema.Number }),
+});
+const WeatherToolkit = Toolkit.make(GetWeather);
+
+const response = yield* LanguageModel.generateText({
+  prompt: "What's the weather in Seattle?",
+  toolkit: WeatherToolkit,
+}).pipe(
+  Effect.provide(
+    WeatherToolkit.toLayer({
+      get_weather: ({ city }) => Effect.succeed({ temperatureF: 72 }),
+    }),
+  ),
+  Effect.provide(model),
+);
+
+response.toolResults; // typed results, executed by your handlers
+```
+
+## Configure parameters at runtime
+
+Binding is the IAM boundary — *which models* the Function may call
+is fixed at deploy time. Everything else is a runtime decision. The
+`parameters` passed to the binding are only defaults; scope per-call
+overrides onto any call with `AWS.Bedrock.withModelParameters`:
+
+```typescript
+const response = yield* LanguageModel.generateText({ prompt }).pipe(
+  AWS.Bedrock.withModelParameters({ temperature: 0, maxTokens: 64 }),
+);
+```
+
+It works on streams the same way:
+
+```typescript
+const parts = LanguageModel.streamText({ prompt }).pipe(
+  Stream.provide(model),
+  AWS.Bedrock.withModelParameters({ temperature: 0.9 }),
+);
+```
+
+The override is fiber-scoped (a `Context.Reference`), so it applies
+to exactly the calls inside the piped region — concurrent requests
+with different settings never interfere. Defined fields win over the
+binding's defaults; omitted fields fall through.
+
+`parameters` covers the Converse API's portable `inferenceConfig`
+(`maxTokens`, `temperature`, `topP`, `stopSequences`). Anything
+model-specific passes through `additionalModelRequestFields`
+verbatim — e.g. `{ top_k: 50 }` for Anthropic models.
+
+## Multiple models
+
+Bind a list of models to grant IAM for all of them in one layer —
+the first is the default, and `modelId` picks per call:
+
+```typescript
+// init: IAM for both models, Nova Micro is the default
+const model = yield* AWS.Bedrock.LanguageModel([
+  "us.amazon.nova-micro-v1:0",
+  "us.anthropic.claude-sonnet-4-20250514-v1:0",
+]);
+
+// runtime: route this request to Claude, tuned for this call
+const response = yield* LanguageModel.generateText({ prompt }).pipe(
+  AWS.Bedrock.withModelParameters({
+    modelId: "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    maxTokens: 2048,
+  }),
+);
+```
+
+Separate `LanguageModel(...)` calls also work — each is its own
+layer with its own grant — when you'd rather select a model by
+providing a different layer per route.
+
+## Why not an OpenAI-compatible endpoint?
+
+Bedrock also exposes an OpenAI-compatible Chat Completions endpoint,
+but it authenticates with long-lived Bedrock API keys and only covers
+a subset of models. The Converse-backed binding uses the Function's
+IAM role (SigV4) with a least-privilege grant scoped to the bound
+model, works with every conversational model on Bedrock, and needs no
+secret material at all.
+
+## Lower-level access
+
+The `LanguageModel` binding is built on the raw Converse bindings,
+which remain available when you want the wire-level API:
+
+- [`AWS.Bedrock.Converse`](/providers/aws/bedrock/converse) — single-shot
+  messages API
+- [`AWS.Bedrock.ConverseStream`](/providers/aws/bedrock/conversestream) —
+  streaming event API
+- [`AWS.Bedrock.InvokeModel`](/providers/aws/bedrock/invokemodel) — raw
+  model-native payloads
+
+## Where to go next
+
+- [Effect AI documentation](https://effect.website/docs/ai/introduction)
+  — the API surface (`generateText`, `streamText`, `Toolkit`,
+  structured outputs).
+- [Lambda](/aws/compute/lambda) — the Function runtime this binding
+  attaches to.
+- [Effect AI on Cloudflare](/cloudflare/ai/effect-ai) — the same
+  `LanguageModel` programs running on Workers AI.

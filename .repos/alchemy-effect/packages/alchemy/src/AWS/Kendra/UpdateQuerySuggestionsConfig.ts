@@ -29,9 +29,8 @@ export interface UpdateQuerySuggestionsConfigRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.UpdateQuerySuggestionsConfigHttp)`.
  *
- * @binding
- * @section Query Suggestions
- * @example Tune Suggestions
+ * ### Query Suggestions
+ * **Example:** Tune Suggestions
  * ```typescript
  * const updateSuggestions =
  *   yield* AWS.Kendra.UpdateQuerySuggestionsConfig(index);
@@ -42,6 +41,8 @@ export interface UpdateQuerySuggestionsConfigRequest extends Omit<
  *   MinimumNumberOfQueryingUsers: 2,
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateQuerySuggestionsConfig extends Binding.Service<
   UpdateQuerySuggestionsConfig,

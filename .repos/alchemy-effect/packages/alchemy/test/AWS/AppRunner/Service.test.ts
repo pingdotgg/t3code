@@ -7,6 +7,12 @@ import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import {
+  awaitLogGroups,
+  deleteLogGroups,
+  logGroupNamesFor,
+  observeLogGroups,
+} from "./logGroups.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
@@ -160,6 +166,56 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
       yield* stack.destroy();
       yield* assertServiceGone(service.serviceArn);
       yield* assertConfigGone("alchemy-test-svc-asc");
+    }),
+  // create (~3-5 min) + delete (~2-3 min), one sequential test.
+  { timeout: 900_000 },
+);
+
+// The `retainLogGroups` opt-out: destroying the service leaves the two
+// auto-created log groups in place. Uses the same public ECR gallery image
+// as the lifecycle test above (no access role, no Docker build) since all
+// this needs is a real service that has logged something.
+test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
+  "retainLogGroups keeps the auto-created log groups after the service is destroyed",
+  (stack) =>
+    Effect.gen(function* () {
+      // Clean slate in case a previous run died mid-flight.
+      yield* stack.destroy();
+
+      const service = yield* stack.deploy(
+        Service("RetainedLogsService", {
+          serviceName: "alchemy-test-apprunner-retain-logs",
+          imageRepository: {
+            imageIdentifier:
+              "public.ecr.aws/aws-containers/hello-app-runner:latest",
+            imageRepositoryType: "ECR_PUBLIC",
+            port: "8000",
+          },
+          autoDeploymentsEnabled: false,
+          instanceConfiguration: { cpu: "256", memory: "512" },
+          retainLogGroups: true,
+        }),
+      );
+      expect(service.status).toBe("RUNNING");
+
+      const logGroupNames = logGroupNamesFor(
+        service.serviceName,
+        service.serviceId,
+      );
+      expect(yield* awaitLogGroups(logGroupNames)).toEqual([true, true]);
+
+      yield* stack.destroy();
+      yield* assertServiceGone(service.serviceArn);
+
+      // The service is gone but its logs are not: the provider honored the
+      // opt-out instead of reaping them.
+      expect(yield* observeLogGroups(logGroupNames)).toEqual([true, true]);
+
+      // Nothing owns them now that the state row is gone, so the test that
+      // asked for them to be retained is what cleans them up — a retained
+      // pair left here would leak into every later run's census.
+      yield* deleteLogGroups(logGroupNames);
+      expect(yield* observeLogGroups(logGroupNames)).toEqual([false, false]);
     }),
   // create (~3-5 min) + delete (~2-3 min), one sequential test.
   { timeout: 900_000 },

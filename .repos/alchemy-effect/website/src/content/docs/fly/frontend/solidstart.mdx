@@ -1,0 +1,259 @@
+---
+title: SolidStart
+description: Deploy a SolidStart app to Fly with Fly.Website.SolidStart — nitro's node preset on a Machine, prerendered pages baked into the image, and SolidStart's own Vite dev server under alchemy dev.
+sidebar:
+  order: 10.5
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Fly.Website.SolidStart` deploys a
+[SolidStart](https://start.solidjs.com) app to Fly. It runs your
+project's own `vite build` and appends nitro's `node` preset: the SSR
+server runs as a Node [`Fly.Service`](/fly/compute/services) on a
+Machine, and client assets plus prerendered pages are baked into the
+image and served first. Omit `app` and Alchemy creates a
+[`Fly.App`](/fly/compute/apps) plus a shared IPv4 so
+`https://{app}.fly.dev` answers. No adapter, no `fly.toml`.
+
+:::note[Verified version line]
+This page tracks `@solidjs/start` **2.x** with
+`@solidjs/vite-plugin-nitro-2` — the Vite-native line where
+`solidStart()` is a plain Vite plugin and nitro is a second plugin.
+:::
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/solidstart` and `/solidstart/node` exports from your project at
+deploy time. It is only used at build time, so a dev dependency is
+enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+`@solidjs/vite-plugin-nitro-2` is the server half of a SolidStart
+build and must be a project dependency too:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun add @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm install @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm add @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn add @solidjs/vite-plugin-nitro-2" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.ts` is the SolidStart plugin — no adapter, no
+nitro wiring. Vite plugins like Tailwind go in `plugins` as usual:
+
+```typescript
+// vite.config.ts
+import { solidStart } from "@solidjs/start/config";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [solidStart(), tailwindcss()],
+});
+```
+
+Alchemy appends its own `nitroV2Plugin()` instance at build time,
+carrying nitro's `node` preset. Don't register `nitroV2Plugin()`
+yourself — the appended instance would discard its options, so the
+build fails with an actionable error instead. Pass nitro options
+through the resource's `nitro` prop; see [Prerendering](#prerendering)
+below.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Fly from "alchemy/Fly";
+
+export const Website = Fly.Website.SolidStart("Website");
+```
+
+Pass `app` to put the site on an existing `Fly.App`. `rootDir` is the
+project root — the directory holding `package.json` and `vite.config.*`.
+It defaults to `"."`, so set it only when the app does not sit next to
+`alchemy.run.ts`:
+
+```typescript
+export const Website = Fly.Website.SolidStart("Website", {
+  rootDir: "./app",
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySolidStartSite",
+  {
+    providers: Fly.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+The live `url` is `https://{app}.fly.dev`. `site.app`,
+`site.service`, `site.ip`, and `site.certificate` are the Fly
+resources underneath — `undefined` during `alchemy dev`.
+
+See the [SolidStart API reference](/providers/fly/website/solidstart)
+for every prop and attribute.
+
+## Add environment variables
+
+Process environment is a top-level `env` map — plain strings, or
+`Redacted` values:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Fly.Website.SolidStart("Website", {
++  env: {
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before the build and the
+dev server, and onto the Machine at deploy time, so server code
+reads the same keys in both modes. Client inlining is whatever Vite
+does (`VITE_` prefixes).
+
+An output from another resource only exists once that resource is
+yielded, so declare the site inside the Stack generator instead:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const site = yield* Fly.Website.SolidStart("Website", {
+    env: { API_BASE: api.url },
+  });
+
+  return { url: site.url };
+});
+```
+
+## Read the environment in server code
+
+The SolidStart server is a plain Node process, so API routes,
+server functions, and SSR read the environment from `process.env`:
+
+```typescript
+// src/routes/api/hello.ts
+export function GET() {
+  return new Response(process.env.API_BASE ?? "unset");
+}
+```
+
+Values prefixed `VITE_` are inlined into the client bundle at build
+time instead, as `import.meta.env.VITE_*` — set those in the shell
+that runs `alchemy deploy`, not in `env`.
+
+## Prerendering
+
+Nitro renders the routes you list at build time into `.output/public`.
+They are baked into the image and served as static files with no
+handler invocation:
+
+```typescript
+export const Website = Fly.Website.SolidStart("Website", {
+  nitro: { prerender: { routes: ["/", "/about"] } },
+});
+```
+
+`prerender` takes the routes to render (`routes`) and can crawl links
+from prerendered pages to prerender them too (`crawlLinks`). The
+`nitro` prop is the home for all nitro options (route rules, storage,
+...) — the integration owns the plugin instance, so they cannot live
+in `vite.config.ts`. Values must be JSON-serializable; `preset` is
+owned by the Node deploy target, and a foreign preset is a hard error.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs SolidStart's own Vite dev server (native HMR)
+instead of deploying; `site.url` is the local address and no Fly
+resources are created. Nitro plays no part in dev. Wrap the site in
+`Alchemy.remote()` to deploy the live App and Service even during
+dev:
+
+```typescript
+export const Website = Fly.Website.SolidStart("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+SolidStart's plugin resolves its app root and route directory from
+the process working directory, so one `alchemy dev` process serves
+one SolidStart app at a time.
+
+:::caution[Run `alchemy dev` under Node]
+SolidStart 2's dev server answers requests through `srvx/node`, which
+returns the string `[object Object]` instead of the rendered document
+when it runs under Bun. Production builds are unaffected — only the
+dev server is. Until that upstream gap closes, run `alchemy dev` with
+Node (`npx alchemy dev`) for SolidStart projects.
+:::
+
+## Custom domain
+
+```typescript
+const site = yield* Fly.Website.SolidStart("Web", {
+  domain: "app.example.com",
+});
+```
+
+`domain` requests ACME (`Fly.Certificate`) on the App. `url`
+becomes `https://app.example.com`. Point DNS at the App first — v1
+does not create DNS records.
+
+## Where next
+
+- [SolidStart API reference](/providers/fly/website/solidstart)
+- [Apps](/fly/compute/apps) and [Services](/fly/compute/services)
+- [IPs & certificates](/fly/networking)

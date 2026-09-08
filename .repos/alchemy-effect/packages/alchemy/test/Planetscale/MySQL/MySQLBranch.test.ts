@@ -2,7 +2,7 @@ import { adopt } from "@/AdoptPolicy";
 import * as Planetscale from "@/Planetscale";
 import * as RemovalPolicy from "@/RemovalPolicy.ts";
 import * as Test from "@/Test/Alchemy";
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import { describe, expect } from "alchemy-test";
 import { Data, Schedule } from "effect";
 import * as Cause from "effect/Cause";
@@ -46,7 +46,7 @@ describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
         );
         yield* deleteBranchIfExists(database.organization, dbName, branchName);
 
-        yield* ops.createBranch({
+        yield* ps.createBranch({
           organization: database.organization,
           database: dbName,
           name: branchName,
@@ -124,7 +124,7 @@ describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
         );
         yield* deleteBranchIfExists(database.organization, dbName, branchName);
 
-        yield* ops.createBranch({
+        yield* ps.createBranch({
           organization: database.organization,
           database: dbName,
           name: branchName,
@@ -198,7 +198,7 @@ describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
         );
         yield* deleteBranchIfExists(database.organization, dbName, branchName);
 
-        const backup = yield* ops.createBackup({
+        const backup = yield* ps.createBackup({
           organization: database.organization,
           database: dbName,
           branch: "main",
@@ -296,7 +296,7 @@ describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
           }),
         );
 
-        const enabled = yield* ops.getBranch({
+        const enabled = yield* ps.getBranch({
           organization: database.organization,
           database: database.name,
           branch: branch.name,
@@ -323,7 +323,7 @@ describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
 
         expect(updatedBranch.name).toEqual(branch.name);
 
-        const disabled = yield* ops.getBranch({
+        const disabled = yield* ps.getBranch({
           organization: database.organization,
           database: database.name,
           branch: branch.name,
@@ -529,7 +529,7 @@ describe.skipIf(!process.env.PLANETSCALE_TEST).concurrent("MySQLBranch", () => {
         expect(live.name).toEqual(branchName);
 
         yield* deleteBranchIfExists(database.organization, dbName, branchName);
-        yield* ops
+        yield* ps
           .deleteDatabase({
             organization: database.organization,
             database: dbName,
@@ -546,7 +546,7 @@ const deleteBranchIfExists = Effect.fn(function* (
   database: string,
   branch: string,
 ) {
-  yield* ops
+  yield* ps
     .deleteBranch({ organization, database, branch })
     .pipe(Effect.catchTag("NotFound", () => Effect.void));
   yield* waitForBranchToBeDeleted(organization, database, branch);
@@ -557,7 +557,7 @@ const waitForBranchToBeDeleted = Effect.fn(function* (
   database: string,
   branch: string,
 ) {
-  yield* ops.getBranch({ organization, database, branch }).pipe(
+  yield* ps.getBranch({ organization, database, branch }).pipe(
     Effect.flatMap(() => Effect.fail(new BranchStillExists())),
     Effect.retry({
       while: (e): e is BranchStillExists => e instanceof BranchStillExists,
@@ -571,7 +571,7 @@ const waitForDatabaseToBeDeleted = Effect.fn(function* (
   database: string,
   organization: string,
 ) {
-  yield* ops
+  yield* ps
     .getDatabase({
       organization,
       database,
@@ -593,7 +593,7 @@ const waitForBackupSuccess = Effect.fn(function* (
   branch: string,
   id: string,
 ) {
-  return yield* ops.getBackup({ organization, database, branch, id }).pipe(
+  return yield* ps.getBackup({ organization, database, branch, id }).pipe(
     Effect.flatMap((backup) => {
       switch (backup.state) {
         case "success":

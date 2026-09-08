@@ -73,9 +73,8 @@ export interface Environment extends Resource<
  * attached via `monitors` trigger an automatic rollback if they fire during a
  * deployment.
  *
- * @resource
- * @section Creating an Environment
- * @example Basic Environment
+ * ### Creating an Environment
+ * **Example:** Basic Environment
  * ```typescript
  * const app = yield* AppConfig.Application("MyApp", {});
  * const env = yield* AppConfig.Environment("Prod", {
@@ -83,13 +82,15 @@ export interface Environment extends Resource<
  * });
  * ```
  *
- * @example Environment with Rollback Alarm
+ * **Example:** Environment with Rollback Alarm
  * ```typescript
  * const env = yield* AppConfig.Environment("Prod", {
  *   applicationId: app.applicationId,
  *   monitors: [{ alarmArn: alarm.alarmArn, alarmRoleArn: role.roleArn }],
  * });
  * ```
+ *
+ * @resource
  */
 export const Environment = Resource<Environment>("AWS.AppConfig.Environment");
 

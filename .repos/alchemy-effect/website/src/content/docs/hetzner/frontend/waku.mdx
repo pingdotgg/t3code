@@ -1,0 +1,197 @@
+---
+title: Waku
+description: Deploy a Waku app to Hetzner with Hetzner.Website.Waku — RSC server as a systemd unit on port 3000, SSG pages baked into the unit, and Waku's own dev server under alchemy dev.
+sidebar:
+  order: 13
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.Waku` deploys a [Waku](https://waku.gg) app (React
+Server Components) to a Hetzner Cloud Server. It builds the project
+programmatically: the RSC server runs as a systemd
+[`Hetzner.Service`](/hetzner/compute/services) on port 3000, and the
+client output — including SSG-prerendered pages — is baked into the
+unit. Omit `server` and Alchemy creates a `cpx12` Ubuntu 24.04 box
+in `fsn1`. The live URL is `http://{ipv4}:3000` — the Service has
+no TLS. No `waku.config.ts` edits are required — if you have one it
+loads natively — and there is no adapter to configure and no build
+command to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/waku`
+and `/waku/node` exports from your project at deploy time. It is only
+used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Waku
+
+No framework config is required — a fresh Waku project deploys
+as-is. If your project has a `waku.config.ts`, Alchemy loads it
+natively (exactly as Waku's own CLI does) and uses it as the base
+config — including Vite plugins under its `vite` field:
+
+```typescript
+// waku.config.ts
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "waku/config";
+
+export default defineConfig({
+  basePath: "/",
+  vite: {
+    plugins: [tailwindcss()],
+  },
+});
+```
+
+Options set on the resource (`srcDir`, `distDir`, `basePath`) merge
+over the file, per key. The one key Alchemy owns is
+`unstable_adapter` — the Node deploy target sets it. Setting it
+fails the build with an actionable error.
+
+:::note
+Vite configuration must live in `waku.config.ts`'s `vite` field —
+a standalone `vite.config.ts` is not loaded, same as Waku's own CLI.
+:::
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.Waku("Website");
+```
+
+Pass `server` to host the site on an existing
+[`Hetzner.Server`](/hetzner/compute/servers) — several sites and
+APIs can share one box. `rootDir` defaults to `"."`.
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyWakuSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages rendered as `"static"` are generated at build time and baked
+into the unit; dynamic pages and API routes run on the Server.
+Prerendered pages are served at their extensionless URLs (`/about`,
+not `/about/`).
+
+The live `url` is `http://{ipv4}:3000`. `site.server` and
+`site.service` are the Hetzner resources underneath — `undefined`
+during `alchemy dev`.
+
+See the [Waku API reference](/providers/hetzner/website/waku) for
+every prop and attribute.
+
+## Add environment variables
+
+Process environment is a top-level `env` map — plain strings, or
+`Redacted` values:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.Waku("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before the build and the
+dev server, and onto the systemd unit at deploy time, so server
+code reads the same keys in both modes. Client inlining is whatever
+Vite does (`VITE_` prefixes).
+
+## Read the environment in server code
+
+The RSC server is a plain Node process. Server components and API
+routes read `process.env` (Waku's `getEnv` reads the same values):
+
+```typescript
+// src/pages/index.tsx
+export default async function HomePage() {
+  const greeting = process.env.GREETING ?? "hello";
+  return <h1>{greeting}</h1>;
+}
+
+export const getConfig = async () => ({ render: "dynamic" }) as const;
+```
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Waku's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Hetzner resources
+are created. Wrap the site in `Alchemy.remote()` to deploy the live
+Server and Service even during dev:
+
+```typescript
+export const Website = Hetzner.Website.Waku("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+## Custom domain
+
+```typescript
+const zone = yield* Hetzner.Zone("dns", { name: "example.com" });
+const site = yield* Hetzner.Website.Waku("Web", {
+  domain: "app.example.com",
+  zone,
+});
+```
+
+`domain` requires an existing [`Hetzner.Zone`](/hetzner/networking/dns)
+— the Website does not create one. It adds an A record pointing at
+the Server's public IPv4. `url` becomes `http://app.example.com:3000`.
+There is no TLS on the Service.
+
+## Where next
+
+- [Waku API reference](/providers/hetzner/website/waku)
+- [Servers](/hetzner/compute/servers) and
+  [Services](/hetzner/compute/services)
+- [DNS](/hetzner/networking/dns)

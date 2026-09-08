@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Deletes a manual Neptune cluster snapshot — the pruning half of a
  * snapshot-rotation function. Provide the implementation with
  * `Effect.provide(AWS.Neptune.DeleteDBClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Prune an Old Snapshot
+ * ### Managing Snapshots
+ * **Example:** Prune an Old Snapshot
  * ```typescript
  * const deleteDBClusterSnapshot = yield* AWS.Neptune.DeleteDBClusterSnapshot();
  *
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   DBClusterSnapshotIdentifier: oldSnapshotId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteDBClusterSnapshot extends Binding.Service<
   DeleteDBClusterSnapshot,

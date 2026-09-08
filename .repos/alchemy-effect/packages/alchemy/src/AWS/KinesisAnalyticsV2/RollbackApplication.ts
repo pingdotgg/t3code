@@ -14,9 +14,8 @@ export interface RollbackApplicationRequest extends Omit<
  * the latest snapshot when available), e.g. an automated bad-deploy
  * remediation. The `CurrentApplicationVersionId` acts as a compare-and-set
  * token; read it fresh with {@link DescribeApplication}.
- * @binding
- * @section Operating the Application
- * @example Roll back a bad configuration update
+ * ### Operating the Application
+ * **Example:** Roll back a bad configuration update
  * ```typescript
  * const describeApplication = yield* AWS.KinesisAnalyticsV2.DescribeApplication(app);
  * const rollbackApplication = yield* AWS.KinesisAnalyticsV2.RollbackApplication(app);
@@ -26,6 +25,8 @@ export interface RollbackApplicationRequest extends Omit<
  *   CurrentApplicationVersionId: ApplicationDetail.ApplicationVersionId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface RollbackApplication extends Binding.Service<
   RollbackApplication,

@@ -15,15 +15,16 @@ export interface GetLogGroupFieldsRequest extends Omit<
  * the fields present in the group's recent log events (and the percentage of
  * events each field appears in), automatically injecting the log group name.
  * Useful for building Insights queries dynamically.
- * @binding
- * @section Logs Insights
- * @example Discover Fields in a Log Group
+ * ### Logs Insights
+ * **Example:** Discover Fields in a Log Group
  * ```typescript
  * const getLogGroupFields = yield* AWS.Logs.GetLogGroupFields(logGroup);
  *
  * const { logGroupFields } = yield* getLogGroupFields();
  * // e.g. [{ name: "@timestamp", percent: 100 }, { name: "@message", ... }]
  * ```
+ *
+ * @binding
  */
 export interface GetLogGroupFields extends Binding.Service<
   GetLogGroupFields,

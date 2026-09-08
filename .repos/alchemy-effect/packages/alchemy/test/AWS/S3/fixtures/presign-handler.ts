@@ -12,7 +12,7 @@ export class S3PresignTestFunction extends Lambda.Function<S3PresignTestFunction
 export default S3PresignTestFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const bucket = yield* S3.Bucket("PresignBucket", {

@@ -15,9 +15,8 @@ export interface ListObjectsV2Request extends Omit<
  * the bucket name is injected automatically and `s3:ListBucket` is granted
  * on the bucket. Provide the implementation with
  * `Effect.provide(AWS.S3.ListObjectsV2Http)`.
- * @binding
- * @section Listing Objects
- * @example List Objects Under a Prefix
+ * ### Listing Objects
+ * **Example:** List Objects Under a Prefix
  * ```typescript
  * // init — bind the operation to the bucket
  * const listObjects = yield* AWS.S3.ListObjectsV2(bucket);
@@ -27,6 +26,8 @@ export interface ListObjectsV2Request extends Omit<
  * const keys = (result.Contents ?? []).map((object) => object.Key);
  * // result.IsTruncated + result.NextContinuationToken page through the rest
  * ```
+ *
+ * @binding
  */
 export interface ListObjectsV2 extends Binding.Service<
   ListObjectsV2,

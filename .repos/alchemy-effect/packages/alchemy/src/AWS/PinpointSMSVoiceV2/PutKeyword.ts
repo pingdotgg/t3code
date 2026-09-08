@@ -21,9 +21,8 @@ export interface PutKeywordRequest extends Omit<
  * back in when `KeywordAction` is set). The deploy-time half grants
  * `sms-voice:PutKeyword` on the number. Provide the implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.PutKeywordHttp)`.
- * @binding
- * @section Managing Keywords
- * @example Register an Auto-Reply Keyword
+ * ### Managing Keywords
+ * **Example:** Register an Auto-Reply Keyword
  * ```typescript
  * // init
  * const putKeyword = yield* AWS.PinpointSMSVoiceV2.PutKeyword(number);
@@ -34,6 +33,8 @@ export interface PutKeywordRequest extends Omit<
  *   KeywordMessage: "Visit https://example.com for details.",
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutKeyword extends Binding.Service<
   PutKeyword,

@@ -21,15 +21,16 @@ export interface ListDecoderManifestNetworkInterfacesRequest extends Omit<
  * decoder manifest. Provide the implementation with
  * `Effect.provide(AWS.IoTFleetWise.ListDecoderManifestNetworkInterfacesHttp)`.
  *
- * @binding
- * @section Inspecting Signal Definitions
- * @example List a Decoder's Network Interfaces
+ * ### Inspecting Signal Definitions
+ * **Example:** List a Decoder's Network Interfaces
  * ```typescript
  * const listNetworkInterfaces =
  *   yield* IoTFleetWise.ListDecoderManifestNetworkInterfaces(decoder);
  *
  * const { networkInterfaces } = yield* listNetworkInterfaces();
  * ```
+ *
+ * @binding
  */
 export interface ListDecoderManifestNetworkInterfaces extends Binding.Service<
   ListDecoderManifestNetworkInterfaces,

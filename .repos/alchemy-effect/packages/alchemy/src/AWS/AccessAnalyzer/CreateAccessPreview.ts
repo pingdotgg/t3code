@@ -15,9 +15,8 @@ export interface CreateAccessPreviewRequest extends Omit<
  * Previews the findings a proposed resource policy would generate, before
  * deploying the policy. Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.CreateAccessPreviewHttp)`.
- * @binding
- * @section Access Previews
- * @example Preview a Proposed Bucket Policy
+ * ### Access Previews
+ * **Example:** Preview a Proposed Bucket Policy
  * ```typescript
  * const createPreview =
  *   yield* AWS.AccessAnalyzer.CreateAccessPreview(analyzer);
@@ -27,6 +26,8 @@ export interface CreateAccessPreviewRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateAccessPreview extends Binding.Service<
   CreateAccessPreview,

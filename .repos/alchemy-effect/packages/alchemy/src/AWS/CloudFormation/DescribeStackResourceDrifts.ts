@@ -12,9 +12,8 @@ import type { Stack } from "./Stack.ts";
  * `DELETED` out-of-band and the actual-vs-expected property differences.
  * Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.DescribeStackResourceDriftsHttp)`.
- * @binding
- * @section Drift Detection
- * @example Read Drifted Resources
+ * ### Drift Detection
+ * **Example:** Read Drifted Resources
  * ```typescript
  * const describeStackResourceDrifts =
  *   yield* AWS.CloudFormation.DescribeStackResourceDrifts(stack);
@@ -23,6 +22,8 @@ import type { Stack } from "./Stack.ts";
  *   StackResourceDriftStatusFilters: ["MODIFIED", "DELETED"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeStackResourceDrifts extends Binding.Service<
   DescribeStackResourceDrifts,

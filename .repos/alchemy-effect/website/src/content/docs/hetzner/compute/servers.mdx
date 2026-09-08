@@ -1,0 +1,190 @@
+---
+title: Servers
+description: Launch Hetzner Cloud Servers with Alchemy — SSH keys and typed SSH access, cloud-init, networks, volumes, snapshots, and placement groups.
+---
+
+A [`Server`](/providers/hetzner/server) is a Hetzner Cloud VM: pick
+a size, an OS image, and a location, and it boots in about ten
+seconds, billed by the hour. It's both a raw compute primitive and
+the host that [Services](/hetzner/compute/services) deploy onto.
+
+## Launch a server
+
+The minimal server is a type, an image, and a location:
+
+```typescript
+const server = yield* Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  location: "nbg1",
+});
+```
+
+All three are create-only — changing any of them **replaces** the
+server. The resolved resource exposes `ipv4`, `ipv6`, `serverId`,
+`status`, and the rest of the observed state — see the
+[`Server` reference](/providers/hetzner/server).
+
+To discover what's available, use the catalog helpers — each
+accepts a name or numeric id and fails with a typed
+`CatalogNotFound` if it doesn't exist:
+
+```typescript
+const serverType = yield* Hetzner.findServerType("cx22");
+const image = yield* Hetzner.findImage("ubuntu-24.04");
+const location = yield* Hetzner.findLocation("nbg1");
+```
+
+## SSH keys
+
+Register your public key as an [`SshKey`](/providers/hetzner/sshkey)
+and inject it at create time:
+
+```typescript
+const key = yield* Hetzner.SshKey("laptop", {
+  publicKey: "ssh-ed25519 AAAA... you@laptop",
+});
+
+const server = yield* Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  sshKeys: [key],
+});
+```
+
+Hetzner applies injected keys only when the server is provisioned —
+changing `sshKeys` later doesn't touch a live server.
+
+Separately from your keys, Alchemy generates a **deploy key** for
+every server it creates and injects it at boot. That key (persisted
+redacted in state) is how [`Hetzner.Ssh`](#run-commands-over-ssh)
+and [`Hetzner.Service`](/hetzner/compute/services) reach the box
+with zero SSH configuration on your side.
+
+## Run commands over SSH
+
+The `Ssh` binding gives you typed `exec`/`scp` against any managed
+server, from deploy-time Effects like
+[Actions](/infrastructure-as-code/action):
+
+```typescript
+const ssh = yield* Hetzner.Ssh(server);
+
+const { stdout } = yield* ssh.exec("uname -a");
+yield* ssh.scp("./assets.tar.gz", "/opt/app/assets.tar.gz");
+```
+
+`exec` returns `{ stdout, stderr, code }` and **fails** with a typed
+`Hetzner.SshError` on a non-zero exit. `scp` accepts a local path or
+a `Uint8Array` and creates the remote directory if needed. Both use
+the server's deploy key and the `root` user by default; pass
+`{ user, privateKey }` to override.
+
+## Cloud-init
+
+`userData` runs on the server's first boot — the place to install
+packages, write config files, or add users:
+
+```typescript
+const server = yield* Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  userData: `#cloud-config
+packages:
+  - postgresql
+`,
+});
+```
+
+A shell script works too, and so does a bare snippet — Alchemy adds the
+`#!/bin/bash` shebang cloud-init needs to execute one:
+
+```typescript
+const server = yield* Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  userData: `#!/bin/bash
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y nginx
+systemctl enable --now nginx
+`,
+});
+```
+
+Alchemy has its own bootstrap script that pre-installs
+[Bun](https://bun.sh) for [Services](/hetzner/compute/services). Your
+`userData` does not replace it: the two are combined into a multipart
+cloud-init document and both run, Alchemy's first. To take over the
+whole payload, bootstrap included, pass a document that already starts
+with a `Content-Type:` header.
+
+The composed document is capped at 32 KiB (Hetzner's limit) — over that,
+the deploy fails with `Hetzner.ServerUserDataTooLarge`.
+
+:::caution
+Cloud-init only runs once, on first boot, so **changing `userData`
+replaces the server**. Plan for it the way you would an `image` or
+`serverType` change: the new server is created, dependents are pointed
+at it, then the old one is deleted.
+:::
+
+## Attach infrastructure
+
+Networks, firewalls, volumes, and a placement group are all props —
+each accepts the resource directly (yielded or module-scope) and is
+kept in sync on update:
+
+```typescript
+const server = yield* Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  networks: [network],
+  firewalls: [firewall],
+  volumes: [volume],
+  placementGroup: group,
+});
+```
+
+See [Networking](/hetzner/networking) for networks, firewalls, and
+load balancers, and [Volumes](/hetzner/data/volumes) for storage.
+
+## Placement groups
+
+A [`PlacementGroup`](/providers/hetzner/placementgroup) of type
+`spread` guarantees its members run on distinct physical hosts —
+cheap insurance for redundant pairs:
+
+```typescript
+const spread = yield* Hetzner.PlacementGroup("spread", {
+  type: "spread",
+});
+
+const a = yield* Hetzner.Server("a", { /* ... */ placementGroup: spread });
+const b = yield* Hetzner.Server("b", { /* ... */ placementGroup: spread });
+```
+
+## Snapshots
+
+[`Image`](/providers/hetzner/image) captures a server's disk as a
+snapshot (or converts an existing backup):
+
+```typescript
+const golden = yield* Hetzner.Image("golden", {
+  server,
+  type: "snapshot",
+  description: "app image v1",
+});
+```
+
+Boot new servers from it by passing the image to another Server's
+`image` prop.
+
+## Where next
+
+- [Services](/hetzner/compute/services) — deploy code to the server
+  as a supervised systemd unit.
+- [Volumes](/hetzner/data/volumes) — durable block storage.
+- [Networking](/hetzner/networking) — private networks, firewalls,
+  load balancers, stable IPs.
+- [`Server` reference](/providers/hetzner/server) — every prop and
+  attribute.

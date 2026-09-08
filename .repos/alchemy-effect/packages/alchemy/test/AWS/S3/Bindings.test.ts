@@ -73,11 +73,10 @@ const getJson = <T>(path: string) =>
 const getTag = (path: string) =>
   getJson<{ tag: string }>(path).pipe(
     Effect.map((body) => body.tag),
-    Effect.flatMap(
-      (tag): Effect.Effect<string, IamNotPropagated> =>
-        tag === "AccessDenied"
-          ? Effect.fail(new IamNotPropagated({ status: 403, body: tag }))
-          : Effect.succeed(tag),
+    Effect.flatMap((tag): Effect.Effect<string, IamNotPropagated> =>
+      tag === "AccessDenied"
+        ? Effect.fail(new IamNotPropagated({ status: 403, body: tag }))
+        : Effect.succeed(tag),
     ),
     Effect.retry({
       while: (e): boolean => e._tag === "IamNotPropagated",

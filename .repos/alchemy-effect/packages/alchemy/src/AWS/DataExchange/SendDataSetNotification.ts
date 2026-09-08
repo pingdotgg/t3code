@@ -12,15 +12,16 @@ import type { DataSet } from "./DataSet.ts";
  * bus. The data set id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.SendDataSetNotificationHttp)`.
- * @binding
- * @section Notifying Subscribers
- * @example Announce A Data Update
+ * ### Notifying Subscribers
+ * **Example:** Announce A Data Update
  * ```typescript
  * const notify = yield* AWS.DataExchange.SendDataSetNotification(dataSet);
  *
  * // runtime — after publishing a new revision
  * yield* notify({ Type: "DATA_UPDATE", Comment: "Daily prices refreshed" });
  * ```
+ *
+ * @binding
  */
 export interface SendDataSetNotification extends Binding.Service<
   SendDataSetNotification,

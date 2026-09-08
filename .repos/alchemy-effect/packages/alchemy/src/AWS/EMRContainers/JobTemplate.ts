@@ -204,9 +204,8 @@ export class JobTemplateConsistencyError extends Data.TaggedError(
  * {@link StartJobRun | AWS.EMRContainers.StartJobRun} binding — a Lambda can
  * start a templated Spark job with just the template ID and parameter values.
  *
- * @resource
- * @section Creating Job Templates
- * @example A Spark Job Template
+ * ### Creating Job Templates
+ * **Example:** A Spark Job Template
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -224,7 +223,7 @@ export class JobTemplateConsistencyError extends Data.TaggedError(
  * });
  * ```
  *
- * @example Parameterized Template
+ * **Example:** Parameterized Template
  * ```typescript
  * const template = yield* AWS.EMRContainers.JobTemplate("Parameterized", {
  *   jobTemplateData: {
@@ -240,6 +239,8 @@ export class JobTemplateConsistencyError extends Data.TaggedError(
  * });
  * // StartJobRun with jobTemplateId + jobTemplateParameters: { EntryPoint: "s3://..." }
  * ```
+ *
+ * @resource
  */
 export const JobTemplate = Resource<JobTemplate>(
   "AWS.EMRContainers.JobTemplate",

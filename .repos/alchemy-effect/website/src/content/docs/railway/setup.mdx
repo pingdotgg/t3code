@@ -1,0 +1,140 @@
+---
+title: Setup
+description: Create a Railway workspace, generate an account API token, and store it in a profile.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import { effectVersion } from "../../../versions";
+
+export const pkgs = `"alchemy@next" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+
+Everything you need before deploying to Railway: the alchemy package,
+a Railway workspace, and an account API token stored in a profile.
+
+## Prerequisites
+
+- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- A [Railway](https://railway.com) account
+- [Docker](https://docs.docker.com/get-docker/) for Effect-native
+  [Services](/railway/compute/services) (Alchemy builds and pushes an
+  image). Image-based Services (`hashicorp/http-echo`) do not need it.
+
+## Create a Railway workspace
+
+Sign in at [railway.com/dashboard](https://railway.com/dashboard). A
+personal workspace is created with the account. Tokens are scoped to
+the account or a workspace — Alchemy uses
+`me.workspace ?? me.workspaces[0]` when you omit `workspaceId` on a
+[Project](/railway/compute/projects).
+
+Workspace is **not** an Alchemy resource. Pin a workspace with
+`workspaceId` on `Railway.Project`.
+
+## Generate an API token
+
+Alchemy needs an **account** or **workspace** token
+(`RAILWAY_API_TOKEN`). Project tokens cannot reach workspace-wide
+operations.
+
+In the dashboard:
+
+1. Open **Account Settings** → **Tokens**.
+2. Create an account token (or a workspace token) with permission to
+   manage projects and services.
+3. Copy the token — Railway shows it **only once**.
+
+The official environment variable is `RAILWAY_API_TOKEN`. An optional
+`RAILWAY_API_URL` overrides the GraphQL host (default
+`https://backboard.railway.com`).
+
+## Create a project directory
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Install
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${pkgs}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Connect alchemy to Railway
+
+There is no separate credentials step. The first time you run
+`alchemy deploy` (or `plan`, `dev`, `destroy`) on a stack that uses
+`Railway.providers()`, alchemy walks you through an interactive login
+with two options:
+
+- **API Token** — paste the token you generated above. It's saved
+  under `~/.alchemy/credentials/<profile>/`.
+- **Environment Variables** — reads `RAILWAY_API_TOKEN` from the
+  environment on every run (plus an optional `RAILWAY_API_URL`).
+  This is the method for CI — when alchemy detects `CI=true` it
+  skips the prompt and uses the environment automatically.
+
+Either choice is saved to your **`default`**
+[profile](/environments/profiles) and reused on every subsequent
+command.
+
+To re-run the setup later (e.g. to rotate the token, or configure a
+separate `prod` profile):
+
+```sh
+alchemy login --configure
+alchemy login --profile prod --configure
+```
+
+Inspect what's stored (secrets are redacted):
+
+```sh
+alchemy profile show
+```
+
+:::note[Effect-native Services]
+[`Railway.Service`](/railway/compute/services) with `main` bundles
+your Effect program, generates a Dockerfile, and uploads the
+context. Railway builds the image — no GHCR, no Docker daemon on
+the machine that runs `alchemy deploy`. Image-based Services
+(`image: "hashicorp/http-echo"`) skip the build and pull a public
+tag.
+:::
+
+## State storage
+
+Railway has no object-storage state backend of its own, so pick one of:
+
+- **`Alchemy.localState()`** — state on disk under `.alchemy/` next
+  to your code. Zero setup; right for solo projects and trying
+  things out.
+- **A cloud state store** — if you also use Cloudflare or AWS, pass
+  `Cloudflare.state()` or `AWS.state()` so state is shared with
+  your team and CI. See [State Store](/state-store).
+
+## Next steps
+
+- [Tutorial part 1](/railway/tutorial/part-1) — deploy your first
+  Project.
+- [Railway overview](/railway) — the map of resources and guides.

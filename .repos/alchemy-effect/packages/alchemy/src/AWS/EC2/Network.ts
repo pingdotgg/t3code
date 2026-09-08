@@ -103,15 +103,14 @@ export type Network = Effect.Success<ReturnType<typeof Network>>;
  *
  * The helper still returns the underlying canonical resources so callers can
  * keep composing with raw `AWS.EC2.*` APIs when they need more control.
- * @resource
- * @example Minimal network
+ * **Example:** Minimal network
  * ```typescript
  * const network = yield* AWS.EC2.Network("AppNetwork", {
  *   cidrBlock: "10.42.0.0/16",
  * });
  * ```
  *
- * @example ECS-ready network with shared NAT
+ * **Example:** ECS-ready network with shared NAT
  * ```typescript
  * const network = yield* AWS.EC2.Network("AppNetwork", {
  *   cidrBlock: "10.42.0.0/16",
@@ -128,6 +127,8 @@ export type Network = Effect.Success<ReturnType<typeof Network>>;
  *   assignPublicIp: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const Network = (id: string, props: NetworkProps) =>
   Namespace.push(

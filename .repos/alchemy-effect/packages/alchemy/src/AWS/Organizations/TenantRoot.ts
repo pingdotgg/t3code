@@ -242,9 +242,8 @@ const toLogicalIdSegment = (value: string) =>
  * tenant root. The broader `RootRoot` concept is an Alchemy control-plane
  * abstraction over many such tenant roots deployed into separate management
  * accounts, not a nested AWS Organizations feature.
- * @resource
- * @section Creating A Tenant Root
- * @example Tenant With Baseline Accounts
+ * ### Creating A Tenant Root
+ * **Example:** Tenant With Baseline Accounts
  * ```typescript
  * const tenant = yield* TenantRoot("CustomerA", {
  *   identityCenter: {
@@ -269,6 +268,8 @@ const toLogicalIdSegment = (value: string) =>
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const TenantRoot = Effect.fn(function* (
   id: string,

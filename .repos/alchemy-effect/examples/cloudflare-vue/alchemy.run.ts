@@ -13,7 +13,12 @@ export default Alchemy.Stack(
       compatibility: {
         flags: ["nodejs_compat"],
       },
-      memo: {},
+      // vue-router runs in history mode, so deep links like /about must
+      // fall back to index.html for the client router to resolve them.
+      assets: {
+        htmlHandling: "auto-trailing-slash",
+        notFoundHandling: "single-page-application",
+      },
     });
 
     return {

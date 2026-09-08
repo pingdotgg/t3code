@@ -34,18 +34,19 @@ export interface GetLabelsClient {
  * from an AMP {@link Workspace}'s Prometheus-compatible query API,
  * SigV4-signed with the host Function's credentials.
  *
- * @binding
- * @section Exploring Labels
- * @example List Label Names
+ * ### Exploring Labels
+ * **Example:** List Label Names
  * ```typescript
  * const labels = yield* AMP.GetLabels(workspace);
  * const names = yield* labels.labelNames();
  * ```
  *
- * @example List Metric Names
+ * **Example:** List Metric Names
  * ```typescript
  * const metricNames = yield* labels.labelValues({ label: "__name__" });
  * ```
+ *
+ * @binding
  */
 export interface GetLabels extends Binding.Service<
   GetLabels,

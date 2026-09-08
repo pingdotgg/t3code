@@ -18,14 +18,13 @@ export interface DeleteEventRequest extends Omit<
  * request. Set `deleteAuditHistory` to also remove the event's prediction
  * history.
  *
- * @binding
- * @section Deleting Stored Events
+ * ### Deleting Stored Events
  * Provide the `DeleteEventHttp` implementation layer on the Function effect,
  * bind the event type in the init phase, then call the returned client at
  * runtime. The binding grants `frauddetector:DeleteEvent` on the event type
  * and injects its `eventTypeName` automatically.
  *
- * @example Delete from a Lambda
+ * **Example:** Delete from a Lambda
  * ```typescript
  * // init
  * const deleteEvent = yield* FraudDetector.DeleteEvent(eventType);
@@ -40,6 +39,8 @@ export interface DeleteEventRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.DeleteEventHttp))
  * ```
+ *
+ * @binding
  */
 export interface DeleteEvent extends Binding.Service<
   DeleteEvent,

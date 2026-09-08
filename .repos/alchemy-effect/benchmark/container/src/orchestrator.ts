@@ -60,7 +60,7 @@ export default class Orchestrator extends AWS.Lambda.Function<Orchestrator>()(
   "MicrovmBenchOrchestrator",
   {
     main: import.meta.filename,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(120),
   },
   Effect.gen(function* () {

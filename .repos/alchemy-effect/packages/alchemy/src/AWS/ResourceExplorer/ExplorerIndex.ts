@@ -61,20 +61,20 @@ export interface Index extends Resource<
  * The first index created in an account also creates the
  * `AWSServiceRoleForResourceExplorer` service-linked role.
  *
- * @section Turning on Resource Explorer
- * @example Local index
+ * ### Turning on Resource Explorer
+ * **Example:** Local index
  * ```typescript
  * const index = yield* AWS.ResourceExplorer.Index("Index", {});
  * ```
  *
- * @example Aggregator index for cross-region search
+ * **Example:** Aggregator index for cross-region search
  * ```typescript
  * const index = yield* AWS.ResourceExplorer.Index("Index", {
  *   type: "AGGREGATOR",
  * });
  * ```
  *
- * @section Searching
+ * ### Searching
  * Search always goes through a view — see `AWS.ResourceExplorer.View` and
  * the `AWS.ResourceExplorer.Search` binding.
  */

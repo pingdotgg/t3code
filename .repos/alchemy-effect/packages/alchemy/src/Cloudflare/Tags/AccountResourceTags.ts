@@ -115,11 +115,8 @@ export type AccountResourceTags = Resource<
  * a non-empty tag set on the target resource is reported as `Unowned`, and
  * the engine refuses to take it over (i.e. clobber the existing tags)
  * unless `--adopt` or `adopt(true)` is set.
- * @resource
- * @product Resource Tagging
- * @category Account & Identity
- * @section Tagging a resource
- * @example Tag a KV namespace
+ * ### Tagging a resource
+ * **Example:** Tag a KV namespace
  * ```typescript
  * const kv = yield* Cloudflare.KV.Namespace("cache", {});
  *
@@ -130,7 +127,7 @@ export type AccountResourceTags = Resource<
  * });
  * ```
  *
- * @example Tag the account itself
+ * **Example:** Tag the account itself
  * ```typescript
  * yield* Cloudflare.Tags.AccountResourceTags("account-tags", {
  *   resourceType: "account",
@@ -140,6 +137,10 @@ export type AccountResourceTags = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/account/tags/
+ *
+ * @resource
+ * @product Resource Tagging
+ * @category Account & Identity
  */
 export const AccountResourceTags = Resource<AccountResourceTags>(TypeId);
 

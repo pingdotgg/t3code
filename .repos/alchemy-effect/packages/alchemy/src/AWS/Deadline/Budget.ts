@@ -140,9 +140,8 @@ export interface Budget extends Resource<
  * An AWS Deadline Cloud budget — tracks a queue's approximate render spend
  * over a fixed window and stops scheduling when thresholds are crossed.
  *
- * @resource
- * @section Creating Budgets
- * @example Queue Budget with Hard Stop
+ * ### Creating Budgets
+ * **Example:** Queue Budget with Hard Stop
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -162,7 +161,7 @@ export interface Budget extends Resource<
  * });
  * ```
  *
- * @example Graduated Thresholds
+ * **Example:** Graduated Thresholds
  * ```typescript
  * // Let in-flight tasks finish at 90%, cancel everything at 100%.
  * const budget = yield* AWS.Deadline.Budget("QueueBudget", {
@@ -181,6 +180,8 @@ export interface Budget extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Budget = Resource<Budget>("AWS.Deadline.Budget");
 

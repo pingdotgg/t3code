@@ -12,9 +12,8 @@ export interface GetProtocolsListRequest extends fms.GetProtocolsListRequest {}
  *
  * Returns the specified Firewall Manager protocols list. Provide the
  * implementation with `Effect.provide(AWS.FMS.GetProtocolsListHttp)`.
- * @binding
- * @section Protocols Lists
- * @example Read a Protocols List
+ * ### Protocols Lists
+ * **Example:** Read a Protocols List
  * ```typescript
  * // init — account-level binding takes no resource
  * const getProtocolsList = yield* AWS.FMS.GetProtocolsList();
@@ -23,6 +22,8 @@ export interface GetProtocolsListRequest extends fms.GetProtocolsListRequest {}
  * const result = yield* getProtocolsList({ ListId: listId });
  * console.log(result.ProtocolsList?.ProtocolsList);
  * ```
+ *
+ * @binding
  */
 export interface GetProtocolsList extends Binding.Service<
   GetProtocolsList,

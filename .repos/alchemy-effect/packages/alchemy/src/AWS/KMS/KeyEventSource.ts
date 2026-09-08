@@ -72,8 +72,8 @@ export interface KeyEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Key Events
- * @example Audit Rotations and Deletions
+ * ### Consuming Key Events
+ * **Example:** Audit Rotations and Deletions
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

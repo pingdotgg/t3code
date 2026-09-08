@@ -18,9 +18,8 @@ export interface GetCertificateRequest extends Omit<
  * `ACMPCA.GetCertificateHttp` on the Function effect to implement the
  * binding.
  *
- * @binding
- * @section Retrieving Issued Certificates
- * @example Poll for an Issued Certificate
+ * ### Retrieving Issued Certificates
+ * **Example:** Poll for an Issued Certificate
  * ```typescript
  * // init
  * const getCertificate = yield* ACMPCA.GetCertificate(ca);
@@ -37,6 +36,8 @@ export interface GetCertificateRequest extends Omit<
  * );
  * // certificate.Certificate / certificate.CertificateChain (PEM)
  * ```
+ *
+ * @binding
  */
 export interface GetCertificate extends Binding.Service<
   GetCertificate,

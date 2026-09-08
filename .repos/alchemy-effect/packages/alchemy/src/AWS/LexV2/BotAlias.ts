@@ -109,9 +109,8 @@ export interface BotAlias extends Resource<
  * An alias of an Amazon Lex V2 bot — a stable pointer to a numbered bot
  * version that runtime conversations (e.g. `RecognizeText`) target.
  *
- * @resource
- * @section Creating an Alias
- * @example Alias on a Version
+ * ### Creating an Alias
+ * **Example:** Alias on a Version
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -121,7 +120,7 @@ export interface BotAlias extends Resource<
  * });
  * ```
  *
- * @example Unassociated Alias
+ * **Example:** Unassociated Alias
  * ```typescript
  * // point it at a version later without changing consumers
  * const alias = yield* AWS.LexV2.BotAlias("Staging", {
@@ -129,8 +128,8 @@ export interface BotAlias extends Resource<
  * });
  * ```
  *
- * @section Conversing at Runtime
- * @example RecognizeText from a Lambda
+ * ### Conversing at Runtime
+ * **Example:** RecognizeText from a Lambda
  * ```typescript
  * const recognizeText = yield* AWS.LexV2.RecognizeText(alias);
  * const reply = yield* recognizeText({
@@ -139,6 +138,8 @@ export interface BotAlias extends Resource<
  *   text: "hello",
  * });
  * ```
+ *
+ * @resource
  */
 export const BotAlias = Resource<BotAlias>("AWS.LexV2.BotAlias");
 

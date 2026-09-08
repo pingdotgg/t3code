@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `DeleteMembers`.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.DisassociateMembershipHttp)`.
- * @binding
- * @section Responding to Invitations
- * @example Leave A Behavior Graph
+ * ### Responding to Invitations
+ * **Example:** Leave A Behavior Graph
  * ```typescript
  * // init — account-level binding, no resource argument
  * const disassociateMembership = yield* AWS.Detective.DisassociateMembership();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* disassociateMembership({ GraphArn: adminGraphArn });
  * ```
+ *
+ * @binding
  */
 export interface DisassociateMembership extends Binding.Service<
   DisassociateMembership,

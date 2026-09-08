@@ -12,9 +12,8 @@ import type { Deployment } from "./Deployment.ts";
  * monitor a rollout. The deployment id is injected from the binding. Provide
  * the implementation with
  * `Effect.provide(AWS.GreengrassV2.GetDeploymentHttp)`.
- * @binding
- * @section Monitoring Deployments
- * @example Check A Deployment's Status
+ * ### Monitoring Deployments
+ * **Example:** Check A Deployment's Status
  * ```typescript
  * // init — bind the operation to the deployment
  * const getDeployment = yield* AWS.GreengrassV2.GetDeployment(deployment);
@@ -23,6 +22,8 @@ import type { Deployment } from "./Deployment.ts";
  * const detail = yield* getDeployment();
  * yield* Effect.log(`rollout is ${detail.deploymentStatus}`);
  * ```
+ *
+ * @binding
  */
 export interface GetDeployment extends Binding.Service<
   GetDeployment,

@@ -11,9 +11,8 @@ import type { OriginEndpoint } from "./OriginEndpoint.ts";
  * withdrew. The endpoint's group, channel, and name are injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.MediaPackageV2.CancelHarvestJobHttp)`.
- * @binding
- * @section Harvesting Live-to-VOD Clips
- * @example Cancel an In-Progress Harvest Job
+ * ### Harvesting Live-to-VOD Clips
+ * **Example:** Cancel an In-Progress Harvest Job
  * ```typescript
  * // init — bind the operation to the endpoint
  * const cancelHarvestJob = yield* AWS.MediaPackageV2.CancelHarvestJob(endpoint);
@@ -21,6 +20,8 @@ import type { OriginEndpoint } from "./OriginEndpoint.ts";
  * // runtime
  * yield* cancelHarvestJob({ HarvestJobName: job.HarvestJobName });
  * ```
+ *
+ * @binding
  */
 export interface CancelHarvestJob extends Binding.Service<
   CancelHarvestJob,

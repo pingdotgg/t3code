@@ -19,14 +19,15 @@ export interface BatchDeleteGeofenceRequest extends Omit<
  * `geo:BatchDeleteGeofence`), scoped to one {@link GeofenceCollection}. Provide the implementation with
  * `Effect.provide(AWS.Location.BatchDeleteGeofenceHttp)`.
  *
- * @binding
- * @section Managing Geofences
- * @example Delete Geofences
+ * ### Managing Geofences
+ * **Example:** Delete Geofences
  * ```typescript
  * const batchDelete = yield* Location.BatchDeleteGeofence(collection);
  *
  * yield* batchDelete({ GeofenceIds: ["warehouse"] });
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteGeofence extends Binding.Service<
   BatchDeleteGeofence,

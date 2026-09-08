@@ -18,15 +18,14 @@ export interface DeleteEventsByEventTypeRequest extends Omit<
  * purge) made from a deployed Lambda or Task. Track progress with the
  * companion `GetDeleteEventsByEventTypeStatus` binding.
  *
- * @binding
- * @section Purging Stored Events
+ * ### Purging Stored Events
  * Provide the `DeleteEventsByEventTypeHttp` implementation layer on the
  * Function effect, bind the event type in the init phase, then call the
  * returned client at runtime. The binding grants
  * `frauddetector:DeleteEventsByEventType` on the event type and injects its
  * `eventTypeName` automatically.
  *
- * @example Purge from a Lambda
+ * **Example:** Purge from a Lambda
  * ```typescript
  * // init
  * const deleteEventsByEventType =
@@ -48,6 +47,8 @@ export interface DeleteEventsByEventTypeRequest extends Omit<
  * //   FraudDetector.GetDeleteEventsByEventTypeStatusHttp,
  * // )))
  * ```
+ *
+ * @binding
  */
 export interface DeleteEventsByEventType extends Binding.Service<
   DeleteEventsByEventType,

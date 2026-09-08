@@ -46,7 +46,7 @@ export default class InitIOProbe extends AWS.Lambda.Function<InitIOProbe>()(
   "InitIOProbe",
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const config = yield* TraceConfig;

@@ -90,11 +90,8 @@ export type Route = Resource<
  * A Cloudflare Tunnel Route attaches a private CIDR to a `cfd_tunnel` so that
  * WARP clients (and other Zero Trust egress paths) can reach private IPs
  * through the tunnel.
- * @resource
- * @product Tunnels
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Route
- * @example Basic route
+ * ### Creating a Route
+ * **Example:** Basic route
  * ```typescript
  * const tunnel = yield* Cloudflare.Tunnel.Tunnel("MyTunnel");
  * const route = yield* Cloudflare.Tunnel.Route("PrivateNet", {
@@ -103,7 +100,7 @@ export type Route = Resource<
  * });
  * ```
  *
- * @example Route with a comment and explicit virtual network
+ * **Example:** Route with a comment and explicit virtual network
  * ```typescript
  * const route = yield* Cloudflare.Tunnel.Route("DcRoute", {
  *   tunnelId: tunnel.tunnelId,
@@ -113,6 +110,10 @@ export type Route = Resource<
  *   adopt: true,
  * });
  * ```
+ *
+ * @resource
+ * @product Tunnels
+ * @category Cloudflare One (Zero Trust)
  */
 export const Route = Resource<Route>("Cloudflare.Tunnel.Route", {
   aliases: ["Cloudflare.TunnelRoute"],

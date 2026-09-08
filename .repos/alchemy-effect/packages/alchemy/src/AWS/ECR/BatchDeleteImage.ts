@@ -17,15 +17,16 @@ export interface BatchDeleteImageRequest extends Omit<
  *
  * Deletes images (by tag or digest) from the bound repository. Missing images are reported in the response's `failures` array rather than as an error, so deletion is naturally idempotent. Provide the implementation with
  * `Effect.provide(AWS.ECR.BatchDeleteImageHttp)`.
- * @binding
- * @section Deleting Images
- * @example Delete an Image Tag
+ * ### Deleting Images
+ * **Example:** Delete an Image Tag
  * ```typescript
  * const batchDeleteImage = yield* AWS.ECR.BatchDeleteImage(repository);
  *
  * const res = yield* batchDeleteImage({ imageIds: [{ imageTag: "stale" }] });
  * console.log(res.imageIds?.length, "deleted");
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteImage extends Binding.Service<
   BatchDeleteImage,

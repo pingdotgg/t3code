@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:ListKxDatabases` — lists the kdb databases of the bound environment.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.ListKxDatabasesHttp)`.
- * @binding
- * @section Reading Databases
- * @example List Databases
+ * ### Reading Databases
+ * **Example:** List Databases
  * ```typescript
  * const listDatabases = yield* AWS.FinSpace.ListKxDatabases(kdb);
  *
  * const { kxDatabases } = yield* listDatabases();
  * ```
+ *
+ * @binding
  */
 export interface ListKxDatabases extends Binding.Service<
   ListKxDatabases,

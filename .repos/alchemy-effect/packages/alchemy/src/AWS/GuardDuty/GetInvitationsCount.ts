@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.GetInvitationsCountHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Count Invitations
+ * ### Administrator & Invitations
+ * **Example:** Count Invitations
  * ```typescript
  * // init
  * // init — account-level binding, no resource argument
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { InvitationsCount } = yield* getInvitationsCount();
  * ```
+ *
+ * @binding
  */
 export interface GetInvitationsCount extends Binding.Service<
   GetInvitationsCount,

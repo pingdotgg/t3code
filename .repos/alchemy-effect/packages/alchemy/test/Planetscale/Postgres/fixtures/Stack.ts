@@ -29,7 +29,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
 
   const branch = yield* Planetscale.PostgresBranch("HyperdriveTestBranch", {
     database,
-    migrationsDir,
+    migrations: migrationsDir,
   });
 
   const role = yield* Planetscale.PostgresRole("HyperdriveTestRole", {

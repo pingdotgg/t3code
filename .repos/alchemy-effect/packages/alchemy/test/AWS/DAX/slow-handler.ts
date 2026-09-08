@@ -32,7 +32,7 @@ export class DAXSlowTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DAXSlowTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const role = yield* Role("DaxBindingsRole", {

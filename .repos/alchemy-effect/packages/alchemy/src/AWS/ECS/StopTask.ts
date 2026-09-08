@@ -12,9 +12,8 @@ export interface StopTaskRequest extends Omit<ECS.StopTaskRequest, "cluster"> {}
  * callable that stops a running task in the bound cluster. The cluster ARN is
  * injected automatically and the host is granted `ecs:StopTask` on the
  * cluster's tasks.
- * @binding
- * @section Stopping Tasks
- * @example Stop a Running Task
+ * ### Stopping Tasks
+ * **Example:** Stop a Running Task
  * ```typescript
  * const stopTask = yield* AWS.ECS.StopTask(cluster);
  *
@@ -23,6 +22,8 @@ export interface StopTaskRequest extends Omit<ECS.StopTaskRequest, "cluster"> {}
  *   reason: "drained by worker",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StopTask extends Binding.Service<
   StopTask,

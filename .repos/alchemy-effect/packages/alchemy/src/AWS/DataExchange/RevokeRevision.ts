@@ -12,9 +12,8 @@ import type { Revision } from "./Revision.ts";
  * binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.RevokeRevisionHttp)`.
- * @binding
- * @section Managing Assets
- * @example Revoke A Published Revision
+ * ### Managing Assets
+ * **Example:** Revoke A Published Revision
  * ```typescript
  * const revokeRevision = yield* AWS.DataExchange.RevokeRevision(revision);
  *
@@ -23,6 +22,8 @@ import type { Revision } from "./Revision.ts";
  *   RevocationComment: "Published with corrupted price data",
  * });
  * ```
+ *
+ * @binding
  */
 export interface RevokeRevision extends Binding.Service<
   RevokeRevision,

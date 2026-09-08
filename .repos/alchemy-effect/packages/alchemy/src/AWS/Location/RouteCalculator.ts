@@ -61,9 +61,8 @@ export interface RouteCalculator extends Resource<
  * routes and route matrices against a chosen data provider. The data source
  * is immutable; the description can be updated in place.
  *
- * @resource
- * @section Creating Route Calculators
- * @example Basic Route Calculator
+ * ### Creating Route Calculators
+ * **Example:** Basic Route Calculator
  * ```typescript
  * import * as Location from "alchemy/AWS/Location";
  *
@@ -71,6 +70,8 @@ export interface RouteCalculator extends Resource<
  *   dataSource: "Esri",
  * });
  * ```
+ *
+ * @resource
  */
 export const RouteCalculator = Resource<RouteCalculator>(
   "AWS.Location.RouteCalculator",

@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Lists a domain's maintenance actions — status and timestamps of past and in-progress reboots and process restarts. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.ListDomainMaintenancesHttp)`.
- * @binding
- * @section Domain Maintenance
- * @example List a Domain's Maintenance History
+ * ### Domain Maintenance
+ * **Example:** List a Domain's Maintenance History
  * ```typescript
  * const listDomainMaintenances = yield* OpenSearch.ListDomainMaintenances();
  *
  * const result = yield* listDomainMaintenances({ DomainName: name });
  * // result.DomainMaintenances → maintenance history
  * ```
+ *
+ * @binding
  */
 export interface ListDomainMaintenances extends Binding.Service<
   ListDomainMaintenances,

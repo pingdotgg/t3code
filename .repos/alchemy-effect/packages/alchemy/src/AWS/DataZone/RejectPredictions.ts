@@ -14,9 +14,8 @@ export interface RejectPredictionsRequest extends Omit<
  * Rejects ML-generated metadata predictions on an asset in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.RejectPredictionsHttp)`.
- * @binding
- * @section Publishing Assets
- * @example Reject All Predictions
+ * ### Publishing Assets
+ * **Example:** Reject All Predictions
  * ```typescript
  * // init — bind the operation to the domain
  * const rejectPredictions = yield* AWS.DataZone.RejectPredictions(domain);
@@ -24,6 +23,8 @@ export interface RejectPredictionsRequest extends Omit<
  * // runtime
  * yield* rejectPredictions({ identifier: assetId, rejectRule: { rule: "ALL" } });
  * ```
+ *
+ * @binding
  */
 export interface RejectPredictions extends Binding.Service<
   RejectPredictions,

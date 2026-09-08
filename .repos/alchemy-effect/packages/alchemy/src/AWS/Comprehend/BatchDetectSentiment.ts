@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * real-time APIs the action has no resource-level IAM, so the binding takes
  * no arguments and grants the action on `*`.
  *
- * @binding
- * @section Batch Real-Time Analysis
- * @example Sentiment for a Batch of Documents
+ * ### Batch Real-Time Analysis
+ * **Example:** Sentiment for a Batch of Documents
  * ```typescript
  * // init
  * const batchDetectSentiment = yield* AWS.Comprehend.BatchDetectSentiment();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.ResultList[0].Sentiment === "POSITIVE"
  * ```
+ *
+ * @binding
  */
 export interface BatchDetectSentiment extends Binding.Service<
   BatchDetectSentiment,

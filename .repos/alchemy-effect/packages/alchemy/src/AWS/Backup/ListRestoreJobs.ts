@@ -9,14 +9,15 @@ import * as Binding from "../../Binding.ts";
  * Lists the account's restore jobs, with optional filters (status, account,
  * time window). Provide the implementation with
  * `Effect.provide(AWS.Backup.ListRestoreJobsHttp)`.
- * @binding
- * @section Restoring Recovery Points
- * @example List Running Restore Jobs
+ * ### Restoring Recovery Points
+ * **Example:** List Running Restore Jobs
  * ```typescript
  * const listRestoreJobs = yield* AWS.Backup.ListRestoreJobs();
  *
  * const page = yield* listRestoreJobs({ ByStatus: "RUNNING" });
  * ```
+ *
+ * @binding
  */
 export interface ListRestoreJobs extends Binding.Service<
   ListRestoreJobs,

@@ -8,9 +8,8 @@ import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
  *
  * Lists the ID mapping job runs of the bound workflow. Provide the
  * implementation with `Effect.provide(AWS.EntityResolution.ListIdMappingJobsHttp)`.
- * @binding
- * @section Running ID Mapping Jobs
- * @example List Recent Jobs
+ * ### Running ID Mapping Jobs
+ * **Example:** List Recent Jobs
  * ```typescript
  * // init — bind the operation to the workflow
  * const listIdMappingJobs = yield* AWS.EntityResolution.ListIdMappingJobs(workflow);
@@ -18,6 +17,8 @@ import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
  * // runtime
  * const { jobs } = yield* listIdMappingJobs({});
  * ```
+ *
+ * @binding
  */
 export interface ListIdMappingJobs extends Binding.Service<
   ListIdMappingJobs,

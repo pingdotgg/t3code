@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DetectTextHttp)`.
  *
- * @binding
- * @section Image Analysis
- * @example Extract Text from an Image
+ * ### Image Analysis
+ * **Example:** Extract Text from an Image
  * ```typescript
  * // init
  * const detectText = yield* AWS.Rekognition.DetectText();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   .filter((t) => t.Type === "LINE")
  *   .map((t) => t.DetectedText);
  * ```
+ *
+ * @binding
  */
 export interface DetectText extends Binding.Service<
   DetectText,

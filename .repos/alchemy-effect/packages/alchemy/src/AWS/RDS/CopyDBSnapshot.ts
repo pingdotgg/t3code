@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * Copies a DB instance snapshot (e.g. to archive it under a new
  * identifier or re-encrypt with a different KMS key). Provide the implementation with
  * `Effect.provide(AWS.RDS.CopyDBSnapshotHttp)`.
- * @binding
- * @section Managing Instance Snapshots
- * @example Archive an Instance Snapshot
+ * ### Managing Instance Snapshots
+ * **Example:** Archive an Instance Snapshot
  * ```typescript
  * const copyDBSnapshot = yield* AWS.RDS.CopyDBSnapshot();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   TargetDBSnapshotIdentifier: `archive-${snapshotId}`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CopyDBSnapshot extends Binding.Service<
   CopyDBSnapshot,

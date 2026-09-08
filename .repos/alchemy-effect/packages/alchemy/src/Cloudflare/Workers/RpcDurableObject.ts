@@ -186,12 +186,9 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * `RpcSerialization` codec, so `Schema.decode` reconstructs class
  * instances correctly.
  *
- * @resource
- * @product Workers
- * @category Workers & Compute
  *
- * @section Defining the rpc group
- * @example DO-scoped rpc schemas
+ * ### Defining the rpc group
+ * **Example:** DO-scoped rpc schemas
  * The DO instance *is* the session, so the group payloads typically
  * don't include any per-session identifier — only the per-call inputs.
  * ```typescript
@@ -211,8 +208,8 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * export class CounterRpcs extends RpcGroup.make(setTitle, getTitle) {}
  * ```
  *
- * @section Implementing the Durable Object
- * @example Class form (recommended)
+ * ### Implementing the Durable Object
+ * **Example:** Class form (recommended)
  * Mirrors `Cloudflare.DurableObject<Self>()(...)` — same
  * outer/inner Effect pattern. The outer Effect resolves shared deps;
  * the per-instance inner Effect returns the
@@ -246,8 +243,8 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * ) {}
  * ```
  *
- * @section Calling the DO from a Worker
- * @example Typed rpc client at the call site
+ * ### Calling the DO from a Worker
+ * **Example:** Typed rpc client at the call site
  * `yield* Counter` resolves to a value whose `getByName(id)` returns
  * an `Effect<RpcClient<CounterRpcs>>`. Each rpc method is a typed
  * Effect/Stream factory — no `RpcClient.make` setup needed. Yield
@@ -265,8 +262,8 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * }).pipe(Effect.scoped);
  * ```
  *
- * @section Modular form: separate the class from its runtime
- * @example Class declaration with no impl + `static make(impl)`
+ * ### Modular form: separate the class from its runtime
+ * **Example:** Class declaration with no impl + `static make(impl)`
  * The inline class form above bundles the runtime into the class
  * declaration. The two-arg form `(name, { schema })` declares the
  * class as a pure tagged identifier; provide the runtime separately
@@ -303,8 +300,8 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * );
  * ```
  *
- * @section Cross-script binding via `Counter.from(Worker)`
- * @example Hosting on WorkerA, binding from WorkerB
+ * ### Cross-script binding via `Counter.from(Worker)`
+ * **Example:** Hosting on WorkerA, binding from WorkerB
  * The host Worker declares `Counter` in its `Deps` (third type
  * arg of `Worker<Self, Bindings, Deps>` or second of
  * `RpcWorker<Self, Deps>`) and provides `CounterLive`. Any other
@@ -344,7 +341,7 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * ) {}
  * ```
  *
- * @example Self-hosted isolated namespace
+ * **Example:** Self-hosted isolated namespace
  * A Worker that declares `Counter` in its own `Deps` and provides
  * `CounterLive` hosts its own isolated namespace — instances under
  * it are separate from any other host's. Use `Counter.from(Self)`
@@ -364,8 +361,8 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  * );
  * ```
  *
- * @section Yielding the surrounding namespace from inside a DO
- * @example `yield* RpcDurableObject` inside the DO impl
+ * ### Yielding the surrounding namespace from inside a DO
+ * **Example:** `yield* RpcDurableObject` inside the DO impl
  * Lets a DO instance refer to its own namespace — e.g. to fan a call
  * out to sibling instances. Mirrors `yield* DurableObject`
  * on the regular `DurableObject`.
@@ -376,6 +373,10 @@ export interface RpcDurableObjectClass extends Effect.Effect<
  *   yield* peer.setTitle({ title: "Sibling call" });
  * }).pipe(Effect.scoped);
  * ```
+ *
+ * @resource
+ * @product Workers
+ * @category Workers & Compute
  */
 export const RpcDurableObject: RpcDurableObjectClass = taggedFunction(
   RpcDurableObjectScope,

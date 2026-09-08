@@ -85,9 +85,8 @@ export interface RuleGroup extends Resource<
  * An AWS Network Firewall rule group — a reusable collection of stateless
  * or stateful network traffic inspection rules referenced by
  * {@link FirewallPolicy | firewall policies}.
- * @resource
- * @section Creating Rule Groups
- * @example Stateless Rule Group
+ * ### Creating Rule Groups
+ * **Example:** Stateless Rule Group
  * ```typescript
  * import * as NetworkFirewall from "alchemy/AWS/NetworkFirewall";
  *
@@ -115,7 +114,7 @@ export interface RuleGroup extends Resource<
  * });
  * ```
  *
- * @example Stateful Rule Group (Suricata rules)
+ * **Example:** Stateful Rule Group (Suricata rules)
  * ```typescript
  * const stateful = yield* NetworkFirewall.RuleGroup("BlockDomains", {
  *   type: "STATEFUL",
@@ -124,7 +123,7 @@ export interface RuleGroup extends Resource<
  * });
  * ```
  *
- * @example Stateful Domain List
+ * **Example:** Stateful Domain List
  * ```typescript
  * const domains = yield* NetworkFirewall.RuleGroup("DenyList", {
  *   type: "STATEFUL",
@@ -140,6 +139,8 @@ export interface RuleGroup extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const RuleGroup = Resource<RuleGroup>("AWS.NetworkFirewall.RuleGroup");
 

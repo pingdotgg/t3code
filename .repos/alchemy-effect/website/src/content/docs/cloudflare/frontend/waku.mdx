@@ -1,0 +1,220 @@
+---
+title: Waku
+description: Deploy a Waku app to Cloudflare Workers with Cloudflare.Website.Waku — RSC server in the Worker, SSG pages as static assets, and a custom-entry seam for Durable Objects.
+sidebar:
+  order: 12
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Cloudflare.Website.Waku` deploys a [Waku](https://waku.gg) app as a
+Cloudflare Worker. It builds the project programmatically: the React
+Server Components server bundle deploys as the Worker script, and the
+client output — including SSG-prerendered pages — deploys as static
+assets. No `waku.config.ts` edits are required — if you have one it
+loads natively — and there is no Wrangler file and no build command
+to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/waku`
+export from your project at deploy time. It is only used at build time,
+so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Waku
+
+No framework config is required — a fresh Waku project deploys
+as-is. If your project has a `waku.config.ts`, Alchemy loads it
+natively (exactly as Waku's own CLI does) and uses it as the base
+config — including Vite plugins under its `vite` field:
+
+```typescript
+// waku.config.ts
+import { defineConfig } from "waku/config";
+import tsconfigPaths from "vite-tsconfig-paths";
+
+export default defineConfig({
+  basePath: "/",
+  vite: {
+    plugins: [tsconfigPaths()],
+  },
+});
+```
+
+`waku.config.*` is the home for static configuration. For deploy-time
+values — anything that varies by stage — the `waku` prop merges
+overrides over the file, per key:
+
+```typescript
+export const Website = Cloudflare.Website.Waku("Website", {
+  waku: {
+    basePath: "/docs/",
+  },
+});
+```
+
+The one key Alchemy owns is `unstable_adapter` — setting it fails the
+build with an actionable error.
+
+:::note
+Vite configuration must live in `waku.config.ts`'s `vite` field —
+a standalone `vite.config.ts` is not loaded, same as Waku's own CLI.
+:::
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.Waku("Website");
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+`WebsiteEnv` is the typed shape of the Worker's bindings, derived
+from the class — you'll import it into your Waku code in
+[Read bindings in server code](#read-bindings-in-server-code).
+
+## Add it to the Stack
+
+Yield the class from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyWakuSite",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Waku's server runtime uses `AsyncLocalStorage`, so the `nodejs_als`
+compatibility flag is added automatically — you don't need to pass
+it. SSG pages are served at their extensionless URLs (`/about`) via
+the default `drop-trailing-slash` asset handling.
+
+During `alchemy dev`, Waku's dev server runs with SSR executing in
+workerd, so server code sees the same runtime and the same real
+bindings it will have in production.
+
+See
+[examples/cloudflare-website-waku](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-website-waku)
+for the checked-in example.
+
+## Add bindings
+
+The resource returns a plain `Worker`, so `env` accepts the full
+binding vocabulary — KV namespaces, R2 buckets, Durable Objects,
+secrets:
+
+```diff lang="typescript"
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export const Website = Cloudflare.Website.Waku("Website", {
++  env: {
++    UPLOADS: Uploads,
++    API_KEY: Config.redacted("API_KEY"),
++  },
+});
+```
+
+`Uploads` is a description, not a deploy — Alchemy provisions the
+real bucket because the Website binds it. `Config.redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
+
+## Read bindings in server code
+
+Server components and API routes read bindings from the
+`cloudflare:workers` env at request time. Use a guarded dynamic
+import — Waku's SSG step renders static pages in Node, where a
+top-level `import { env } from "cloudflare:workers"` cannot
+resolve — and type the result with the inferred env type:
+
+```typescript
+// src/lib/env.ts
+import type { WebsiteEnv } from "../../alchemy.run.ts";
+
+export const getEnv = async (): Promise<WebsiteEnv> => {
+  const { env } = await import("cloudflare:workers");
+  return env as WebsiteEnv;
+};
+```
+
+Server code calls it per request:
+
+```typescript
+// src/pages/api/upload.ts
+import { getEnv } from "../../lib/env.ts";
+
+export const POST = async (request: Request) => {
+  const env = await getEnv();
+  await env.UPLOADS.put("hello.txt", await request.text());
+  return Response.json({ ok: true });
+};
+```
+
+`env.UPLOADS` is typed as an R2 bucket and `env.API_KEY` as a
+string — renaming a binding in `alchemy.run.ts` is a type error in
+your server code.
+
+## Custom Worker entry (Durable Objects)
+
+By default the deployed Worker entry is Waku's own RSC server entry.
+When the Worker must export more than Waku's fetch handler — Durable
+Object classes, additional handlers — point `main` at your own module
+that wraps Waku's handler and re-exports the extras:
+
+```typescript
+// src/worker-entry.ts
+import wakuHandler from "virtual:waku/server-entry";
+export class Counter extends DurableObject {}
+export default {
+  fetch: (request, env, ctx) => wakuHandler.fetch(request, env, ctx),
+};
+```
+
+```typescript
+export const Website = Cloudflare.Website.Waku("Website", {
+  main: "src/worker-entry.ts",
+  env: {
+    COUNTER: Cloudflare.DurableObject("Counter", {
+      className: "Counter",
+    }),
+  },
+});
+```

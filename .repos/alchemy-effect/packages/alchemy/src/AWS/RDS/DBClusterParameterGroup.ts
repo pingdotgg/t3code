@@ -62,9 +62,8 @@ export interface DBClusterParameterGroup extends Resource<
  *
  * Name, family, and description changes force a replacement (RDS has no
  * modify API for these); tags update in place.
- * @resource
- * @section Creating a Cluster Parameter Group
- * @example Parameter Group for Aurora Postgres 16
+ * ### Creating a Cluster Parameter Group
+ * **Example:** Parameter Group for Aurora Postgres 16
  * ```typescript
  * const clusterParams = yield* DBClusterParameterGroup("ClusterParams", {
  *   family: "aurora-postgresql16",
@@ -72,13 +71,15 @@ export interface DBClusterParameterGroup extends Resource<
  * });
  * ```
  *
- * @example Attach to a Cluster
+ * **Example:** Attach to a Cluster
  * ```typescript
  * const cluster = yield* DBCluster("Cluster", {
  *   engine: "aurora-postgresql",
  *   dbClusterParameterGroupName: clusterParams.dbClusterParameterGroupName,
  * });
  * ```
+ *
+ * @resource
  */
 export const DBClusterParameterGroup = Resource<DBClusterParameterGroup>(
   "AWS.RDS.DBClusterParameterGroup",

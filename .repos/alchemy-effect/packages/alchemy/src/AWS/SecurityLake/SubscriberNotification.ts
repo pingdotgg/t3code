@@ -79,8 +79,8 @@ export interface SubscriberNotification extends Resource<
  * subscriber whenever new objects land in its Security Lake bucket, either
  * via an AWS-managed SQS queue or a custom HTTPS endpoint.
  *
- * @section Notifying subscribers
- * @example SQS notifications
+ * ### Notifying subscribers
+ * **Example:** SQS notifications
  * ```typescript
  * const notification = yield* SecurityLake.SubscriberNotification("Notify", {
  *   subscriberId: subscriber.subscriberId,
@@ -88,7 +88,7 @@ export interface SubscriberNotification extends Resource<
  * });
  * ```
  *
- * @example HTTPS notifications with an API key
+ * **Example:** HTTPS notifications with an API key
  * ```typescript
  * const notification = yield* SecurityLake.SubscriberNotification("Notify", {
  *   subscriberId: subscriber.subscriberId,

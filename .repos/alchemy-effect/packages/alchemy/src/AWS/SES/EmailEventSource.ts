@@ -96,8 +96,8 @@ export interface EmailEventSourceProps extends EventRouteProps {
  * (the default bus). Provide the host-specific implementation layer
  * (e.g. `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Email Events
- * @example Suppress Hard-Bouncing Addresses
+ * ### Consuming Email Events
+ * **Example:** Suppress Hard-Bouncing Addresses
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

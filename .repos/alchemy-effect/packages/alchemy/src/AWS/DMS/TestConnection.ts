@@ -12,9 +12,8 @@ import type { ReplicationInstance } from "./ReplicationInstance.ts";
  * database. The test runs asynchronously — poll the result with
  * {@link DescribeConnections}. Provide the implementation with
  * `Effect.provide(AWS.DMS.TestConnectionHttp)`.
- * @binding
- * @section Testing Connectivity
- * @example Kick Off a Connection Test
+ * ### Testing Connectivity
+ * **Example:** Kick Off a Connection Test
  * ```typescript
  * // init — bind the operation to the instance + endpoint
  * const testConnection = yield* AWS.DMS.TestConnection(instance, source);
@@ -23,6 +22,8 @@ import type { ReplicationInstance } from "./ReplicationInstance.ts";
  * const { Connection } = yield* testConnection();
  * // Connection.Status === "testing" — poll DescribeConnections for the result
  * ```
+ *
+ * @binding
  */
 export interface TestConnection extends Binding.Service<
   TestConnection,

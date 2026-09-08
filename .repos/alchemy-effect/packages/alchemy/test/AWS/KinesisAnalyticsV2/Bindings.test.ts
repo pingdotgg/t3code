@@ -122,9 +122,24 @@ describe.sequential("KinesisAnalyticsV2 Bindings", () => {
         Effect.retry({ schedule: readinessPolicy }),
       );
 
-      const described = (yield* getJson("/describe")) as { name?: string };
+      // `/bindings` only proves the function URL is up. The first real
+      // SDK call (`DescribeApplication`) can still 200 with `{ errorTag }`
+      // while IAM on the freshly attached policy is propagating — poll
+      // until the application name is present.
+      const described = yield* getJson("/describe").pipe(
+        Effect.flatMap((body) => {
+          const name = (body as { name?: string }).name;
+          return typeof name === "string" && name.length > 0
+            ? Effect.succeed(body as { name: string })
+            : Effect.fail(
+                new Error(
+                  `KinesisAnalyticsV2 describe not ready yet (${JSON.stringify(body)})`,
+                ),
+              );
+        }),
+        Effect.retry({ schedule: readinessPolicy }),
+      );
       applicationName = described.name;
-      expect(applicationName).toBeTruthy();
     }),
     { timeout: 300_000 },
   );

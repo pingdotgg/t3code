@@ -11,14 +11,15 @@ import type { Broker } from "./Broker.ts";
  * On ActiveMQ the change is staged and applied at the next broker reboot or
  * maintenance window; on RabbitMQ it takes effect immediately. Provide the
  * implementation with `Effect.provide(AWS.MQ.DeleteUserHttp)`.
- * @binding
- * @section Managing Users
- * @example Revoke a User
+ * ### Managing Users
+ * **Example:** Revoke a User
  * ```typescript
  * const deleteUser = yield* MQ.DeleteUser(broker);
  *
  * yield* deleteUser({ Username: "tenant-42" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteUser extends Binding.Service<
   DeleteUser,

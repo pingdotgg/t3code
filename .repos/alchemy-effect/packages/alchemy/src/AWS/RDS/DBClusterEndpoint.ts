@@ -92,9 +92,8 @@ export interface DBClusterEndpoint extends Resource<
  * Use it to pin analytics traffic to specific readers or to keep a stable
  * address across instance replacements. Changing the identifier or owning
  * cluster replaces the endpoint; type and membership update in place.
- * @resource
- * @section Creating Custom Endpoints
- * @example Reader Endpoint for a Cluster
+ * ### Creating Custom Endpoints
+ * **Example:** Reader Endpoint for a Cluster
  * ```typescript
  * const readers = yield* DBClusterEndpoint("Readers", {
  *   dbClusterIdentifier: cluster.dbClusterIdentifier,
@@ -102,7 +101,7 @@ export interface DBClusterEndpoint extends Resource<
  * });
  * ```
  *
- * @example Pin Specific Instances
+ * **Example:** Pin Specific Instances
  * ```typescript
  * const analytics = yield* DBClusterEndpoint("Analytics", {
  *   dbClusterIdentifier: cluster.dbClusterIdentifier,
@@ -110,6 +109,8 @@ export interface DBClusterEndpoint extends Resource<
  *   staticMembers: [reporting.dbInstanceIdentifier],
  * });
  * ```
+ *
+ * @resource
  */
 export const DBClusterEndpoint = Resource<DBClusterEndpoint>(
   "AWS.RDS.DBClusterEndpoint",

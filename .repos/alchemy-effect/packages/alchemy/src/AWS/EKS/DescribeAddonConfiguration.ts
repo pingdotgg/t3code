@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * `eks:DescribeAddonConfiguration` is granted on `*` — the operation is account-scoped and takes no resource.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeAddonConfigurationHttp)`.
- * @binding
- * @section Version Catalogs
- * @example Read an Add-on's Configuration Schema
+ * ### Version Catalogs
+ * **Example:** Read an Add-on's Configuration Schema
  * ```typescript
  * // init
  * const describeAddonConfiguration =
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   addonVersion,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeAddonConfiguration extends Binding.Service<
   DescribeAddonConfiguration,

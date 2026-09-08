@@ -15,9 +15,8 @@ export interface CompleteMultipartUploadRequest extends Omit<
  * part list must be in ascending `PartNumber` order with the `ETag` each
  * `UploadPart` call returned. Provide the implementation with
  * `Effect.provide(AWS.S3.CompleteMultipartUploadHttp)`.
- * @binding
- * @section Multipart Uploads
- * @example Complete a Multipart Upload
+ * ### Multipart Uploads
+ * **Example:** Complete a Multipart Upload
  * ```typescript
  * // init — bind the operation to the bucket
  * const completeUpload = yield* AWS.S3.CompleteMultipartUpload(bucket);
@@ -34,6 +33,8 @@ export interface CompleteMultipartUploadRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CompleteMultipartUpload extends Binding.Service<
   CompleteMultipartUpload,

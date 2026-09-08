@@ -227,26 +227,197 @@ contract. See
 [Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
 for the model across all runtimes.
 
-## Custom domains
+## URLs & domains
 
-The `workers.dev` URL is for development. To serve a Worker from
-your own hostname, pass `domain` — a single hostname or an array.
-The zone is inferred from the hostname and must already exist in
-the account:
+`worker.urls` is every URL that serves the Worker, most significant
+first — and `worker.url` is always `urls[0]`:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: {
+    name: "example.com",
+    aliases: ["www.example.com"],
+    redirects: ["old.example.com"], // 301 → https://example.com
+  },
+});
+// worker.url    === "https://example.com"
+// worker.urls   === ["https://example.com", "https://www.example.com",
+//                    "https://<name>.<account>.workers.dev"]
+// worker.domain === { name: "example.com", aliases: ["www.example.com"],
+//                     redirects: ["old.example.com"] }
+```
+
+Every hostname is attached as a Cloudflare custom domain — DNS records
+and edge certificates are managed for you (the zone must already exist
+in the account). A bare string is shorthand for `{ name }`. Redirect
+hostnames answer with a permanent redirect (path and query preserved)
+before the Worker runs, so they never appear in `urls`.
+
+`workersDev` controls the `workers.dev` surface:
+
+```typescript
+workersDev: false, // no workers.dev URLs — url is the custom domain
+workersDev: { enabled: false, previewsEnabled: true }, // preview URLs only
+```
+
+Under `alchemy dev`, `urls` is the dev server's actual surface:
+
+```typescript
+// worker.url  === "http://localhost:1337"
+// worker.urls === ["http://localhost:1337", "http://192.168.0.12:1337"]
+```
+
+Pass `urls` wholesale wherever a list of origins is needed:
+
+```typescript
+const api = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  env: { ALLOWED_ORIGINS: site.urls }, // CORS allow-list
+});
+```
+
+For zone setup, DNS records, and route patterns, see the
+[custom domains guide](/cloudflare/networking/custom-domains).
+
+## Static assets
+
+A Worker can serve a directory of static files alongside its code.
+Pass `assets` and Cloudflare serves matching requests from its asset
+layer; everything else invokes your handlers:
 
 ```typescript
 export default Cloudflare.Worker(
   "Worker",
   {
     main: import.meta.url,
-    domain: "app.example.com",
+    assets: "./public",
   },
   // ...
 );
 ```
 
-For zone setup, DNS records, and route patterns, see the
-[custom domains guide](/cloudflare/networking/custom-domains).
+Set `assets.runWorkerFirst` to route requests through the Worker
+*before* asset matching — `true` for every request (the Worker then
+serves static files itself via the `ASSETS` binding), or a glob array
+to intercept only specific paths:
+
+```typescript
+export default Cloudflare.Worker(
+  "Worker",
+  {
+    main: import.meta.url,
+    assets: {
+      directory: "./public",
+      // only these paths reach the Worker ahead of assets
+      runWorkerFirst: ["/api/*", "/admin/*"],
+    },
+  },
+  // ...
+);
+```
+
+You rarely need this for SSR pages or API routes alone — a path that
+matches no asset already falls through to the Worker. Reach for it
+when a path the Worker must own could be answered by the asset layer
+instead: an asset file shadowing a route, a
+`single-page-application` fallback that would serve the app shell to
+navigations, or a handler that intercepts asset requests outright
+(`true`, serving files itself via the `ASSETS` binding).
+
+The same routing applies under `alchemy dev`, so a path that hits
+your handler locally hits it deployed too.
+
+Omit `main` entirely to deploy an **assets-only Worker** — a static
+site with no Worker code of your own:
+
+```typescript
+const site = yield* Cloudflare.Worker("Site", {
+  assets: {
+    directory: "./public",
+    htmlHandling: "drop-trailing-slash",
+    notFoundHandling: "404-page",
+  },
+  domain: "static.example.com",
+});
+```
+
+Cloudflare's asset layer serves every request and applies
+`htmlHandling` / `notFoundHandling` (including
+single-page-application fallback) itself — the same deployment shape
+as an assets-only `wrangler deploy`. Static asset requests are free
+and never invoke a Worker.
+
+The class form works too — declare it in its own file and yield the
+class in your Stack:
+
+```typescript
+export class Site extends Cloudflare.Worker<Site>()("Site", {
+  assets: {
+    directory: "./public",
+    htmlHandling: "drop-trailing-slash",
+  },
+  domain: "static.example.com",
+}) {}
+```
+
+A `_headers` or `_redirects` file in the assets directory is applied
+automatically, and a `.assetsignore` file excludes files from the
+upload.
+
+If the directory comes from a build command, use
+[StaticSite](/cloudflare/frontend/static-site); for Vite projects,
+use the [Vite resource](/cloudflare/frontend/vite).
+
+## The Worker's own URL
+
+A Worker often needs to know the URL it is served at — to build
+absolute links, register webhooks, or hand a frontend its API
+origin. That URL only exists at deploy time, and a Worker can't
+reference its own `url` Output, so `Worker.URL` injects it as a
+binding on the Worker itself. Yield it in the init phase; the
+accessor it returns is yielded again inside a handler:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default Cloudflare.Worker(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const url = yield* Cloudflare.Worker.URL;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const publicUrl = yield* url;
+        return yield* HttpServerResponse.json({ url: publicUrl });
+      }),
+    };
+  }),
+);
+```
+
+The value is resolved before the upload — the first custom
+`domain` if one is configured, otherwise the Worker's `workers.dev`
+URL — and always equals the resource's `url` attribute. Under
+`alchemy dev` it resolves to the local dev server's URL instead.
+
+Async Workers declare it on `env`, where `InferEnv` types the
+entry as `string`:
+
+```typescript
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: { PUBLIC_URL: Cloudflare.Worker.URL },
+});
+```
+
+Because the URL exists before the build, a `VITE_`-prefixed entry
+(`VITE_PUBLIC_URL: Cloudflare.Worker.URL`) is also inlined into a
+Vite site's client bundle — see
+[the site's own URL](/cloudflare/frontend/vite#the-sites-own-url).
 
 ## Typed env for async Workers
 
@@ -272,7 +443,9 @@ export type WorkerEnv = Cloudflare.InferEnv<typeof Worker>;
 
 `InferEnv` maps each `env` entry to its native `workers-types`
 client — an R2 bucket becomes `R2Bucket`, a D1 database becomes
-`D1Database`, a Durable Object becomes a typed
+`D1Database`, a Durable Object (or a
+[Container](/cloudflare/compute/containers#bind-on-an-async-worker),
+which declares a container-backed DO class) becomes a typed
 `DurableObjectNamespace`, and `Config`/`Redacted` values become
 `string`. The handler stays plain JavaScript but the env can never
 drift from the infrastructure that produced it:
@@ -288,6 +461,143 @@ export default {
   },
 };
 ```
+
+## Named entrypoints
+
+Binding another Worker directly (`env: { TARGET: worker }`) targets its
+*default* entrypoint. A Worker can export additional
+[`WorkerEntrypoint` classes](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/) —
+workerd treats every named class export of an entry module as an
+entrypoint. Bind one by name with `Cloudflare.WorkerEntrypoint`:
+
+```typescript
+const caller = yield* Cloudflare.Worker("Caller", {
+  main: "./src/caller.ts",
+  env: {
+    API: Cloudflare.WorkerEntrypoint(target, "Api"),
+  },
+});
+```
+
+`InferEnv` types the entry as a `Fetcher` service stub; RPC methods on
+the target class are called on it directly (`env.API.greet("alice")`).
+
+## Entrypoint props
+
+The options form attaches properties the target entrypoint reads from
+`this.ctx.props` — workerd's per-binding configuration channel. `Output`
+values resolve at deploy time:
+
+```typescript
+env: {
+  VENDOR: Cloudflare.WorkerEntrypoint(vendorWorker, {
+    entrypoint: "Vendor",
+    props: { baseUrl: site.url },
+  }),
+}
+```
+
+:::caution
+`alchemy dev` delivers `props` to the local workerd today. On deployed
+Workers the Cloudflare API's binding schema does not carry the field
+yet, so `props` are dropped at upload until the distilled `workers`
+service adds it — the binding itself (service + entrypoint) deploys
+correctly either way.
+:::
+
+## Versions & gradual deployments
+
+Every deploy of a Worker uploads an immutable
+[version](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/),
+and a deployment routes traffic across up to two versions. By default
+alchemy deploys each new version at 100%. The `version` prop unlocks the
+other shapes: preview versions of another Worker, canaries, and gradual
+rollouts of a Worker's own deploys. The
+[Gradual deployments](/cloudflare/compute/gradual-deployments) guide
+covers the full rollout workflow — ramping, rollback, smoke testing
+with version overrides, and pinning users to a version with version
+affinity.
+
+### Preview versions
+
+Set `version.parent` to upload this Worker's code as a version of
+another Worker's script instead of creating a script of its own. The
+parent is usually a Worker deployed in another stage, referenced with
+`Worker.ref`:
+
+```typescript
+const parent = yield* Cloudflare.Worker.ref("Api", { stage: "staging" });
+
+const preview = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  version: { parent, message: `PR #${process.env.PR_NUMBER}` },
+});
+```
+
+The version receives no traffic. `preview.url` is its *aliased* preview
+URL (`<alias>-<name>.<subdomain>.workers.dev`) — alchemy derives a stable
+alias from the stack, stage, and logical id (override it with
+`version.alias`), so the link stays the same across re-deploys and always
+serves the latest uploaded version, while the parent's live traffic is
+untouched — the PR-preview workflow. The per-version URL
+(`<version-prefix>-...`) is also returned in `urls`. The version
+carries its own bindings, so a preview stage binds its own KV namespaces,
+D1 databases, and secrets for a fully isolated environment — and because
+the aliased URL is known before upload, [`Worker.URL`](#the-workers-own-url)
+works on version workers and resolves to it. `parent` also accepts a
+literal script name as an escape hatch for scripts alchemy doesn't manage.
+
+### Canary traffic
+
+Give the version `traffic` to route a percentage of the parent's
+traffic to it, with the live version keeping the remainder:
+
+```typescript
+yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  version: { parent, traffic: 10 },
+});
+```
+
+Destroying the canary restores 100% of traffic to the live version.
+Cloudflare deployments split between at most two versions, so one
+canary can be active per script at a time.
+
+### Gradual rollouts
+
+On a Worker that deploys as its own script (no `version.parent`),
+`version.traffic` below 100 turns a deploy into a gradual rollout —
+the new version takes that share and the previously-live version
+keeps the rest:
+
+```typescript
+yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  version: { traffic: 25 },
+});
+```
+
+Raise the number and re-deploy to ramp; remove the prop (or set 100) to
+promote fully. `traffic: 0` uploads the version without deploying it.
+The very first deploy of a script always goes to 100% since there is no
+previous version to split with.
+
+### What a version carries
+
+A version snapshots code, bindings, compatibility settings, and cache
+configuration. Script-level settings — routes, custom domains, crons,
+tags, observability, logpush, placement, limits, and the workers.dev
+subdomain — apply immediately to all versions, so they belong to the
+parent and are rejected on a version worker. During a gradual rollout
+of a Worker's own deploy, script-level settings keep their live values
+until the next full deploy.
+
+Two Cloudflare platform limits to know: preview URLs require the
+script's workers.dev subdomain (enabled by default, and Workers that
+implement Durable Objects don't get preview URLs), and a version worker
+cannot host Durable Object or Workflow classes — their migrations would
+apply to the parent's script. Host the classes on the parent and
+reference them cross-script instead.
 
 ## Version metadata
 
@@ -328,6 +638,8 @@ and `InferEnv` types the entry as the native
 
 Guides that build on Workers:
 
+- [Gradual deployments](/cloudflare/compute/gradual-deployments) —
+  canary and ramp deploys across versions instead of cutting over.
 - [Custom domains](/cloudflare/networking/custom-domains) — serve
   Workers from your own hostnames and routes.
 - [Effect HTTP API](/cloudflare/apis/effect-http-api) — a

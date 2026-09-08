@@ -1,15 +1,24 @@
-name: website
+name: Website
 
 on:
+  # Manual override — deploys unconditionally on whatever branch it's run
+  # from (use this to force a prod deploy from main without a release).
   workflow_dispatch:
+  # Release commits update package manifests, so packages/** keeps production
+  # deploys automatic without redeploying the site for unrelated main commits.
   push:
     branches:
       - main
     paths:
       - "website/**"
-      - "packages/alchemy/**"
-      - "bun.lock"
-      - ".github/workflows/deploy.yml"
+      - "packages/**"
+      - "scripts/generate-api-reference.ts"
+      - "patches/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
+      - ".github/workflows/website.yml"
   pull_request:
     # `labeled` so adding `deploy-website` on an open PR triggers a
     # deploy without needing another push.
@@ -21,9 +30,14 @@ on:
       - closed
     paths:
       - "website/**"
-      - "packages/alchemy/**"
-      - "bun.lock"
-      - ".github/workflows/deploy.yml"
+      - "packages/**"
+      - "scripts/generate-api-reference.ts"
+      - "patches/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.json"
+      - ".github/workflows/website.yml"
 
 concurrency:
   group: deploy-website-${{ github.ref }}
@@ -31,13 +45,16 @@ concurrency:
 
 env:
   STAGE: ${{ github.event_name == 'pull_request' && format('pr-{0}',
-    github.event.number) || (github.ref == 'refs/heads/main' && 'prod' ||
-    github.ref_name) }}
+    github.event.number) || (github.event_name == 'workflow_dispatch' ||
+    startsWith(github.event.head_commit.message, 'chore(release):')) && 'prod' ||
+    (github.ref == 'refs/heads/main' && 'main' || github.ref_name) }}
 
 jobs:
   deploy:
-    # Deploy on push-to-main and `workflow_dispatch` always. On PRs,
-    # require BOTH:
+    name: Deploy
+    # Deploy every push to main. Release commits (`chore(release): x.y.z`)
+    # and manual dispatches deploy production; other main commits deploy to
+    # main.alchemy.run. On PRs, require BOTH:
     #   - the PR is internal (forks can't access bot/Cloudflare secrets
     #     so `create-github-app-token` would error immediately), AND
     #   - the PR carries the `deploy-website` label (opt-in — most PRs
@@ -47,15 +64,16 @@ jobs:
       (github.event_name != 'pull_request' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
         contains(github.event.pull_request.labels.*.name, 'deploy-website')))
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          # `bun install` needs the distilled submodule (workspace member)
-          submodules: true
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
 
       # Mint a token for the alchemy-version-bot GitHub App so the PR
       # preview comment (created via GitHub.Comment in alchemy.run.ts)
@@ -66,30 +84,60 @@ jobs:
         id: bot-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
           private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Restore Astro build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: website/node_modules/.astro
+          key: website-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
+          restore-keys: |
+            website-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-${{ github.sha }}-
+            website-astro-${{ runner.os }}-${{ github.event.pull_request.number || 'main' }}-
+            website-astro-${{ runner.os }}-main-
 
-      - name: Install dependencies
-        run: bun install
+      - name: Restore Turbo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
+            turbo-${{ runner.os }}-${{ github.repository_id }}-
 
-      # Secrets (Cloudflare credentials, etc.) are injected by
-      # `doppler run` from the `alchemy-v2` project — `prod` config on
-      # main, `dev` config everywhere else.
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      # Main/prod use the production account; PR stages use the test account.
       - name: Deploy
         working-directory: website
         run: bun alchemy deploy --stage "$STAGE" --yes
         env:
           PULL_REQUEST: ${{ github.event.number }}
-          CLOUDFLARE_API_TOKEN: ${{ startsWith(env.STAGE, 'prod') && secrets.PROD_CLOUDFLARE_API_TOKEN || secrets.TEST_CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ startsWith(env.STAGE, 'prod') && secrets.PROD_CLOUDFLARE_ACCOUNT_ID || secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ (env.STAGE == 'main' || env.STAGE == 'prod') && secrets.PROD_CLOUDFLARE_API_TOKEN || secrets.TEST_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ (env.STAGE == 'main' || env.STAGE == 'prod') && secrets.PROD_CLOUDFLARE_ACCOUNT_ID || secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
           BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GITHUB_TOKEN: ${{ steps.bot-token.outputs.token }}
 
+      # PR builds upload zero-traffic versions of this Worker. Refresh the
+      # parent from merged main using the same test account as PR previews.
+      - name: Deploy preview parent
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: website
+        run: bun alchemy deploy --stage preview-base --yes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.TEST_CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.TEST_CLOUDFLARE_ACCOUNT_ID }}
+          BUILD_SHA: ${{ github.sha }}
+
   cleanup:
-    runs-on: ubuntu-latest
+    name: Cleanup
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     if: >-
       github.event_name == 'pull_request' && github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
@@ -97,26 +145,32 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          # `bun install` needs the distilled submodule (workspace member)
-          submodules: true
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
 
       - name: Generate bot token
         id: bot-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
           private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - name: Setup pnpm, Node.js, Bun
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: false
+
+      - name: Install dependencies
+        # Destroy evaluates the stack and calls providers; it does not build or
+        # bundle anything. Skip native postinstalls and the root prepare build.
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
-
-      - name: Install dependencies
-        run: bun install
 
       - name: Safety Check
         run: |-

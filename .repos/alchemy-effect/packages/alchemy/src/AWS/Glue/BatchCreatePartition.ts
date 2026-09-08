@@ -16,9 +16,8 @@ export interface BatchCreatePartitionRequest extends Omit<
  * failures come back in the response's `Errors` list. The database/table
  * names and catalog id are injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.Glue.BatchCreatePartitionHttp)`.
- * @binding
- * @section Managing Partitions
- * @example Backfill Partitions
+ * ### Managing Partitions
+ * **Example:** Backfill Partitions
  * ```typescript
  * // init
  * const batchCreatePartition = yield* AWS.Glue.BatchCreatePartition(table);
@@ -28,6 +27,8 @@ export interface BatchCreatePartitionRequest extends Omit<
  *   PartitionInputList: days.map((dt) => ({ Values: [dt] })),
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchCreatePartition extends Binding.Service<
   BatchCreatePartition,

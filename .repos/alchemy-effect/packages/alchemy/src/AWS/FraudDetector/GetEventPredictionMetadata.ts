@@ -19,8 +19,7 @@ export interface GetEventPredictionMetadataRequest extends Omit<
  * scores recorded for the prediction — the effectful audit call made from a
  * deployed Lambda or Task.
  *
- * @binding
- * @section Auditing Predictions
+ * ### Auditing Predictions
  * Provide the `GetEventPredictionMetadataHttp` implementation layer on the
  * Function effect, bind the detector in the init phase, then call the
  * returned client at runtime. The binding grants
@@ -28,7 +27,7 @@ export interface GetEventPredictionMetadataRequest extends Omit<
  * `detectorId` automatically. Find `predictionTimestamp` values via the
  * `ListEventPredictions` binding.
  *
- * @example Audit from a Lambda
+ * **Example:** Audit from a Lambda
  * ```typescript
  * // init
  * const getPredictionMetadata =
@@ -49,6 +48,8 @@ export interface GetEventPredictionMetadataRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.GetEventPredictionMetadataHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetEventPredictionMetadata extends Binding.Service<
   GetEventPredictionMetadata,

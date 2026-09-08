@@ -82,9 +82,8 @@ export interface Adapter extends Resource<
  * auto-update, tags); versions are trained separately with
  * `CreateAdapterVersion` against an annotated dataset.
  *
- * @resource
- * @section Managing Adapters
- * @example Create an adapter for the Queries feature
+ * ### Managing Adapters
+ * **Example:** Create an adapter for the Queries feature
  * ```typescript
  * const adapter = yield* AWS.Textract.Adapter("InvoiceAdapter", {
  *   featureTypes: ["QUERIES"],
@@ -93,7 +92,7 @@ export interface Adapter extends Resource<
  * });
  * ```
  *
- * @example Analyze a document with a trained adapter version
+ * **Example:** Analyze a document with a trained adapter version
  * ```typescript
  * const analyzeDocument = yield* AWS.Textract.AnalyzeDocument();
  * const result = yield* analyzeDocument({
@@ -105,6 +104,8 @@ export interface Adapter extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Adapter = Resource<Adapter>("AWS.Textract.Adapter");
 

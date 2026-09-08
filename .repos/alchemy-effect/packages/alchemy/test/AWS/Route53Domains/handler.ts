@@ -41,7 +41,7 @@ const errorRoute = <A, E extends { _tag: string }>(
 export default Route53DomainsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Route 53 Domains calls cross to us-east-1; give cold starts headroom
     // over the 3s default.
     timeout: Duration.seconds(30),

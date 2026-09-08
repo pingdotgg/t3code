@@ -54,7 +54,7 @@ export const BoundContactsLive = Layer.effect(
 export default ContactsBindingsFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
   },
   Effect.gen(function* () {

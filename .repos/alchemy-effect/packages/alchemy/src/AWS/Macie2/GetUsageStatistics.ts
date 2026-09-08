@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.GetUsageStatisticsHttp)`.
- * @binding
- * @section Usage & Quotas
- * @example Per-Account Usage Statistics
+ * ### Usage & Quotas
+ * **Example:** Per-Account Usage Statistics
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getUsageStatistics = yield* AWS.Macie2.GetUsageStatistics();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { records } = yield* getUsageStatistics({});
  * ```
+ *
+ * @binding
  */
 export interface GetUsageStatistics extends Binding.Service<
   GetUsageStatistics,

@@ -15,9 +15,8 @@ export interface ListNotificationEventsRequest
  * range, EventBridge source, or aggregate parent event. Provide the
  * implementation with
  * `Effect.provide(AWS.Notifications.ListNotificationEventsHttp)`.
- * @binding
- * @section Reading Notification Events
- * @example List Recent Notification Events
+ * ### Reading Notification Events
+ * **Example:** List Recent Notification Events
  * ```typescript
  * // init — account-level binding takes no resource
  * const listNotificationEvents = yield* AWS.Notifications.ListNotificationEvents();
@@ -28,6 +27,8 @@ export interface ListNotificationEventsRequest
  *   (e) => e.notificationEvent.messageComponents.headline,
  * );
  * ```
+ *
+ * @binding
  */
 export interface ListNotificationEvents extends Binding.Service<
   ListNotificationEvents,

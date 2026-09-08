@@ -12,9 +12,8 @@ export interface ListDeploymentsRequest extends Omit<
  * Runtime binding for `codedeploy:ListDeployments` — lists the deployment
  * ids of the bound deployment group (optionally filtered by status or
  * create-time range).
- * @binding
- * @section Observing Deployments
- * @example List In-Progress Deployments
+ * ### Observing Deployments
+ * **Example:** List In-Progress Deployments
  * ```typescript
  * const listDeployments = yield* AWS.CodeDeploy.ListDeployments(group);
  *
@@ -22,6 +21,8 @@ export interface ListDeploymentsRequest extends Omit<
  *   includeOnlyStatuses: ["InProgress"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListDeployments extends Binding.Service<
   ListDeployments,

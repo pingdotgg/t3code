@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetDelegatedAdminAccountHttp)`.
- * @binding
- * @section Organization & Members
- * @example Get the Delegated Administrator
+ * ### Organization & Members
+ * **Example:** Get the Delegated Administrator
  * ```typescript
  * // init
  * const getDelegatedAdminAccount = yield* AWS.Inspector2.GetDelegatedAdminAccount();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { delegatedAdmin } = yield* getDelegatedAdminAccount();
  * ```
+ *
+ * @binding
  */
 export interface GetDelegatedAdminAccount extends Binding.Service<
   GetDelegatedAdminAccount,

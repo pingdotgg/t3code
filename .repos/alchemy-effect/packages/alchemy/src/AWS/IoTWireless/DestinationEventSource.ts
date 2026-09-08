@@ -59,9 +59,8 @@ export type DestinationEventSourceService = <Req = never>(
  * Use the {@link consumeUplinks} helper rather than the service directly,
  * and provide `Lambda.WirelessDestinationEventSource` on the hosting
  * function.
- * @binding
- * @section Consuming Uplinks
- * @example Consume LoRaWAN Uplinks in a Lambda
+ * ### Consuming Uplinks
+ * **Example:** Consume LoRaWAN Uplinks in a Lambda
  * ```typescript
  * export default IngestFunction.make(
  *   { main: import.meta.url },
@@ -87,6 +86,8 @@ export type DestinationEventSourceService = <Req = never>(
  *   }).pipe(Effect.provide(Lambda.WirelessDestinationEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DestinationEventSource extends Binding.Service<
   DestinationEventSource,

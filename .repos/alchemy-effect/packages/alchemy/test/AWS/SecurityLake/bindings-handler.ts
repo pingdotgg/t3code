@@ -17,7 +17,7 @@ export class SecurityLakeBindingsFunction extends Lambda.Function<Lambda.Functio
 export default SecurityLakeBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const { region } = yield* AWSEnvironment.current;

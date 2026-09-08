@@ -63,16 +63,15 @@ export interface SignalingChannel extends Resource<
  *
  * `messageTtl` is updated in place; changing `channelName` or `type`
  * replaces the channel.
- * @resource
- * @section Creating Channels
- * @example Basic Signaling Channel
+ * ### Creating Channels
+ * **Example:** Basic Signaling Channel
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
  * const channel = yield* AWS.KinesisVideo.SignalingChannel("Doorbell");
  * ```
  *
- * @example Channel with Message TTL
+ * **Example:** Channel with Message TTL
  * ```typescript
  * const channel = yield* AWS.KinesisVideo.SignalingChannel("Doorbell", {
  *   messageTtl: "30 seconds",
@@ -80,8 +79,8 @@ export interface SignalingChannel extends Resource<
  * });
  * ```
  *
- * @section WebRTC Connectivity
- * @example ICE Server Configuration
+ * ### WebRTC Connectivity
+ * **Example:** ICE Server Configuration
  * ```typescript
  * // init
  * const getIceServers = yield* AWS.KinesisVideo.GetIceServerConfig(channel);
@@ -89,6 +88,8 @@ export interface SignalingChannel extends Resource<
  * // runtime — TURN URIs + short-lived credentials for a WebRTC peer
  * const { IceServerList } = yield* getIceServers({ ClientId: "viewer-1" });
  * ```
+ *
+ * @resource
  */
 export const SignalingChannel = Resource<SignalingChannel>(
   "AWS.KinesisVideo.SignalingChannel",
@@ -283,6 +284,7 @@ export const SignalingChannelProvider = () =>
           ).pipe(
             Effect.catchTag("ResourceNotFoundException", () => Effect.void),
           );
+          yield* waitForChannelGone(output.channelName);
         }),
       });
     }),

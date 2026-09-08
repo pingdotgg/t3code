@@ -15,9 +15,8 @@ export interface BatchPutAttributesRequest extends Omit<
  * Bind this operation to a {@link Domain} inside a function runtime to get a
  * callable that automatically injects the domain name. Puts attributes on up
  * to 25 items in a single call.
- * @binding
- * @section Writing Items
- * @example Batch Put Multiple Items
+ * ### Writing Items
+ * **Example:** Batch Put Multiple Items
  * ```typescript
  * const batchPutAttributes = yield* AWS.SimpleDB.BatchPutAttributes(domain);
  *
@@ -34,6 +33,8 @@ export interface BatchPutAttributesRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchPutAttributes extends Binding.Service<
   BatchPutAttributes,

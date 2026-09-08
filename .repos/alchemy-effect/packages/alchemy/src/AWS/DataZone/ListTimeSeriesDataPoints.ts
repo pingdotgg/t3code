@@ -14,9 +14,8 @@ export interface ListTimeSeriesDataPointsRequest extends Omit<
  * Lists time series data points recorded on an asset or listing in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.ListTimeSeriesDataPointsHttp)`.
- * @binding
- * @section Time Series Metadata
- * @example Read Back Metric History
+ * ### Time Series Metadata
+ * **Example:** Read Back Metric History
  * ```typescript
  * // init — bind the operation to the domain
  * const listTimeSeriesDataPoints = yield* AWS.DataZone.ListTimeSeriesDataPoints(domain);
@@ -28,6 +27,8 @@ export interface ListTimeSeriesDataPointsRequest extends Omit<
  *   formName: "quality",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListTimeSeriesDataPoints extends Binding.Service<
   ListTimeSeriesDataPoints,

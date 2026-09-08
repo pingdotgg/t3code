@@ -54,9 +54,8 @@ export interface RuleGroupsNamespace extends Resource<
  * workspace — a container of Prometheus recording and alerting rules,
  * supplied as a YAML definition.
  *
- * @resource
- * @section Creating a Rule Groups Namespace
- * @example Basic Recording Rule
+ * ### Creating a Rule Groups Namespace
+ * **Example:** Basic Recording Rule
  * ```typescript
  * const workspace = yield* AMP.Workspace("Metrics", {});
  * const rules = yield* AMP.RuleGroupsNamespace("Rules", {
@@ -69,6 +68,8 @@ export interface RuleGroupsNamespace extends Resource<
  *         expr: rate(http_requests_total[5m])`,
  * });
  * ```
+ *
+ * @resource
  */
 export const RuleGroupsNamespace = Resource<RuleGroupsNamespace>(
   "AWS.AMP.RuleGroupsNamespace",

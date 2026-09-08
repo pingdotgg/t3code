@@ -20,15 +20,16 @@ export interface ListRecoveryPointsByBackupVaultRequest extends Omit<
  * optional filters (resource ARN, resource type, plan, time window). Provide
  * the implementation with
  * `Effect.provide(AWS.Backup.ListRecoveryPointsByBackupVaultHttp)`.
- * @binding
- * @section Recovery Points
- * @example List A Vault's Recovery Points
+ * ### Recovery Points
+ * **Example:** List A Vault's Recovery Points
  * ```typescript
  * const listRecoveryPoints =
  *   yield* AWS.Backup.ListRecoveryPointsByBackupVault(vault);
  *
  * const page = yield* listRecoveryPoints({ MaxResults: 25 });
  * ```
+ *
+ * @binding
  */
 export interface ListRecoveryPointsByBackupVault extends Binding.Service<
   ListRecoveryPointsByBackupVault,

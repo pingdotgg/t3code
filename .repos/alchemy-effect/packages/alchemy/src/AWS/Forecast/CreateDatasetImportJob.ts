@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `forecast:CreateDatasetImportJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.Forecast.CreateDatasetImportJobHttp)`.
  *
- * @binding
- * @section Importing Data
- * @example Start a Scheduled Import
+ * ### Importing Data
+ * **Example:** Start a Scheduled Import
  * ```typescript
  * // init
  * const createDatasetImportJob = yield* AWS.Forecast.CreateDatasetImportJob();
@@ -33,6 +32,8 @@ import * as Binding from "../../Binding.ts";
  *   TimestampFormat: "yyyy-MM-dd",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateDatasetImportJob extends Binding.Service<
   CreateDatasetImportJob,

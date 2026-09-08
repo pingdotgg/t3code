@@ -49,9 +49,8 @@ export interface PrincipalPortfolioAssociation extends Resource<
  * Catalog portfolio, allowing it to browse and launch the portfolio's
  * products.
  *
- * @resource
- * @section Granting Access
- * @example Associate an IAM role
+ * ### Granting Access
+ * **Example:** Associate an IAM role
  * ```typescript
  * import * as ServiceCatalog from "alchemy/AWS/ServiceCatalog";
  *
@@ -61,7 +60,7 @@ export interface PrincipalPortfolioAssociation extends Resource<
  * });
  * ```
  *
- * @example Associate a wildcard principal pattern
+ * **Example:** Associate a wildcard principal pattern
  * ```typescript
  * yield* ServiceCatalog.PrincipalPortfolioAssociation("AllDevRoles", {
  *   portfolioId: portfolio.portfolioId,
@@ -69,6 +68,8 @@ export interface PrincipalPortfolioAssociation extends Resource<
  *   principalType: "IAM_PATTERN",
  * });
  * ```
+ *
+ * @resource
  */
 export const PrincipalPortfolioAssociation =
   Resource<PrincipalPortfolioAssociation>(

@@ -23,9 +23,8 @@ export interface ModifyCapacityReservationRequest extends Omit<
  * ELBv2 analogue of Auto Scaling's `SetDesiredCapacity`. Provide the
  * implementation with
  * `Effect.provide(AWS.ELBv2.ModifyCapacityReservationHttp)`.
- * @binding
- * @section Capacity Reservation
- * @example Reserve capacity ahead of a spike
+ * ### Capacity Reservation
+ * **Example:** Reserve capacity ahead of a spike
  * ```typescript
  * // init — bind the operation to the load balancer
  * const modifyCapacityReservation =
@@ -39,6 +38,8 @@ export interface ModifyCapacityReservationRequest extends Omit<
  * // later — release the reservation
  * yield* modifyCapacityReservation({ ResetCapacityReservation: true });
  * ```
+ *
+ * @binding
  */
 export interface ModifyCapacityReservation extends Binding.Service<
   ModifyCapacityReservation,

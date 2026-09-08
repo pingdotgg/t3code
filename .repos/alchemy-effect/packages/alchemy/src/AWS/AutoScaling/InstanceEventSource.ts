@@ -101,8 +101,8 @@ const allInstanceEvents: InstanceEventType[] = [
  * the account; inspect `event.detail.AutoScalingGroupName` in the handler if
  * multiple groups share the Function.
  *
- * @section Observing the Fleet
- * @example React to instance launches and terminations
+ * ### Observing the Fleet
+ * **Example:** React to instance launches and terminations
  * ```typescript
  * yield* consumeInstanceEvents(
  *   group,
@@ -121,7 +121,7 @@ const allInstanceEvents: InstanceEventType[] = [
  * );
  * ```
  *
- * @example Alert on launch failures
+ * **Example:** Alert on launch failures
  * ```typescript
  * yield* consumeInstanceEvents(
  *   group,

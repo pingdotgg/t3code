@@ -106,9 +106,8 @@ export interface AssetModel extends Resource<
  * (`CREATING`/`UPDATING` → `ACTIVE`); the provider waits for the model to
  * converge to `ACTIVE` before returning.
  *
- * @resource
- * @section Creating Asset Models
- * @example Asset Model with a Measurement and an Attribute
+ * ### Creating Asset Models
+ * **Example:** Asset Model with a Measurement and an Attribute
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -130,8 +129,8 @@ export interface AssetModel extends Resource<
  * });
  * ```
  *
- * @section Hierarchies
- * @example Parent Model with a Child Hierarchy
+ * ### Hierarchies
+ * **Example:** Parent Model with a Child Hierarchy
  * ```typescript
  * const pump = yield* AWS.IoTSiteWise.AssetModel("PumpModel", {
  *   assetModelProperties: [
@@ -145,6 +144,8 @@ export interface AssetModel extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const AssetModel = Resource<AssetModel>("AWS.IoTSiteWise.AssetModel");
 

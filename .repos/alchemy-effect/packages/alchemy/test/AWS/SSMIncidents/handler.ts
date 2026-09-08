@@ -40,7 +40,7 @@ const errorTagged = <A, E extends { _tag: string }, R>(
 export default IncidentsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

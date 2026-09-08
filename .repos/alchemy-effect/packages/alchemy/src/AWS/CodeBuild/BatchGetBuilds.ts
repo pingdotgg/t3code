@@ -7,15 +7,16 @@ import type { Project } from "./Project.ts";
  * Runtime binding for `codebuild:BatchGetBuilds` — reads the status of one
  * or more builds by id (the ids returned from {@link StartBuild}). Bind it
  * to the project whose builds you poll.
- * @binding
- * @section Polling Builds
- * @example Poll a Build to Completion
+ * ### Polling Builds
+ * **Example:** Poll a Build to Completion
  * ```typescript
  * const batchGetBuilds = yield* AWS.CodeBuild.BatchGetBuilds(project);
  *
  * const { builds } = yield* batchGetBuilds({ ids: [buildId] });
  * const status = builds?.[0]?.buildStatus; // IN_PROGRESS | SUCCEEDED | FAILED | ...
  * ```
+ *
+ * @binding
  */
 export interface BatchGetBuilds extends Binding.Service<
   BatchGetBuilds,

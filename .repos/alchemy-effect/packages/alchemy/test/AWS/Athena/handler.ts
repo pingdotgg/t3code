@@ -30,7 +30,7 @@ export class AthenaTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AthenaTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // startQueryExecution → poll getQueryExecution → getQueryResults fans out
     // several SDK calls; AWS's 3s default would intermittently time out.
     timeout: Duration.seconds(60),

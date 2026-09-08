@@ -67,8 +67,8 @@ export interface AllowList extends Resource<
  * criteria are all updatable in place; destroy deletes the list even if
  * classification jobs reference it.
  *
- * @section Creating an allow list
- * @example Regex allow list
+ * ### Creating an allow list
+ * **Example:** Regex allow list
  * ```typescript
  * const allowList = yield* Macie2.AllowList("InternalIds", {
  *   description: "Internal ticket ids are not sensitive",
@@ -76,7 +76,7 @@ export interface AllowList extends Resource<
  * });
  * ```
  *
- * @example Predefined words from S3
+ * **Example:** Predefined words from S3
  * ```typescript
  * const allowList = yield* Macie2.AllowList("KnownTestData", {
  *   criteria: {

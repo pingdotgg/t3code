@@ -6,9 +6,8 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
 /**
  * Runtime binding for `codedeploy:BatchGetDeploymentTargets` — reads up to
  * 25 deployment targets of a deployment in one call.
- * @binding
- * @section Observing Deployment Targets
- * @example Read Several Targets
+ * ### Observing Deployment Targets
+ * **Example:** Read Several Targets
  * ```typescript
  * const batchGetDeploymentTargets =
  *   yield* AWS.CodeDeploy.BatchGetDeploymentTargets(group);
@@ -18,6 +17,8 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
  *   targetIds,
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetDeploymentTargets extends Binding.Service<
   BatchGetDeploymentTargets,

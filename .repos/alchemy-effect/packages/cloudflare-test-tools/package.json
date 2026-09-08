@@ -1,0 +1,31 @@
+{
+  "name": "@alchemy.run/cloudflare-test-tools",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && bun ../../scripts/copy-package-files.ts cloudflare-test-tools",
+    "e2e": "bun run src/e2e/Cli.ts",
+    "typecheck": "bun run build"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "effect": "catalog:effect",
+    "miniflare": "catalog:cloudflare-runtime"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:testing",
+    "rolldown": "catalog:build",
+    "vite": "catalog:build"
+  },
+  "exports": {
+    "./e2e/Framework": "./src/e2e/Framework.ts",
+    "./e2e/Options": "./src/e2e/Options.ts",
+    "./e2e/Playwright": "./src/e2e/Playwright.ts",
+    "./miniflare": "./src/miniflare/miniflare.ts",
+    "./miniflare-module": "./src/miniflare/miniflare-module.ts"
+  }
+}

@@ -14,9 +14,8 @@ import type { Flow } from "./Flow.ts";
  * `ThumbnailMessages` explaining why no image is available. The flow ARN
  * is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MediaConnect.DescribeFlowSourceThumbnailHttp)`.
- * @binding
- * @section Observing Flows
- * @example Render a Confidence Thumbnail
+ * ### Observing Flows
+ * **Example:** Render a Confidence Thumbnail
  * ```typescript
  * // init — bind the operation to the flow
  * const sourceThumbnail = yield* AWS.MediaConnect.DescribeFlowSourceThumbnail(flow);
@@ -25,6 +24,8 @@ import type { Flow } from "./Flow.ts";
  * const { ThumbnailDetails } = yield* sourceThumbnail();
  * const image = ThumbnailDetails?.Thumbnail; // base64-encoded JPEG
  * ```
+ *
+ * @binding
  */
 export interface DescribeFlowSourceThumbnail extends Binding.Service<
   DescribeFlowSourceThumbnail,

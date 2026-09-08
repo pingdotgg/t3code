@@ -83,9 +83,8 @@ export interface User extends Resource<
  * {@link ACL}s, which are attached to clusters.
  *
  * Users are free and provision quickly. Passwords are write-only.
- * @resource
- * @section Creating a User
- * @example Password User with Full Access
+ * ### Creating a User
+ * **Example:** Password User with Full Access
  * ```typescript
  * const user = yield* User("AppUser", {
  *   authenticationMode: { type: "password", passwords: [appPassword] },
@@ -93,7 +92,7 @@ export interface User extends Resource<
  * });
  * ```
  *
- * @example IAM-Authenticated User
+ * **Example:** IAM-Authenticated User
  * ```typescript
  * const user = yield* User("IamUser", {
  *   userName: "iam-app-user",
@@ -101,6 +100,8 @@ export interface User extends Resource<
  *   accessString: "on ~* +@all",
  * });
  * ```
+ *
+ * @resource
  */
 export const User = Resource<User>("AWS.MemoryDB.User");
 

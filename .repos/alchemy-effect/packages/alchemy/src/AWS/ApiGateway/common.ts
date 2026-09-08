@@ -3,6 +3,7 @@ import * as Retry from "@distilled.cloud/aws/Retry";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import { diffTags, normalizeTags } from "../../Tags.ts";
 
 /**
@@ -96,6 +97,13 @@ const restApiGoneSchedule = Schedule.max([
   Schedule.recurs(8),
 ]);
 
+// DeleteRestApi's ~1-per-30s quota is ACCOUNT-wide, so concurrent destroys
+// (parallel test files, parallel stacks in one process) all contend for the
+// same token — each one's individual retry wall can expire while the others
+// keep winning the race. Serialize deletes process-wide so each waiter only
+// contends with the quota window itself, never with its siblings.
+const restApiDeleteMutex = Semaphore.makeUnsafe(1);
+
 /**
  * Idempotently delete a REST API and observe it disappear.
  *
@@ -109,6 +117,7 @@ export const deleteRestApiAndWait = Effect.fn(function* (restApiId: string) {
       schedule: restApiDeleteSchedule,
     }),
     Effect.catchTag("NotFoundException", () => Effect.void),
+    Semaphore.withPermits(restApiDeleteMutex, 1),
   );
 
   // Avoid nesting the account-wide AWS retry policy inside the observable

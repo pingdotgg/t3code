@@ -1,7 +1,8 @@
 /**
- * Internal pod-identity + host-binding machinery shared by the EKS platforms
- * (`AWS.EKS.Deployment`, `AWS.EKS.Job`). Each helper is an independently
- * idempotent mini-reconciler: observe, ensure, converge.
+ * Internal pod-identity + host-binding machinery behind the `aws-eks`
+ * cluster adapter's workload-identity implementation (see
+ * `../KubernetesAdapter.ts`). Each helper is an independently idempotent
+ * mini-reconciler: observe, ensure, converge.
  */
 import * as eks from "@distilled.cloud/aws/eks";
 import * as iam from "@distilled.cloud/aws/iam";
@@ -11,34 +12,6 @@ import { createPhysicalName } from "../../../PhysicalName.ts";
 import type { ResourceBinding } from "../../../Resource.ts";
 import { createInternalTags, hasTags } from "../../../Tags.ts";
 import type { PolicyStatement } from "../../IAM/Policy.ts";
-import type { Cluster } from "../Cluster.ts";
-import type { KubernetesClusterConnection } from "./client.ts";
-
-/**
- * The subset of an `AWS.EKS.Cluster`'s Attributes an EKS platform needs to
- * connect to the Kubernetes API and place a pod identity association. Passed
- * as the whole `cluster` resource — the engine resolves it to bare attributes
- * at reconcile, giving us the live `endpoint` / `certificateAuthorityData`.
- */
-export type ClusterConnectionProps = Pick<
-  Cluster["Attributes"],
-  "clusterName" | "endpoint" | "certificateAuthorityData"
->;
-
-export const toConnection = (
-  cluster: ClusterConnectionProps,
-): KubernetesClusterConnection => {
-  if (!cluster.endpoint || !cluster.certificateAuthorityData) {
-    throw new Error(
-      `EKS cluster '${cluster.clusterName}' is missing endpoint or certificate authority data`,
-    );
-  }
-  return {
-    clusterName: cluster.clusterName,
-    endpoint: cluster.endpoint,
-    certificateAuthorityData: cluster.certificateAuthorityData,
-  };
-};
 
 export const toClientRequestToken = (id: string, action: string) =>
   createPhysicalName({
@@ -103,10 +76,12 @@ export interface HostBindingContract {
 }
 
 /**
- * Collect env + IAM from bindings and land the inline policy on the pod role
- * (or delete it when no statements remain).
+ * Land the IAM policy statements carried by a host's active bindings as
+ * the pod role's inline policy (or delete it when no statements remain).
+ * Binding env collection is generic and lives in the Kubernetes workload
+ * providers.
  */
-export const attachBindings = Effect.fn(function* ({
+export const attachPolicyStatements = Effect.fn(function* ({
   roleName,
   policyName,
   bindings,
@@ -122,10 +97,6 @@ export const attachBindings = Effect.fn(function* ({
       },
     ) => binding.action !== "delete",
   );
-
-  const env = activeBindings
-    .map((binding) => binding?.data?.env)
-    .reduce((acc, value) => ({ ...acc, ...value }), {});
 
   const policyStatements = activeBindings.flatMap(
     (binding) =>
@@ -149,8 +120,6 @@ export const attachBindings = Effect.fn(function* ({
       .deleteRolePolicy({ RoleName: roleName, PolicyName: policyName })
       .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
   }
-
-  return env;
 });
 
 /** Observe an existing pod identity association for (cluster, ns, sa). */
@@ -298,32 +267,3 @@ export const deletePodRole = Effect.fn(function* (roleName: string) {
     .deleteRole({ RoleName: roleName })
     .pipe(Effect.catchTag("NoSuchEntityException", () => Effect.void));
 });
-
-/**
- * Structural deep merge: objects merge recursively; arrays and primitives
- * from `override` replace the base value wholesale. Powers escape hatches
- * like `AWS.EKS.Deployment.podTemplate`.
- */
-export const deepMerge = <T>(base: T, override: unknown): T => {
-  if (override === undefined) return base;
-  if (
-    base === null ||
-    override === null ||
-    typeof base !== "object" ||
-    typeof override !== "object" ||
-    Array.isArray(base) ||
-    Array.isArray(override)
-  ) {
-    return override as T;
-  }
-  const out: Record<string, unknown> = {
-    ...(base as Record<string, unknown>),
-  };
-  for (const [key, value] of Object.entries(override)) {
-    out[key] =
-      key in (base as Record<string, unknown>)
-        ? deepMerge((base as Record<string, unknown>)[key], value)
-        : value;
-  }
-  return out as T;
-};

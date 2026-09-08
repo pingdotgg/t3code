@@ -58,9 +58,8 @@ export interface KafkaEventSourceProps {
  * authentication requires, creates an event source mapping on the cluster,
  * and forwards `aws:kafka` records into the handler's `Stream`. Use the
  * {@link consumeKafkaTopic} helper rather than calling the service directly.
- * @binding
- * @section Consuming Topics
- * @example Consume a Topic in a Lambda Function
+ * ### Consuming Topics
+ * **Example:** Consume a Topic in a Lambda Function
  * ```typescript
  * export default MyFunction.make(
  *   { main: import.meta.url },
@@ -81,6 +80,8 @@ export interface KafkaEventSourceProps {
  *   }).pipe(Effect.provide(AWS.Lambda.KafkaEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface KafkaEventSource extends Binding.Service<
   KafkaEventSource,

@@ -12,9 +12,8 @@ export interface ListApplicationRevisionsRequest extends Omit<
  * Runtime binding for `codedeploy:ListApplicationRevisions` — lists the
  * revisions registered with the bound application (optionally filtered by
  * S3 bucket/prefix or deployed state).
- * @binding
- * @section Managing Revisions
- * @example List Registered Revisions
+ * ### Managing Revisions
+ * **Example:** List Registered Revisions
  * ```typescript
  * const listApplicationRevisions =
  *   yield* AWS.CodeDeploy.ListApplicationRevisions(app);
@@ -24,6 +23,8 @@ export interface ListApplicationRevisionsRequest extends Omit<
  *   sortOrder: "descending",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListApplicationRevisions extends Binding.Service<
   ListApplicationRevisions,

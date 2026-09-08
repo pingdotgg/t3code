@@ -15,13 +15,12 @@ export interface ExecuteQueryRequest extends sitewise.ExecuteQueryRequest {}
  * The query surface is account-wide, so the binding grants the action on
  * `Resource: ["*"]` and takes no bound resource.
  *
- * @binding
- * @section Querying Asset Data with SQL
+ * ### Querying Asset Data with SQL
  * Provide the `ExecuteQueryHttp` implementation layer on the Function
  * effect, bind in the init phase (no resource argument), then call the
  * returned client at runtime.
  *
- * @example Find an Asset by Name
+ * **Example:** Find an Asset by Name
  * ```typescript
  * // init — account-level binding takes no resource
  * const executeQuery = yield* AWS.IoTSiteWise.ExecuteQuery();
@@ -34,6 +33,8 @@ export interface ExecuteQueryRequest extends sitewise.ExecuteQueryRequest {}
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTSiteWise.ExecuteQueryHttp))
  * ```
+ *
+ * @binding
  */
 export interface ExecuteQuery extends Binding.Service<
   ExecuteQuery,

@@ -17,9 +17,8 @@ export interface StartAnnotationImportJobRequest extends Omit<
  * the bound resource (with `iam:PassRole` for the HealthOmics service role).
  * Provide the implementation with
  * `Effect.provide(AWS.Omics.StartAnnotationImportJobHttp)`.
- * @binding
- * @section Annotation Imports
- * @example Bind StartAnnotationImportJob to an AnnotationStore
+ * ### Annotation Imports
+ * **Example:** Bind StartAnnotationImportJob to an AnnotationStore
  * ```typescript
  * // init
  * const startImport = yield* AWS.Omics.StartAnnotationImportJob(store);
@@ -29,6 +28,8 @@ export interface StartAnnotationImportJobRequest extends Omit<
  *   items: [{ source: "s3://my-bucket/annotations.tsv" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartAnnotationImportJob extends Binding.Service<
   StartAnnotationImportJob,

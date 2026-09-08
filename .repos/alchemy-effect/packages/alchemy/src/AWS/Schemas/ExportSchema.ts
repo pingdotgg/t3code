@@ -16,9 +16,8 @@ import type { Schema } from "./Schema.ts";
  * (registries `discovered-schemas` / `aws.events`). Calling it on a
  * custom-registry schema fails with a typed `ForbiddenException`
  * (`You cannot export non discovered or non aws managed schemas.`).
- * @binding
- * @section Reading Schemas
- * @example Export As JSONSchema Draft 4
+ * ### Reading Schemas
+ * **Example:** Export As JSONSchema Draft 4
  * ```typescript
  * // init — bind the operation to the schema
  * const exportSchema = yield* AWS.Schemas.ExportSchema(schema);
@@ -27,6 +26,8 @@ import type { Schema } from "./Schema.ts";
  * const { Content } = yield* exportSchema({ Type: "JSONSchemaDraft4" });
  * const jsonSchema = JSON.parse(Content!);
  * ```
+ *
+ * @binding
  */
 export interface ExportSchema extends Binding.Service<
   ExportSchema,

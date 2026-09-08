@@ -1,5 +1,5 @@
 ---
-import { yantraSvg } from "./yantra";
+import { YANTRA_THEMES, yantraSvg } from "./yantra";
 
 interface Props {
   size?: number;
@@ -22,9 +22,9 @@ const {
   class: className,
 } = Astro.props;
 
-// Theme-aware bindu: green in light, terracotta in dark. Defined per
-// theme in tokens.css; falls back to deep moss outside the website.
-const resolvedDot = dot ?? "var(--alc-yantra-dot, #3f5a2a)";
+// Theme-aware bindu, defined per theme in tokens.css. The fallback covers
+// use outside the website, where the token isn't defined.
+const resolvedDot = dot ?? `var(--alc-yantra-dot, ${YANTRA_THEMES.light.dot})`;
 
 const svg = yantraSvg({
   size,

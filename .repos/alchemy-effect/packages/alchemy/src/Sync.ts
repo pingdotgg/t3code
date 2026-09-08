@@ -15,6 +15,7 @@ import { deepEqual } from "./Diff.ts";
 import { InstanceId } from "./InstanceId.ts";
 import type { Apply, Plan } from "./Plan.ts";
 import { findProviderByType, Provider } from "./Provider.ts";
+import { stampedMode } from "./ProviderMode.ts";
 import type { ResourceLike } from "./Resource.ts";
 import {
   isActionState,
@@ -185,7 +186,13 @@ export const sync = (
         );
       }
 
-      const provider = yield* findProviderByType(resourceType);
+      // Observe with the provider variant of the mode that created the row —
+      // a local dev worker's state must be read by the local provider.
+      // Legacy unstamped rows infer "local" from a `dev:` identity marker.
+      const provider = yield* findProviderByType(
+        resourceType,
+        stampedMode(old),
+      );
       if (!provider.read) {
         return yield* skip(
           `provider '${resourceType}' does not implement read`,
@@ -436,7 +443,12 @@ export const plan = (stack: {
         fqn,
       });
       if (!persisted || isActionState(persisted)) continue;
-      const provider = yield* findProviderByType(persisted.resourceType);
+      // Repair the row with the provider mode that created it (sync never
+      // switches modes — a local ⇄ live switch is a plan-time replacement).
+      const provider = yield* findProviderByType(
+        persisted.resourceType,
+        stampedMode(persisted),
+      );
       const action =
         r.action === "drifted"
           ? ("update" as const)
@@ -448,6 +460,7 @@ export const plan = (stack: {
         props: persisted.props,
         state: persisted,
         provider,
+        mode: persisted.providerMode,
         // Synthetic ResourceLike reconstructed from persisted state, the
         // same way Plan.make builds its deletion nodes.
         resource: {
@@ -461,6 +474,9 @@ export const plan = (stack: {
           Provider: Provider(persisted.resourceType),
           RemovalPolicy: persisted.removalPolicy,
           Adopt: undefined,
+          RequiresImplementation: undefined,
+          FormerFqns: undefined,
+          Mode: persisted.providerMode,
           RuntimeContext: undefined!,
           Providers: undefined,
         } as ResourceLike,

@@ -47,7 +47,7 @@ export class AcmTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AcmTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Above the 3s AWS default: distilled auto-retries retryable typed
     // errors (RequestInProgressException on /get is patched retryable, ~3s
     // of bounded backoff), which must complete within the invocation so the

@@ -25,9 +25,8 @@ export interface GetPredictiveScalingForecastRequest extends Omit<
  * with the typed `PredictiveScalingForecastNotSupported`. Provide the
  * implementation with
  * `Effect.provide(AWS.ApplicationAutoScaling.GetPredictiveScalingForecastHttp)`.
- * @binding
- * @section Reading Forecasts
- * @example Get the Next 48 Hours of Forecast
+ * ### Reading Forecasts
+ * **Example:** Get the Next 48 Hours of Forecast
  * ```typescript
  * // init — bind the operation to the predictive scaling policy
  * const getPredictiveScalingForecast =
@@ -41,6 +40,8 @@ export interface GetPredictiveScalingForecastRequest extends Omit<
  * });
  * const capacity = forecast.CapacityForecast?.Values ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetPredictiveScalingForecast extends Binding.Service<
   GetPredictiveScalingForecast,

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.StartProjectVersionHttp)`.
  *
- * @binding
- * @section Custom Labels
- * @example Start a Model Version
+ * ### Custom Labels
+ * **Example:** Start a Model Version
  * ```typescript
  * // init
  * const startProjectVersion = yield* AWS.Rekognition.StartProjectVersion();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // started.Status
  * ```
+ *
+ * @binding
  */
 export interface StartProjectVersion extends Binding.Service<
   StartProjectVersion,

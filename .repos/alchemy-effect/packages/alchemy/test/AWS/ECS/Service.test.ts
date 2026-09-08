@@ -7,6 +7,7 @@ import { isResourceState, State, type ResourceState } from "@/State";
 import * as Test from "@/Test/Alchemy";
 import * as ec2 from "@distilled.cloud/aws/ec2";
 import * as ecs from "@distilled.cloud/aws/ecs";
+import * as iam from "@distilled.cloud/aws/iam";
 import * as elbv2 from "@distilled.cloud/aws/elastic-load-balancing-v2";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
@@ -208,6 +209,12 @@ test.provider(
       });
       const svc = described.services?.[0];
       expect(svc?.serviceArn).toEqual(created.serviceArn);
+      expect(svc?.taskDefinition).toEqual(taskDefinitionArn);
+      expect(svc?.runningCount).toBe(0);
+      expect(svc?.pendingCount).toBe(0);
+      expect(svc?.deployments).toHaveLength(1);
+      expect(svc?.deployments?.[0]?.status).toBe("PRIMARY");
+      expect(svc?.deployments?.[0]?.rolloutState).toBe("COMPLETED");
       expect(
         svc?.deploymentConfiguration?.deploymentCircuitBreaker?.enable,
       ).toBe(true);
@@ -586,6 +593,74 @@ test.provider(
 
       yield* stack.destroy();
       yield* reclaimTaskDefinitionFamily(family);
+    }),
+  { timeout: 240_000 },
+);
+
+// Regression: the image-owning `ServiceProps` form inherits
+// `taskRoleManagedPolicyArns` from `TaskDefinitionConfig`, but reconcile
+// used to honor only its sibling `executionRoleManagedPolicyArns` — services
+// deployed with task roles silently missing their declared permissions.
+// Deploy an image-form service (desiredCount 0, no ingress) declaring an
+// AWS-managed policy, verify out of band that the policy is attached to the
+// task role, redeploy to prove the attach is idempotent, and verify destroy
+// detaches the policy and deletes the role.
+test.provider(
+  "attaches taskRoleManagedPolicyArns to the task role (image form)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const managedPolicyArn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess";
+
+      const deployService = () =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const cluster = yield* Cluster("TaskRolePolicyCluster", {
+              clusterName: "alchemy-test-ecs-service-task-role-policy",
+            });
+            return yield* Service("TaskRolePolicyService", {
+              cluster,
+              image: "busybox:stable",
+              command: ["sh", "-c", "while true; do sleep 30; done"],
+              port: 80,
+              desiredCount: 0,
+              taskRoleManagedPolicyArns: [managedPolicyArn],
+            });
+          }),
+        );
+
+      const created = yield* deployService();
+      const taskRoleName = created.taskRoleName;
+      if (!taskRoleName) {
+        return yield* Effect.die(
+          new Error("image-form service returned no taskRoleName"),
+        );
+      }
+
+      const listAttachedArns = iam
+        .listAttachedRolePolicies({ RoleName: taskRoleName })
+        .pipe(
+          Effect.map((r) => (r.AttachedPolicies ?? []).map((p) => p.PolicyArn)),
+        );
+
+      expect(yield* listAttachedArns).toContain(managedPolicyArn);
+
+      // Second deploy re-runs the attach against an already-attached ARN —
+      // `attachRolePolicy` is idempotent, so reconcile must not fail.
+      const updated = yield* deployService();
+      expect(updated.serviceArn).toEqual(created.serviceArn);
+      expect(yield* listAttachedArns).toContain(managedPolicyArn);
+
+      yield* stack.destroy();
+
+      // Gone-proof: destroy detached the managed policy and deleted the
+      // task role.
+      const roleGone = yield* iam.getRole({ RoleName: taskRoleName }).pipe(
+        Effect.map(() => false),
+        Effect.catchTag("NoSuchEntityException", () => Effect.succeed(true)),
+      );
+      expect(roleGone).toBe(true);
     }),
   { timeout: 240_000 },
 );

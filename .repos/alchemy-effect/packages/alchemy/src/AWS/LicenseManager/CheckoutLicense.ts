@@ -17,9 +17,8 @@ export interface CheckoutLicenseRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.CheckoutLicenseHttp)`.
- * @binding
- * @section License Checkout Data Plane
- * @example Check Out an Entitlement
+ * ### License Checkout Data Plane
+ * **Example:** Check Out an Entitlement
  * ```typescript
  * // init — account-level binding takes no resource
  * const checkoutLicense = yield* AWS.LicenseManager.CheckoutLicense();
@@ -36,6 +35,8 @@ export interface CheckoutLicenseRequest
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.LicenseManager.CheckoutLicenseHttp))
  * ```
+ *
+ * @binding
  */
 export interface CheckoutLicense extends Binding.Service<
   CheckoutLicense,

@@ -1,0 +1,114 @@
+---
+title: Apps
+description: A global namespace containing Machines, Services, Secrets, IPs, and certificates.
+---
+
+A [`Fly.App`](/providers/fly/app) is a global namespace in your
+account. It contains Machines, Services, Secrets, IPs, and
+certificates.
+
+## Create an App
+
+Alchemy generates a unique name unless you pass one.
+
+```typescript
+const site = yield* Fly.App("Site");
+```
+
+`url` is `https://{appName}.fly.dev`. Nothing answers there until a
+[Service](/fly/compute/services) or
+[Machine](/fly/compute/machines) publishes a proxy service and the
+App has an [IP assignment](/fly/networking).
+
+:::note
+Prefer omitting `name` in tests and CI so names stay unique and
+reclaimable.
+:::
+
+## A stable hostname
+
+Pass `name` when you need a stable `fly.dev` hostname.
+
+```typescript
+const site = yield* Fly.App("Site", {
+  name: "my-site",
+});
+```
+
+:::caution[Changing `name` replaces the App]
+Fly cannot have two Apps with the same name. Alchemy deletes the
+old App first, then creates the new one.
+:::
+
+## Organization
+
+Org defaults to the current token. Pass `orgSlug` to pin it.
+
+```diff lang="typescript"
+const site = yield* Fly.App("Site", {
+  name: "my-site",
++  orgSlug: "my-org",
+});
+```
+
+:::caution[Changing `orgSlug` replaces the App]
+The App is created in the new org. The old App is deleted.
+:::
+
+## Subdomains
+
+`enableSubdomains: true` turns on `*.{appName}.fly.dev`.
+
+```diff lang="typescript"
+const site = yield* Fly.App("Site", {
+  name: "my-site",
+  orgSlug: "my-org",
++  enableSubdomains: true,
+});
+```
+
+:::note[Create-only]
+Flipping `enableSubdomains` later is ignored.
+:::
+
+## Isolated network
+
+`network` is an optional 6PN name.
+
+```diff lang="typescript"
+const site = yield* Fly.App("Site", {
+  name: "my-site",
+  orgSlug: "my-org",
+  enableSubdomains: true,
++  network: "private",
+});
+```
+
+:::caution[Changing `network` replaces the App]
+The App is recreated on the new network.
+:::
+
+## Module-scope declarations
+
+Declare the App once. Pass it into every child.
+
+```typescript
+// src/app.ts
+import * as Fly from "alchemy/Fly";
+
+export const Site = Fly.App("Site");
+```
+
+Resource-valued props accept the resource or an Effect producing
+it. Do not unwrap it just to pass it along.
+
+## Destroy
+
+`alchemy destroy` deletes children, then the App.
+
+## Where next
+
+The [tutorial](/fly/tutorial/part-1) deploys an App from an empty
+directory. [Services](/fly/compute/services) run in the App.
+[Machines](/fly/compute/machines) run a raw image. The
+[`App` reference](/providers/fly/app) lists every prop.

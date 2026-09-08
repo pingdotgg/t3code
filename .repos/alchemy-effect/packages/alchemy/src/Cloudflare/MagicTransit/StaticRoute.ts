@@ -95,11 +95,8 @@ export type MagicStaticRoute = Resource<
  * identity is the `(prefix, nexthop, priority)` triple — when state is
  * lost, `read` scans for a matching route and reports it as `Unowned` so
  * takeover is gated behind `--adopt`.
- * @resource
- * @product Magic Transit
- * @category Network
- * @section Creating a static route
- * @example Route a prefix over a GRE tunnel
+ * ### Creating a static route
+ * **Example:** Route a prefix over a GRE tunnel
  * ```typescript
  * const tunnel = yield* Cloudflare.MagicTransit.GreTunnel("office", {
  *   name: "office-gre-1",
@@ -115,7 +112,7 @@ export type MagicStaticRoute = Resource<
  * });
  * ```
  *
- * @example ECMP route scoped to a region
+ * **Example:** ECMP route scoped to a region
  * ```typescript
  * yield* Cloudflare.MagicTransit.MagicStaticRoute("ecmp-route", {
  *   prefix: "10.100.0.0/24",
@@ -127,6 +124,10 @@ export type MagicStaticRoute = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-transit/how-to/configure-static-routes/
+ *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  */
 export const MagicStaticRoute = Resource<MagicStaticRoute>(TypeId);
 

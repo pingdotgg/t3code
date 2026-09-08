@@ -30,7 +30,7 @@ export class RDSDataTestFunction extends Lambda.Function<Lambda.Function>()(
 export default RDSDataTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Data API statements can take tens of seconds while the serverless
     // cluster scales from idle — keep the Lambda alive through that.
     timeout: Duration.seconds(60),

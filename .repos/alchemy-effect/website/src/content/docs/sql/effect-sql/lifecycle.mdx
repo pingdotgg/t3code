@@ -3,8 +3,9 @@ title: Connection lifecycle
 description: SQL clients build lazily on first query, memoize per execution, and tear down when the event settles — why, and what that means on workerd and Lambda.
 ---
 
-Every alchemy SQL client — `SQL.Postgres`, `SQL.D1`,
-`Drizzle.Postgres`, `Drizzle.D1` — follows one lifecycle contract.
+Every alchemy SQL client — `SQL.Postgres`, `SQL.MySQL`, `SQL.D1`,
+`Drizzle.Postgres`, `Drizzle.MySQL`, `Drizzle.D1` — follows one
+lifecycle contract.
 This page is the canonical statement of that contract; the runtime
 pages link here.
 
@@ -93,8 +94,9 @@ finalizers run, and the Lambda SIGTERM window.
 
 ## Where next
 
-- [Postgres](/sql/effect-sql/postgres) / [D1](/sql/effect-sql/d1) —
-  the clients this contract governs.
+- [Postgres](/sql/effect-sql/postgres) /
+  [MySQL](/sql/effect-sql/mysql) / [D1](/sql/effect-sql/d1) — the
+  clients this contract governs.
 - [Workers: isolate scope vs request scope](/cloudflare/compute/workers#isolate-scope-vs-request-scope)
   — the same rules from the Worker's point of view.
 - [Functions & Servers](/infrastructure-as-effects/functions-and-servers)

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists resource operation requests made in the account and Region over the
  * last 7 days — useful for surfacing in-flight or failed provisioning
  * operations from a management Function.
- * @binding
- * @section Tracking Requests
- * @example List in-progress operations
+ * ### Tracking Requests
+ * **Example:** List in-progress operations
  * ```typescript
  * const listResourceRequests = yield* CloudControl.ListResourceRequests();
  *
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   MaxResults: 20,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListResourceRequests extends Binding.Service<
   ListResourceRequests,

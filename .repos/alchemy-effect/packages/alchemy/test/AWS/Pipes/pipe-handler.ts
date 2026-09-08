@@ -45,7 +45,7 @@ const isPipeSqsBatch = (
 export default PipeTargetFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

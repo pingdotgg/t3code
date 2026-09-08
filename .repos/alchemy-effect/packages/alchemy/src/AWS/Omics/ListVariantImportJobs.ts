@@ -11,15 +11,16 @@ export interface ListVariantImportJobsRequest
  * An account-level operation (no resource argument) that lists variant import
  * jobs, optionally filtered by store name or status. Provide the
  * implementation with `Effect.provide(AWS.Omics.ListVariantImportJobsHttp)`.
- * @binding
- * @section Variant Imports
- * @example Call ListVariantImportJobs
+ * ### Variant Imports
+ * **Example:** Call ListVariantImportJobs
  * ```typescript
  * // init — account-level binding takes no resource
  * const listImports = yield* AWS.Omics.ListVariantImportJobs();
  * // runtime
  * const result = yield* listImports({});
  * ```
+ *
+ * @binding
  */
 export interface ListVariantImportJobs extends Binding.Service<
   ListVariantImportJobs,

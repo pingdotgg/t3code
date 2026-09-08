@@ -118,11 +118,11 @@ export interface RuleAttributes {
    */
   duration: string | undefined;
   /** Zscore sensitivity, if set. */
-  zscoreSensitivity: "low" | "medium" | "high" | undefined;
+  zscoreSensitivity: "low" | "medium" | "high" | (string & {}) | undefined;
   /** Zscore target, if set. */
-  zscoreTarget: "bits" | "packets" | undefined;
+  zscoreTarget: "bits" | "packets" | (string & {}) | undefined;
   /** Prefix match type, if set. */
-  prefixMatch: "exact" | "subnet" | "supernet" | undefined;
+  prefixMatch: "exact" | "subnet" | "supernet" | (string & {}) | undefined;
 }
 
 export type Rule = Resource<
@@ -143,11 +143,8 @@ export type Rule = Resource<
  * Config resource's `accountId` output as this rule's `accountId` to
  * sequence the deployment. Rule names are unique per account; the rule
  * `type` is immutable and changing it triggers a replacement.
- * @resource
- * @product Magic Network Monitoring
- * @category Network
- * @section Threshold rules
- * @example Alert when bandwidth exceeds 1 Mbps for 5 minutes
+ * ### Threshold rules
+ * **Example:** Alert when bandwidth exceeds 1 Mbps for 5 minutes
  * ```typescript
  * const config = yield* Cloudflare.MagicNetworkMonitoring.Config("Mnm", {
  *   name: "my-network",
@@ -162,7 +159,7 @@ export type Rule = Resource<
  * });
  * ```
  *
- * @example Packet-rate alert
+ * **Example:** Packet-rate alert
  * ```typescript
  * yield* Cloudflare.MagicNetworkMonitoring.Rule("PacketAlert", {
  *   accountId: config.accountId,
@@ -172,8 +169,8 @@ export type Rule = Resource<
  * });
  * ```
  *
- * @section Anomaly detection
- * @example Zscore rule on bits
+ * ### Anomaly detection
+ * **Example:** Zscore rule on bits
  * ```typescript
  * yield* Cloudflare.MagicNetworkMonitoring.Rule("AnomalyAlert", {
  *   accountId: config.accountId,
@@ -185,6 +182,10 @@ export type Rule = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-network-monitoring/rules/
+ *
+ * @resource
+ * @product Magic Network Monitoring
+ * @category Network
  */
 export const Rule = Resource<Rule>(TypeId);
 

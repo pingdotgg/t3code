@@ -87,16 +87,15 @@ export interface SequenceStore extends Resource<
  * change to an immutable property (name, description, encryption, fallback
  * location, ETag algorithm) replaces the store. A store can only be deleted
  * once it contains no read sets.
- * @resource
- * @section Creating a Sequence Store
- * @example Basic Sequence Store
+ * ### Creating a Sequence Store
+ * **Example:** Basic Sequence Store
  * ```typescript
  * import * as Omics from "alchemy/AWS/Omics";
  *
  * const store = yield* Omics.SequenceStore("Reads");
  * ```
  *
- * @example Sequence Store with Fallback Location
+ * **Example:** Sequence Store with Fallback Location
  * ```typescript
  * const store = yield* Omics.SequenceStore("Reads", {
  *   name: "sample-reads",
@@ -105,8 +104,8 @@ export interface SequenceStore extends Resource<
  * });
  * ```
  *
- * @section Encryption
- * @example Customer-managed KMS key
+ * ### Encryption
+ * **Example:** Customer-managed KMS key
  * ```typescript
  * const store = yield* Omics.SequenceStore("Reads", {
  *   sseConfig: {
@@ -115,6 +114,8 @@ export interface SequenceStore extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const SequenceStore = Resource<SequenceStore>("AWS.Omics.SequenceStore");
 

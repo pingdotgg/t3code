@@ -63,7 +63,7 @@ const resolveNetwork = Effect.gen(function* () {
 export default Route53ResolverBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(120),
   },
   Effect.gen(function* () {

@@ -13,9 +13,8 @@ import type { Graph } from "./Graph.ts";
  * {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.StartInvestigationHttp)`.
- * @binding
- * @section Running Investigations
- * @example Investigate A Suspicious Role
+ * ### Running Investigations
+ * **Example:** Investigate A Suspicious Role
  * ```typescript
  * // init — bind the operation to the behavior graph
  * const startInvestigation = yield* AWS.Detective.StartInvestigation(graph);
@@ -27,6 +26,8 @@ import type { Graph } from "./Graph.ts";
  *   ScopeEndTime: new Date(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartInvestigation extends Binding.Service<
   StartInvestigation,

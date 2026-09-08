@@ -127,7 +127,7 @@ import * as Effect from "effect/Effect";
 
 export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
   "JobFunction",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     return {};
   }),
@@ -291,7 +291,7 @@ import { JobApi } from "./JobApi.ts";
 
 export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
   "JobFunction",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const table = yield* AWS.DynamoDB.Table("JobsTable", {
       partitionKey: "id",

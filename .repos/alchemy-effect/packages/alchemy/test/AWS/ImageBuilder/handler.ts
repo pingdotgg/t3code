@@ -33,7 +33,7 @@ const componentData = [
 export default ImageBuilderTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

@@ -116,11 +116,8 @@ export type Deployment = Resource<
  * it is the project's active production deployment — Cloudflare refuses to
  * delete the live deployment, so delete tolerates that case and the
  * deployment is cleaned up when the project itself is deleted.
- * @resource
- * @product Pages
- * @category Workers & Compute
- * @section Creating a Deployment
- * @example Production deployment on a direct-upload project
+ * ### Creating a Deployment
+ * **Example:** Production deployment on a direct-upload project
  * ```typescript
  * const project = yield* Cloudflare.Pages.Project("site", {});
  *
@@ -131,7 +128,7 @@ export type Deployment = Resource<
  * // deployment.environment === "production"
  * ```
  *
- * @example Preview deployment from a non-production branch
+ * **Example:** Preview deployment from a non-production branch
  * ```typescript
  * const preview = yield* Cloudflare.Pages.Deployment("site-preview", {
  *   projectName: project.name,
@@ -141,6 +138,10 @@ export type Deployment = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/pages/
+ *
+ * @resource
+ * @product Pages
+ * @category Workers & Compute
  */
 export const Deployment = Resource<Deployment>(TypeId);
 

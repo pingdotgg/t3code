@@ -15,13 +15,14 @@ export interface BatchAssociateAssessmentReportEvidenceRequest extends Omit<
  * Adds a batch of evidence items to the (in-progress) assessment
  * report of the bound assessment. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.BatchAssociateAssessmentReportEvidenceHttp)`.
- * @binding
- * @section Assessment Reports
- * @example Include a Batch of Evidence in the Report
+ * ### Assessment Reports
+ * **Example:** Include a Batch of Evidence in the Report
  * ```typescript
  * const batchAssociateAssessmentReportEvidence = yield* AWS.AuditManager.BatchAssociateAssessmentReportEvidence(assessment);
  * const result = yield* batchAssociateAssessmentReportEvidence({ evidenceFolderId, evidenceIds });
  * ```
+ *
+ * @binding
  */
 export interface BatchAssociateAssessmentReportEvidence extends Binding.Service<
   BatchAssociateAssessmentReportEvidence,

@@ -39,7 +39,10 @@ describe.each([true, false])(
           HttpClient.get(new URL("/rpc", stack.websiteUrl)).pipe(
             Effect.flatMap(HttpClientResponse.filterStatusOk),
             Effect.retry({
-              schedule: Schedule.max([Schedule.spaced("500 millis"), Schedule.recurs(20)]),
+              schedule: Schedule.max([
+                Schedule.spaced("500 millis"),
+                Schedule.recurs(20),
+              ]),
             }),
           ),
         ),

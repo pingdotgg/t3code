@@ -87,8 +87,8 @@ export interface NeptuneEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Neptune Events
- * @example Alert on Cluster Failovers
+ * ### Consuming Neptune Events
+ * **Example:** Alert on Cluster Failovers
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

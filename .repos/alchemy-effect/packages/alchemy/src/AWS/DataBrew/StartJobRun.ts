@@ -9,14 +9,15 @@ import type { Job } from "./Job.ts";
  *
  * The response carries the `RunId`, which can be observed with the
  * {@link DescribeJobRun} binding and cancelled with {@link StopJobRun}.
- * @binding
- * @section Starting Job Runs
- * @example Start a Job Run
+ * ### Starting Job Runs
+ * **Example:** Start a Job Run
  * ```typescript
  * const startJobRun = yield* AWS.DataBrew.StartJobRun(job);
  *
  * const { RunId } = yield* startJobRun();
  * ```
+ *
+ * @binding
  */
 export interface StartJobRun extends Binding.Service<
   StartJobRun,

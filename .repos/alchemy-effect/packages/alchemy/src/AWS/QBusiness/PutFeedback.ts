@@ -21,9 +21,8 @@ export interface PutFeedbackRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.PutFeedbackHttp)`.
  *
- * @binding
- * @section Chat
- * @example Submit Feedback for a Message
+ * ### Chat
+ * **Example:** Submit Feedback for a Message
  * ```typescript
  * const feedback = yield* AWS.QBusiness.PutFeedback(app);
  *
@@ -36,6 +35,8 @@ export interface PutFeedbackRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutFeedback extends Binding.Service<
   PutFeedback,

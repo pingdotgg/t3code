@@ -37,7 +37,7 @@ const TaskRef = ECS.Task as unknown as {
 export default EcsBindingsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
     memorySize: 512,
   },

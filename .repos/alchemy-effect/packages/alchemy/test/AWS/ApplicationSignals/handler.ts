@@ -49,7 +49,7 @@ export class ApplicationSignalsTestFunction extends Lambda.Function<Lambda.Funct
 export default ApplicationSignalsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const slo = yield* ApplicationSignals.ServiceLevelObjective("BindingsSlo", {

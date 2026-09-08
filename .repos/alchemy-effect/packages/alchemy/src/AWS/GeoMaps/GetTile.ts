@@ -11,13 +11,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-maps:GetTile`. Requests and responses are raw distilled types; the
  * tile payload is returned as `Blob` (`Uint8Array`).
  *
- * @binding
- * @section Fetching Map Tiles
+ * ### Fetching Map Tiles
  * Provide the `GetTileHttp` implementation layer on the Function effect
  * (`.pipe(Effect.provide(AWS.GeoMaps.GetTileHttp))`), bind in the init phase,
  * then call the client at runtime.
  *
- * @example Fetch a vector tile
+ * **Example:** Fetch a vector tile
  * ```typescript
  * // init
  * const getTile = yield* AWS.GeoMaps.GetTile();
@@ -31,6 +30,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const bytes = tile.Blob; // Uint8Array | undefined
  * ```
+ *
+ * @binding
  */
 export interface GetTile extends Binding.Service<
   GetTile,

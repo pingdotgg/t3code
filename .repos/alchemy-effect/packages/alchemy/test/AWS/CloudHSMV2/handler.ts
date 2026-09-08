@@ -26,7 +26,7 @@ export class CloudHSMV2TestFunction extends Lambda.Function<Lambda.Function>()(
 export default CloudHSMV2TestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const describeClusters = yield* CloudHSMV2.DescribeClusters();

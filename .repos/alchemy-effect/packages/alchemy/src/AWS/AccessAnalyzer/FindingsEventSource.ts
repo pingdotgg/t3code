@@ -83,8 +83,8 @@ const DETAIL_TYPES = {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Finding Events
- * @example Alert on New External-Access Findings
+ * ### Consuming Finding Events
+ * **Example:** Alert on New External-Access Findings
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

@@ -23,9 +23,8 @@ export interface UpdateWhatsAppMessageTemplateRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.UpdateWhatsAppMessageTemplateHttp)`.
- * @binding
- * @section Managing Message Templates
- * @example Update a Template
+ * ### Managing Message Templates
+ * **Example:** Update a Template
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const updateTemplate = yield* AWS.SocialMessaging.UpdateWhatsAppMessageTemplate(account);
@@ -38,6 +37,8 @@ export interface UpdateWhatsAppMessageTemplateRequest extends Omit<
  *   ),
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateWhatsAppMessageTemplate extends Binding.Service<
   UpdateWhatsAppMessageTemplate,

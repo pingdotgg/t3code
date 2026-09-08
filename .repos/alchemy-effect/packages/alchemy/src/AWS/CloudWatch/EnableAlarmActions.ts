@@ -14,9 +14,8 @@ type AlarmResources = [AlarmResource, ...AlarmResource[]];
  *
  * Provide `CloudWatch.EnableAlarmActionsHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Managing Alarm Actions
- * @example Re-enable an Alarm After a Deploy
+ * ### Managing Alarm Actions
+ * **Example:** Re-enable an Alarm After a Deploy
  * ```typescript
  * // init — grants cloudwatch:EnableAlarmActions on the alarm
  * const enableAlarmActions = yield* AWS.CloudWatch.EnableAlarmActions(alarm);
@@ -24,6 +23,8 @@ type AlarmResources = [AlarmResource, ...AlarmResource[]];
  * // runtime
  * yield* enableAlarmActions();
  * ```
+ *
+ * @binding
  */
 export interface EnableAlarmActions extends Binding.Service<
   EnableAlarmActions,

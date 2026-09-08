@@ -1,7 +1,12 @@
 import { applyEnvRegionOverride } from "@/AWS/AuthProvider.ts";
+import { loadConfigProvider } from "@/Util/ConfigProvider.ts";
+import { PlatformServices } from "@/Util/PlatformServices.ts";
 import { describe, expect, it } from "alchemy-test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 const withEnv = (env: Record<string, string>) =>
   Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })));
@@ -33,5 +38,52 @@ describe("applyEnvRegionOverride", () => {
       const creds = yield* applyEnvRegionOverride(profileCreds);
       expect(creds.region).toBe("us-west-2");
     }).pipe(withEnv({})),
+  );
+
+  it.effect(
+    "process environment overrides the default dotenv region",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const tempDir = yield* fs.makeTempDirectoryScoped({
+            prefix: "alchemy-config-provider-",
+          });
+          yield* fs.writeFileString(
+            path.join(tempDir, ".env"),
+            "AWS_REGION=ap-south-1\n",
+          );
+
+          const originalCwd = process.cwd();
+          const originalRegion = process.env.AWS_REGION;
+          yield* Effect.gen(function* () {
+            yield* Effect.sync(() => {
+              process.chdir(tempDir);
+              process.env.AWS_REGION = "us-east-1";
+            });
+
+            const configProvider = yield* loadConfigProvider(Option.none());
+            const creds = yield* applyEnvRegionOverride({
+              accountId: "654654387918",
+              region: "us-west-2",
+            }).pipe(Effect.provide(ConfigProvider.layer(configProvider)));
+            expect(creds.region).toBe("us-east-1");
+            expect(creds.accountId).toBe("654654387918");
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                process.chdir(originalCwd);
+                if (originalRegion === undefined) {
+                  delete process.env.AWS_REGION;
+                } else {
+                  process.env.AWS_REGION = originalRegion;
+                }
+              }),
+            ),
+          );
+        }),
+      ).pipe(Effect.provide(PlatformServices)),
+    { exclusive: true },
   );
 });

@@ -1,0 +1,118 @@
+---
+title: Redis
+description: Managed Upstash Redis. Bind Fly.ReadRedis / WriteRedis / ReadWriteRedis on a Service.
+---
+
+[`Fly.Redis`](/providers/fly/redis) is managed Upstash Redis in a
+Fly org. Bind [`ReadWriteRedis`](/providers/fly/readwriteredis) on a
+[Service](/fly/compute/services). Alchemy writes `REDIS_URL` as an
+App secret and the runtime client uses it internally. Redis is not
+reachable from CI — drive it over HTTP.
+
+## Create Redis
+
+Alchemy generates a unique name unless you pass one. Default
+[region](/fly/compute/regions) is `iad`. Default plan is the
+cheapest `addOnPlans` row (free or pay-as-you-go).
+
+```typescript
+const cache = yield* Fly.Redis("Cache");
+```
+
+:::note
+Prefer omitting `name` in tests and CI so names stay unique and
+reclaimable.
+:::
+
+## A stable name
+
+Pass `name` when you want a stable Upstash database name.
+
+```typescript
+const cache = yield* Fly.Redis("Cache", {
+  name: "my-cache",
+  primaryRegion: "iad",
+});
+```
+
+:::caution[Changing `name` replaces Redis]
+Fly cannot rename an add-on. Alchemy deletes the old database first,
+then creates the new one.
+:::
+
+:::caution[Changing `primaryRegion` replaces Redis]
+The primary region is immutable. The old database is deleted first
+because the name cannot exist twice.
+:::
+
+## Bind from a Service
+
+Yield `Fly.ReadWriteRedis` (or `ReadRedis` / `WriteRedis`) in
+Service init. Provide the matching `*Http` layer.
+
+```typescript
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+const Cache = Fly.Redis("Cache");
+
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { app: Site, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    const cache = yield* Fly.ReadWriteRedis(Cache);
+    return {
+      fetch: Effect.gen(function* () {
+        yield* cache.set("marker", "hello");
+        const value = yield* cache.get("marker");
+        return HttpServerResponse.json({ value });
+      }),
+    };
+  }).pipe(Effect.provide(Fly.ReadWriteRedisHttp)),
+) {}
+```
+
+## Eviction
+
+Enable eviction for cache workloads. Updated in place.
+
+```typescript
+const cache = yield* Fly.Redis("Cache", {
+  eviction: true,
+});
+```
+
+## Read replicas
+
+`readRegions` are extra replica regions. Updated in place. They
+must not include the primary region.
+
+```typescript
+const cache = yield* Fly.Redis("Cache", {
+  primaryRegion: "iad",
+  readRegions: ["sjc"],
+});
+```
+
+## Plan
+
+Omit `plan` for the cheapest listed plan. Pass a plan id or display
+name to pin one. Fixed plans are billed.
+
+```typescript
+const cache = yield* Fly.Redis("Cache", {
+  plan: "Pay-as-you-go",
+});
+```
+
+:::caution[Fixed plans are billed]
+Fixed plans are billed monthly. Prefer omitting `plan` unless you
+need a specific size.
+:::
+
+## Where next
+
+[Regions](/fly/compute/regions) lists codes. Default primary is
+`iad`.
+[Services](/fly/compute/services) is the Machine that binds
+`ReadWriteRedis`.
+The [`Redis` reference](/providers/fly/redis) lists every prop.

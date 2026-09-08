@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Reads a domain's cluster health — overall status, master eligibility, per-AZ shard and node distribution — for dashboards and automated health checks. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.DescribeDomainHealthHttp)`.
- * @binding
- * @section Monitoring Domains
- * @example Check Cluster Health
+ * ### Monitoring Domains
+ * **Example:** Check Cluster Health
  * ```typescript
  * const describeDomainHealth = yield* OpenSearch.DescribeDomainHealth();
  *
  * const result = yield* describeDomainHealth({ DomainName: name });
  * // result.ClusterHealth → "Green"
  * ```
+ *
+ * @binding
  */
 export interface DescribeDomainHealth extends Binding.Service<
   DescribeDomainHealth,

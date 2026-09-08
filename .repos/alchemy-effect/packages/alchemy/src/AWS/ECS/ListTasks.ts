@@ -14,9 +14,8 @@ export interface ListTasksRequest extends Omit<
  * Bind this operation to a `Cluster` inside a function runtime to get a
  * callable that lists task ARNs in the bound cluster. The cluster ARN is
  * injected automatically and the grant is conditioned on the bound cluster.
- * @binding
- * @section Listing Tasks
- * @example List Stopped Tasks
+ * ### Listing Tasks
+ * **Example:** List Stopped Tasks
  * ```typescript
  * const listTasks = yield* AWS.ECS.ListTasks(cluster);
  *
@@ -25,6 +24,8 @@ export interface ListTasksRequest extends Omit<
  * });
  * const taskArns = response.taskArns ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListTasks extends Binding.Service<
   ListTasks,

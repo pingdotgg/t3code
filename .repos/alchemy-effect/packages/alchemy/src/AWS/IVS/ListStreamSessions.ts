@@ -15,9 +15,8 @@ export interface ListStreamSessionsRequest extends Omit<
  * {@link Channel} (most recent first). The channel ARN is injected from
  * the binding. Provide the implementation with
  * `Effect.provide(AWS.IVS.ListStreamSessionsHttp)`.
- * @binding
- * @section Monitoring Live Streams
- * @example List Recent Broadcasts
+ * ### Monitoring Live Streams
+ * **Example:** List Recent Broadcasts
  * ```typescript
  * // init — bind the operation to the channel
  * const listStreamSessions = yield* AWS.IVS.ListStreamSessions(channel);
@@ -26,6 +25,8 @@ export interface ListStreamSessionsRequest extends Omit<
  * const { streamSessions } = yield* listStreamSessions({ maxResults: 10 });
  * yield* Effect.log(`sessions: ${streamSessions.length}`);
  * ```
+ *
+ * @binding
  */
 export interface ListStreamSessions extends Binding.Service<
   ListStreamSessions,

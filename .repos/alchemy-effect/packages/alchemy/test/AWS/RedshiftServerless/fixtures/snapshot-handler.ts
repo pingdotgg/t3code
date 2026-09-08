@@ -20,7 +20,7 @@ export class SnapshotFunction extends Lambda.Function<Lambda.Function>()(
 export default SnapshotFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(60),
   },
   Effect.gen(function* () {

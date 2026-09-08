@@ -83,9 +83,8 @@ export interface StateTemplate extends Resource<
  * mutable — changing the name or signal catalog replaces the template.
  * AWS IoT FleetWise is allowlist-gated and offered in
  * `us-east-1`/`eu-central-1` only.
- * @resource
- * @section Creating a State Template
- * @example Track Last-Known Speed
+ * ### Creating a State Template
+ * **Example:** Track Last-Known Speed
  * ```typescript
  * const template = yield* StateTemplate("SpeedState", {
  *   signalCatalogArn: catalog.signalCatalogArn,
@@ -93,7 +92,7 @@ export interface StateTemplate extends Resource<
  * });
  * ```
  *
- * @example Associate with a Vehicle
+ * **Example:** Associate with a Vehicle
  * ```typescript
  * const vehicle = yield* Vehicle("TestVehicle", {
  *   modelManifestArn: model.modelManifestArn,
@@ -106,6 +105,8 @@ export interface StateTemplate extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const StateTemplate = Resource<StateTemplate>(
   "AWS.IoTFleetWise.StateTemplate",

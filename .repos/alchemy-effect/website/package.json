@@ -25,13 +25,13 @@
     "astro": "astro"
   },
   "dependencies": {
-    "@astrojs/check": "^0.9.9",
-    "@astrojs/mdx": "^7.0.3",
-    "@astrojs/react": "^6.0.1",
+    "@astrojs/check": "0.9.10",
+    "@astrojs/mdx": "7.0.5",
+    "@astrojs/react": "6.0.2",
     "@astrojs/sitemap": "^3.7.3",
-    "@astrojs/starlight": "^0.41.3",
+    "@astrojs/starlight": "0.41.7",
     "@astrojs/starlight-tailwind": "^5.0.0",
-    "@effect/platform-node": "catalog:",
+    "@effect/platform-node": "catalog:effect",
     "@iconify-json/logos": "^1.2.11",
     "@iconify-json/lucide": "^1.2.102",
     "@iconify/react": "^6.0.2",
@@ -40,19 +40,20 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "alchemy": "workspace:*",
-    "astro": "^7.0.9",
-    "effect": "catalog:",
+    "astro": "catalog:frontend",
+    "effect": "catalog:effect",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-icons": "^5.6.0",
     "satori": "^0.26.0",
     "satteri": "^0.9.5",
     "starlight-blog": "^0.28.0",
-    "tailwindcss": "^4.1.14"
+    "tailwindcss": "^4.1.14",
+    "yaml": "catalog:shared"
   },
   "devDependencies": {
     "@iconify-json/simple-icons": "^1.2.87",
-    "typescript": "^6.0.3",
+    "typescript": "catalog:build",
     "zod": "^3"
   }
 }

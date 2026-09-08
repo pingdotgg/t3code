@@ -74,8 +74,8 @@ export interface BuildEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Build Events
- * @example Alert On Failed Builds
+ * ### Consuming Build Events
+ * **Example:** Alert On Failed Builds
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

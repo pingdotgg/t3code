@@ -1,5 +1,7 @@
+import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Test from "@/Test/Alchemy";
+import * as workers from "@distilled.cloud/cloudflare/workers";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -51,6 +53,7 @@ describe.concurrent("Cloudflare.Worker env bindings", () => {
         OBJ: { nested: { value: "ok" }, count: 7 },
         ARR: [1, 2, 3],
         OUTPUT_STR: "output-str",
+        RANDOM_IS_HEX: true,
         SECRET_STR: "shh",
         SECRET_JSON: { token: "abc", scopes: ["read", "write"] },
         CONFIG_STR: CONFIG_STR_VALUE,
@@ -63,6 +66,29 @@ describe.concurrent("Cloudflare.Worker env bindings", () => {
         },
       });
     }).pipe(logLevel),
+  );
+
+  test.provider(
+    "Output env values classify by resolved value on the wire",
+    () =>
+      Effect.gen(function* () {
+        const { asyncWorkerName } = yield* stack;
+        const { accountId } = yield* yield* CloudflareEnvironment;
+
+        const settings = yield* workers.getScriptScriptAndVersionSetting({
+          accountId,
+          scriptName: asyncWorkerName,
+        });
+        // Output<Redacted<string>> (Alchemy.Random) must deploy encrypted,
+        // never as a plaintext json binding.
+        expect(settings.bindings).toContainEqual(
+          expect.objectContaining({ type: "secret_text", name: "RANDOM" }),
+        );
+        // Output<string> resolves to a string, so it lands as plain_text.
+        expect(settings.bindings).toContainEqual(
+          expect.objectContaining({ type: "plain_text", name: "OUTPUT_STR" }),
+        );
+      }).pipe(logLevel),
   );
 
   test(

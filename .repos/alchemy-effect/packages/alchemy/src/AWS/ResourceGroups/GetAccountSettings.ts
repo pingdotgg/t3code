@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * {@link consumeGroupEvents}) are `ACTIVE`, `INACTIVE`, or stuck in
  * `ERROR`. Provide the implementation with
  * `Effect.provide(AWS.ResourceGroups.GetAccountSettingsHttp)`.
- * @binding
- * @section Account Settings
- * @example Check Group Lifecycle Events Status
+ * ### Account Settings
+ * **Example:** Check Group Lifecycle Events Status
  * ```typescript
  * // init
  * const getAccountSettings = yield* AWS.ResourceGroups.GetAccountSettings();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const { AccountSettings } = yield* getAccountSettings();
  * const status = AccountSettings?.GroupLifecycleEventsStatus;
  * ```
+ *
+ * @binding
  */
 export interface GetAccountSettings extends Binding.Service<
   GetAccountSettings,

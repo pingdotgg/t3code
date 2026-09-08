@@ -7,6 +7,7 @@ import * as ec2 from "@distilled.cloud/aws/ec2";
 import * as ecr from "@distilled.cloud/aws/ecr";
 import * as ecs from "@distilled.cloud/aws/ecs";
 import * as elbv2 from "@distilled.cloud/aws/elastic-load-balancing-v2";
+import * as iam from "@distilled.cloud/aws/iam";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -30,6 +31,55 @@ const defaultAzSubnets = (vpcId: string) =>
         (r.Subnets ?? []).flatMap((s) => (s.SubnetId ? [s.SubnetId] : [])),
       ),
     );
+
+/**
+ * Delete any leftover out-of-band "legacy" fixtures carrying {@link name}.
+ *
+ * The reap test builds its fixtures under a fixed name and relies on
+ * finalizers to reclaim them, which a hard kill skips. Matching by listing
+ * (rather than describe-by-name) keeps this free of not-found handling: an
+ * absent fixture simply doesn't appear.
+ */
+const reclaimLegacyFixtures = Effect.fn("reclaimLegacyFixtures")(function* (
+  name: string,
+  vpcId: string,
+) {
+  const lbs = yield* elbv2.describeLoadBalancers({});
+  const lbArn = (lbs.LoadBalancers ?? []).find(
+    (lb) => lb.LoadBalancerName === name,
+  )?.LoadBalancerArn;
+  if (lbArn) {
+    const listeners = yield* elbv2.describeListeners({
+      LoadBalancerArn: lbArn,
+    });
+    yield* Effect.forEach(
+      (listeners.Listeners ?? []).flatMap((l) =>
+        l.ListenerArn ? [l.ListenerArn] : [],
+      ),
+      (ListenerArn) => elbv2.deleteListener({ ListenerArn }),
+    );
+    yield* elbv2.deleteLoadBalancer({ LoadBalancerArn: lbArn });
+  }
+
+  const tgs = yield* elbv2.describeTargetGroups({});
+  const tgArn = (tgs.TargetGroups ?? []).find(
+    (tg) => tg.TargetGroupName === name,
+  )?.TargetGroupArn;
+  if (tgArn) {
+    yield* elbv2.deleteTargetGroup({ TargetGroupArn: tgArn });
+  }
+
+  const sgs = yield* ec2.describeSecurityGroups({
+    Filters: [
+      { Name: "vpc-id", Values: [vpcId] },
+      { Name: "group-name", Values: [name] },
+    ],
+  });
+  const sgId = (sgs.SecurityGroups ?? [])[0]?.GroupId;
+  if (sgId) {
+    yield* ec2.deleteSecurityGroup({ GroupId: sgId });
+  }
+});
 
 // The image-owning `Service` platform form: `image:` (mirrored into ECR) with
 // `loadBalancer: true` — the Service synthesizes its own task definition
@@ -60,6 +110,12 @@ test.provider(
             port: 80,
             desiredCount: 0,
             loadBalancer: true,
+            environmentFiles: [
+              {
+                value: "arn:aws:s3:::alchemy-test-ecs-env-files/edge.env",
+                type: "s3",
+              },
+            ],
           });
         }),
       );
@@ -94,6 +150,21 @@ test.provider(
         "while true; do sleep 30; done",
       ]);
       expect(container?.portMappings?.[0]?.containerPort).toBe(80);
+      // `environmentFiles` lands on the synthesized primary container, with
+      // the execution role granted read access to the referenced object.
+      expect(container?.environmentFiles).toEqual([
+        {
+          value: "arn:aws:s3:::alchemy-test-ecs-env-files/edge.env",
+          type: "s3",
+        },
+      ]);
+      const envFilesPolicy = yield* iam.getRolePolicy({
+        RoleName: deployed.executionRoleArn!.split(":role/")[1]!,
+        PolicyName: "alchemy-environment-files",
+      });
+      expect(decodeURIComponent(envFilesPolicy.PolicyDocument ?? "")).toContain(
+        "arn:aws:s3:::alchemy-test-ecs-env-files/edge.env",
+      );
 
       // Out-of-band: the service is wired to the generated target group.
       const services = yield* ecs.describeServices({
@@ -201,6 +272,16 @@ test.provider(
       // reap deletes are instant). Finalizers reclaim them if the test dies
       // before the reap runs.
       const legacyName = "alchemy-test-ecs-svc-legacy";
+      // The scaffolding below is created out-of-band under a fixed name and
+      // reclaimed by finalizers. A hard kill (SIGKILL, machine death) skips
+      // finalizers, so the previous run's copy survives and the next run dies
+      // on DuplicateLoadBalancerName before it can test anything. Reclaim any
+      // same-named leftovers first so the suite is rerunnable after a crash.
+      //
+      // This is scaffolding hygiene, NOT adoption of a leaked stack-managed
+      // resource: these are fixtures the test itself creates, and the reap
+      // under test is unaffected by whether they pre-existed.
+      yield* reclaimLegacyFixtures(legacyName, net.vpcId);
       const legacySubnets = yield* defaultAzSubnets(net.vpcId);
       const legacyLb = yield* elbv2.createLoadBalancer({
         Name: legacyName,

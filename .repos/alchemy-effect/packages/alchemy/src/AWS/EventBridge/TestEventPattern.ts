@@ -12,9 +12,8 @@ export interface TestEventPatternRequest
  * An account-level operation — bind it with no resource argument. Useful for
  * validating patterns before creating a `Rule`. Provide the
  * `TestEventPatternHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Testing Patterns
- * @example Test an Event Against a Pattern
+ * ### Testing Patterns
+ * **Example:** Test an Event Against a Pattern
  * ```typescript
  * // init — no resource argument (provide AWS.EventBridge.TestEventPatternHttp on the Function)
  * const testEventPattern = yield* AWS.EventBridge.TestEventPattern();
@@ -33,6 +32,8 @@ export interface TestEventPatternRequest
  *   }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface TestEventPattern extends Binding.Service<
   TestEventPattern,

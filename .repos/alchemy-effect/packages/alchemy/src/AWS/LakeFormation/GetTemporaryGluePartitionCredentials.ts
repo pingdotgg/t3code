@@ -15,9 +15,8 @@ export interface GetTemporaryGluePartitionCredentialsRequest
  * single partition's S3 prefix. The returned `SecretAccessKey` and
  * `SessionToken` are `Redacted`. Provide the implementation with
  * `Effect.provide(AWS.LakeFormation.GetTemporaryGluePartitionCredentialsHttp)`.
- * @binding
- * @section Vending Data Access Credentials
- * @example Vend Partition-Scoped S3 Credentials
+ * ### Vending Data Access Credentials
+ * **Example:** Vend Partition-Scoped S3 Credentials
  * ```typescript
  * // init — account-level binding takes no resource
  * const getPartitionCredentials =
@@ -30,6 +29,8 @@ export interface GetTemporaryGluePartitionCredentialsRequest
  *   Permissions: ["SELECT"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetTemporaryGluePartitionCredentials extends Binding.Service<
   GetTemporaryGluePartitionCredentials,

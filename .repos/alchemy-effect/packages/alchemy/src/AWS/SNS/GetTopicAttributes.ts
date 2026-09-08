@@ -16,9 +16,8 @@ export interface GetTopicAttributesRequest extends Omit<
  * The binding grants the host function `sns:GetTopicAttributes` on the
  * topic. Provide the `GetTopicAttributesHttp` layer on the Function to
  * implement the binding.
- * @binding
- * @section Reading Topic Attributes
- * @example Read a Topic's Attributes
+ * ### Reading Topic Attributes
+ * **Example:** Read a Topic's Attributes
  * ```typescript
  * // init (provide SNS.GetTopicAttributesHttp on the Function)
  * const getTopicAttributes = yield* SNS.GetTopicAttributes(topic);
@@ -27,6 +26,8 @@ export interface GetTopicAttributesRequest extends Omit<
  * const response = yield* getTopicAttributes();
  * const displayName = response.Attributes?.DisplayName;
  * ```
+ *
+ * @binding
  */
 export interface GetTopicAttributes extends Binding.Service<
   GetTopicAttributes,

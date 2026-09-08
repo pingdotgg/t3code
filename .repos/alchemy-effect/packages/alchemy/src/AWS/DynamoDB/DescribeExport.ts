@@ -13,15 +13,16 @@ export interface DescribeExportRequest extends DynamoDB.DescribeExportInput {}
  * IAM grant covers every export of the bound table (`{tableArn}/export/*`).
  * Provide the `DescribeExportHttp` layer on the Function to satisfy the
  * binding.
- * @binding
- * @section Exporting to S3
- * @example Poll an Export Until It Completes
+ * ### Exporting to S3
+ * **Example:** Poll an Export Until It Completes
  * ```typescript
  * const describeExport = yield* AWS.DynamoDB.DescribeExport(table);
  *
  * const response = yield* describeExport({ ExportArn: exportArn });
  * const status = response.ExportDescription?.ExportStatus;
  * ```
+ *
+ * @binding
  */
 export interface DescribeExport extends Binding.Service<
   DescribeExport,

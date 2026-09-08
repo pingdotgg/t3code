@@ -52,7 +52,10 @@ export const makePricingHttpBinding = <I extends object, A, E, R>(options: {
       return Effect.fn(`AWS.Pricing.${options.capability}`)(function* (
         request?: I,
       ) {
-        return yield* op((request ?? {}) as I);
+        // The region must also be pinned at the call site: the yield-time
+        // snapshot is only a fallback — the calling fiber's ambient Region
+        // (the host Function's own region) wins over it.
+        return yield* withPricingRegion(op((request ?? {}) as I));
       });
     });
   });

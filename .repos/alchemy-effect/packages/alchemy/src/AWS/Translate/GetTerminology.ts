@@ -7,9 +7,8 @@ import * as Binding from "../../Binding.ts";
  * terminology's properties and a presigned download location for its
  * term-pair file.
  *
- * @binding
- * @section Reading Terminologies
- * @example Read a terminology's properties
+ * ### Reading Terminologies
+ * **Example:** Read a terminology's properties
  * ```typescript
  * // init
  * const getTerminology = yield* AWS.Translate.GetTerminology();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // result.TerminologyProperties?.TermCount
  * // result.TerminologyDataLocation?.Location — presigned download URL
  * ```
+ *
+ * @binding
  */
 export interface GetTerminology extends Binding.Service<
   GetTerminology,

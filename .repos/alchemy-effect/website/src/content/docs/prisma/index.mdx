@@ -1,0 +1,120 @@
+---
+title: Prisma
+description: Prisma Postgres and Prisma Compute — projects, databases, connections, and deployed apps as Stack resources, with a zero-config local database in dev.
+---
+
+Prisma's data platform gives you serverless Postgres and a managed
+app runtime. With alchemy you declare the project, its databases,
+the connections your apps use, and the Compute deployments that run
+them — all as resources in one Stack. In dev mode the same Stack
+runs against a local `@prisma/dev` Postgres with nothing to
+provision.
+
+New here? [Set up credentials](/prisma/setup) first.
+
+## Resources
+
+A `Prisma.Project` is the top-level container. By default it creates
+a Prisma Postgres database in `us-east-1`:
+
+```typescript
+const project = yield* Prisma.Project("app", {
+  region: "us-east-1",
+});
+```
+
+Prisma injects that database's system-managed `DATABASE_URL` and
+`DATABASE_URL_POOLED` variables into Compute deployments
+automatically.
+
+When you need a database with an independent lifecycle and explicit
+connection outputs, declare it separately:
+
+```typescript
+const project = yield* Prisma.Project("app", { createDatabase: false });
+
+const postgres = yield* Prisma.Postgres("db", {
+  project,
+});
+
+const connection = yield* Prisma.Connection("api", {
+  database: postgres,
+});
+```
+
+Display names are optional for these resources — omit them and alchemy
+generates stable physical names from the Stack, logical ID, and stage.
+
+The connection exposes ready-to-use outputs — a conventional
+`databaseUrl`, direct and pooled connection strings, and parsed
+`origin` components for poolers like Hyperdrive. See
+[Connections](/prisma/data/connections).
+
+[Branches](/prisma/data/branches) group databases and apps under
+git-style names. A standalone `Prisma.Branch` has Prisma's `preview`
+role even when promoted to be the project's default branch.
+
+## Compute
+
+`Prisma.Compute` builds, uploads, and promotes an application next
+to its database — either a framework app built from a directory, or
+an Effect-native app defined inline:
+
+```typescript
+const app = yield* Prisma.Compute("api", {
+  project,
+  path: "./app",
+  build: "auto",
+  healthCheck: { path: "/api/health" },
+});
+```
+
+For a standalone database, pass `connection.databaseUrl` explicitly
+as shown in [Connections](/prisma/data/connections).
+
+The candidate health check gates promotion. If the stable endpoint
+fails after promotion, alchemy attempts to restore the previous
+deployment and fails closed if recovery cannot converge. See
+[Deployments](/prisma/compute/deployments).
+
+## Runtime bindings
+
+Inside a Compute app, Lambda function, or Cloudflare Worker,
+`Prisma.Connect` turns a Connection into a typed runtime client
+whose `databaseUrl` feeds straight into `SQL.Postgres` or Drizzle:
+
+```typescript
+Effect.gen(function* () {
+  const db = yield* Prisma.Connect(connection);
+  const sql = yield* SQL.Postgres({ url: db.databaseUrl });
+
+  return {
+    fetch: Effect.gen(function* () {
+      const users = yield* sql`SELECT * FROM users`;
+      return yield* HttpServerResponse.json(users);
+    }),
+  };
+}).pipe(Effect.provide(Prisma.ConnectBinding));
+```
+
+## The Prisma path
+
+On Cloudflare, Prisma Postgres slots into the same path as the other
+Postgres providers:
+
+1. [Hyperdrive](/cloudflare/data/hyperdrive) pools the connection's
+   direct `origin` at the edge
+2. [Drizzle](/cloudflare/data/drizzle) or
+   [`SQL.Postgres`](/sql/effect-sql/postgres) gives the Worker a
+   typed query layer over that connection
+3. [Connect from Workers](/prisma/guides/cloudflare-workers) walks
+   through both wiring styles
+
+## Reference
+
+- [Project](/providers/prisma/project)
+- [Database](/providers/prisma/database)
+- [Connection](/providers/prisma/connection)
+- [Branch](/providers/prisma/branch)
+- [Compute](/providers/prisma/compute)
+- [SourceRepository](/providers/prisma/sourcerepository)

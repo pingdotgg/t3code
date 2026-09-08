@@ -62,8 +62,8 @@ export interface AssetEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Asset Events
- * @example React To Dashboard Publishes
+ * ### Consuming Asset Events
+ * **Example:** React To Dashboard Publishes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

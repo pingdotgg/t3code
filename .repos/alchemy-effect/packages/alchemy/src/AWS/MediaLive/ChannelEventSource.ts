@@ -89,8 +89,8 @@ export interface ChannelEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Channel Events
- * @example Page an Operator When a Channel Raises an Alert
+ * ### Consuming Channel Events
+ * **Example:** Page an Operator When a Channel Raises an Alert
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

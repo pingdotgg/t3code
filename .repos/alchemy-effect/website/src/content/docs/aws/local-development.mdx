@@ -1,0 +1,251 @@
+---
+title: Local development
+description: alchemy dev runs your AWS stack on your machine — Lambda in Docker containers, local S3/DynamoDB/SQS, event sources firing, hot reload — with no AWS account or credentials required.
+---
+
+import Terminal from "../../../components/Terminal.astro";
+
+`alchemy dev` runs your AWS stack entirely on your machine — no
+AWS account, no credentials, no config. Lambda functions execute
+in Docker containers behind working Function URLs, websites run
+their frameworks' own dev servers with native HMR, ECS tasks run
+as real containers, and the surrounding services (S3, DynamoDB,
+SQS, SNS, EventBridge, and many more) are emulated locally. Code
+changes hot reload in ~100–500ms.
+
+```sh
+alchemy dev
+# no AWS credentials — using the local emulator
+```
+
+<Terminal content={`[g]✓[/g] [b]Files[/b] [d](AWS.S3.Bucket)[/d] [g]created[/g] [d](local)[/d]
+[g]✓[/g] [b]Users[/b] [d](AWS.DynamoDB.Table)[/d] [g]created[/g] [d](local)[/d]
+[g]✓[/g] [b]Jobs[/b] [d](AWS.SQS.Queue)[/d] [g]created[/g] [d](local)[/d]
+[g]✓[/g] [b]Api[/b] [d](AWS.Lambda.Function)[/d] [g]created[/g] [d](local → docker)[/d]
+[s2][d]• http://b71ff5c0….lambda-url.us-east-1.localhost:4566/[/d]
+
+[d]Watching for changes ...[/d]`} />
+
+## How it works
+
+Local AWS emulation is powered by
+[our fork](https://github.com/alchemy-run/floci) of
+[floci](https://floci.io), an MIT-licensed LocalStack-style
+emulator. The emulator starts automatically in Docker — one
+container (`alchemy-floci`) shared across projects and sessions —
+and your stack deploys into it in seconds. Resource identifiers
+carry the `dev:` marker and local endpoints
+(`localhost:4566`), which doubles as proof that no cloud call
+ran.
+
+We hold the emulator to the same bar as the real cloud: alchemy's
+live AWS test suites — the control-plane lifecycle tests and the
+data-plane binding tests that normally run against real AWS —
+also run against the emulator, and every fidelity gap they
+surface becomes a fix in the fork.
+
+## Lambda runs in containers
+
+Each Lambda function executes in a local runtime container behind
+a working Function URL:
+
+```typescript
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  { main: import.meta.url, functionUrl: true },
+  Effect.gen(function* () {
+    const files = yield* AWS.S3.Bucket("Files");
+    const jobs = yield* AWS.SQS.Queue("Jobs");
+
+    const putObject = yield* AWS.S3.PutObject(files);
+    const sendMessage = yield* AWS.SQS.SendMessage(jobs);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* putObject({ Key: "hello.txt", Body: "hello" });
+        yield* sendMessage({ MessageBody: "process hello.txt" });
+        return yield* HttpServerResponse.text("ok");
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(
+    Effect.provide([AWS.S3.PutObjectHttp, AWS.SQS.SendMessageHttp]),
+  ),
+) {}
+```
+
+In dev, the function serves at a working local Function URL
+(`http://….lambda-url.us-east-1.localhost:4566/`), `putObject`
+lands in the local bucket, and `sendMessage` lands in the local
+queue. The SDK honors the standard `AWS_ENDPOINT_URL` environment
+override that the emulator injects into every dev container.
+
+Save the file and the running function serves the new code in
+**~100–500ms** — no redeploy, no restart. The dev session watches
+your code's module graph, rebuilds, and swaps the code under the
+live Function URL.
+
+## Websites run their own dev servers
+
+Every `AWS.Website.*` resource — Vite, Next.js, Astro, Nuxt,
+SvelteKit, Waku, Octane, StaticSite — runs its framework's own
+dev server under `alchemy dev`: native HMR, no cloud resources.
+The site's `url` is the local dev server's address:
+
+```typescript
+const site = yield* AWS.Website.Vite("Web");
+// dev:    site.url = http://localhost:5173 — Vite's own dev server, HMR included
+// deploy: site.url = the CloudFront distribution
+```
+
+The same stack deploys unchanged: `alchemy deploy` runs
+`vite build` and serves the output from S3 through CloudFront. For
+SSR frameworks, `server.environment` is delivered to the dev
+server's process env, so config reads work the same locally and
+deployed. See [AWS frontends](/aws/frontend/websites).
+
+## ECS tasks run as containers
+
+ECS tasks and services run as real Docker containers, built and
+pushed through a local OCI registry:
+
+```typescript
+// bundled Effect program — built into an image, pushed through
+// a local registry, running as a real container seconds later
+export default class Web extends AWS.ECS.Task<Web>()(
+  "Web",
+  { main: import.meta.url, port: 8080 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text("hello from a local container");
+      }),
+    };
+  }),
+) {}
+```
+
+Bring-your-own-Dockerfile containers work too:
+`AWS.ECS.Service("Api", { context: "./api", port: 3000 })` builds
+your image and runs it the same way.
+
+The whole live pipeline runs unchanged: image build, `docker
+push`, task definitions, `RunTask`, and services that converge
+exactly like AWS. Hot reload swaps a running container in ~6
+seconds — bundled tasks watch the deploy's exact module graph,
+Dockerfile tasks watch the build context, and services roll their
+tasks onto the new image revision. Emulated ALB listeners route
+to the local containers; each task is also reachable directly at
+its literal host port (`localhost:<port>`).
+
+## Event sources fire locally
+
+The glue between services works end to end in the emulator:
+SQS→Lambda event source mappings poll and deliver batches, S3
+notifications fire, EventBridge rules route, SNS subscriptions
+deliver, DynamoDB Streams pump changes, and EventBridge Scheduler
+schedules fire — so a `consumeQueueMessages` handler in a local
+Lambda drains a local queue exactly like it would in the cloud.
+
+## What's emulated
+
+Close to 40 services and over 200 resource types run against the
+local emulator in dev:
+
+| Category            | Services                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Compute             | Lambda (functions, layers, versions, aliases, event source mappings, permissions), ECS, ECR, Batch, Auto Scaling, Application Auto Scaling |
+| APIs & delivery     | API Gateway (REST), API Gateway v2 (HTTP & WebSocket), AppSync, CloudFront (Distributions, Functions, KeyValueStore), WAFv2, ACM |
+| Storage & databases | S3, DynamoDB, RDS, Glue, Athena, S3 Vectors                                                                          |
+| Messaging & events  | SQS, SNS, EventBridge, Kinesis, Firehose, Pipes, Scheduler, Step Functions                                           |
+| Networking & DNS    | EC2 (VPCs, subnets, security groups, instances, …), ELBv2, Route 53, Cloud Map                                       |
+| Identity & security | IAM, Cognito, KMS, Secrets Manager                                                                                   |
+| Config & ops        | SSM Parameter Store, AppConfig, CloudWatch Logs, SES                                                                 |
+
+Resources without local emulation run against the real cloud in
+your personal [stage](/environments/stages) — a stack that mixes
+emulated and live-only resources just works.
+
+## Mix in the real cloud
+
+`Alchemy.remote()` opts any resource out of local emulation:
+
+```typescript
+// everything else is local; this one hits real AWS
+const secret = yield* AWS.SecretsManager.Secret("ProdSecret", { ... })
+  .pipe(Alchemy.remote());
+```
+
+If a remote resource needs credentials you don't have,
+`alchemy dev` tells you before touching anything:
+
+```text
+CredentialsRequired: 1 resource runs against the real cloud via Alchemy.remote():
+  - ProdSecret (AWS.SecretsManager.Secret)
+Run `alchemy login --profile <name>`, or set CI=1 to use environment credentials.
+```
+
+Switching a resource between local and live (or dev → deploy)
+plans a **replacement** — dev state never silently becomes cloud
+state. See
+[Local development](/environments/local-development) for the
+shared semantics.
+
+## Emulator management
+
+The emulator container outlives dev sessions — Docker is the
+supervisor, so there's nothing to babysit. Overrides when you
+want them:
+
+```sh
+ALCHEMY_FLOCI_IMAGE=floci:dev alchemy dev   # use your own emulator build
+```
+
+The default image is our patched release
+(`ghcr.io/alchemy-run/floci`).
+
+To wipe everything inside the emulator without recreating the
+container, point [`nuke`](/cli/nuke) at the local providers:
+
+```sh
+bun alchemy unsafe nuke --local --include 'AWS.*'
+```
+
+`--local` enumerates and deletes through each provider's local
+implementation, so it only ever sees emulated resources — no
+cloud credentials are involved and nothing in a real AWS account
+can be touched.
+
+## Test against the local stack
+
+The [test harness](/testing/test-harness) has the same dev mode —
+`Test.make({ dev: true })` (available on both the Bun and Vitest
+adapters, off by default) runs the suite's `deploy(Stack)` against
+the local emulator instead of the real account, no separate
+`alchemy dev` terminal needed:
+
+```typescript
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: AWS.providers(),
+  dev: true,
+});
+```
+
+Lambda functions run in local containers, the emulated services
+back them, and function URL outputs point at the local gateway —
+so the same HTTP assertions run with zero cloud credentials. See
+[Test harness → dev](/testing/test-harness#dev) for the full
+semantics.
+
+## Where next
+
+- [Local development](/environments/local-development) — the
+  shared `alchemy dev` concepts: hot reload, `Alchemy.remote()`,
+  and dev vs deploy semantics.
+- [AWS frontends](/aws/frontend/websites) — framework dev servers
+  under `alchemy dev`.
+- [Stages](/environments/stages) — how live-in-dev resources stay
+  isolated per developer.
+- [Testing](/testing) — run the same test suite against the local
+  emulator with `Test.make({ dev: true })`.
+- [Local Providers](/infrastructure-as-code/local-provider) —
+  build the local implementation of a resource.

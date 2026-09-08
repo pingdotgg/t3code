@@ -22,7 +22,7 @@
  * Unicode codepoint we use.
  */
 
-import { yantraSvg } from "./yantra";
+import { YANTRA_THEMES, yantraSvg } from "./yantra";
 
 const COLORS = {
   bg: "#f5efe3",
@@ -38,11 +38,12 @@ const COLORS = {
   darkFg2: "#bdb09a",
   darkFg3: "#7d705c",
   darkAccent: "#a8c47a",
-  // Dark-mode yantra — lifted moss stroke + terracotta bindu dot, mirroring
-  // the runtime tokens (--alc-accent / --alc-yantra-dot in the .dark block).
-  darkYantraStroke: "#7a9a5e",
-  darkYantraDot: "#c56e3c",
   darkHairline: "rgba(245,239,227,0.12)",
+  // The yantra is painted from the shared brand palette.
+  yantraStroke: YANTRA_THEMES.light.stroke,
+  yantraDot: YANTRA_THEMES.light.dot,
+  darkYantraStroke: YANTRA_THEMES.dark.stroke,
+  darkYantraDot: YANTRA_THEMES.dark.dot,
 } as const;
 
 export type OgCardKind = "marketing" | "doc" | "blog";
@@ -92,7 +93,7 @@ export function OgCard(props: OgCardProps): any {
 
 function DocCard({ title, description, eyebrow, kind }: OgCardProps): any {
   const eyebrowText = (eyebrow ?? defaultEyebrow(kind ?? "doc")).toUpperCase();
-  const yantraDataUrl = yantraImage(COLORS.accentDeep);
+  const yantraDataUrl = yantraImage(COLORS.yantraStroke, COLORS.yantraDot);
 
   return {
     type: "div",

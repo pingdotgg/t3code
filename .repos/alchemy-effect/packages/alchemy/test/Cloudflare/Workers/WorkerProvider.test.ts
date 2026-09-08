@@ -2,52 +2,52 @@ import {
   encodeDurableObjectTags,
   getDurableObjectTagMap,
   normalizeStateDomains,
+  resolveWorkerDomain,
+  resolveWorkerDomainZone,
+  resolveWorkersDev,
+  shouldRecreateWorkerDomainAttachment,
+  shouldObserveWorkerCrons,
+  shouldObserveWorkerDomains,
+  shouldObserveWorkerRoutes,
+  stateCustomDomains,
+  stateWorkerDomain,
 } from "@/Cloudflare/Workers/WorkerProvider";
 import { describe, expect, test } from "alchemy-test";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 describe("WorkerProvider", () => {
   describe("normalizeStateDomains", () => {
-    // Worker state written by Alchemy <= beta.44 stored each custom domain as a
-    // `{ id, hostname, zoneId }` object; beta.45+ stores `https://<hostname>`
-    // strings. The diff path then called `.endsWith` directly on each entry and
-    // threw `u.endsWith is not a function` when reading the older object state
-    // (#546).
-    test("coerces legacy domain objects to https:// strings", () => {
+    // Worker state has gone through three generations: <= beta.44 stored each
+    // custom domain as a `{ id, hostname, zoneId }` object; beta.45 – beta.57
+    // stored `https://<hostname>` URL strings (with the workers.dev URL mixed
+    // in); the current format stores bare hostnames aligned with `allUrls`.
+    // The diff path reads all three without throwing (#546).
+    test("coerces legacy domain objects to hostnames", () => {
       expect(
         normalizeStateDomains([
           { id: "abc", hostname: "metrics.example.com", zoneId: "z1" },
         ]),
-      ).toEqual(["https://metrics.example.com"]);
+      ).toEqual(["metrics.example.com"]);
     });
 
-    test("leaves modern string entries untouched", () => {
+    test("coerces legacy https:// URL strings to hostnames", () => {
       expect(
         normalizeStateDomains([
           "https://app.example.com",
           "https://my-worker.acct.workers.dev",
         ]),
-      ).toEqual([
-        "https://app.example.com",
-        "https://my-worker.acct.workers.dev",
+      ).toEqual(["app.example.com", "my-worker.acct.workers.dev"]);
+    });
+
+    test("leaves current-format hostnames untouched", () => {
+      expect(normalizeStateDomains(["app.example.com", "localhost"])).toEqual([
+        "app.example.com",
+        "localhost",
       ]);
     });
 
-    test("keeps the diff filter and workers.dev lookup working after normalization", () => {
-      const normalized = normalizeStateDomains([
-        { id: "abc", hostname: "app.example.com", zoneId: "z1" },
-        "https://my-worker.acct.workers.dev",
-      ]);
-      // custom domains used by the domainsChanged diff (workers.dev excluded)
-      expect(normalized.filter((u) => !u.endsWith(".workers.dev"))).toEqual([
-        "https://app.example.com",
-      ]);
-      // the workers.dev url stays findable for the `newUrl` computation
-      expect(normalized.find((u) => u.endsWith(".workers.dev"))).toBe(
-        "https://my-worker.acct.workers.dev",
-      );
-    });
-
-    test("drops entries that are neither strings nor objects with a string hostname", () => {
+    test("drops entries that fit no state generation", () => {
       expect(
         normalizeStateDomains([
           "https://keep.example.com",
@@ -55,12 +55,269 @@ describe("WorkerProvider", () => {
           { hostname: 123 },
           null,
           42,
+          "",
         ]),
-      ).toEqual(["https://keep.example.com"]);
+      ).toEqual(["keep.example.com"]);
     });
 
     test("returns an empty array for undefined state", () => {
       expect(normalizeStateDomains(undefined)).toEqual([]);
+    });
+  });
+
+  describe("stateCustomDomains", () => {
+    test("excludes workers.dev, preview, and local-dev entries", () => {
+      expect(
+        stateCustomDomains([
+          "my-worker.acct.workers.dev",
+          "0a1b2c3d-my-worker.acct.workers.dev",
+          "localhost",
+          "192.168.0.12",
+          "app.example.com",
+        ]),
+      ).toEqual(["app.example.com"]);
+    });
+
+    test("reads legacy URL-string state", () => {
+      expect(
+        stateCustomDomains([
+          "https://app.example.com",
+          "https://my-worker.acct.workers.dev",
+        ]),
+      ).toEqual(["app.example.com"]);
+    });
+  });
+
+  describe("resolveWorkerDomain", () => {
+    const resolve = (domain: Parameters<typeof resolveWorkerDomain>[0]) =>
+      Effect.runSync(resolveWorkerDomain(domain));
+
+    test("string shorthand resolves to { name }", () => {
+      expect(resolve("app.example.com")).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+      });
+    });
+
+    test("object form dedupes and punycodes hostnames", () => {
+      expect(
+        resolve({
+          name: "📦.example.com",
+          aliases: ["www.example.com", "www.example.com"],
+          redirects: ["old.example.com"],
+        }),
+      ).toEqual({
+        name: "xn--cu8h.example.com",
+        aliases: ["www.example.com"],
+        redirects: ["old.example.com"],
+      });
+    });
+
+    test("undefined and null resolve to no domain", () => {
+      expect(resolve(undefined)).toBeUndefined();
+      expect(resolve(null)).toBeUndefined();
+    });
+
+    // Pre-redesign props stored `domain: string[]` — persisted `olds` can
+    // still hand that shape to read's classification. `domains[0]` was the
+    // primary hostname back then, so it maps to `name`; the rest to
+    // aliases. A legacy empty array was the explicit detach-all.
+    test("legacy string[] maps to name + aliases", () => {
+      expect(resolve(["app.example.com", "www.example.com"])).toEqual({
+        name: "app.example.com",
+        aliases: ["www.example.com"],
+        redirects: [],
+      });
+      expect(resolve([])).toBeUndefined();
+    });
+
+    test("a hostname in more than one role is a typed error", () => {
+      const result = Effect.runSync(
+        Effect.result(
+          resolveWorkerDomain({
+            name: "app.example.com",
+            aliases: ["app.example.com"],
+          }),
+        ),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure._tag).toEqual("WorkerDomainConfigError");
+      }
+    });
+
+    test("carries zoneId / zone / zoneName pins", () => {
+      const zoneId = "0123456789abcdef0123456789abcdef";
+      expect(
+        resolve({
+          name: "app.example.com",
+          zoneId,
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+        zone: zoneId,
+      });
+      expect(
+        resolve({
+          name: "app.example.com",
+          zoneName: "example.com",
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+        zone: "example.com",
+      });
+      expect(
+        resolveWorkerDomainZone({
+          zoneId,
+          zoneName: "ignored.com",
+          zone: "also-ignored.com",
+        }),
+      ).toEqual(zoneId);
+    });
+
+    test("recreates an existing attachment only for a changed explicit zone", () => {
+      expect(shouldRecreateWorkerDomainAttachment("live-zone", undefined)).toBe(
+        false,
+      );
+      expect(
+        shouldRecreateWorkerDomainAttachment("live-zone", "live-zone"),
+      ).toBe(false);
+      expect(
+        shouldRecreateWorkerDomainAttachment("live-zone", "desired-zone"),
+      ).toBe(true);
+    });
+  });
+
+  describe("stateWorkerDomain", () => {
+    test("passes the current-format domain attribute through", () => {
+      expect(
+        stateWorkerDomain({
+          domain: {
+            name: "app.example.com",
+            aliases: ["www.example.com"],
+            redirects: ["old.example.com"],
+          },
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: ["www.example.com"],
+        redirects: ["old.example.com"],
+      });
+      expect(
+        stateWorkerDomain({
+          domain: {
+            name: "app.example.com",
+            aliases: [],
+            redirects: [],
+            zoneId: "0123456789abcdef0123456789abcdef",
+          },
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+        zone: "0123456789abcdef0123456789abcdef",
+      });
+      expect(
+        stateWorkerDomain({
+          domain: {
+            name: "app.example.com",
+            aliases: [],
+            redirects: [],
+            zoneId: 42,
+            zoneName: "example.com",
+          },
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+        zone: "example.com",
+      });
+    });
+
+    test("derives name + aliases from legacy URL-string domains state", () => {
+      expect(
+        stateWorkerDomain({
+          domains: [
+            "https://app.example.com",
+            "https://www.example.com",
+            "https://my-worker.acct.workers.dev",
+          ],
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: ["www.example.com"],
+        redirects: [],
+      });
+    });
+
+    test("derives from <= beta.44 domain objects", () => {
+      expect(
+        stateWorkerDomain({
+          domains: [{ id: "abc", hostname: "app.example.com", zoneId: "z" }],
+        }),
+      ).toEqual({
+        name: "app.example.com",
+        aliases: [],
+        redirects: [],
+      });
+    });
+
+    test("workers.dev-only and empty state resolve to no domain", () => {
+      expect(
+        stateWorkerDomain({
+          domains: ["https://my-worker.acct.workers.dev"],
+        }),
+      ).toBeUndefined();
+      expect(stateWorkerDomain({})).toBeUndefined();
+      expect(stateWorkerDomain(undefined)).toBeUndefined();
+    });
+  });
+
+  describe("resolveWorkersDev", () => {
+    test("defaults to the full workers.dev behavior", () => {
+      expect(resolveWorkersDev(undefined)).toEqual({
+        enabled: true,
+        previewsEnabled: true,
+      });
+      expect(resolveWorkersDev(true)).toEqual({
+        enabled: true,
+        previewsEnabled: true,
+      });
+    });
+
+    test("false disables both toggles", () => {
+      expect(resolveWorkersDev(false)).toEqual({
+        enabled: false,
+        previewsEnabled: false,
+      });
+    });
+
+    test("object form fills unset toggles with true", () => {
+      expect(resolveWorkersDev({})).toEqual({
+        enabled: true,
+        previewsEnabled: true,
+      });
+      expect(resolveWorkersDev({ enabled: false })).toEqual({
+        enabled: false,
+        previewsEnabled: true,
+      });
+      expect(resolveWorkersDev({ previewsEnabled: false })).toEqual({
+        enabled: true,
+        previewsEnabled: false,
+      });
+      expect(
+        resolveWorkersDev({ enabled: false, previewsEnabled: true }),
+      ).toEqual({
+        enabled: false,
+        previewsEnabled: true,
+      });
     });
   });
 
@@ -184,6 +441,94 @@ describe("WorkerProvider", () => {
 
     test("returns an empty map when no DO tags are present", () => {
       expect(getDurableObjectTagMap(["alchemy:stack:app", "user"])).toEqual({});
+    });
+  });
+
+  // Worker read used to always fan out listDomains + account-wide route
+  // discovery + getScriptSchedule, even for a plain workers.dev Worker. That
+  // stampeded GET /accounts/{id}/workers/subdomain neighbors into 429/code 971
+  // (#926). These helpers gate those observations on whether Alchemy manages
+  // the surface.
+  describe("shouldObserveWorkerDomains", () => {
+    test("skips when neither props nor state manage custom domains", () => {
+      expect(
+        shouldObserveWorkerDomains(
+          {},
+          {
+            domains: ["https://my-worker.acct.workers.dev"],
+          },
+        ),
+      ).toBe(false);
+      expect(shouldObserveWorkerDomains(undefined, undefined)).toBe(false);
+    });
+
+    test("observes when domain prop is present, including null", () => {
+      expect(shouldObserveWorkerDomains({ domain: null }, undefined)).toBe(
+        true,
+      );
+      expect(
+        shouldObserveWorkerDomains({ domain: "app.example.com" }, undefined),
+      ).toBe(true);
+    });
+
+    test("observes when prior state has non-workers.dev domains", () => {
+      expect(
+        shouldObserveWorkerDomains(
+          {},
+          {
+            domains: [
+              "https://app.example.com",
+              "https://my-worker.acct.workers.dev",
+            ],
+          },
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("shouldObserveWorkerRoutes", () => {
+    test("skips when neither props nor state manage routes", () => {
+      expect(shouldObserveWorkerRoutes({}, { routes: [] })).toBe(false);
+      expect(shouldObserveWorkerRoutes(undefined, undefined)).toBe(false);
+    });
+
+    test("observes when routes prop is present, including empty array", () => {
+      expect(shouldObserveWorkerRoutes({ routes: [] }, undefined)).toBe(true);
+      expect(
+        shouldObserveWorkerRoutes(
+          { routes: [{ pattern: "example.com/*" }] },
+          undefined,
+        ),
+      ).toBe(true);
+    });
+
+    test("observes when prior state has routes", () => {
+      expect(
+        shouldObserveWorkerRoutes(
+          {},
+          {
+            routes: [{ id: "r1", pattern: "example.com/*", zoneId: "z1" }],
+          },
+        ),
+      ).toBe(true);
+    });
+  });
+
+  describe("shouldObserveWorkerCrons", () => {
+    test("skips when neither props nor state manage crons", () => {
+      expect(shouldObserveWorkerCrons({}, { crons: [] })).toBe(false);
+      expect(shouldObserveWorkerCrons(undefined, undefined)).toBe(false);
+    });
+
+    test("observes when crons prop is present, including empty array", () => {
+      expect(shouldObserveWorkerCrons({ crons: [] }, undefined)).toBe(true);
+      expect(
+        shouldObserveWorkerCrons({ crons: ["0 * * * *"] }, undefined),
+      ).toBe(true);
+    });
+
+    test("observes when prior state has crons (e.g. Effect-native cron())", () => {
+      expect(shouldObserveWorkerCrons({}, { crons: ["0 * * * *"] })).toBe(true);
     });
   });
 });

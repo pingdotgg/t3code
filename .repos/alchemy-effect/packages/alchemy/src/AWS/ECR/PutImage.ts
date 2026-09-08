@@ -17,9 +17,8 @@ export interface PutImageRequest extends Omit<
  *
  * Writes an image manifest to the bound repository — the final step of a push, and the write half of re-tagging (`BatchGetImage` → `PutImage` with a new tag). Provide the implementation with
  * `Effect.provide(AWS.ECR.PutImageHttp)`.
- * @binding
- * @section Pushing Images
- * @example Re-tag an Existing Image
+ * ### Pushing Images
+ * **Example:** Re-tag an Existing Image
  * ```typescript
  * const batchGetImage = yield* AWS.ECR.BatchGetImage(repository);
  * const putImage = yield* AWS.ECR.PutImage(repository);
@@ -30,6 +29,8 @@ export interface PutImageRequest extends Omit<
  *   imageTag: "stable",
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutImage extends Binding.Service<
   PutImage,

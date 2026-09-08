@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the infrastructure and deployment events (CloudTrail changes, deployments, schema changes) DevOps Guru evaluated around an insight — the "what changed?" of an incident.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.ListEventsHttp)`.
- * @binding
- * @section Events and Recommendations
- * @example List Deployment Events Around an Insight
+ * ### Events and Recommendations
+ * **Example:** List Deployment Events Around an Insight
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listEvents = yield* AWS.DevOpsGuru.ListEvents();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`events: ${Events?.length}`);
  * ```
+ *
+ * @binding
  */
 export interface ListEvents extends Binding.Service<
   ListEvents,

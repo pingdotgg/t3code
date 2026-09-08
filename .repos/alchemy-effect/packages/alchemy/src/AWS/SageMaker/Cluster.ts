@@ -21,9 +21,21 @@ import type { Providers } from "../Providers.ts";
 export type ClusterStatus = sagemaker.ClusterStatus;
 
 /**
- * An instance group surfaced on the cluster's attributes — the value EKS
- * workloads reference via `hyperpod.instanceGroup` to pin themselves to
- * the group.
+ * The well-known node label carrying the HyperPod instance-group name.
+ * HyperPod nodes join the orchestrating EKS cluster as ordinary Kubernetes
+ * nodes carrying this label.
+ */
+export const HYPERPOD_INSTANCE_GROUP_LABEL =
+  "sagemaker.amazonaws.com/instance-group-name";
+
+/** The well-known node label carrying HyperPod's node health verdict. */
+export const HYPERPOD_NODE_HEALTH_LABEL =
+  "sagemaker.amazonaws.com/node-health-status";
+
+/**
+ * An instance group surfaced on the cluster's attributes — Kubernetes
+ * workloads pin themselves to the group by referencing its
+ * {@link ClusterInstanceGroupRef.nodeSelector}.
  */
 export interface ClusterInstanceGroupRef {
   /** The group's name (the `sagemaker.amazonaws.com/instance-group-name` node label). */
@@ -34,6 +46,18 @@ export interface ClusterInstanceGroupRef {
   CurrentCount: number | undefined;
   /** Instances the group is converging toward. */
   TargetCount: number | undefined;
+  /**
+   * A Kubernetes node selector pinning pods onto this group's
+   * health-checked nodes — pass it to a `Kubernetes.Job` /
+   * `Kubernetes.Deployment` through the `podTemplate` escape hatch:
+   *
+   * ```ts
+   * podTemplate: {
+   *   spec: { nodeSelector: hyperpod.instanceGroups.workers.nodeSelector },
+   * }
+   * ```
+   */
+  nodeSelector: Record<string, string>;
 }
 
 /**
@@ -145,10 +169,10 @@ export interface Cluster extends Resource<
      */
     orchestratorEksClusterArn: string | undefined;
     /**
-     * The cluster's instance groups, keyed by group name. Reference one
-     * from an EKS workload's `hyperpod.instanceGroup` to pin the workload
-     * to the group through the resource graph:
-     * `hyperpod.instanceGroups.workers`.
+     * The cluster's instance groups, keyed by group name. Pin a
+     * Kubernetes workload onto a group through the resource graph with
+     * its node selector:
+     * `hyperpod.instanceGroups.workers.nodeSelector`.
      */
     instanceGroups: Record<string, ClusterInstanceGroupRef>;
   },
@@ -178,9 +202,8 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  * Provisioning a HyperPod cluster takes 10–25 minutes; instance groups are
  * updated in place and removing a group from `instanceGroups` deletes it
  * from the cluster.
- * @resource
- * @section Creating Clusters
- * @example Slurm-Orchestrated Cluster
+ * ### Creating Clusters
+ * **Example:** Slurm-Orchestrated Cluster
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -199,7 +222,7 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  * });
  * ```
  *
- * @example EKS-Orchestrated Cluster
+ * **Example:** EKS-Orchestrated Cluster
  * ```typescript
  * // The EKS cluster must use the `API` (or `API_AND_CONFIG_MAP`)
  * // authentication mode — pass `accessConfig` explicitly, EKS's own
@@ -229,8 +252,8 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  * const workers = hyperpod.instanceGroups.workers;
  * ```
  *
- * @section Running Workloads (Slurm)
- * @example Submit jobs from the login node over SSM
+ * ### Running Workloads (Slurm)
+ * **Example:** Submit jobs from the login node over SSM
  * ```sh
  * # Slurm jobs are submitted on the cluster itself. Each node is an SSM
  * # target named sagemaker-cluster:<cluster-id>_<instance-group>-<instance-id>
@@ -241,8 +264,8 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  * sbatch --nodes=4 train.sbatch
  * ```
  *
- * @section Running Workloads (EKS)
- * @example Low level: apply any Kubernetes manifest to the orchestrator
+ * ### Running Workloads (EKS)
+ * **Example:** Low level: apply any Kubernetes manifest to the orchestrator
  * ```typescript
  * // HyperPod nodes are ordinary EKS nodes — target them from a raw
  * // manifest (a PyTorchJob CRD, a batch/v1 Job, ...) with the well-known
@@ -269,21 +292,27 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  * });
  * ```
  *
- * @example High level: an effectful Job pinned to HyperPod nodes
+ * **Example:** High level: an effectful Job pinned to HyperPod nodes
  * ```typescript
- * // AWS.EKS.Job / AWS.EKS.Deployment run on HyperPod via the orchestrating
- * // EKS cluster; the `hyperpod` prop derives the node selector, namespace,
- * // and Kueue labels — pass the ComputeQuota resource to submit through
- * // task governance.
- * const evaluate = yield* AWS.EKS.Job(
+ * // Kubernetes.Job / Kubernetes.Deployment run on HyperPod via the
+ * // orchestrating EKS cluster in plain Kubernetes vocabulary — the
+ * // HyperPod resources expose the derived values as attributes: the
+ * // group's `nodeSelector`, the quota's governed `namespace` and Kueue
+ * // `queueName`.
+ * const evaluate = yield* Kubernetes.Job(
  *   "Evaluate",
  *   {
  *     cluster: eksCluster,
  *     main: import.meta.url,
- *     hyperpod: {
- *       instanceGroup: "workers",
- *       quota,
- *       priorityClass: "training",
+ *     namespace: quota.namespace,
+ *     labels: {
+ *       [AWS.SageMaker.KUEUE_QUEUE_NAME_LABEL]: quota.queueName,
+ *       [AWS.SageMaker.KUEUE_PRIORITY_CLASS_LABEL]: "training-priority",
+ *     },
+ *     podTemplate: {
+ *       spec: {
+ *         nodeSelector: hyperpod.instanceGroups.workers.nodeSelector,
+ *       },
  *     },
  *   },
  *   Effect.gen(function* () {
@@ -297,8 +326,8 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  * );
  * ```
  *
- * @section Task Governance
- * @example Prioritize workloads with a scheduler policy and team quotas
+ * ### Task Governance
+ * **Example:** Prioritize workloads with a scheduler policy and team quotas
  * ```typescript
  * // Requires the amazon-sagemaker-hyperpod-taskgovernance EKS add-on.
  * const policy = yield* AWS.SageMaker.ClusterSchedulerConfig("Scheduler", {
@@ -309,8 +338,9 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  *   },
  * });
  *
- * // Creates the hyperpod-ns-research namespace + Kueue LocalQueue that
- * // `hyperpod: { quota }` on an EKS Job/Deployment submits into.
+ * // Creates the hyperpod-ns-research namespace + Kueue LocalQueue —
+ * // exposed as `quota.namespace` / `quota.queueName` for governed
+ * // Kubernetes workloads to reference.
  * const quota = yield* AWS.SageMaker.ComputeQuota("ResearchQuota", {
  *   clusterArn: hyperpod.clusterArn,
  *   computeQuotaTarget: { TeamName: "research", FairShareWeight: 10 },
@@ -321,6 +351,8 @@ export type ClusterOf<Groups> = Omit<Cluster, "instanceGroups"> & {
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Cluster: {
   <
@@ -381,6 +413,10 @@ const toAttrs = (
                 InstanceType: group.InstanceType,
                 CurrentCount: group.CurrentCount,
                 TargetCount: group.TargetCount,
+                nodeSelector: {
+                  [HYPERPOD_NODE_HEALTH_LABEL]: "Schedulable",
+                  [HYPERPOD_INSTANCE_GROUP_LABEL]: group.InstanceGroupName,
+                },
               },
             ],
           ]

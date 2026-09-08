@@ -18,9 +18,8 @@ export interface DescribeCertificateAuthorityAuditReportRequest extends Omit<
  * `ACMPCA.DescribeCertificateAuthorityAuditReportHttp` on the Function
  * effect to implement the binding.
  *
- * @binding
- * @section Audit Reports
- * @example Poll an Audit Report Until It Succeeds
+ * ### Audit Reports
+ * **Example:** Poll an Audit Report Until It Succeeds
  * ```typescript
  * // init
  * const describeAuditReport =
@@ -37,6 +36,8 @@ export interface DescribeCertificateAuthorityAuditReportRequest extends Omit<
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeCertificateAuthorityAuditReport extends Binding.Service<
   DescribeCertificateAuthorityAuditReport,

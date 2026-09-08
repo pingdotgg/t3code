@@ -5,16 +5,16 @@ sidebar:
   order: 8
 ---
 
-SolidStart builds through Vite: the `solidStart()` plugin in your
-`vite.config.ts` owns routing, SSR, and the server entry, and a
-single `vite build` produces the whole app. That makes it a pure-Vite
-project, so [`Cloudflare.Website.Vite`](/cloudflare/frontend/vite)
-deploys it directly — no adapter config, no Wrangler file, no manual
-entrypoint.
+[SolidStart](https://start.solidjs.com) builds through Vite: the
+`solidStart()` plugin in your `vite.config.ts` owns routing, SSR, and
+the server entry, and a single `vite build` produces the whole app.
+That makes it a pure-Vite project, so
+[`Cloudflare.Website.Vite`](/cloudflare/frontend/vite) deploys it
+directly — no adapter config, no Wrangler file, no manual entrypoint.
 
 :::note[Verified version line]
 The checked-in example
-([examples/cloudflare-solidstart](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-solidstart))
+([examples/cloudflare-website-solidstart](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-website-solidstart))
 pins `@solidjs/start` **2.0.0-alpha.2** with
 `@solidjs/vite-plugin-nitro-2` — the Vite-native alpha line where
 `solidStart()` is a plain Vite plugin. That is the version line
@@ -45,15 +45,31 @@ programmatic `vite build` picks up the client assets and the SSR
 server bundle from this one config — the server bundle becomes the
 deployed Worker, the client output becomes its static assets.
 
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.Vite("Website");
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+SolidStart's SSR server bundle uses Node APIs at runtime — the
+`nodejs_compat` compatibility flag covers that, and it is enabled by
+default for every Worker, so there is nothing to pass.
+
 ## Add it to the Stack
 
-Yield `Cloudflare.Website.Vite` from your Stack with `nodejs_compat`
-enabled:
+Yield the class from your Stack and return its URL:
 
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Alchemy.Stack(
@@ -63,11 +79,7 @@ export default Alchemy.Stack(
     state: Cloudflare.state(),
   },
   Effect.gen(function* () {
-    const worker = yield* Cloudflare.Website.Vite("CloudflareSolidStart", {
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
-    });
+    const worker = yield* Website;
 
     return {
       url: worker.url,
@@ -76,9 +88,38 @@ export default Alchemy.Stack(
 );
 ```
 
-The `nodejs_compat` flag is required because SolidStart's SSR server
-bundle uses Node APIs at runtime; without it the deployed Worker
-fails to start.
+## Add bindings
+
+Both env channels of the Vite resource apply unchanged:
+`VITE_`-prefixed entries are inlined into the client bundle as
+`import.meta.env.<KEY>` at build time, and everything else attaches
+to the SSR Worker as runtime bindings:
+
+```diff lang="typescript"
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export const Website = Cloudflare.Website.Vite("Website", {
++  env: {
++    UPLOADS: Uploads,
++    API_KEY: Config.redacted("API_KEY"),
++  },
+});
+```
+
+`Uploads` is a description, not a deploy — Alchemy provisions the
+real bucket because the Website binds it. `Config.redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
+
+`WebsiteEnv` (from
+[Declare the Website](#declare-the-website)) is the typed shape of
+the runtime bindings — import it wherever your server code reads the
+Worker env. See
+[the Vite resource page](/cloudflare/frontend/vite#environment) for
+how each env channel works.
 
 ## Hand-rolled SolidJS SSR
 
@@ -124,64 +165,14 @@ before the asset layer answers — set `assets.runWorkerFirst`:
 
 ```typescript
 // alchemy.run.ts
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Effect from "effect/Effect";
-
-export default Alchemy.Stack(
-  "CloudflareSolidJSSSRExample",
-  {
-    providers: Cloudflare.providers(),
-    state: Cloudflare.state(),
+export const SolidSsr = Cloudflare.Website.Vite("SolidJSSsr", {
+  assets: {
+    runWorkerFirst: true,
   },
-  Effect.gen(function* () {
-    const worker = yield* Cloudflare.Website.Vite("SolidJSSrr", {
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
-      assets: {
-        runWorkerFirst: true,
-      },
-    });
-
-    return {
-      url: worker.url,
-    };
-  }),
-);
+});
 ```
 
 With `runWorkerFirst: true` the SSR handler sees every request first
 and delegates to the `ASSETS` binding itself for static files —
 without it, a request matching a built asset (like `/index.html`)
 would be served directly and never hit your renderer.
-
-## Deploy
-
-```sh
-bun alchemy deploy
-```
-
-Alchemy runs the Vite build, uploads the client assets, deploys the
-SSR bundle as the Worker, and prints the stack's `url` output.
-Inputs are content-hashed, so re-deploying an unchanged project
-skips the build entirely.
-
-## Local dev
-
-```sh
-bun alchemy dev
-```
-
-`alchemy dev` boots Vite's own dev server programmatically — HMR and
-instant module updates work as in a plain SolidStart project, while
-any bound backend resources are the real cloud resources.
-
-## Environment variables and bindings
-
-Both env channels of the Vite resource apply unchanged: `VITE_`-prefixed
-`env` entries are inlined into the client bundle as
-`import.meta.env.<KEY>` at build time, and everything else attaches
-to the SSR Worker as runtime bindings. See
-[the Vite resource page](/cloudflare/frontend/vite) for how each
-channel works.

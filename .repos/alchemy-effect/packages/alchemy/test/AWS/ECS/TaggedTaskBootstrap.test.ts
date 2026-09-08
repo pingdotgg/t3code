@@ -51,20 +51,33 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW || !!process.env.FAST)(
 
       expect(taskDefinitionArn).toBeTruthy();
 
-      // Launch the one-shot task once, out-of-band.
-      const started = yield* ecs.runTask({
-        cluster: clusterArn,
-        taskDefinition: taskDefinitionArn!,
-        launchType: "FARGATE",
-        count: 1,
-        startedBy: "alchemy-tagged-bootstrap-test",
-        networkConfiguration: {
-          awsvpcConfiguration: {
-            subnets: [subnetId!],
-            assignPublicIp: "ENABLED",
+      // Launch the one-shot task once, out-of-band. The task/execution roles
+      // were created seconds ago: ECS rejects `runTask` with "unable to
+      // assume the role" until IAM propagates, so retry that one typed error
+      // (bounded).
+      const started = yield* ecs
+        .runTask({
+          cluster: clusterArn,
+          taskDefinition: taskDefinitionArn!,
+          launchType: "FARGATE",
+          count: 1,
+          startedBy: "alchemy-tagged-bootstrap-test",
+          networkConfiguration: {
+            awsvpcConfiguration: {
+              subnets: [subnetId!],
+              assignPublicIp: "ENABLED",
+            },
           },
-        },
-      });
+        })
+        .pipe(
+          Effect.retry({
+            while: (e) =>
+              e._tag === "ClientException" &&
+              (e.message ?? "").includes("unable to assume the role"),
+            schedule: Schedule.spaced("5 seconds"),
+            times: 12,
+          }),
+        );
       expect(started.failures ?? []).toEqual([]);
       const taskArn = started.tasks?.[0]?.taskArn;
       expect(taskArn).toBeTruthy();

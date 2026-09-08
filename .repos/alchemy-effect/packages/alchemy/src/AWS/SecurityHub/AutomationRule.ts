@@ -92,8 +92,8 @@ export interface AutomationRule extends Resource<
  * A Security Hub automation rule — automatically updates findings that match
  * its criteria (suppress, change severity, add notes) as they are ingested.
  *
- * @section Automating Finding Triage
- * @example Suppress Informational Findings
+ * ### Automating Finding Triage
+ * **Example:** Suppress Informational Findings
  * ```typescript
  * const rule = yield* AWS.SecurityHub.AutomationRule("SuppressInfo", {
  *   description: "Suppress informational findings",
@@ -108,7 +108,7 @@ export interface AutomationRule extends Resource<
  * });
  * ```
  *
- * @example Escalate Production Findings
+ * **Example:** Escalate Production Findings
  * ```typescript
  * const rule = yield* AWS.SecurityHub.AutomationRule("EscalateProd", {
  *   description: "Raise severity of findings on production resources",

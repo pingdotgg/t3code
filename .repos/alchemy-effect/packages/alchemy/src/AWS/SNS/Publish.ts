@@ -15,16 +15,15 @@ export interface PublishRequest extends Omit<
  * callable that automatically injects the `TopicArn`. The binding grants the
  * host function `sns:Publish` on the topic. Provide the `PublishHttp` layer
  * on the Function to implement the binding.
- * @binding
- * @section Publishing Messages
- * @example Publish from a Lambda Function
+ * ### Publishing Messages
+ * **Example:** Publish from a Lambda Function
  * ```typescript
  * export class ApiFunction extends Lambda.Function<Lambda.Function>()(
  *   "ApiFunction",
  * ) {}
  *
  * export default ApiFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const topic = yield* SNS.Topic("Events");
  *
@@ -46,6 +45,8 @@ export interface PublishRequest extends Omit<
  *   }).pipe(Effect.provide(SNS.PublishHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface Publish extends Binding.Service<
   Publish,

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the resources DevOps Guru is analyzing (or supports analyzing) — an audit of what the resource collection actually covers.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.ListMonitoredResourcesHttp)`.
- * @binding
- * @section Coverage Health
- * @example List Analyzed Resources
+ * ### Coverage Health
+ * **Example:** List Analyzed Resources
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listMonitoredResources = yield* AWS.DevOpsGuru.ListMonitoredResources();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const { MonitoredResourceIdentifiers } = yield* listMonitoredResources();
  * yield* Effect.log(`monitored: ${MonitoredResourceIdentifiers?.length}`);
  * ```
+ *
+ * @binding
  */
 export interface ListMonitoredResources extends Binding.Service<
   ListMonitoredResources,

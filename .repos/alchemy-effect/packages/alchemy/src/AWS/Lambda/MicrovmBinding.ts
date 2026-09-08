@@ -1,3 +1,9 @@
+import type {
+  AwsCredentialProviderError,
+  ResolvedCredentials,
+} from "@distilled.cloud/aws/Credentials";
+import * as Endpoint from "@distilled.cloud/aws/Endpoint";
+import { Region } from "@distilled.cloud/aws/Region";
 import * as Effect from "effect/Effect";
 import * as HashMap from "effect/HashMap";
 import * as Layer from "effect/Layer";
@@ -6,15 +12,12 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import { Region } from "@distilled.cloud/aws/Region";
+import { AlchemyContext } from "../../AlchemyContext.ts";
 import * as Binding from "../../Binding.ts";
 import type { Input } from "../../Input.ts";
 import * as Output from "../../Output.ts";
 import type { ResourceLike } from "../../Resource.ts";
-import type {
-  AwsCredentialProviderError,
-  ResolvedCredentials,
-} from "@distilled.cloud/aws/Credentials";
+import { DEFAULT_LOCAL_ENDPOINT } from "../AuthProvider.ts";
 import { Credentials, makeAssumeRoleResolver } from "../Credentials.ts";
 import { AccessKey } from "../IAM/AccessKey.ts";
 import type { PolicyStatement } from "../IAM/Policy.ts";
@@ -41,7 +44,8 @@ type Operation<Res, Err> = Effect.Effect<
 const WORKER_TYPE_ID = "Cloudflare.Worker";
 type WorkerHost = ResourceLike & {
   bind: (
-    sid: string,
+    template: TemplateStringsArray,
+    ...args: unknown[]
   ) => (binding: Input<{ bindings?: unknown[] }>) => Effect.Effect<void>;
 };
 const isWorkerHost = (host: ResourceLike): host is WorkerHost =>
@@ -267,6 +271,27 @@ const ensureWorkerAwsAccess = (host: WorkerHost) =>
         },
       });
 
+      // Local dev: the AWS side of this binding runs on the emulator, so the
+      // worker's STS AssumeRole and MicroVM calls must too. Bake the
+      // LocalStack-standard `AWS_ENDPOINT_URL` into the worker env — the same
+      // override the emulator injects into Lambda containers, picked up at
+      // runtime by `Endpoint.fromEnv()` in `withRuntimeCredentials`. Deploy
+      // runs (dev=false) bind nothing, so live behavior is unchanged.
+      if (!globalThis.__ALCHEMY_RUNTIME__) {
+        const context = yield* Effect.serviceOption(AlchemyContext);
+        if (Option.isSome(context) && context.value.dev) {
+          yield* host.bind`${id}-microvm-endpoint`({
+            bindings: [
+              {
+                type: "plain_text",
+                name: "AWS_ENDPOINT_URL",
+                text: DEFAULT_LOCAL_ENDPOINT,
+              },
+            ],
+          });
+        }
+      }
+
       // Bind the user's credentials + role ARN onto the worker via accessors:
       // at deploy this registers the env (the secret as `secret_text`); at
       // runtime these resolve to the deployed values.
@@ -290,6 +315,9 @@ const ensureWorkerAwsAccess = (host: WorkerHost) =>
                 : Redacted.make(secret)
               : Redacted.make(""),
             sessionToken: undefined,
+            // STS AssumeRole is signed against a fixed global endpoint region;
+            // per-request operations provide their own image-derived Region.
+            region: "us-east-1",
           } satisfies ResolvedCredentials;
         }),
       );
@@ -327,9 +355,18 @@ const withRuntimeCredentials = <A, E>(
         // so the assumed-role credentials are reused (and only refreshed near
         // expiry) instead of re-assuming the role on every call.
         return yield* eff.pipe(
-          Effect.provide(Layer.succeed(Credentials, access.credentials)),
-          Effect.provide(Layer.succeed(Region, Effect.succeed(reg))),
-          Effect.provide(FetchHttpClient.layer),
+          Effect.provide(
+            Layer.succeed(Credentials, access.credentials).pipe(
+              Layer.provideMerge(Layer.succeed(Region, Effect.succeed(reg))),
+              // `AWS_ENDPOINT_URL` from the worker env (bound under local
+              // dev by `ensureWorkerAwsAccess`); resolves undefined when
+              // unset, so live workers keep the real AWS endpoints. The
+              // shared assume-role resolver also reads this ambient
+              // Endpoint for its STS call.
+              Layer.provideMerge(Endpoint.fromEnv()),
+              Layer.provideMerge(FetchHttpClient.layer),
+            ),
+          ),
         );
       })
     : eff;
@@ -351,7 +388,7 @@ export const makeImageBinding = <Req, Res, Err, Self>(
       return Effect.fn(function* (image: MicrovmImage) {
         const host = yield* Binding.Host;
         const statements = imagePolicyStatements(image, options);
-        const label = `Allow(${host.LogicalId}, AWS.Lambda.${options.name}(${image.LogicalId}))`;
+        const label = `Allow(${host?.LogicalId}, AWS.Lambda.${options.name}(${image.LogicalId}))`;
 
         // Accessors (registered on the host at deploy, resolved at runtime).
         const imageArn = yield* image.imageArn;
@@ -365,7 +402,7 @@ export const makeImageBinding = <Req, Res, Err, Self>(
           if (!globalThis.__ALCHEMY_RUNTIME__) {
             yield* host.bind`${label}`({ policyStatements: statements });
           }
-        } else if (isWorkerHost(host)) {
+        } else if (host !== undefined && isWorkerHost(host)) {
           access = yield* ensureWorkerAwsAccess(host);
           if (!globalThis.__ALCHEMY_RUNTIME__) {
             yield* access.role.bind`${label}`({ policyStatements: statements });
@@ -413,7 +450,7 @@ export const makeAccountBinding = <Req, Res, Err, Self>(
       const run = yield* options.operation;
       return Effect.fn(function* () {
         const host = yield* Binding.Host;
-        const label = `Allow(${host.LogicalId}, AWS.Lambda.${options.name}())`;
+        const label = `Allow(${host?.LogicalId}, AWS.Lambda.${options.name}())`;
         const statements: Input<PolicyStatement>[] = [
           { Effect: "Allow", Action: options.actions, Resource: ["*"] },
         ];
@@ -423,7 +460,7 @@ export const makeAccountBinding = <Req, Res, Err, Self>(
           if (!globalThis.__ALCHEMY_RUNTIME__) {
             yield* host.bind`${label}`({ policyStatements: statements });
           }
-        } else if (isWorkerHost(host)) {
+        } else if (host !== undefined && isWorkerHost(host)) {
           access = yield* ensureWorkerAwsAccess(host);
           if (!globalThis.__ALCHEMY_RUNTIME__) {
             yield* access.role.bind`${label}`({ policyStatements: statements });

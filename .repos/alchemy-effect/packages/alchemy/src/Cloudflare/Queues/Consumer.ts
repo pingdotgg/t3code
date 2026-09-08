@@ -1,5 +1,7 @@
 import * as queues from "@distilled.cloud/cloudflare/queues";
+import * as workers from "@distilled.cloud/cloudflare/workers";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -9,11 +11,13 @@ import * as ProviderLayer from "../../Local/ProviderLayer.ts";
 import * as RpcProvider from "../../Local/RpcProvider.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
+import { Stack } from "../../Stack.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import {
   isLiveId,
   LOCAL_ENTRY_URL,
   LocalRuntimeState,
+  localRuntimeServices,
 } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
 
@@ -72,6 +76,18 @@ export type Consumer = Resource<
     accountId: string;
     deadLetterQueue?: string;
     settings?: ConsumerSettings;
+    /**
+     * Dev only, live queues only: the real queue's name, resolved from the
+     * cloud so the local runtime can wire the broker + pull loop for a
+     * locally-running consumer of an `Alchemy.remote()` queue.
+     */
+    queueName?: string;
+    /**
+     * Dev only, live queues only: id of the `http_pull` consumer attached
+     * to the real queue so the local runtime can drain it via the HTTP
+     * pull API. Deleted when this resource is deleted.
+     */
+    pullConsumerId?: string;
   },
   never,
   Providers
@@ -85,13 +101,12 @@ export type Consumer = Resource<
  *
  * Cloudflare allows at most one Worker consumer per queue (HTTP-pull
  * consumers can coexist). The reconciler enforces this: if the queue
- * already has a Worker consumer pointing at a different script, the
- * deploy fails with a clear error rather than silently adopting it.
- * @resource
- * @product Queues
- * @category Storage & Databases
- * @section Registering a Consumer
- * @example Basic consumer
+ * already has a Worker consumer pointing at a different logical Worker's
+ * script, the deploy fails with a clear error rather than silently
+ * adopting it. A stranded consumer from a prior generation of the *same*
+ * Worker (identified by the scripts' ownership tags) is rebuilt in place.
+ * ### Registering a Consumer
+ * **Example:** Basic consumer
  * ```typescript
  * const queue = yield* Cloudflare.Queues.Queue("MyQueue");
  * const worker = yield* Cloudflare.Worker("Worker", { ... });
@@ -102,7 +117,7 @@ export type Consumer = Resource<
  * });
  * ```
  *
- * @example Consumer with settings
+ * **Example:** Consumer with settings
  * ```typescript
  * yield* Cloudflare.Queues.Consumer("MyConsumer", {
  *   queueId: queue.queueId,
@@ -114,9 +129,76 @@ export type Consumer = Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
+ * @product Queues
+ * @category Storage & Databases
  */
 export const Consumer = Resource<Consumer>("Cloudflare.Queues.Consumer", {
   aliases: ["Cloudflare.QueueConsumer"],
+});
+
+/**
+ * Find and detach every worker queue-consumer pointing at `scriptName`.
+ * Queue consumers have no by-script lookup, so scan the account's queues
+ * (the list response inlines each queue's consumers). Waits until each
+ * detach propagates to the workers subsystem so a follow-up deleteScript
+ * doesn't re-race the conflict.
+ *
+ * Shared by the Worker provider's script delete (QueueConsumerConflict
+ * recovery) and the Queue provider's orphaned-script cleanup.
+ *
+ * @internal
+ */
+export const detachQueueConsumersOfScript = Effect.fn(function* (
+  accountId: string,
+  scriptName: string,
+) {
+  const pages = yield* queues.listQueues.pages({ accountId }).pipe(
+    Stream.runCollect,
+    Effect.catchTag("InvalidRoute", () => Effect.succeed([])),
+  );
+  const targets = Array.from(pages).flatMap((page) =>
+    (page.result ?? []).flatMap((queue) =>
+      (queue.consumers ?? []).flatMap((consumer) =>
+        queue.queueId &&
+        consumer.type === "worker" &&
+        consumer.consumerId &&
+        "scriptName" in consumer &&
+        consumer.scriptName === scriptName
+          ? [{ queueId: queue.queueId, consumerId: consumer.consumerId }]
+          : [],
+      ),
+    ),
+  );
+  yield* Effect.forEach(
+    targets,
+    ({ queueId, consumerId }) =>
+      queues.deleteConsumer({ accountId, queueId, consumerId }).pipe(
+        Effect.catchTag(
+          ["ConsumerNotFound", "QueueNotFound"],
+          () => Effect.void,
+        ),
+        Effect.andThen(
+          queues.getConsumer({ accountId, queueId, consumerId }).pipe(
+            Effect.flatMap(() => Effect.fail("still-attached" as const)),
+            Effect.catchTag(
+              ["ConsumerNotFound", "QueueNotFound"],
+              () => Effect.void,
+            ),
+            Effect.retry({
+              while: (e) => e === "still-attached",
+              schedule: Schedule.max([
+                Schedule.spaced("1 second"),
+                Schedule.recurs(30),
+              ]),
+            }),
+            Effect.ignore,
+          ),
+        ),
+      ),
+    { concurrency: 5, discard: true },
+  );
 });
 
 // Cloudflare allows a single Worker consumer per queue, so the
@@ -244,6 +326,29 @@ export const ConsumerProviderLive = () =>
       // Otherwise, the lookup will fail because the request is malformed.
       const queueId = isLiveId(output?.queueId) ? output.queueId : news.queueId;
 
+      // Delete a consumer and wait for Cloudflare's worker subsystem to
+      // drop its claim on the old script so createConsumer below doesn't
+      // race the queue↔script propagation lag.
+      const detachConsumer = Effect.fn(function* (consumerId: string) {
+        yield* queues
+          .deleteConsumer({ accountId: acct, queueId, consumerId })
+          .pipe(Effect.catchTag("ConsumerNotFound", () => Effect.void));
+        yield* queues
+          .getConsumer({ accountId: acct, queueId, consumerId })
+          .pipe(
+            Effect.flatMap(() => Effect.fail("still-attached" as const)),
+            Effect.catchTag("ConsumerNotFound", () => Effect.void),
+            Effect.retry({
+              while: (e) => e === "still-attached",
+              schedule: Schedule.max([
+                Schedule.spaced("1 second"),
+                Schedule.recurs(30),
+              ]),
+            }),
+            Effect.ignore,
+          );
+      });
+
       // Observe — prefer the cached consumerId, then fall back to
       // listConsumers (paginated) to recover from out-of-band
       // deletes or partial state-persistence failures. Track
@@ -284,61 +389,77 @@ export const ConsumerProviderLive = () =>
       if (
         owned &&
         observed &&
-        observed.script !== undefined &&
-        observed.script !== news.scriptName
+        observed.scriptName !== undefined &&
+        observed.scriptName !== news.scriptName
       ) {
-        yield* queues
-          .deleteConsumer({
-            accountId: acct,
-            queueId,
-            consumerId: observed.consumerId,
-          })
-          .pipe(Effect.catchTag("ConsumerNotFound", () => Effect.void));
-        // Wait for Cloudflare's worker subsystem to drop its
-        // claim on the old script so createConsumer below
-        // doesn't race the queue↔script propagation lag.
-        yield* queues
-          .getConsumer({
-            accountId: acct,
-            queueId,
-            consumerId: observed.consumerId,
-          })
-          .pipe(
-            Effect.flatMap(() => Effect.fail("still-attached" as const)),
-            Effect.catchTag("ConsumerNotFound", () => Effect.void),
-            Effect.retry({
-              while: (e) => e === "still-attached",
-              schedule: Schedule.max([
-                Schedule.spaced("1 second"),
-                Schedule.recurs(30),
-              ]),
-            }),
-            Effect.ignore,
-          );
+        yield* detachConsumer(observed.consumerId);
         observed = undefined;
         owned = false;
       }
 
-      // Refuse to take over a foreign consumer on the state-loss
-      // path. With `owned=false` we found this via the list scan
-      // and the script mismatch means it belongs to another
-      // resource or was created out-of-band — silent adoption
-      // would clobber that.
+      // A consumer found via the list scan (state loss) pointing at a
+      // different script. Probe the script it points at: when it no
+      // longer exists, or is a *prior generation of the same logical
+      // Worker* (same `alchemy:stack/stage/id` ownership tags as the
+      // configured script — replacements mint a new physical name, and
+      // a crashed apply can strand the old generation's consumer with
+      // its state entry lost), the wiring is ours to rebuild. Any other
+      // script — another team's, or a *different* Worker in this stack
+      // (a real misconfiguration: two consumers declared for one queue)
+      // — is refused loudly rather than silently stolen.
       if (
         observed &&
         !owned &&
-        observed.script !== undefined &&
-        observed.script !== news.scriptName
+        observed.scriptName !== undefined &&
+        observed.scriptName !== news.scriptName
       ) {
-        return yield* Effect.die(
-          `Cloudflare queue "${queueId}" already has a worker ` +
-            `consumer for script "${observed.script}", but this ` +
-            `resource is configured for "${news.scriptName}" and ` +
-            `local state for the consumer was missing. Each queue ` +
-            `can have only one worker consumer — delete the ` +
-            `existing one, update scriptName to match, or restore ` +
-            `the consumer's state entry before redeploying.`,
-        );
+        const scriptTags = Effect.fn(function* (scriptName: string) {
+          const settings = yield* workers
+            .getScriptScriptAndVersionSetting({
+              accountId: acct,
+              scriptName,
+            })
+            .pipe(
+              Effect.catchTag(["WorkerNotFound", "WorkerHasNoVersions"], () =>
+                Effect.succeed(undefined),
+              ),
+            );
+          return settings === undefined
+            ? undefined
+            : new Set(settings.tags ?? []);
+        });
+        const observedTags = yield* scriptTags(observed.scriptName);
+        let staleGeneration = observedTags === undefined;
+        if (observedTags !== undefined) {
+          const stack = yield* Stack;
+          const desiredTags = news.scriptName
+            ? yield* scriptTags(news.scriptName)
+            : undefined;
+          const observedId = Array.from(observedTags).find((t) =>
+            t.startsWith("alchemy:id:"),
+          );
+          staleGeneration =
+            observedId !== undefined &&
+            observedTags.has(`alchemy:stack:${stack.name}`) &&
+            observedTags.has(`alchemy:stage:${stack.stage}`) &&
+            desiredTags !== undefined &&
+            desiredTags.has(observedId) &&
+            desiredTags.has(`alchemy:stack:${stack.name}`) &&
+            desiredTags.has(`alchemy:stage:${stack.stage}`);
+        }
+        if (!staleGeneration) {
+          return yield* Effect.die(
+            `Cloudflare queue "${queueId}" already has a worker ` +
+              `consumer for script "${observed.scriptName}", but this ` +
+              `resource is configured for "${news.scriptName}" and ` +
+              `local state for the consumer was missing. Each queue ` +
+              `can have only one worker consumer — delete the ` +
+              `existing one, update scriptName to match, or restore ` +
+              `the consumer's state entry before redeploying.`,
+          );
+        }
+        yield* detachConsumer(observed.consumerId);
+        observed = undefined;
       }
 
       // Ensure — create if missing. ConsumerAlreadyExists is the
@@ -392,12 +513,12 @@ export const ConsumerProviderLive = () =>
                   );
                 }
                 if (
-                  match.script !== undefined &&
-                  match.script !== news.scriptName
+                  match.scriptName !== undefined &&
+                  match.scriptName !== news.scriptName
                 ) {
                   return yield* Effect.die(
                     `Cloudflare queue "${queueId}" already has a ` +
-                      `worker consumer for script "${match.script}", ` +
+                      `worker consumer for script "${match.scriptName}", ` +
                       `but this resource is configured for ` +
                       `"${news.scriptName}". Each queue can have only ` +
                       `one worker consumer — delete the existing one ` +
@@ -438,7 +559,7 @@ export const ConsumerProviderLive = () =>
 
       yield* queues.getConsumer({ accountId: acct, queueId, consumerId }).pipe(
         Effect.flatMap((fetched) =>
-          toObserved(fetched)?.script === news.scriptName
+          toObserved(fetched)?.scriptName === news.scriptName
             ? Effect.void
             : Effect.fail("ScriptUnbound" as const),
         ),
@@ -513,10 +634,7 @@ export const ConsumerProviderLive = () =>
           return {
             consumerId: fetched.consumerId!,
             queueId: output.queueId,
-            scriptName:
-              ("scriptName" in fetched && typeof fetched.scriptName === "string"
-                ? fetched.scriptName
-                : output.scriptName) ?? output.scriptName,
+            scriptName: toObserved(fetched)?.scriptName ?? output.scriptName,
             accountId: output.accountId,
             deadLetterQueue: output.deadLetterQueue,
             settings: output.settings,
@@ -536,7 +654,7 @@ export const ConsumerProviderLive = () =>
           return {
             consumerId: match.consumerId,
             queueId: output.queueId,
-            scriptName: match.script ?? output.scriptName,
+            scriptName: match.scriptName ?? output.scriptName,
             accountId: output.accountId,
             deadLetterQueue: output.deadLetterQueue,
             settings: output.settings,
@@ -549,7 +667,7 @@ export const ConsumerProviderLive = () =>
 
 type ObservedConsumer = {
   consumerId: string;
-  script: string | undefined;
+  scriptName: string | undefined;
 };
 
 const toObserved = (c: {
@@ -558,7 +676,7 @@ const toObserved = (c: {
   type?: "worker" | "http_pull" | null;
 }): ObservedConsumer | undefined =>
   c.consumerId && c.type === "worker"
-    ? { consumerId: c.consumerId, script: c.scriptName ?? undefined }
+    ? { consumerId: c.consumerId, scriptName: c.scriptName ?? undefined }
     : undefined;
 
 // ~60s budget — Worker reconcile uploads typically land in 2–10s,
@@ -603,6 +721,13 @@ export const ConsumerProviderLocal = () =>
         diff: Effect.fn(function* ({ news, output }) {
           const { accountId } = yield* yield* CloudflareEnvironment;
           if (!output) return { action: "update" };
+          // A real (non-`dev:`) consumerId on a local-mode row is legacy
+          // damage from pre-stamping dev runs — replace so the new
+          // generation mints a true local identity (delete best-effort
+          // detaches the stray live consumer).
+          if (isLiveId(output.consumerId)) {
+            return { action: "replace" };
+          }
           if (!isResolved(news)) return undefined;
           if (
             output.queueId !== news.queueId ||
@@ -636,13 +761,55 @@ export const ConsumerProviderLocal = () =>
         }),
         reconcile: Effect.fn(function* ({ news, output }) {
           const { accountId } = yield* yield* CloudflareEnvironment;
+          // A LIVE queue (`Alchemy.remote()`) consumed by a LOCAL worker:
+          // Cloudflare only pushes to deployed consumers, so the local
+          // runtime drains the real queue via the HTTP pull API instead.
+          // Observe the queue (name + existing consumers) and ensure an
+          // `http_pull` consumer exists for the pull loop to lease from.
+          let queueName: string | undefined;
+          let pullConsumerId: string | undefined;
+          if (isLiveId(news.queueId)) {
+            const queue = yield* queues.getQueue({
+              accountId,
+              queueId: news.queueId,
+            });
+            queueName = queue.queueName ?? undefined;
+            const existingPull = (queue.consumers ?? []).find(
+              (c) => c.type === "http_pull",
+            );
+            if (existingPull?.consumerId) {
+              pullConsumerId = existingPull.consumerId;
+            } else {
+              const created = yield* queues.createConsumer({
+                accountId,
+                queueId: news.queueId,
+                type: "http_pull",
+                settings: {
+                  batchSize: news.settings?.batchSize,
+                  maxRetries: news.settings?.maxRetries,
+                  retryDelay: news.settings?.retryDelay,
+                },
+              });
+              pullConsumerId =
+                ("consumerId" in created ? created.consumerId : undefined) ??
+                undefined;
+            }
+          }
           const consumer: Consumer["Attributes"] = {
-            consumerId: output?.consumerId ?? `dev:${crypto.randomUUID()}`,
+            // Never carry a real (non-`dev:`) consumer id forward onto a
+            // local row — it belongs to a live consumer this row no longer
+            // manages (legacy pre-stamping damage).
+            consumerId:
+              output?.consumerId && !isLiveId(output.consumerId)
+                ? output.consumerId
+                : `dev:${crypto.randomUUID()}`,
             queueId: news.queueId,
             scriptName: news.scriptName,
             deadLetterQueue: news.deadLetterQueue,
             accountId,
             settings: news.settings,
+            queueName,
+            pullConsumerId,
           };
           MutableHashMap.set(
             localRuntimeState.queueConsumers,
@@ -668,13 +835,50 @@ export const ConsumerProviderLocal = () =>
             output.consumerId,
           );
           yield* restartScripts([output.scriptName]);
+          // Legacy local-mode rows written before providerMode stamping can
+          // carry a real consumer's id — detach the live consumer too so
+          // migrating the row to a true local identity doesn't strand it on
+          // the queue (a stranded worker consumer blocks every future
+          // createConsumer with ConsumerAlreadyExists).
+          if (isLiveId(output.consumerId) && isLiveId(output.queueId)) {
+            yield* queues
+              .deleteConsumer({
+                accountId: output.accountId,
+                queueId: output.queueId,
+                consumerId: output.consumerId,
+              })
+              .pipe(
+                Effect.catchTag(
+                  ["ConsumerNotFound", "QueueNotFound"],
+                  () => Effect.void,
+                ),
+              );
+          }
+          // Remove the http_pull consumer this row attached to its live
+          // queue. Idempotent: gone-already (or queue deleted first) is
+          // success.
+          if (output.pullConsumerId && isLiveId(output.queueId)) {
+            yield* queues
+              .deleteConsumer({
+                accountId: output.accountId,
+                queueId: output.queueId,
+                consumerId: output.pullConsumerId,
+              })
+              .pipe(
+                Effect.catchTag(
+                  ["ConsumerNotFound", "QueueNotFound"],
+                  () => Effect.void,
+                ),
+              );
+          }
         }),
       };
     }),
   );
 
 export const ConsumerProvider = () =>
-  ProviderLayer.select({
-    local: () => ConsumerProviderLocal(),
+  ProviderLayer.dual(Consumer, {
+    local: () =>
+      ConsumerProviderLocal().pipe(Layer.provide(localRuntimeServices())),
     live: () => ConsumerProviderLive(),
   });

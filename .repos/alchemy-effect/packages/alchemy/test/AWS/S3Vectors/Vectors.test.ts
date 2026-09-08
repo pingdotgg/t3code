@@ -77,7 +77,7 @@ describe("S3Vectors Bindings", () => {
     { timeout: 240_000 },
   );
 
-  afterAll(sharedStack.destroy(), { timeout: 120_000 });
+  afterAll(sharedStack.destroy(), { timeout: 300_000 });
 
   describe("Vectors", () => {
     test.provider(

@@ -16,9 +16,8 @@ export interface AssociateQAppWithUserRequest extends Omit<
  *
  * Links the calling identity to the bound Q App, marking it as a favorite in the user's inventory. Provide the implementation with
  * `Effect.provide(AWS.QApps.AssociateQAppWithUserHttp)`.
- * @binding
- * @section User Inventory
- * @example Favorite the App
+ * ### User Inventory
+ * **Example:** Favorite the App
  * ```typescript
  * // init — bind the operation to the Q App
  * const associateQAppWithUser = yield* AWS.QApps.AssociateQAppWithUser(app);
@@ -26,6 +25,8 @@ export interface AssociateQAppWithUserRequest extends Omit<
  * // runtime
  * yield* associateQAppWithUser();
  * ```
+ *
+ * @binding
  */
 export interface AssociateQAppWithUser extends Binding.Service<
   AssociateQAppWithUser,

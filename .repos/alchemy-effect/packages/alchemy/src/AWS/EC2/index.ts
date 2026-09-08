@@ -10,6 +10,8 @@ export * from "./DhcpOptions.ts";
 export * from "./EgressOnlyInternetGateway.ts";
 export * from "./EIP.ts";
 export * from "./FlowLog.ts";
+export * from "./GetAmi.ts";
+export * from "./GetAmiHttp.ts";
 export * from "./GetConsoleOutput.ts";
 export * from "./GetConsoleOutputHttp.ts";
 export * from "./GetPasswordData.ts";

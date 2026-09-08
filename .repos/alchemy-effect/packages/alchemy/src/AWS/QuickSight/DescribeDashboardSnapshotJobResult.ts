@@ -12,9 +12,8 @@ import type { Dashboard } from "./Dashboard.ts";
  * and `DashboardId` are injected from the binding. Provide the
  * implementation with
  * `Effect.provide(AWS.QuickSight.DescribeDashboardSnapshotJobResultHttp)`.
- * @binding
- * @section Dashboard Snapshots
- * @example Download A Completed Snapshot
+ * ### Dashboard Snapshots
+ * **Example:** Download A Completed Snapshot
  * ```typescript
  * // init — bind the operation to the dashboard
  * const describeSnapshotJobResult =
@@ -26,6 +25,8 @@ import type { Dashboard } from "./Dashboard.ts";
  * });
  * const url = Result?.AnonymousUsers?.[0]?.FileGroups?.[0]?.Files?.[0];
  * ```
+ *
+ * @binding
  */
 export interface DescribeDashboardSnapshotJobResult extends Binding.Service<
   DescribeDashboardSnapshotJobResult,

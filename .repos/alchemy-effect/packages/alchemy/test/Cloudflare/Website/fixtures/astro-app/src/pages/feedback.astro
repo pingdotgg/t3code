@@ -1,0 +1,27 @@
+---
+// Server-handled form POST: GET renders the form; POST (same route) reads
+// the urlencoded body server-side and re-renders with the echoed message —
+// pins that POSTs reach the Worker through the asset router. Direct fetch()
+// POSTs (no Origin header) work because the user config sets
+// `security.checkOrigin: false`.
+let submitted: string | null = null;
+if (Astro.request.method === "POST") {
+  const data = await Astro.request.formData();
+  submitted = data.get("message")?.toString() ?? null;
+}
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Feedback — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>Feedback</h1>
+    {submitted !== null && <p id="feedback-result">received: {submitted}</p>}
+    <form method="POST" action="/feedback">
+      <input id="message" name="message" type="text" />
+      <button id="submit" type="submit">Send</button>
+    </form>
+  </body>
+</html>

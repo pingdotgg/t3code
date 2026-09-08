@@ -34,9 +34,8 @@ export interface StartFHIRImportJobRequest extends Omit<
  * store. Track the job with {@link DescribeFHIRImportJob}. Provide the
  * implementation with `Effect.provide(AWS.HealthLake.StartFHIRImportJobHttp)`.
  *
- * @binding
- * @section Importing FHIR Data
- * @example Start a Bulk FHIR Import Job
+ * ### Importing FHIR Data
+ * **Example:** Start a Bulk FHIR Import Job
  * ```typescript
  * // deploy time — bind the data store and the HealthLake data-access role
  * const startImport = yield* HealthLake.StartFHIRImportJob(datastore, dataAccessRole);
@@ -53,6 +52,8 @@ export interface StartFHIRImportJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartFHIRImportJob extends Binding.Service<
   StartFHIRImportJob,

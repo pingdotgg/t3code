@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.ListAWSServiceAccessForOrganizationHttp)`.
- * @binding
- * @section Delegated Administration & Trusted Access
- * @example List Trusted-Access Services
+ * ### Delegated Administration & Trusted Access
+ * **Example:** List Trusted-Access Services
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listAWSServiceAccessForOrganization = yield* AWS.Organizations.ListAWSServiceAccessForOrganization();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { EnabledServicePrincipals } =
  *   yield* listAWSServiceAccessForOrganization();
  * ```
+ *
+ * @binding
  */
 export interface ListAWSServiceAccessForOrganization extends Binding.Service<
   ListAWSServiceAccessForOrganization,

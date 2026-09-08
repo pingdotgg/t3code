@@ -60,9 +60,8 @@ export interface List extends Resource<
  * allow-list or deny-list, e.g. known-fraud IP addresses) referenced from
  * detector rule expressions.
  *
- * @resource
- * @section Creating a List
- * @example Deny-list of IP Addresses
+ * ### Creating a List
+ * **Example:** Deny-list of IP Addresses
  * ```typescript
  * const blockedIps = yield* FraudDetector.List("BlockedIps", {
  *   variableType: "IP_ADDRESS",
@@ -71,8 +70,8 @@ export interface List extends Resource<
  * });
  * ```
  *
- * @section Using a List at Runtime
- * @example Append to the List from a Lambda
+ * ### Using a List at Runtime
+ * **Example:** Append to the List from a Lambda
  * ```typescript
  * // init
  * const updateList = yield* FraudDetector.UpdateList(blockedIps);
@@ -87,6 +86,8 @@ export interface List extends Resource<
  * //   FraudDetector.GetListElementsHttp,
  * // )))
  * ```
+ *
+ * @resource
  */
 export const List = Resource<List>("AWS.FraudDetector.List");
 

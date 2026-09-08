@@ -87,16 +87,15 @@ export interface StorageLensConfiguration extends Resource<
  * organization-wide) storage analytics dashboard aggregating usage and
  * activity metrics across buckets, with optional daily export to S3 or
  * CloudWatch.
- * @resource
- * @section Creating Dashboards
- * @example Free-metrics dashboard over the whole account
+ * ### Creating Dashboards
+ * **Example:** Free-metrics dashboard over the whole account
  * ```typescript
  * import * as S3Control from "alchemy/AWS/S3Control";
  *
  * const lens = yield* S3Control.StorageLensConfiguration("account-lens", {});
  * ```
  *
- * @example Dashboard scoped to specific buckets
+ * **Example:** Dashboard scoped to specific buckets
  * ```typescript
  * const lens = yield* S3Control.StorageLensConfiguration("data-lens", {
  *   include: {
@@ -105,7 +104,7 @@ export interface StorageLensConfiguration extends Resource<
  * });
  * ```
  *
- * @example Advanced metrics with S3 export
+ * **Example:** Advanced metrics with S3 export
  * ```typescript
  * const lens = yield* S3Control.StorageLensConfiguration("advanced-lens", {
  *   accountLevel: {
@@ -125,12 +124,14 @@ export interface StorageLensConfiguration extends Resource<
  * });
  * ```
  *
- * @example Disable a dashboard without deleting it
+ * **Example:** Disable a dashboard without deleting it
  * ```typescript
  * const lens = yield* S3Control.StorageLensConfiguration("account-lens", {
  *   isEnabled: false,
  * });
  * ```
+ *
+ * @resource
  */
 export const StorageLensConfiguration = Resource<StorageLensConfiguration>(
   "AWS.S3Control.StorageLensConfiguration",

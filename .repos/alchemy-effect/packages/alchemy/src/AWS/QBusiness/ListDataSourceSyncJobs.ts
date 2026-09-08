@@ -19,14 +19,15 @@ export interface ListDataSourceSyncJobsRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.ListDataSourceSyncJobsHttp)`.
  *
- * @binding
- * @section Data Source Sync
- * @example List Sync Job History
+ * ### Data Source Sync
+ * **Example:** List Sync Job History
  * ```typescript
  * const listSyncJobs = yield* AWS.QBusiness.ListDataSourceSyncJobs(source);
  *
  * const { history } = yield* listSyncJobs();
  * ```
+ *
+ * @binding
  */
 export interface ListDataSourceSyncJobs extends Binding.Service<
   ListDataSourceSyncJobs,

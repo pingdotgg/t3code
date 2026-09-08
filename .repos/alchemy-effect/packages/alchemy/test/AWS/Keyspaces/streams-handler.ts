@@ -15,7 +15,7 @@ export class KeyspacesStreamsTestFunction extends Lambda.Function<Lambda.Functio
 export default KeyspacesStreamsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

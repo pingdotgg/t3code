@@ -46,9 +46,8 @@ export interface AccessPointPolicy extends Resource<
  *
  * Note that the underlying bucket must delegate access control to the access
  * point (or the principals must also be allowed by the bucket policy).
- * @resource
- * @section Attaching a Policy
- * @example Allow a role to read objects through the access point
+ * ### Attaching a Policy
+ * **Example:** Allow a role to read objects through the access point
  * ```typescript
  * import * as S3Control from "alchemy/AWS/S3Control";
  *
@@ -71,6 +70,8 @@ export interface AccessPointPolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessPointPolicy = Resource<AccessPointPolicy>(
   "AWS.S3Control.AccessPointPolicy",

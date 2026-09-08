@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Returns the details of a single anomaly — severity, status, time ranges, and the CloudWatch/Performance Insights metrics that triggered it.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.DescribeAnomalyHttp)`.
- * @binding
- * @section Inspecting Anomalies
- * @example Read an Anomaly's Detail
+ * ### Inspecting Anomalies
+ * **Example:** Read an Anomaly's Detail
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeAnomaly = yield* AWS.DevOpsGuru.DescribeAnomaly();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const { ReactiveAnomaly } = yield* describeAnomaly({ Id: anomalyId });
  * yield* Effect.log(`severity: ${ReactiveAnomaly?.Severity}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeAnomaly extends Binding.Service<
   DescribeAnomaly,

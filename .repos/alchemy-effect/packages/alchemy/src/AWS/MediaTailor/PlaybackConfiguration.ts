@@ -233,9 +233,8 @@ export interface PlaybackConfiguration extends Resource<
  * An AWS Elemental MediaTailor playback configuration for server-side ad
  * insertion (SSAI) into HLS and DASH video streams.
  *
- * @resource
- * @section Creating Playback Configurations
- * @example Basic ad-inserted stream
+ * ### Creating Playback Configurations
+ * **Example:** Basic ad-inserted stream
  * ```typescript
  * import * as MediaTailor from "alchemy/AWS/MediaTailor";
  *
@@ -245,7 +244,7 @@ export interface PlaybackConfiguration extends Resource<
  * });
  * ```
  *
- * @example Slate fill and personalization threshold
+ * **Example:** Slate fill and personalization threshold
  * ```typescript
  * const config = yield* MediaTailor.PlaybackConfiguration("Ads", {
  *   adDecisionServerUrl: "https://ads.example.com/vast",
@@ -255,8 +254,8 @@ export interface PlaybackConfiguration extends Resource<
  * });
  * ```
  *
- * @section Manifest Behavior
- * @example Ad marker passthrough and avail suppression
+ * ### Manifest Behavior
+ * **Example:** Ad marker passthrough and avail suppression
  * ```typescript
  * const config = yield* MediaTailor.PlaybackConfiguration("Live", {
  *   adDecisionServerUrl: "https://ads.example.com/vast",
@@ -266,8 +265,8 @@ export interface PlaybackConfiguration extends Resource<
  * });
  * ```
  *
- * @section Session Logging
- * @example Send 10% of session logs to CloudWatch
+ * ### Session Logging
+ * **Example:** Send 10% of session logs to CloudWatch
  * ```typescript
  * const config = yield* MediaTailor.PlaybackConfiguration("Logged", {
  *   adDecisionServerUrl: "https://ads.example.com/vast",
@@ -275,6 +274,8 @@ export interface PlaybackConfiguration extends Resource<
  *   logConfiguration: { percentEnabled: 10 },
  * });
  * ```
+ *
+ * @resource
  */
 export const PlaybackConfiguration = Resource<PlaybackConfiguration>(
   "AWS.MediaTailor.PlaybackConfiguration",

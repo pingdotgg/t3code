@@ -14,15 +14,16 @@ export interface GetFunctionRequest extends Omit<
  * Reads the bound {@link Function}'s configuration, code location, and tags —
  * useful for introspection and operational tooling at runtime. Provide the
  * `GetFunctionHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Function Metadata
- * @example Read a function's configuration
+ * ### Function Metadata
+ * **Example:** Read a function's configuration
  * ```typescript
  * const getFunction = yield* AWS.Lambda.GetFunction(target);
  *
  * const response = yield* getFunction();
  * const memory = response.Configuration?.MemorySize;
  * ```
+ *
+ * @binding
  */
 export interface GetFunction extends Binding.Service<
   GetFunction,

@@ -12,9 +12,8 @@ export interface GetArtifactUrlRequest extends amplify.GetArtifactUrlRequest {}
  * resolves a pre-signed download URL for a build artifact discovered via
  * {@link ListArtifacts}. Provide the implementation with
  * `Effect.provide(AWS.Amplify.GetArtifactUrlHttp)`.
- * @binding
- * @section Reading Artifacts
- * @example Download a Job Artifact
+ * ### Reading Artifacts
+ * **Example:** Download a Job Artifact
  * ```typescript
  * // init — bind the operation to the app
  * const listArtifacts = yield* AWS.Amplify.ListArtifacts(app);
@@ -29,6 +28,8 @@ export interface GetArtifactUrlRequest extends amplify.GetArtifactUrlRequest {}
  *   artifactId: artifacts[0].artifactId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetArtifactUrl extends Binding.Service<
   GetArtifactUrl,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * `IN_PROGRESS` — the companion to {@link CreateResource} /
  * {@link UpdateResource} / {@link DeleteResource} for aborting slow or
  * mistaken provisioning operations.
- * @binding
- * @section Tracking Requests
- * @example Cancel an in-flight operation
+ * ### Tracking Requests
+ * **Example:** Cancel an in-flight operation
  * ```typescript
  * const cancelResourceRequest = yield* CloudControl.CancelResourceRequest();
  *
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   RequestToken: created.ProgressEvent!.RequestToken!,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CancelResourceRequest extends Binding.Service<
   CancelResourceRequest,

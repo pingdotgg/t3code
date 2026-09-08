@@ -1,0 +1,7 @@
+---
+// An async component boundary: Astro flushes HTML rendered before this
+// component while it awaits, making /stream a streaming-friendly page.
+await new Promise((resolve) => setTimeout(resolve, 50));
+---
+
+<p id="late">late chunk</p>

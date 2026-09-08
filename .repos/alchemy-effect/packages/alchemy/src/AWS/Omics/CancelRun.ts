@@ -9,15 +9,16 @@ export interface CancelRunRequest extends omics.CancelRunRequest {}
  *
  * An account-level run-control operation (no resource argument) that cancels an in-progress run.
  * Provide the implementation with `Effect.provide(AWS.Omics.CancelRunHttp)`.
- * @binding
- * @section Runs
- * @example Call CancelRun
+ * ### Runs
+ * **Example:** Call CancelRun
  * ```typescript
  * // init — account-level binding takes no resource
  * const cancelRun = yield* AWS.Omics.CancelRun();
  * // runtime
  * const result = yield* cancelRun({ id: runId });
  * ```
+ *
+ * @binding
  */
 export interface CancelRun extends Binding.Service<
   CancelRun,

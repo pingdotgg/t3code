@@ -1,13 +1,37 @@
+import { Action } from "@/Action";
 import * as AWS from "@/AWS";
-import { Bucket } from "@/AWS/S3";
+import { AWSEnvironment } from "@/AWS/Environment.ts";
+import { flociServices } from "@/AWS/Local/FlociServices.ts";
+import { Bucket, PutObject, PutObjectHttp } from "@/AWS/S3";
+import { remote } from "@/ProviderMode.ts";
 import * as Test from "@/Test/Alchemy";
+import { liveContext } from "../Local/fixtures/live.ts";
 import * as S3 from "@distilled.cloud/aws/s3";
 import { expect } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
+
+// The Floci sweep must override even a configured live AWS environment. This
+// sentinel makes the Action regression independent of local profiles.
+const forceLocal = process.env.ALCHEMY_TEST_DEV === "1";
+const actionProviders = forceLocal
+  ? Layer.merge(
+      AWS.providers(),
+      Layer.succeed(
+        AWSEnvironment,
+        Effect.succeed({
+          accountId: "111111111111",
+          region: "us-east-1",
+          credentials: Effect.die("live credentials must not be used"),
+        }),
+      ),
+    )
+  : AWS.providers();
+const { test: actionTest } = Test.make({ providers: actionProviders });
 
 const deployTestBucket = (stack: Test.ScratchStack) =>
   Effect.gen(function* () {
@@ -23,6 +47,156 @@ const deployTestBucket = (stack: Test.ScratchStack) =>
       }),
     );
   });
+
+// The PRODUCTION dev path: plain `dev: true` (no ALCHEMY_TEST_DEV sweep), so
+// the ambient AWS environment stays whatever the profile resolves — live
+// credentials under `--profile testing`. Binding clients invoked inside an
+// Action must route per bound resource regardless: a local-mode bucket's
+// calls land on the floci emulator, an `Alchemy.remote()` bucket's calls
+// land on the real cloud. Skipped under the sweep, which pins the whole
+// process to floci and would make the live-vs-local distinction vacuous.
+const { test: devTest } = Test.make({ providers: AWS.providers(), dev: true });
+const inSweep = process.env.ALCHEMY_TEST_DEV === "1";
+
+devTest.provider.skipIf(inSweep)(
+  "dev Action routes to the local bucket's emulator data plane",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const output = yield* stack.deploy(
+        Effect.gen(function* () {
+          const bucket = yield* Bucket("DevLocalActionBucket", {
+            forceDestroy: true,
+          });
+          const PutLocal = Action(
+            "PutLocalObject",
+            Effect.gen(function* () {
+              const putObject = yield* PutObject(bucket);
+              return () =>
+                Effect.gen(function* () {
+                  const result = yield* putObject({
+                    Key: "local.txt",
+                    Body: "routed to the emulator",
+                  });
+                  return { etag: result.ETag };
+                });
+            }).pipe(Effect.provide(PutObjectHttp)),
+          );
+          return { bucketName: bucket.bucketName, put: yield* PutLocal({}) };
+        }),
+      );
+      expect(output.put.etag).toBeDefined();
+
+      // The object landed on the emulator...
+      const local = yield* S3.headObject({
+        Bucket: output.bucketName,
+        Key: "local.txt",
+      }).pipe(Effect.provide(flociServices()));
+      expect(local.ETag).toBe(output.put.etag);
+
+      // ...and the bucket never existed on the real cloud. Ambient in a
+      // `dev` run is the emulator, so the live probe must opt into the
+      // registration-captured live chain (see Actions.local.test.ts).
+      const live = yield* S3.headBucket({ Bucket: output.bucketName }).pipe(
+        Effect.map(() => "found" as const),
+        Effect.catchTag("NotFound", () => Effect.succeed("not-found" as const)),
+        Effect.provide(liveContext),
+      );
+      expect(live).toBe("not-found");
+
+      yield* stack.destroy();
+    }),
+);
+
+devTest.provider.skipIf(inSweep)(
+  "dev Action on a remote() bucket targets the real cloud",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const output = yield* stack.deploy(
+        Effect.gen(function* () {
+          const bucket = yield* Bucket("DevRemoteActionBucket", {
+            forceDestroy: true,
+          }).pipe(remote());
+          const PutRemote = Action(
+            "PutRemoteObject",
+            Effect.gen(function* () {
+              const putObject = yield* PutObject(bucket);
+              return () =>
+                Effect.gen(function* () {
+                  const result = yield* putObject({
+                    Key: "remote.txt",
+                    Body: "landed on real AWS",
+                  });
+                  return { etag: result.ETag };
+                });
+            }).pipe(Effect.provide(PutObjectHttp)),
+          );
+          return { bucketName: bucket.bucketName, put: yield* PutRemote({}) };
+        }),
+      );
+      expect(output.put.etag).toBeDefined();
+
+      // Out-of-band via the live SDK: the write landed on the real bucket.
+      // Ambient in a `dev` run is the emulator, so this probe (and the
+      // post-destroy check) must opt into the registration-captured live
+      // chain.
+      yield* Effect.gen(function* () {
+        const live = yield* S3.headObject({
+          Bucket: output.bucketName,
+          Key: "remote.txt",
+        });
+        expect(live.ETag).toBe(output.put.etag);
+
+        yield* stack.destroy();
+        yield* assertBucketDeleted(output.bucketName);
+      }).pipe(Effect.provide(liveContext));
+    }),
+);
+
+actionTest.provider("Action - uses the configured S3 data plane", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const output = yield* stack.deploy(
+      Effect.gen(function* () {
+        const bucket = yield* Bucket("ActionDataPlaneBucket", {
+          forceDestroy: true,
+        });
+        const PutWithAction = Action(
+          "PutWithAction",
+          Effect.gen(function* () {
+            const putObject = yield* PutObject(bucket);
+            return () =>
+              Effect.gen(function* () {
+                const environment = yield* AWSEnvironment.current;
+                if (forceLocal && environment.accountId !== "000000000000") {
+                  return { accountId: environment.accountId };
+                }
+                const result = yield* putObject({
+                  Key: "action.txt",
+                  Body: "hello from Action",
+                });
+                return {
+                  accountId: environment.accountId,
+                  etag: result.ETag,
+                };
+              });
+          }).pipe(Effect.provide(PutObjectHttp)),
+        );
+        return yield* PutWithAction({});
+      }),
+    );
+
+    expect(output.etag).toBeDefined();
+    if (forceLocal) {
+      expect(output.accountId).toBe("000000000000");
+    }
+    yield* stack.destroy();
+  }),
+);
 
 test.provider("listObjectsV2 - list objects in bucket", (stack) =>
   Effect.gen(function* () {

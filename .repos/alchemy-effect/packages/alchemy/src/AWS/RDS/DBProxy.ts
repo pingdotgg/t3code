@@ -137,9 +137,8 @@ export interface DBProxy extends Resource<
  *
  * For the common case, `Aurora("Db", { proxy: true })` wires the role,
  * proxy, target group, and secret automatically.
- * @resource
- * @section Creating a Proxy
- * @example Proxy in Front of an Aurora Cluster
+ * ### Creating a Proxy
+ * **Example:** Proxy in Front of an Aurora Cluster
  * ```typescript
  * const proxy = yield* DBProxy("Proxy", {
  *   engineFamily: "POSTGRESQL",
@@ -162,6 +161,8 @@ export interface DBProxy extends Resource<
  *   dbClusterIdentifiers: [cluster.dbClusterIdentifier],
  * });
  * ```
+ *
+ * @resource
  */
 export const DBProxy = Resource<DBProxy>("AWS.RDS.DBProxy");
 

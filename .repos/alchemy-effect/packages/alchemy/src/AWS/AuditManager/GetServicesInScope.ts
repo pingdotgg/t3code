@@ -8,13 +8,14 @@ import * as Binding from "../../Binding.ts";
  * Lists the AWS services that Audit Manager can include in the scope
  * of an assessment. Provide the
  * implementation with `Effect.provide(AWS.AuditManager.GetServicesInScopeHttp)`.
- * @binding
- * @section Account Status
- * @example List Services Audit Manager Can Assess
+ * ### Account Status
+ * **Example:** List Services Audit Manager Can Assess
  * ```typescript
  * const getServicesInScope = yield* AWS.AuditManager.GetServicesInScope();
  * const result = yield* getServicesInScope();
  * ```
+ *
+ * @binding
  */
 export interface GetServicesInScope extends Binding.Service<
   GetServicesInScope,

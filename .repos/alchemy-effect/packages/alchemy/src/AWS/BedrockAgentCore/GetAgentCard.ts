@@ -15,9 +15,8 @@ export interface GetAgentCardRequest extends Omit<
  * AgentCore data-plane API against it. Provide `AgentCore.GetAgentCardHttp`
  * on the Function effect to implement the binding.
  *
- * @binding
- * @section Agent Discovery
- * @example Fetch the Agent Card
+ * ### Agent Discovery
+ * **Example:** Fetch the Agent Card
  * ```typescript
  * // init
  * const getAgentCard = yield* AgentCore.GetAgentCard(runtime);
@@ -30,6 +29,8 @@ export interface GetAgentCardRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface GetAgentCard extends Binding.Service<
   GetAgentCard,

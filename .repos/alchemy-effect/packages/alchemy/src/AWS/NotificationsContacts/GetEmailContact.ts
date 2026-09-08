@@ -10,9 +10,8 @@ import type { EmailContact } from "./EmailContact.ts";
  * which flips from `inactive` to `active` once the address owner confirms
  * the activation email. Provide the implementation with
  * `Effect.provide(AWS.NotificationsContacts.GetEmailContactHttp)`.
- * @binding
- * @section Checking Activation Status
- * @example Read the Contact's Status
+ * ### Checking Activation Status
+ * **Example:** Read the Contact's Status
  * ```typescript
  * // init — bind the operation to the contact
  * const getContact = yield* AWS.NotificationsContacts.GetEmailContact(contact);
@@ -21,6 +20,8 @@ import type { EmailContact } from "./EmailContact.ts";
  * const result = yield* getContact();
  * const isActive = result.emailContact.status === "active";
  * ```
+ *
+ * @binding
  */
 export interface GetEmailContact extends Binding.Service<
   GetEmailContact,

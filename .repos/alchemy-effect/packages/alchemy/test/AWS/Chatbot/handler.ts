@@ -39,7 +39,7 @@ export class ChatbotTestFunction extends Lambda.Function<Lambda.Function>()(
 export default ChatbotTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const getAccountPreferences = yield* Chatbot.GetAccountPreferences();

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * self-service EDI onboarding flows where trading partners supply sample
  * documents. `mappingAccuracy` reports the model's confidence. Provide the
  * implementation with `Effect.provide(AWS.B2BI.GenerateMappingHttp)`.
- * @binding
- * @section Generating Mappings
- * @example Generate a JSONATA Template from Samples
+ * ### Generating Mappings
+ * **Example:** Generate a JSONATA Template from Samples
  * ```typescript
  * // init — account-level, no resource argument
  * const generateMapping = yield* AWS.B2BI.GenerateMapping();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.mappingTemplate, result.mappingAccuracy
  * ```
+ *
+ * @binding
  */
 export interface GenerateMapping extends Binding.Service<
   GenerateMapping,

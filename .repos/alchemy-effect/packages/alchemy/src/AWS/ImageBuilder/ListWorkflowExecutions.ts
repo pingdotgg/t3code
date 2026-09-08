@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * entry reports the workflow's status and step counts). Account-level
  * binding: pass the `imageBuildVersionArn`. Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.ListWorkflowExecutionsHttp)`.
- * @binding
- * @section Observing Builds
- * @example Inspect a Build's Workflow Progress
+ * ### Observing Builds
+ * **Example:** Inspect a Build's Workflow Progress
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listWorkflowExecutions =
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.log(`${execution.type}: ${execution.status}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListWorkflowExecutions extends Binding.Service<
   ListWorkflowExecutions,

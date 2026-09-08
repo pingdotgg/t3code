@@ -12,9 +12,8 @@ export interface SetEndpointAttributesRequest
  * Bind this operation to a {@link PlatformApplication} to update a device
  * endpoint — e.g. re-enable it after a delivery failure or rotate its token.
  * Provide the `SetEndpointAttributesHttp` layer on the Function to implement the binding.
- * @binding
- * @section Mobile Push
- * @example Re-enable an Endpoint
+ * ### Mobile Push
+ * **Example:** Re-enable an Endpoint
  * ```typescript
  * const setEndpointAttributes = yield* SNS.SetEndpointAttributes(app);
  * yield* setEndpointAttributes({
@@ -22,6 +21,8 @@ export interface SetEndpointAttributesRequest
  *   Attributes: { Enabled: "true" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface SetEndpointAttributes extends Binding.Service<
   SetEndpointAttributes,

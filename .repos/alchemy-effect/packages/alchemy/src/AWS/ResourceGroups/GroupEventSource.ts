@@ -81,8 +81,8 @@ export interface GroupEventSourceProps extends EventRouteProps {
  * implementation layer (e.g. `AWS.Lambda.EventSource`) on the Function
  * effect.
  *
- * @section Consuming Group Lifecycle Events
- * @example React To Membership Changes
+ * ### Consuming Group Lifecycle Events
+ * **Example:** React To Membership Changes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

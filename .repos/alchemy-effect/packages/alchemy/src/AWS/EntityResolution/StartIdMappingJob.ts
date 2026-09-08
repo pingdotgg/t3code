@@ -9,9 +9,8 @@ import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
  * Starts an ID mapping job run of the bound workflow — a batch process over
  * the workflow's full input that takes many minutes. Provide the
  * implementation with `Effect.provide(AWS.EntityResolution.StartIdMappingJobHttp)`.
- * @binding
- * @section Running ID Mapping Jobs
- * @example Start a Job
+ * ### Running ID Mapping Jobs
+ * **Example:** Start a Job
  * ```typescript
  * // init — bind the operation to the workflow
  * const startIdMappingJob = yield* AWS.EntityResolution.StartIdMappingJob(workflow);
@@ -19,6 +18,8 @@ import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
  * // runtime
  * const { jobId } = yield* startIdMappingJob({});
  * ```
+ *
+ * @binding
  */
 export interface StartIdMappingJob extends Binding.Service<
   StartIdMappingJob,

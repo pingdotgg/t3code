@@ -11,13 +11,14 @@ export interface ListOriginationNumbersRequest
  * An account-scoped operation — lists the origination phone numbers
  * available to send SMS from this account.
  * Provide the `ListOriginationNumbersHttp` layer on the Function to implement the binding.
- * @binding
- * @section SMS Account Settings
- * @example List Origination Numbers
+ * ### SMS Account Settings
+ * **Example:** List Origination Numbers
  * ```typescript
  * const listOriginationNumbers = yield* SNS.ListOriginationNumbers();
  * const { PhoneNumbers } = yield* listOriginationNumbers();
  * ```
+ *
+ * @binding
  */
 export interface ListOriginationNumbers extends Binding.Service<
   ListOriginationNumbers,

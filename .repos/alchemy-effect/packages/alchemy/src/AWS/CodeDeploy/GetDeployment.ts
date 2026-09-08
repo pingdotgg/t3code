@@ -7,14 +7,15 @@ import type { DeploymentGroup } from "./DeploymentGroup.ts";
  * Runtime binding for `codedeploy:GetDeployment` — reads a deployment's
  * status, revision, and rollout overview. CodeDeploy authorizes the call
  * against the deployment group the deployment belongs to.
- * @binding
- * @section Observing Deployments
- * @example Poll a Deployment's Status
+ * ### Observing Deployments
+ * **Example:** Poll a Deployment's Status
  * ```typescript
  * const getDeployment = yield* AWS.CodeDeploy.GetDeployment(group);
  *
  * const { deploymentInfo } = yield* getDeployment({ deploymentId });
  * ```
+ *
+ * @binding
  */
 export interface GetDeployment extends Binding.Service<
   GetDeployment,

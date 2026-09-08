@@ -1,6 +1,9 @@
 import * as AWS from "@/AWS";
 import { ServerHost } from "@/Server/Process.ts";
+import * as Telemetry from "@/Telemetry.ts";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
@@ -56,8 +59,33 @@ export default class TestTask extends AWS.ECS.Task<TestTask>()(
             ticks: yield* Ref.get(ticks),
           });
         }
+        // Telemetry probe: each hit produces one root span, one child span,
+        // and one log record. The smoke test drives two rapid hits and
+        // asserts both land in a SINGLE batched traces payload — process
+        // runtimes batch on intervals; they must not flush per request.
+        if (url.pathname === "/work") {
+          const tag = url.searchParams.get("tag") ?? "none";
+          yield* Effect.log(`ecs-work-log:${tag}`).pipe(
+            Effect.withSpan(`work:${tag}`),
+          );
+          return yield* HttpServerResponse.json({
+            marker: `ecs-did-work:${tag}`,
+          });
+        }
         return HttpServerResponse.text("hello from ecs task");
       }),
     };
-  }),
+  }).pipe(
+    // Process-lifetime telemetry via the binding layer: the collector url
+    // resolves from the deployer's COLLECTOR_URL config at deploy time and
+    // binds onto the task; exporters build once into the process root scope.
+    Effect.provide(
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const url = yield* Config.string("COLLECTOR_URL");
+          return Telemetry.layerOtlp({ url, serviceName: "otel-ecs-e2e" });
+        }),
+      ),
+    ),
+  ),
 ) {}

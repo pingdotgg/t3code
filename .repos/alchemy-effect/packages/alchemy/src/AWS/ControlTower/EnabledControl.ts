@@ -68,9 +68,8 @@ export interface EnabledControl extends Resource<
  *
  * Requires an AWS Control Tower landing zone and can only be managed from
  * the Organizations management account.
- * @resource
- * @section Enabling Controls
- * @example Enable a preventive guardrail on an OU
+ * ### Enabling Controls
+ * **Example:** Enable a preventive guardrail on an OU
  * ```typescript
  * import * as ControlTower from "alchemy/AWS/ControlTower";
  *
@@ -81,7 +80,7 @@ export interface EnabledControl extends Resource<
  * });
  * ```
  *
- * @example Enable a configurable control with parameters
+ * **Example:** Enable a configurable control with parameters
  * ```typescript
  * const regionDeny = yield* ControlTower.EnabledControl("RegionDeny", {
  *   controlIdentifier:
@@ -92,6 +91,8 @@ export interface EnabledControl extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const EnabledControl = Resource<EnabledControl>(
   "AWS.ControlTower.EnabledControl",

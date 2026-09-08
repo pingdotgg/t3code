@@ -20,9 +20,8 @@ export interface ImportCertificateRequest
  * outside CA and re-imports it over the existing ACM entry by passing its
  * `CertificateArn`. Provide the implementation with
  * `Effect.provide(AWS.ACM.ImportCertificateHttp)`.
- * @binding
- * @section Importing Certificates
- * @example Rotate an Externally Issued Certificate
+ * ### Importing Certificates
+ * **Example:** Rotate an Externally Issued Certificate
  * ```typescript
  * // init — account-level binding takes no resource
  * const importCertificate = yield* AWS.ACM.ImportCertificate();
@@ -36,6 +35,8 @@ export interface ImportCertificateRequest
  *   CertificateChain: encoder.encode(chainPem),
  * });
  * ```
+ *
+ * @binding
  */
 export interface ImportCertificate extends Binding.Service<
   ImportCertificate,

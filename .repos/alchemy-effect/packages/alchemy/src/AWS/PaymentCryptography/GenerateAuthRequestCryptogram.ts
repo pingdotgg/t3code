@@ -14,9 +14,8 @@ export interface GenerateAuthRequestCryptogramRequest extends Omit<
  * transactions under an EMV issuer master {@link Key}. Provide
  * `GenerateAuthRequestCryptogramHttp` on the Function to satisfy this
  * service.
- * @binding
- * @section EMV Cryptograms
- * @example Generate an ARQC for transaction data
+ * ### EMV Cryptograms
+ * **Example:** Generate an ARQC for transaction data
  * ```typescript
  * // init
  * const generateArqc =
@@ -31,6 +30,8 @@ export interface GenerateAuthRequestCryptogramRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateAuthRequestCryptogram extends Binding.Service<
   GenerateAuthRequestCryptogram,

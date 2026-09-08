@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * grant the function S3 access to those buckets separately. Poll the job to
  * completion with {@link GetTranscriptionJob}.
  *
- * @binding
- * @section Starting a Transcription Job
- * @example Transcribe an S3 Audio File
+ * ### Starting a Transcription Job
+ * **Example:** Transcribe an S3 Audio File
  * ```typescript
  * // init
  * const startJob = yield* AWS.Transcribe.StartTranscriptionJob();
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  *   OutputBucketName: "my-output-bucket",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartTranscriptionJob extends Binding.Service<
   StartTranscriptionJob,

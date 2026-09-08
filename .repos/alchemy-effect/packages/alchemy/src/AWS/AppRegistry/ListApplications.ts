@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * discovery/dashboard functions that inventory registered applications.
  * Account-level: no resource argument. Provide the implementation with
  * `Effect.provide(AWS.AppRegistry.ListApplicationsHttp)`.
- * @binding
- * @section Discovering Applications
- * @example List the Account's Applications
+ * ### Discovering Applications
+ * **Example:** List the Account's Applications
  * ```typescript
  * // init — account-level, no resource argument
  * const listApplications = yield* AWS.AppRegistry.ListApplications();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   console.log(app.name, app.id);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListApplications extends Binding.Service<
   ListApplications,

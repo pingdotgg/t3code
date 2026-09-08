@@ -17,7 +17,7 @@ export class AgentCoreTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AgentCoreTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // code interpreter / browser session start + execution can take >3s
     timeout: Duration.seconds(60),
   },

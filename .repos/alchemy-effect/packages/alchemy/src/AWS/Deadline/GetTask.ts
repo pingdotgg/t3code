@@ -10,9 +10,8 @@ import type { Queue } from "./Queue.ts";
  * parameters, retry count, latest session action. The queue's
  * `farmId`/`queueId` are injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.Deadline.GetTaskHttp)`.
- * @binding
- * @section Monitoring Tasks
- * @example Inspect A Task
+ * ### Monitoring Tasks
+ * **Example:** Inspect A Task
  * ```typescript
  * // init — bind the operation to the queue
  * const getTask = yield* AWS.Deadline.GetTask(queue);
@@ -20,6 +19,8 @@ import type { Queue } from "./Queue.ts";
  * // runtime
  * const task = yield* getTask({ jobId, stepId, taskId });
  * ```
+ *
+ * @binding
  */
 export interface GetTask extends Binding.Service<
   GetTask,

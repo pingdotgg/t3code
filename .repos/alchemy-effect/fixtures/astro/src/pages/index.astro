@@ -1,0 +1,39 @@
+---
+import { env } from "cloudflare:workers";
+
+// On-demand SSR: this page renders inside workerd (dev) / the Worker (live)
+// and reads a Text binding server-side.
+const value = (env as Record<string, unknown>).FIXTURE_VALUE ?? null;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Astro Fixture</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem;
+        color: #1a1a1a;
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Astro Fixture</h1>
+    <p id="mode">on-demand</p>
+    <p id="binding">{value}</p>
+    <button id="counter" type="button">count is 0</button>
+    <p><a href="/about/">about</a></p>
+    <script>
+      // Client-side interactivity, bundled by Astro's client environment.
+      const button = document.getElementById("counter");
+      let count = 0;
+      button?.addEventListener("click", () => {
+        count += 1;
+        button.textContent = `count is ${count}`;
+      });
+    </script>
+  </body>
+</html>

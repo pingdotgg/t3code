@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `inputFile` with its service principal, so the bucket needs a bucket
  * policy granting `b2bi.amazonaws.com` read access. Provide the
  * implementation with `Effect.provide(AWS.B2BI.TestParsingHttp)`.
- * @binding
- * @section Parsing EDI Documents
- * @example Parse an X12 850 into JSON
+ * ### Parsing EDI Documents
+ * **Example:** Parse an X12 850 into JSON
  * ```typescript
  * // init — account-level, no resource argument
  * const testParsing = yield* AWS.B2BI.TestParsing();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.parsedFileContent — the JSON representation of the EDI file
  * ```
+ *
+ * @binding
  */
 export interface TestParsing extends Binding.Service<
   TestParsing,

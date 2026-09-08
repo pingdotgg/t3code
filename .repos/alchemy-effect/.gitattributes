@@ -1,0 +1,4 @@
+* text=auto eol=lf
+
+.vendor/** linguist-vendored
+distilled/** linguist-vendored

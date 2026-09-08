@@ -50,7 +50,7 @@ export const ResultQueueLive = Layer.effect(
 export default IoTWirelessTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

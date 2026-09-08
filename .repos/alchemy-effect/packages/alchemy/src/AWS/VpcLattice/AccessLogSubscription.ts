@@ -91,9 +91,8 @@ export interface AccessLogSubscription extends Resource<
  * access logs for a service network or lattice service to CloudWatch Logs,
  * Kinesis Data Firehose, or S3.
  *
- * @resource
- * @section Creating Access Log Subscriptions
- * @example Log a Service Network to CloudWatch
+ * ### Creating Access Log Subscriptions
+ * **Example:** Log a Service Network to CloudWatch
  * ```typescript
  * const logs = yield* AccessLogSubscription("NetworkLogs", {
  *   resourceIdentifier: network.serviceNetworkId,
@@ -101,13 +100,15 @@ export interface AccessLogSubscription extends Resource<
  * });
  * ```
  *
- * @example Log a Service to S3
+ * **Example:** Log a Service to S3
  * ```typescript
  * const logs = yield* AccessLogSubscription("ServiceLogs", {
  *   resourceIdentifier: service.serviceId,
  *   destinationArn: bucket.bucketArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessLogSubscription = Resource<AccessLogSubscription>(
   "AWS.VpcLattice.AccessLogSubscription",

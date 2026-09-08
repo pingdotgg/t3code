@@ -3,7 +3,7 @@
  * through its `KubernetesObjectBinding` contract. The cluster's reconciler
  * server-side-applies every bound object after the control plane is ACTIVE.
  * Not exported from the EKS index — the public path for raw manifests is
- * `AWS.EKS.Manifest`.
+ * `Kubernetes.Manifest`.
  */
 import * as Effect from "effect/Effect";
 import type { Cluster } from "../Cluster.ts";
@@ -12,7 +12,7 @@ import {
   toKubernetesObjectRef,
   type KubernetesObjectDefinition,
   type KubernetesObjectMetadata,
-} from "./objects.ts";
+} from "../../../Kubernetes/internal/objects.ts";
 
 export interface ClusterObjectProps {
   /** Target EKS cluster that will own this Kubernetes object. */

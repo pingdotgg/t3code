@@ -1,6 +1,5 @@
 import * as PrPackage from "@alchemy.run/pr-package";
 import * as Cloudflare from "alchemy/Cloudflare";
-import { Stack } from "alchemy/Stack";
 
 export const ALCHEMY_HOSTS = [
   "pkg.alchemy.run",
@@ -24,7 +23,11 @@ const parseAliasUrl: PrPackage.ParseAliasUrl = (url) => {
       }
     });
 
-  if (url.hostname === "pkg.ing" || ALCHEMY_HOSTS.includes(url.hostname)) {
+  if (
+    url.hostname === "pkg.ing" ||
+    url.hostname === "staging.pkg.ing" ||
+    ALCHEMY_HOSTS.includes(url.hostname)
+  ) {
     if (segments.length === 2) {
       return { pkgName: segments[0]!, tag: segments[1]! };
     }
@@ -41,17 +44,12 @@ const parseAliasUrl: PrPackage.ParseAliasUrl = (url) => {
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "PrPackageWorker",
-  Stack.useSync(({ stage }) => ({
+  {
     main: import.meta.url,
-    url: true,
-    domain:
-      stage === "prod"
-        ? ["pkg.ing", ...ALCHEMY_HOSTS, ...DISTILLED_HOSTS]
-        : undefined,
-    compatibility: {
-      flags: ["nodejs_compat"],
-      date: "2026-03-17",
+    domain: {
+      name: "pkg.ing",
+      aliases: [...ALCHEMY_HOSTS, ...DISTILLED_HOSTS],
     },
-  })),
+  },
   PrPackage.handler({ parseAliasUrl }),
 ) {}

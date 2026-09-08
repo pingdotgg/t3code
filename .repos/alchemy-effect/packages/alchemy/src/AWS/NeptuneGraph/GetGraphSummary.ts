@@ -9,15 +9,16 @@ import type { Graph } from "./Graph.ts";
  *
  * Reads the data summary of the bound graph — node/edge counts, labels, and (in `DETAILED` mode) per-label structure. Cheap way to sanity-check a load or drive dashboards without running a query. Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.GetGraphSummaryHttp)`.
- * @binding
- * @section Inspecting a Graph
- * @example Read node and edge counts
+ * ### Inspecting a Graph
+ * **Example:** Read node and edge counts
  * ```typescript
  * const getSummary = yield* NeptuneGraph.GetGraphSummary(graph);
  *
  * const summary = yield* getSummary({ mode: "BASIC" });
  * // summary.graphSummary?.numNodes, summary.graphSummary?.numEdges
  * ```
+ *
+ * @binding
  */
 export interface GetGraphSummary extends Binding.Service<
   GetGraphSummary,

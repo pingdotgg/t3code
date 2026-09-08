@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.GetAdministratorAccountHttp)`.
- * @binding
- * @section Members & Organization
- * @example Read the Administrator Account
+ * ### Members & Organization
+ * **Example:** Read the Administrator Account
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getAdministratorAccount = yield* AWS.SecurityHub.GetAdministratorAccount();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Administrator } = yield* getAdministratorAccount();
  * ```
+ *
+ * @binding
  */
 export interface GetAdministratorAccount extends Binding.Service<
   GetAdministratorAccount,

@@ -9,15 +9,16 @@ import * as Binding from "../../Binding.ts";
  * that reads the region's Lambda quotas (`AccountLimit`) and current usage
  * (`AccountUsage`). Provide the `GetAccountSettingsHttp` layer on the
  * Function to satisfy the binding.
- * @binding
- * @section Account Settings
- * @example Read account limits and usage
+ * ### Account Settings
+ * **Example:** Read account limits and usage
  * ```typescript
  * const getAccountSettings = yield* AWS.Lambda.GetAccountSettings();
  *
  * const settings = yield* getAccountSettings();
  * const concurrency = settings.AccountLimit?.ConcurrentExecutions;
  * ```
+ *
+ * @binding
  */
 export interface GetAccountSettings extends Binding.Service<
   GetAccountSettings,

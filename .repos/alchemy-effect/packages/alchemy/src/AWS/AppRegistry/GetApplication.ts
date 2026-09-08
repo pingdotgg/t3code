@@ -10,9 +10,8 @@ import type { Application } from "./Application.ts";
  * `awsApplication` tag value, integrations, and the associated resource
  * count. Provide the implementation with
  * `Effect.provide(AWS.AppRegistry.GetApplicationHttp)`.
- * @binding
- * @section Reading Application Metadata
- * @example Read the Application at Runtime
+ * ### Reading Application Metadata
+ * **Example:** Read the Application at Runtime
  * ```typescript
  * // init — bind the operation to the application
  * const getApplication = yield* AWS.AppRegistry.GetApplication(app);
@@ -21,6 +20,8 @@ import type { Application } from "./Application.ts";
  * const details = yield* getApplication();
  * console.log(details.name, details.associatedResourceCount);
  * ```
+ *
+ * @binding
  */
 export interface GetApplication extends Binding.Service<
   GetApplication,

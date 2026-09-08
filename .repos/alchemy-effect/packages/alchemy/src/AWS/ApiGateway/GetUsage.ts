@@ -17,9 +17,8 @@ export interface GetUsageRequest extends Omit<
  * Provide `ApiGateway.GetUsageHttp` on the Function effect to implement
  * the binding.
  *
- * @binding
- * @section Metering usage
- * @example Read this month's usage for a key
+ * ### Metering usage
+ * **Example:** Read this month's usage for a key
  * ```typescript
  * // init
  * const getUsage = yield* ApiGateway.GetUsage(plan);
@@ -31,6 +30,8 @@ export interface GetUsageRequest extends Omit<
  *   endDate: "2026-07-14",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetUsage extends Binding.Service<
   GetUsage,

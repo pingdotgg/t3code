@@ -14,9 +14,8 @@ export interface PollForJobsRequest extends SVC.PollForJobsInput {}
  * CodePipeline grants job-worker polling on `*` (the action-type sub-ARN is
  * also honored, but the binding takes no resource — the action type is a
  * request field).
- * @binding
- * @section Job Workers
- * @example Poll for Custom-Action Jobs
+ * ### Job Workers
+ * **Example:** Poll for Custom-Action Jobs
  * ```typescript
  * const pollForJobs = yield* AWS.CodePipeline.PollForJobs();
  *
@@ -30,6 +29,8 @@ export interface PollForJobsRequest extends SVC.PollForJobsInput {}
  *   maxBatchSize: 1,
  * });
  * ```
+ *
+ * @binding
  */
 export interface PollForJobs extends Binding.Service<
   PollForJobs,

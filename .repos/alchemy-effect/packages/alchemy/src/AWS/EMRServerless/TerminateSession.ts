@@ -19,9 +19,8 @@ export type TerminateSessionInput = Omit<
  * releasing its workers — e.g. a cost-control function reaping sessions
  * left idle past a policy window. Provide the implementation with
  * `Effect.provide(AWS.EMRServerless.TerminateSessionHttp)`.
- * @binding
- * @section Interactive Sessions
- * @example Terminate A Session
+ * ### Interactive Sessions
+ * **Example:** Terminate A Session
  * ```typescript
  * // init
  * const terminateSession = yield* AWS.EMRServerless.TerminateSession(app);
@@ -29,6 +28,8 @@ export type TerminateSessionInput = Omit<
  * // runtime
  * yield* terminateSession({ sessionId });
  * ```
+ *
+ * @binding
  */
 export interface TerminateSession extends Binding.Service<
   TerminateSession,

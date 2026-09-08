@@ -100,9 +100,8 @@ export interface BackupSelection extends Resource<
  * A selection is immutable: any change to its name, role, or resource set
  * replaces it.
  *
- * @resource
- * @section Assigning Resources
- * @example Assign resources by tag
+ * ### Assigning Resources
+ * **Example:** Assign resources by tag
  * ```typescript
  * import * as Backup from "alchemy/AWS/Backup";
  *
@@ -119,7 +118,7 @@ export interface BackupSelection extends Resource<
  * });
  * ```
  *
- * @example Assign resources by ARN
+ * **Example:** Assign resources by ARN
  * ```typescript
  * const selection = yield* Backup.BackupSelection("ExplicitResources", {
  *   backupPlanId: plan.backupPlanId,
@@ -127,6 +126,8 @@ export interface BackupSelection extends Resource<
  *   resources: [table.tableArn],
  * });
  * ```
+ *
+ * @resource
  */
 export const BackupSelection = Resource<BackupSelection>(
   "AWS.Backup.BackupSelection",

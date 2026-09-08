@@ -120,9 +120,8 @@ export interface Component extends Resource<
  *
  * Components are immutable versions: every property except `tags` replaces
  * the component. Bump `semanticVersion` when changing the document.
- * @resource
- * @section Creating a Component
- * @example Inline Build Component
+ * ### Creating a Component
+ * **Example:** Inline Build Component
  * ```typescript
  * const component = yield* ImageBuilder.Component("Setup", {
  *   platform: "Linux",
@@ -143,14 +142,16 @@ export interface Component extends Resource<
  * });
  * ```
  *
- * @section Using in an Image Recipe
- * @example Reference from a Recipe
+ * ### Using in an Image Recipe
+ * **Example:** Reference from a Recipe
  * ```typescript
  * const recipe = yield* ImageBuilder.ImageRecipe("Recipe", {
  *   parentImage: "arn:aws:imagebuilder:us-west-2:aws:image/amazon-linux-2023-x86/x.x.x",
  *   components: [{ componentArn: component.componentBuildVersionArn }],
  * });
  * ```
+ *
+ * @resource
  */
 export const Component = Resource<Component>("AWS.ImageBuilder.Component");
 

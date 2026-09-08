@@ -59,7 +59,15 @@ const stageWorkspace = (initialSource: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    // Stage inside the repo (not the OS temp dir): the schema module is
+    // loaded via dynamic `import()`, and bun resolves its bare
+    // `drizzle-orm/*` imports by walking up from the schema file — which
+    // only finds `node_modules` when the staging dir lives in the workspace.
+    const cwd = yield* Effect.sync(() => process.cwd());
+    const tempParent = path.join(cwd, ".alchemy", "tmp");
+    yield* fs.makeDirectory(tempParent, { recursive: true });
     const root = yield* fs.makeTempDirectory({
+      directory: tempParent,
       prefix: "alchemy-drizzle-schema-test-",
     });
     const schemaPath = path.join(root, "schema.ts");

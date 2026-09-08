@@ -10,9 +10,8 @@ import type { Queue } from "./Queue.ts";
  * run status counts, priority, timing. The queue's `farmId`/`queueId` are
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Deadline.GetJobHttp)`.
- * @binding
- * @section Monitoring Jobs
- * @example Check A Job's Status
+ * ### Monitoring Jobs
+ * **Example:** Check A Job's Status
  * ```typescript
  * // init — bind the operation to the queue
  * const getJob = yield* AWS.Deadline.GetJob(queue);
@@ -23,6 +22,8 @@ import type { Queue } from "./Queue.ts";
  *   yield* Effect.logError(job.lifecycleStatusMessage);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetJob extends Binding.Service<
   GetJob,

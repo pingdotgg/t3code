@@ -1,0 +1,128 @@
+---
+title: DNS
+description: Hetzner Cloud DNS with Alchemy — Zones and RecordSets as resources, plus ReadDns/WriteDns bindings for querying and mutating records from Effects.
+---
+
+Hetzner Cloud DNS is part of the same project and the same
+`HCLOUD_TOKEN` as your servers — no separate account, console, or
+token. Alchemy models it two ways: **resources** (`Zone`,
+`RecordSet`) for records that belong to your stack, and **bindings**
+(`ReadDns`/`WriteDns`) for code that queries or mutates records
+dynamically.
+
+## Zones
+
+A [`Zone`](/providers/hetzner/zone) is an apex domain you own —
+`name` must be a real registrable domain (no subdomains, no
+trailing dot):
+
+```typescript
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Dns = Hetzner.Zone("dns", {
+  name: "example.com",
+  ttl: 300,
+});
+```
+
+Changing `name` replaces the Zone. The resolved resource exposes
+`assignedNameservers` — set those at your registrar to delegate the
+domain — plus `delegationStatus` to check whether that's done.
+
+## RecordSets
+
+A [`RecordSet`](/providers/hetzner/recordset) is one `(name, type)`
+pair and **all** of its records. Values accept resource outputs, so
+pointing your domain at a Load Balancer is a reference, not a
+copy-pasted IP:
+
+```typescript
+const www = yield* Hetzner.RecordSet("www", {
+  zone: Dns,
+  name: "www",
+  type: "A",
+  ttl: 300,
+  records: [{ value: lb.ipv4.as<string>() }],
+});
+```
+
+`name` is relative to the zone (`@` for the apex). Changing `zone`,
+`name`, or `type` replaces the RecordSet; `records` and `ttl`
+update in place. Because a RecordSet owns the whole `(name, type)`
+pair, keep each pair in exactly one resource.
+
+## Query & mutate from Effects
+
+For DNS that isn't part of the declared stack — health-dependent
+records, dynamic entries, lookups — bind a typed client to a zone.
+Three bindings, each with a matching layer:
+
+| Binding | Layer | Client |
+| --- | --- | --- |
+| `Hetzner.ReadDns(zone)` | `Hetzner.ReadDnsHttp` | `getRecordSet`, `listRecordSets` |
+| `Hetzner.WriteDns(zone)` | `Hetzner.WriteDnsHttp` | `createRecordSet`, `setRecordSetRecords`, `addRecordSetRecords`, `removeRecordSetRecords`, `updateRecordSet`, `deleteRecordSet`, `changeRecordSetTtl`, … |
+| `Hetzner.ReadWriteDns(zone)` | `Hetzner.ReadWriteDnsHttp` | both |
+
+The zone is fixed when you bind — pass the Zone declaration
+directly, and calls never pass a zone id:
+
+```typescript
+import * as Alchemy from "alchemy";
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
+import { Dns } from "./dns.ts";
+
+const SyncRecords = Alchemy.Action(
+  "SyncRecords",
+  Effect.gen(function* () {
+    const dns = yield* Hetzner.ReadWriteDns(Dns);
+
+    return Effect.fn(function* () {
+      const listed = yield* dns.listRecordSets({ type: ["A"] });
+
+      const { action } = yield* dns.setRecordSetRecords("api", "A", {
+        records: [{ value: "203.0.113.20" }],
+      });
+      yield* Hetzner.waitForZoneAction(action);
+    });
+  }).pipe(Effect.provide(Hetzner.ReadWriteDnsHttp)),
+);
+```
+
+:::caution[DNS mutations are asynchronous]
+Every mutating RRSet call returns an `action` that Hetzner applies
+in the background — a read right after may not see the change.
+Always `yield* Hetzner.waitForZoneAction(action)` before depending
+on the result. (Zone actions have their own API namespace — use
+`waitForZoneAction`, not the compute `waitForAction`.)
+:::
+
+Writes also require your `HCLOUD_TOKEN` to be a **Read & Write**
+token — a read-only token fails mutations with a typed `Forbidden`.
+
+## Put it together: a domain on your Load Balancer
+
+```typescript
+const cert = yield* Hetzner.Certificate("cert", {
+  type: "managed",
+  domainNames: ["example.com", "www.example.com"],
+});
+
+yield* Hetzner.RecordSet("apex", {
+  zone: Dns,
+  name: "@",
+  type: "A",
+  records: [{ value: lb.ipv4.as<string>() }],
+});
+```
+
+The managed [Certificate](/hetzner/networking#tls-termination) is
+issued via this same DNS, so the Zone must exist (and be delegated)
+first — Alchemy orders that for you through the references.
+
+## Where next
+
+- [Networking](/hetzner/networking) — the Load Balancer these
+  records usually point at.
+- [`Zone`](/providers/hetzner/zone) and
+  [`RecordSet`](/providers/hetzner/recordset) references.

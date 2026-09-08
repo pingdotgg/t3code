@@ -12,9 +12,8 @@ export interface DescribeApplicationVersionRequest extends Omit<
  * Runtime binding for `kinesisanalytics:DescribeApplicationVersion` — reads
  * the configuration of a specific version of the bound application, e.g. to
  * inspect what a rollback target looked like.
- * @binding
- * @section Observing the Application
- * @example Inspect a historical version
+ * ### Observing the Application
+ * **Example:** Inspect a historical version
  * ```typescript
  * const describeVersion = yield* AWS.KinesisAnalyticsV2.DescribeApplicationVersion(app);
  *
@@ -22,6 +21,8 @@ export interface DescribeApplicationVersionRequest extends Omit<
  *   ApplicationVersionId: 3,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeApplicationVersion extends Binding.Service<
   DescribeApplicationVersion,

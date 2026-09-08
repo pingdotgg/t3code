@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Callable only from the organization management account.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.ListOrganizationAdminAccountsHttp)`.
- * @binding
- * @section Organization Administration
- * @example Find The Delegated Administrator
+ * ### Organization Administration
+ * **Example:** Find The Delegated Administrator
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listOrganizationAdminAccounts =
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Administrators } = yield* listOrganizationAdminAccounts();
  * ```
+ *
+ * @binding
  */
 export interface ListOrganizationAdminAccounts extends Binding.Service<
   ListOrganizationAdminAccounts,

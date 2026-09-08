@@ -9,15 +9,16 @@ import type { AddressList } from "./AddressList.ts";
  * Removes an email address from the bound address list. The address
  * list id is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MailManager.DeregisterMemberFromAddressListHttp)`.
- * @binding
- * @section Managing Address List Members
- * @example Unblock a Sender
+ * ### Managing Address List Members
+ * **Example:** Unblock a Sender
  * ```typescript
  * const deregisterMember = yield* MailManager.DeregisterMemberFromAddressList(blockList);
  *
  * // runtime
  * yield* deregisterMember({ Address: "reformed@example.com" });
  * ```
+ *
+ * @binding
  */
 export interface DeregisterMemberFromAddressList extends Binding.Service<
   DeregisterMemberFromAddressList,

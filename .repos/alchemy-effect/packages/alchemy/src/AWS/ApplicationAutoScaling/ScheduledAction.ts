@@ -111,9 +111,8 @@ export interface ScheduledAction extends Resource<
  * (`serviceNamespace`, `resourceId`, `scalableDimension`) triple, which must
  * be registered (see {@link ScalableTarget}) before the action is created —
  * pass the target's outputs so deployment orders correctly.
- * @resource
- * @section Scheduling Capacity Changes
- * @example Scale Out for Business Hours
+ * ### Scheduling Capacity Changes
+ * **Example:** Scale Out for Business Hours
  * ```typescript
  * yield* ScheduledAction("BusinessHoursScaleOut", {
  *   serviceNamespace: target.serviceNamespace,
@@ -125,7 +124,7 @@ export interface ScheduledAction extends Resource<
  * });
  * ```
  *
- * @example One-Time Capacity Bump
+ * **Example:** One-Time Capacity Bump
  * ```typescript
  * yield* ScheduledAction("LaunchDayBump", {
  *   serviceNamespace: target.serviceNamespace,
@@ -135,6 +134,8 @@ export interface ScheduledAction extends Resource<
  *   scalableTargetAction: { MinCapacity: 5 },
  * });
  * ```
+ *
+ * @resource
  */
 export const ScheduledAction = Resource<ScheduledAction>(
   "AWS.ApplicationAutoScaling.ScheduledAction",
@@ -293,7 +294,7 @@ export const ScheduledActionProvider = () =>
           if (action === undefined) {
             return yield* Effect.fail(
               new aas.ObjectNotFoundException({
-                Message: `Scheduled action '${scheduledActionName}' was not readable after PutScheduledAction`,
+                message: `Scheduled action '${scheduledActionName}' was not readable after PutScheduledAction`,
               }),
             );
           }

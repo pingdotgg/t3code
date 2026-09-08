@@ -10,14 +10,15 @@ import * as Binding from "../../Binding.ts";
  * only CloudHSM resource that supports policies — they govern cross-account
  * backup sharing). Provide the implementation with
  * `Effect.provide(AWS.CloudHSMV2.GetResourcePolicyHttp)`.
- * @binding
- * @section Sharing Backups
- * @example Read A Backup's Sharing Policy
+ * ### Sharing Backups
+ * **Example:** Read A Backup's Sharing Policy
  * ```typescript
  * const getResourcePolicy = yield* AWS.CloudHSMV2.GetResourcePolicy();
  *
  * const { Policy } = yield* getResourcePolicy({ ResourceArn: backupArn });
  * ```
+ *
+ * @binding
  */
 export interface GetResourcePolicy extends Binding.Service<
   GetResourcePolicy,

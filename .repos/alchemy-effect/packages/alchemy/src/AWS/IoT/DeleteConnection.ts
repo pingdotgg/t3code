@@ -14,14 +14,15 @@ export interface DeleteConnectionRequest
  * a callable that force-disconnects a connected client, optionally cleaning
  * its session state. Provide the implementation with
  * `Effect.provide(AWS.IoT.DeleteConnectionHttp)`.
- * @binding
- * @section MQTT Connections
- * @example Kick a Device off the Broker
+ * ### MQTT Connections
+ * **Example:** Kick a Device off the Broker
  * ```typescript
  * const deleteConnection = yield* AWS.IoT.DeleteConnection("sensor-*");
  *
  * yield* deleteConnection({ clientId: "sensor-1", cleanSession: true });
  * ```
+ *
+ * @binding
  */
 export interface DeleteConnection extends Binding.Service<
   DeleteConnection,

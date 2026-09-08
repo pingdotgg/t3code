@@ -21,13 +21,14 @@ export interface ValidateConfigurationRequest extends Omit<
  * Provide `AppConfig.ValidateConfigurationHttp` on the hosting function's
  * Effect to implement the binding.
  *
- * @binding
- * @section Writing Configuration at Runtime
- * @example Validate a version before deploying it
+ * ### Writing Configuration at Runtime
+ * **Example:** Validate a version before deploying it
  * ```typescript
  * const validate = yield* AppConfig.ValidateConfiguration(app, profile);
  * yield* validate({ ConfigurationVersion: "2" });
  * ```
+ *
+ * @binding
  */
 export interface ValidateConfiguration extends Binding.Service<
   ValidateConfiguration,

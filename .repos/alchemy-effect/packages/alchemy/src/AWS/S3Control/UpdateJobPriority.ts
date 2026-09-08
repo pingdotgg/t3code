@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * e.g. bumping an urgent restore ahead of routine re-tagging runs. The
  * account id is resolved once via `sts:GetCallerIdentity`. Provide the
  * implementation with `Effect.provide(AWS.S3Control.UpdateJobPriorityHttp)`.
- * @binding
- * @section Running Batch Operations Jobs
- * @example Bump a Job's Priority
+ * ### Running Batch Operations Jobs
+ * **Example:** Bump a Job's Priority
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateJobPriority = yield* AWS.S3Control.UpdateJobPriority();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const updated = yield* updateJobPriority({ JobId: jobId, Priority: 10 });
  * // updated.Priority === 10
  * ```
+ *
+ * @binding
  */
 export interface UpdateJobPriority extends Binding.Service<
   UpdateJobPriority,

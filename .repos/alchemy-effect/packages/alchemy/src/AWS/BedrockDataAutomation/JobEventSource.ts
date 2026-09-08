@@ -71,8 +71,8 @@ export interface DataAutomationJobEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Job Events
- * @example Process Results When A Job Succeeds
+ * ### Consuming Job Events
+ * **Example:** Process Results When A Job Succeeds
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

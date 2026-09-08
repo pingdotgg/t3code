@@ -11,9 +11,8 @@ import type { Cluster } from "./Cluster.ts";
  * right-sizing automation that checks the legal targets before calling
  * `UpdateCluster`. Provide the implementation with
  * `Effect.provide(AWS.MemoryDB.ListAllowedNodeTypeUpdatesHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example List the Cluster's Legal Node-Type Targets
+ * ### Monitoring Clusters
+ * **Example:** List the Cluster's Legal Node-Type Targets
  * ```typescript
  * const listAllowedNodeTypeUpdates =
  *   yield* MemoryDB.ListAllowedNodeTypeUpdates(cluster);
@@ -21,6 +20,8 @@ import type { Cluster } from "./Cluster.ts";
  * const result = yield* listAllowedNodeTypeUpdates();
  * // result.ScaleUpNodeTypes / result.ScaleDownNodeTypes
  * ```
+ *
+ * @binding
  */
 export interface ListAllowedNodeTypeUpdates extends Binding.Service<
   ListAllowedNodeTypeUpdates,

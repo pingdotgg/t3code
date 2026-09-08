@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.ListFindingAggregatorsHttp)`.
- * @binding
- * @section Custom Actions, Automation Rules & Aggregation
- * @example List Finding Aggregators
+ * ### Custom Actions, Automation Rules & Aggregation
+ * **Example:** List Finding Aggregators
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listFindingAggregators = yield* AWS.SecurityHub.ListFindingAggregators();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { FindingAggregators } = yield* listFindingAggregators();
  * ```
+ *
+ * @binding
  */
 export interface ListFindingAggregators extends Binding.Service<
   ListFindingAggregators,

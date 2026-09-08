@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * is governed by portfolio principal associations, so the binding takes no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.ServiceCatalog.DescribeRecordHttp)`.
- * @binding
- * @section Tracking Provisioned Products
- * @example Poll a Provisioning Record to Completion
+ * ### Tracking Provisioned Products
+ * **Example:** Poll a Provisioning Record to Completion
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeRecord = yield* AWS.ServiceCatalog.DescribeRecord();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   Id: "rec-abc123",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeRecord extends Binding.Service<
   DescribeRecord,

@@ -80,24 +80,23 @@ export interface VectorBucket extends Resource<
  *
  * S3 Vectors is in preview; availability varies by region.
  *
- * @resource
- * @section Creating a Vector Bucket
- * @example Basic Vector Bucket
+ * ### Creating a Vector Bucket
+ * **Example:** Basic Vector Bucket
  * ```typescript
  * import * as S3Vectors from "alchemy/AWS/S3Vectors";
  *
  * const bucket = yield* S3Vectors.VectorBucket("Embeddings", {});
  * ```
  *
- * @example Vector Bucket with KMS Encryption
+ * **Example:** Vector Bucket with KMS Encryption
  * ```typescript
  * const bucket = yield* S3Vectors.VectorBucket("Embeddings", {
  *   encryption: { sseType: "aws:kms", kmsKeyArn: key.keyArn },
  * });
  * ```
  *
- * @section Bucket Policy
- * @example Grant Another Account Read Access
+ * ### Bucket Policy
+ * **Example:** Grant Another Account Read Access
  * ```typescript
  * const bucket = yield* S3Vectors.VectorBucket("Embeddings", {
  *   vectorBucketName: "shared-embeddings",
@@ -112,6 +111,8 @@ export interface VectorBucket extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const VectorBucket = Resource<VectorBucket>(
   "AWS.S3Vectors.VectorBucket",
@@ -128,9 +129,14 @@ export const VectorBucketProvider = () =>
         id: string,
         props: Pick<VectorBucketProps, "vectorBucketName">,
       ) {
+        // The service rejects bucket names starting with `aws` as reserved.
         return (
           props.vectorBucketName ??
-          (yield* createPhysicalName({ id, maxLength: 63 })).toLowerCase()
+          (yield* createPhysicalName({
+            id,
+            maxLength: 63,
+            forbiddenPrefixes: ["aws"],
+          })).toLowerCase()
         );
       });
 

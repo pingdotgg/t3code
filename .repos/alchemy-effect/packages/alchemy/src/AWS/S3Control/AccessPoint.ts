@@ -134,9 +134,8 @@ export interface AccessPoint extends Resource<
  * with its own policy, public-access-block settings, and optional VPC
  * restriction. Use access points to manage shared-dataset access at scale
  * instead of maintaining one giant bucket policy.
- * @resource
- * @section Creating Access Points
- * @example Internet access point on a bucket
+ * ### Creating Access Points
+ * **Example:** Internet access point on a bucket
  * ```typescript
  * import * as S3 from "alchemy/AWS/S3";
  * import * as S3Control from "alchemy/AWS/S3Control";
@@ -147,7 +146,7 @@ export interface AccessPoint extends Resource<
  * });
  * ```
  *
- * @example VPC-only access point
+ * **Example:** VPC-only access point
  * ```typescript
  * const accessPoint = yield* S3Control.AccessPoint("internal-ap", {
  *   bucket: bucket.bucketName,
@@ -155,7 +154,7 @@ export interface AccessPoint extends Resource<
  * });
  * ```
  *
- * @example Access point with explicit public-access-block
+ * **Example:** Access point with explicit public-access-block
  * ```typescript
  * const accessPoint = yield* S3Control.AccessPoint("locked-ap", {
  *   bucket: bucket.bucketName,
@@ -169,8 +168,8 @@ export interface AccessPoint extends Resource<
  * });
  * ```
  *
- * @section Granting Access
- * @example Attach a policy to the access point
+ * ### Granting Access
+ * **Example:** Attach a policy to the access point
  * ```typescript
  * yield* S3Control.AccessPointPolicy("data-ap-policy", {
  *   accessPointName: accessPoint.accessPointName,
@@ -187,6 +186,8 @@ export interface AccessPoint extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessPoint = Resource<AccessPoint>("AWS.S3Control.AccessPoint");
 

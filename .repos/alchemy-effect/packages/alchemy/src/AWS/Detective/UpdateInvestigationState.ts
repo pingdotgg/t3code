@@ -11,9 +11,8 @@ import type { Graph } from "./Graph.ts";
  * ARN is injected from the bound {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.UpdateInvestigationStateHttp)`.
- * @binding
- * @section Running Investigations
- * @example Archive A Triaged Investigation
+ * ### Running Investigations
+ * **Example:** Archive A Triaged Investigation
  * ```typescript
  * // init
  * const updateInvestigationState =
@@ -22,6 +21,8 @@ import type { Graph } from "./Graph.ts";
  * // runtime
  * yield* updateInvestigationState({ InvestigationId: id, State: "ARCHIVED" });
  * ```
+ *
+ * @binding
  */
 export interface UpdateInvestigationState extends Binding.Service<
   UpdateInvestigationState,

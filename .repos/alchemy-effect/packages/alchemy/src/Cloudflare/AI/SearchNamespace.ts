@@ -70,16 +70,13 @@ export type SearchNamespace = Resource<
  * and Cloudflare disallows modifying or deleting it. Alchemy adopts it so
  * it can be referenced and bound, but never updates or tears it down.
  *
- * @resource
- * @product AI Search
- * @category AI
- * @section Creating a Namespace
- * @example Generated name
+ * ### Creating a Namespace
+ * **Example:** Generated name
  * ```typescript
  * const ns = yield* Cloudflare.AI.SearchNamespace("docs", {});
  * ```
  *
- * @example Explicit name and description
+ * **Example:** Explicit name and description
  * ```typescript
  * const ns = yield* Cloudflare.AI.SearchNamespace("docs", {
  *   name: "docs-search",
@@ -87,8 +84,8 @@ export type SearchNamespace = Resource<
  * });
  * ```
  *
- * @section Updating a Namespace
- * @example Change the description in place
+ * ### Updating a Namespace
+ * **Example:** Change the description in place
  * Only the `description` is mutable; changing `name` replaces the namespace.
  * ```typescript
  * const ns = yield* Cloudflare.AI.SearchNamespace("docs", {
@@ -97,12 +94,12 @@ export type SearchNamespace = Resource<
  * });
  * ```
  *
- * @section Grouping pipelines
+ * ### Grouping pipelines
  * Group {@link Search} pipelines under the namespace by passing the
  * namespace resource itself to each pipeline's `namespace` prop. The engine
  * orders each pipeline after the namespace on deploy and tears them down
  * before it on destroy.
- * @example Two pipelines in one namespace
+ * **Example:** Two pipelines in one namespace
  * ```typescript
  * const ns = yield* Cloudflare.AI.SearchNamespace("docs", {});
  * const guides = yield* Cloudflare.AI.Search("guides", {
@@ -115,13 +112,13 @@ export type SearchNamespace = Resource<
  * });
  * ```
  *
- * @section Binding to an Effect Worker
+ * ### Binding to an Effect Worker
  * Bind the namespace with `Cloudflare.AI.QuerySearchNamespace(namespace)`,
  * which attaches the `ai_search_namespace` binding and returns a client
  * whose `.get(name)` selects an instance within the namespace at runtime.
  * Provide {@link QuerySearchNamespaceBinding} in the Worker's runtime
  * layer.
- * @example Select an instance per request
+ * **Example:** Select an instance per request
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
@@ -149,10 +146,10 @@ export type SearchNamespace = Resource<
  * ) {}
  * ```
  *
- * @section Binding to an Async Worker
+ * ### Binding to an Async Worker
  * For a vanilla `async fetch` Worker, pass the namespace under `Worker.env`.
  * `InferEnv` types `env.SEARCH` as the runtime `SearchNamespace` handle.
- * @example Async Worker via `env`
+ * **Example:** Async Worker via `env`
  * ```typescript
  * export const Api = Cloudflare.Worker("api", {
  *   main: "./worker.ts",
@@ -174,6 +171,10 @@ export type SearchNamespace = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ai-search/
+ *
+ * @resource
+ * @product AI Search
+ * @category AI
  */
 export const SearchNamespace = Resource<SearchNamespace>(TypeId, {
   aliases: ["Cloudflare.AiSearch.Namespace"],

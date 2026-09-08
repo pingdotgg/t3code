@@ -9,6 +9,7 @@ import type {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { Scope } from "effect/Scope";
+import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as Http from "../../Http.ts";
@@ -45,7 +46,12 @@ export const isAlbEvent = (event: any): event is ALBEvent => {
 };
 
 export const makeFunctionHttpHandler = <Req>(handler: Http.HttpEffect<Req>) => {
-  const safeHandler = Http.safeHttpEffect(handler);
+  // `HttpMiddleware.tracer` creates the `http.server` root span per request
+  // (continuing an incoming `traceparent`), matching the Worker bridge's
+  // fetch path. With the default no-op tracer this is free; with a telemetry
+  // exporter installed the span is exported when the invocation scope
+  // flushes.
+  const safeHandler = HttpMiddleware.tracer(Http.safeHttpEffect(handler));
   return (
     event: any,
   ):
@@ -123,10 +129,10 @@ export const makeFunctionHttpHandler = <Req>(handler: Http.HttpEffect<Req>) => {
 const functionUrlEventToWebRequest = (
   event: LambdaFunctionURLEvent,
 ): Request => {
-  const protocol =
-    event.headers["x-forwarded-proto"] ??
-    event.requestContext.http.protocol ??
-    "https";
+  // `requestContext.http.protocol` is the HTTP version ("HTTP/1.1"), never a
+  // URL scheme — without `x-forwarded-proto` (real Function URLs always set
+  // it; local emulators may not) fall back to https.
+  const protocol = event.headers["x-forwarded-proto"] ?? "https";
   const host = event.headers.host ?? event.requestContext.domainName;
   const url = `${protocol}://${host}${event.rawPath}${event.rawQueryString ? `?${event.rawQueryString}` : ""}`;
   const method = event.requestContext.http.method;

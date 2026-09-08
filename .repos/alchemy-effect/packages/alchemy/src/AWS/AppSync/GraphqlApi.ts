@@ -224,9 +224,8 @@ export interface GraphqlApi extends Resource<
  * awaited until active), its authentication modes, and an optional
  * server-side cache. Pair with {@link DataSource}, {@link Resolver},
  * and {@link ApiKey} to serve GraphQL over Lambda or DynamoDB.
- * @resource
- * @section Creating a GraphQL API
- * @example API-key authenticated API with a schema
+ * ### Creating a GraphQL API
+ * **Example:** API-key authenticated API with a schema
  * ```typescript
  * import * as AppSync from "alchemy/AWS/AppSync";
  *
@@ -239,8 +238,8 @@ export interface GraphqlApi extends Resource<
  * const key = yield* AppSync.ApiKey("Key", { api });
  * ```
  *
- * @section Authentication Modes
- * @example Lambda authorizer
+ * ### Authentication Modes
+ * **Example:** Lambda authorizer
  * ```typescript
  * const api = yield* AppSync.GraphqlApi("Api", {
  *   authenticationType: "AWS_LAMBDA",
@@ -256,7 +255,7 @@ export interface GraphqlApi extends Resource<
  * });
  * ```
  *
- * @example Cognito user pools as an additional auth mode
+ * **Example:** Cognito user pools as an additional auth mode
  * ```typescript
  * const api = yield* AppSync.GraphqlApi("Api", {
  *   authenticationType: "API_KEY",
@@ -270,8 +269,8 @@ export interface GraphqlApi extends Resource<
  * });
  * ```
  *
- * @section Caching
- * @example Full-request server-side cache (bills hourly!)
+ * ### Caching
+ * **Example:** Full-request server-side cache (bills hourly!)
  * ```typescript
  * const api = yield* AppSync.GraphqlApi("Api", {
  *   schema,
@@ -279,8 +278,8 @@ export interface GraphqlApi extends Resource<
  * });
  * ```
  *
- * @section Environment Variables
- * @example Expose variables to resolver code via ctx.env
+ * ### Environment Variables
+ * **Example:** Expose variables to resolver code via ctx.env
  * ```typescript
  * const api = yield* AppSync.GraphqlApi("Api", {
  *   schema,
@@ -289,6 +288,8 @@ export interface GraphqlApi extends Resource<
  * // in APPSYNC_JS resolver code:
  * //   export function response(ctx) { return ctx.env.STAGE; }
  * ```
+ *
+ * @resource
  */
 export const GraphqlApi = Resource<GraphqlApi>("AWS.AppSync.GraphqlApi");
 

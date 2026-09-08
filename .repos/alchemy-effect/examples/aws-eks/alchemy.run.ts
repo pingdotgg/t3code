@@ -3,19 +3,21 @@
  * container surface:
  *
  * - a stack-owned network + `compute: "auto"` cluster + DynamoDB table +
- *   a namespace applied as a raw manifest via `EKS.Manifest` (`src/infra.ts`),
- * - `Api` — an effectful `AWS.EKS.Deployment` (bundled `main:` image source)
+ *   a namespace applied as a raw manifest via `Kubernetes.Manifest` (`src/infra.ts`),
+ * - `Api` — an effectful `Kubernetes.Deployment` (bundled `main:` image source)
  *   behind an internet-facing NLB with DynamoDB bindings on the pod-identity
  *   role, plus the typed `podTemplate` escape hatch (`src/Api.ts`),
- * - `Web` — an EXTERNAL `AWS.EKS.Deployment` (registry `image:` source, no
+ * - `Web` — an EXTERNAL `Kubernetes.Deployment` (registry `image:` source, no
  *   Effect runtime in the container), nginx behind its own NLB,
- * - `SeedJob` — an inline-effect one-shot `AWS.EKS.Job` (`{ run }`) that
+ * - `SeedJob` — an inline-effect one-shot `Kubernetes.Job` (`{ run }`) that
  *   seeds the guestbook table when the batch/v1 Job is applied on deploy
  *   (`src/SeedJob.ts`).
  */
 import * as Alchemy from "alchemy";
 import * as AWS from "alchemy/AWS";
+import * as Kubernetes from "alchemy/Kubernetes";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import ApiLive, { Api } from "./src/Api.ts";
 import {
   EntriesTable,
@@ -27,7 +29,7 @@ import SeedJob from "./src/SeedJob.ts";
 export default Alchemy.Stack(
   "AwsEksExample",
   {
-    providers: AWS.providers(),
+    providers: Layer.mergeAll(AWS.providers(), Kubernetes.providers()),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
@@ -45,7 +47,7 @@ export default Alchemy.Stack(
     // into ECR), no Effect runtime in the container. Auto Mode's built-in
     // controller provisions the NLB for the LoadBalancer Service; port 80,
     // so `web.url` carries no port suffix.
-    const web = yield* AWS.EKS.Deployment("Web", {
+    const web = yield* Kubernetes.Deployment("Web", {
       cluster,
       image: "public.ecr.aws/nginx/nginx:1.27",
       namespace: ns.name,

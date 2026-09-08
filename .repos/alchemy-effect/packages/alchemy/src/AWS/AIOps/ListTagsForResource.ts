@@ -10,9 +10,8 @@ import type { InvestigationGroup } from "./InvestigationGroup.ts";
  * ownership/audit reporting from an ops function. The group's ARN is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.AIOps.ListTagsForResourceHttp)`.
- * @binding
- * @section Reading Tags
- * @example List the Group's Tags
+ * ### Reading Tags
+ * **Example:** List the Group's Tags
  * ```typescript
  * // init — grants aiops:ListTagsForResource on the group
  * const listTagsForResource = yield* AWS.AIOps.ListTagsForResource(group);
@@ -21,6 +20,8 @@ import type { InvestigationGroup } from "./InvestigationGroup.ts";
  * const { tags } = yield* listTagsForResource();
  * yield* Effect.log(`owned by team ${tags?.Team}`);
  * ```
+ *
+ * @binding
  */
 export interface ListTagsForResource extends Binding.Service<
   ListTagsForResource,

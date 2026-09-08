@@ -12,15 +12,16 @@ import type { FileSystem } from "./FileSystem.ts";
  * {@link FileSystem} — the recovery action for clients that crashed while
  * holding locks and left files stuck. Provide the implementation with
  * `Effect.provide(AWS.FSx.ReleaseFileSystemNfsV3LocksHttp)`.
- * @binding
- * @section Operational Recovery
- * @example Release stuck NFSv3 locks
+ * ### Operational Recovery
+ * **Example:** Release stuck NFSv3 locks
  * ```typescript
  * const releaseLocks = yield* AWS.FSx.ReleaseFileSystemNfsV3Locks(zfs);
  *
  * const response = yield* releaseLocks();
  * yield* Effect.log(`file system ${response.FileSystem?.FileSystemId} locks released`);
  * ```
+ *
+ * @binding
  */
 export interface ReleaseFileSystemNfsV3Locks extends Binding.Service<
   ReleaseFileSystemNfsV3Locks,

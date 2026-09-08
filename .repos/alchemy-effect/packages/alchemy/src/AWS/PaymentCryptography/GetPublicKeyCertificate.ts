@@ -9,9 +9,8 @@ import type { Key } from "./Key.ts";
  * asymmetric key pair {@link Key}, e.g. to share the public verification key
  * with a partner. The private key never leaves the service. Provide
  * `GetPublicKeyCertificateHttp` on the Function to satisfy this service.
- * @binding
- * @section Public Key Certificates
- * @example Export the public key certificate of a signing key
+ * ### Public Key Certificates
+ * **Example:** Export the public key certificate of a signing key
  * ```typescript
  * // init
  * const getPublicKeyCertificate =
@@ -21,6 +20,8 @@ import type { Key } from "./Key.ts";
  * const { KeyCertificate, KeyCertificateChain } =
  *   yield* getPublicKeyCertificate();
  * ```
+ *
+ * @binding
  */
 export interface GetPublicKeyCertificate extends Binding.Service<
   GetPublicKeyCertificate,

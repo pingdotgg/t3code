@@ -1,0 +1,22 @@
+---
+// Prerendered at build time and served from S3 through CloudFront — the
+// server function is not invoked for this route.
+import "../styles/global.css";
+
+export const prerender = true;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About — Astro on AWS</title>
+  </head>
+  <body class="bg-slate-50 p-8 text-slate-900">
+    <h1 class="text-3xl font-bold">About</h1>
+    <p class="mt-4 text-slate-600">This page was prerendered at build time.</p>
+    <p class="mt-2">
+      <a href="/" class="text-blue-600 underline">Back home</a>
+    </p>
+  </body>
+</html>

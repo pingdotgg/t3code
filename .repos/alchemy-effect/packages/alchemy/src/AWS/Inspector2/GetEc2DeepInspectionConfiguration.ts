@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetEc2DeepInspectionConfigurationHttp)`.
- * @binding
- * @section Account Settings & Usage
- * @example Read Deep Inspection Settings
+ * ### Account Settings & Usage
+ * **Example:** Read Deep Inspection Settings
  * ```typescript
  * // init
  * const getEc2DeepInspectionConfiguration = yield* AWS.Inspector2.GetEc2DeepInspectionConfiguration();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { status, packagePaths } = yield* getEc2DeepInspectionConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface GetEc2DeepInspectionConfiguration extends Binding.Service<
   GetEc2DeepInspectionConfiguration,

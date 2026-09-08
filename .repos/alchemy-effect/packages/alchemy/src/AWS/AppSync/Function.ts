@@ -68,9 +68,8 @@ export interface AppSyncFunction extends Resource<
 /**
  * An AppSync pipeline function — a reusable step composed by `PIPELINE`
  * resolvers.
- * @resource
- * @section Creating Pipeline Functions
- * @example JavaScript pipeline function over a Lambda data source
+ * ### Creating Pipeline Functions
+ * **Example:** JavaScript pipeline function over a Lambda data source
  * ```typescript
  * const step = yield* AppSync.Function("InvokeStep", {
  *   api,
@@ -87,6 +86,8 @@ export interface AppSyncFunction extends Resource<
  * // reference from a PIPELINE resolver:
  * // pipelineFunctionIds: [step.functionId]
  * ```
+ *
+ * @resource
  */
 export const FunctionResource = Resource<AppSyncFunction>(
   "AWS.AppSync.Function",

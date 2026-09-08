@@ -107,9 +107,8 @@ export interface AnnotationStore extends Resource<
  * ID unless you provide one. The `storeFormat`, `reference`, `storeOptions`,
  * and `sseConfig` are immutable — changing any of them replaces the store.
  * `description` is updated in place.
- * @resource
- * @section Creating an Annotation Store
- * @example VCF Annotation Store
+ * ### Creating an Annotation Store
+ * **Example:** VCF Annotation Store
  * ```typescript
  * import * as Omics from "alchemy/AWS/Omics";
  *
@@ -121,7 +120,7 @@ export interface AnnotationStore extends Resource<
  * });
  * ```
  *
- * @example TSV Annotation Store
+ * **Example:** TSV Annotation Store
  * ```typescript
  * const store = yield* Omics.AnnotationStore("Annotations", {
  *   storeFormat: "TSV",
@@ -130,6 +129,8 @@ export interface AnnotationStore extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const AnnotationStore = Resource<AnnotationStore>(
   "AWS.Omics.AnnotationStore",

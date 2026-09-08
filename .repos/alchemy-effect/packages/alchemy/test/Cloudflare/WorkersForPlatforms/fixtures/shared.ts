@@ -19,7 +19,7 @@ export const DispatchNs = Cloudflare.WorkersForPlatforms.DispatchNamespace(
  */
 export const AsyncPlatformWorker = Cloudflare.Worker("WfpAsyncPlatformWorker", {
   main: pathe.resolve(import.meta.dirname, "async-platform-handler.ts"),
-  url: true,
+  workersDev: true,
   env: {
     DISPATCH: DispatchNs,
   },

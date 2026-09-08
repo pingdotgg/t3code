@@ -1,0 +1,107 @@
+---
+title: Buckets
+description: Prisma Buckets provision S3-compatible object storage inside a project, and Bucket access keys mint the S3 credentials — access key, one-time secret, endpoint, and the provider-side bucket name.
+---
+
+A `Prisma.Bucket` is an Object Store bucket inside a Prisma
+project. A `Prisma.BucketAccessKey` is an access key for one bucket and
+yields the S3 credentials your app connects with.
+
+```typescript
+import * as Prisma from "alchemy/Prisma";
+
+const bucket = yield* Prisma.Bucket("uploads", {
+  project,
+  name: "uploads",
+});
+
+const key = yield* Prisma.BucketAccessKey("uploads-key", {
+  bucket,
+  role: "read_write",
+});
+```
+
+## Bucket access key outputs
+
+```typescript
+key.accessKeyId; //     S3 access key ID
+key.secretAccessKey; // S3 secret, Redacted — returned once at creation
+key.endpoint; //        S3-compatible endpoint URL
+key.bucketName; //      provider-side S3 bucket name (e.g. user-<id>)
+```
+
+Prisma returns `secretAccessKey` exactly once, in the create
+response. Alchemy persists it `Redacted` in state and never re-reads
+it from the API, so keep your state store somewhere durable.
+
+S3 clients must use `key.bucketName` — the provider-side name — as
+the bucket, not the friendly display name you chose on the bucket:
+
+```typescript
+const app = yield* Prisma.Compute("api", {
+  project,
+  path: "./app",
+  env: {
+    S3_ENDPOINT: key.endpoint,
+    S3_BUCKET: key.bucketName,
+    S3_ACCESS_KEY_ID: key.accessKeyId,
+    S3_SECRET_ACCESS_KEY: key.secretAccessKey,
+  },
+});
+```
+
+## Roles
+
+A key's `role` is `"read"` or `"read_write"` and is fixed at
+creation — changing it (or the key's name or bucket) replaces the
+key and mints fresh credentials.
+
+## Deletion
+
+Destroying a bucket deletes its objects and revokes any remaining
+keys server-side. A `Prisma.BucketAccessKey` destroyed after its bucket
+tolerates the already-revoked key.
+
+## Branch-scoped buckets
+
+Pass `branchId` to scope a bucket to a branch, e.g. for per-preview
+storage:
+
+```typescript
+const previewBucket = yield* Prisma.Bucket("preview-uploads", {
+  project,
+  branchId: preview.branchId,
+});
+```
+
+## The bucket bindings
+
+Inside a Prisma Compute app, AWS Lambda function, or Cloudflare Worker, bind the bucket instead of wiring credentials by hand. `Prisma.ReadBucket`, `Prisma.WriteBucket`, and `Prisma.ReadWriteBucket` each mint a scoped `Prisma.BucketAccessKey` for the bucket, carry its credentials into the host, and resolve to a typed client at runtime:
+
+```typescript
+Effect.gen(function* () {
+  const uploads = yield* Prisma.ReadWriteBucket(bucket);
+
+  return {
+    fetch: Effect.gen(function* () {
+      yield* uploads.put("hits", "1");
+      const object = yield* uploads.get("hits");
+      return yield* HttpServerResponse.text(
+        object === null ? "" : yield* object.text(),
+      );
+    }),
+  };
+}).pipe(Effect.provide(Prisma.ReadWriteBucketBinding));
+```
+
+`ReadBucket` mints a `read`-role key, so its credential genuinely cannot write. The store has no write-only role, so `WriteBucket` carries a `read_write` credential and enforces write-only at the client.
+
+## Where next
+
+- [Compute](/prisma/compute/apps) — the host the bindings deliver to.
+
+Reference:
+
+- [Bucket API reference](/providers/prisma/bucket)
+- [BucketAccessKey API reference](/providers/prisma/bucketaccesskey)
+- [ReadBucket](/providers/prisma/readbucket) / [WriteBucket](/providers/prisma/writebucket) / [ReadWriteBucket](/providers/prisma/readwritebucket)

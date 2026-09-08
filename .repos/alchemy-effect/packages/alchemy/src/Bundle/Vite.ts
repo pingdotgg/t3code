@@ -17,6 +17,12 @@ import {
 
 export interface ViteBuildOutput {
   readonly clientDirectory: string | undefined;
+  /**
+   * The client environment's resolved Vite `base`. The build rewrites
+   * every emitted asset URL with it, so the uploaded asset manifest must
+   * be keyed with the same prefix to agree with the HTML.
+   */
+  readonly base: string | undefined;
   // This is emitted as an Effect instead of a value so we can process it in parallel with reading the client assets.
   readonly serverBundle: Effect.Effect<BundleOutput | undefined, BundleError>;
   readonly externalWorkspaces: Effect.Effect<Set<string>, PlatformError>;
@@ -39,6 +45,7 @@ type RscManifestId = keyof typeof RSC_MANIFEST;
 interface EnvironmentLike {
   readonly name: string;
   readonly config: {
+    readonly base: string;
     readonly root: string;
     readonly build: { readonly outDir: string };
   };
@@ -56,6 +63,7 @@ export const viteBuildOutputPlugin = Effect.fn(function* ({
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let clientDirectory: string | undefined;
+  let base: string | undefined;
   let serverEntry: string | undefined;
   const serverChunks = new Map<
     string,
@@ -125,6 +133,7 @@ export const viteBuildOutputPlugin = Effect.fn(function* ({
           root,
           this.environment.config.build.outDir,
         );
+        base = this.environment.config.base;
         return;
       }
       const files = Object.values(bundle);
@@ -191,7 +200,11 @@ export const viteBuildOutputPlugin = Effect.fn(function* ({
     const relativeOutDir = path.isAbsolute(outDir)
       ? path.relative(environment.config.root, outDir)
       : outDir;
-    return `${relativeOutDir}/${name}`;
+    // `path.relative` (and user-configured outDirs) yield backslashes on
+    // Windows; worker module names are import specifiers, so a name like
+    // `dist\ssr/index.js` deploys fine but can never be resolved by the
+    // entry's `import "ssr/index.js"` — the worker 1101s at request time.
+    return `${relativeOutDir.replaceAll("\\", "/")}/${name}`;
   };
 
   // Manually read the RSC manifest chunk from the file system.
@@ -212,13 +225,11 @@ export const viteBuildOutputPlugin = Effect.fn(function* ({
       .pipe(
         Effect.flatMap((content) =>
           sha256(content).pipe(
-            Effect.map(
-              (hash): BundleFile => ({
-                path: fileName(name, environment),
-                content,
-                hash,
-              }),
-            ),
+            Effect.map((hash): BundleFile => ({
+              path: fileName(name, environment),
+              content,
+              hash,
+            })),
           ),
         ),
         Effect.mapError(bundleErrorFromUnknown),
@@ -258,12 +269,11 @@ export const viteBuildOutputPlugin = Effect.fn(function* ({
     plugin,
     // Read lazily so callers observe the state collected during the build.
     // Only safe to await *after* `builder.buildApp()` has resolved.
-    output: Effect.sync(
-      (): ViteBuildOutput => ({
-        clientDirectory,
-        serverBundle: makeServerBundle(),
-        externalWorkspaces: collectExternalWorkspaces(),
-      }),
-    ),
+    output: Effect.sync((): ViteBuildOutput => ({
+      clientDirectory,
+      base,
+      serverBundle: makeServerBundle(),
+      externalWorkspaces: collectExternalWorkspaces(),
+    })),
   };
 });

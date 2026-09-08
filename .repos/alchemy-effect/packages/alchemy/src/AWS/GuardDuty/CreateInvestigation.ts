@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.CreateInvestigationHttp)`.
- * @binding
- * @section Extended Threat Detection
- * @example Start an Investigation
+ * ### Extended Threat Detection
+ * **Example:** Start an Investigation
  * ```typescript
  * // init
  * const createInvestigation = yield* AWS.GuardDuty.CreateInvestigation(detector);
@@ -22,6 +21,8 @@ import type { Detector } from "./Detector.ts";
  *   TriggerPrompt: "Investigate the port probe findings on my web tier",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateInvestigation extends Binding.Service<
   CreateInvestigation,

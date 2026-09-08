@@ -90,11 +90,8 @@ export type SnippetRules = Resource<
  * Safety: when there is no prior state and the zone already has a
  * non-empty rule list, `read` reports it as `Unowned` and the engine
  * refuses to take it over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Snippets
- * @category Rules & Configuration
- * @section Activating Snippets
- * @example Route a path through a snippet
+ * ### Activating Snippets
+ * **Example:** Route a path through a snippet
  * ```typescript
  * const snippet = yield* Cloudflare.Snippets.Snippet("HeaderSnippet", {
  *   zoneId: zone.zoneId,
@@ -112,6 +109,10 @@ export type SnippetRules = Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
+ * @product Snippets
+ * @category Rules & Configuration
  */
 export const SnippetRules = Resource<SnippetRules>("Cloudflare.Snippets.Rules");
 
@@ -212,10 +213,11 @@ export const SnippetRulesProvider = () =>
 
 /**
  * `ListRulesResponse` is untyped in distilled (`unknown`); the wire shape
- * is an array of snake_case rule objects under `result`.
+ * is an array of rule objects under `result`, camelized by the service key
+ * dictionary at decode (`snippet_name` → `snippetName`).
  */
 interface WireRule {
-  readonly snippet_name?: string;
+  readonly snippetName?: string;
   readonly expression?: string;
   readonly enabled?: boolean;
   readonly description?: string | null;
@@ -229,11 +231,11 @@ const listObservedRules = (zoneId: string) =>
     Effect.map((result): SnippetRuleAttribute[] => {
       if (!Array.isArray(result)) return [];
       return (result as WireRule[]).flatMap((rule) =>
-        rule.snippet_name === undefined || rule.expression === undefined
+        rule.snippetName === undefined || rule.expression === undefined
           ? []
           : [
               {
-                snippetName: rule.snippet_name,
+                snippetName: rule.snippetName,
                 expression: rule.expression,
                 enabled: rule.enabled ?? true,
                 description: rule.description ?? undefined,

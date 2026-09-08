@@ -12,6 +12,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import ConsumerWorker from "./fixtures/dedicated-consumer-worker.ts";
+import ProducerWorker from "./fixtures/dedicated-producer-worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
@@ -25,7 +28,8 @@ const logLevel = Effect.provideService(
 /**
  * Seed a `created` Queue state row whose `queueId` is a `dev:` mock id —
  * i.e. the shape `alchemy dev` persists when a queue is "created" locally
- * against the in-memory local runtime instead of Cloudflare.
+ * against the in-memory local runtime instead of Cloudflare. Dev runs stamp
+ * `providerMode: "local"` on every commit, so the seeded row carries it.
  */
 const seedDevQueue = (input: {
   stackName: string;
@@ -49,6 +53,7 @@ const seedDevQueue = (input: {
         logicalId: input.fqn,
         instanceId: "00000000000000000000000000000001",
         providerVersion: 0,
+        providerMode: "local",
         bindings: [],
         downstream: [],
         props: {},
@@ -66,9 +71,10 @@ const seedDevQueue = (input: {
  * is a `dev:` mock id) must be promoted to a real Cloudflare queue on the
  * first live deploy.
  *
- * The live provider's `diff` sees the `dev:` id and returns `update`
- * (rather than `noop`/`replace`), so the engine calls `reconcile`, which
- * observes that the cached id is not a real queue and creates one. The
+ * The row is stamped `providerMode: "local"`, which differs from the
+ * deploy's resolved mode (`live`), so the engine plans a REPLACEMENT: the
+ * live provider creates a real queue and the old local-mode generation is
+ * deleted via the local provider (no cloud call for the `dev:` id). The
  * resulting `queueId` must be a live id and resolvable on Cloudflare.
  */
 test.provider("promotes a dev queue to a live queue on deploy", (stack) =>
@@ -174,8 +180,9 @@ test.provider("list enumerates the deployed queue", (stack) =>
  * persisted `queueId` is a `dev:` mock id) has no Cloudflare counterpart.
  * Destroying it must NOT issue a `deleteQueue` against Cloudflare — the
  * `dev:` id is not a valid queue id and the request URL would be
- * malformed. The live provider's `delete` short-circuits on the non-live
- * id, so destroy succeeds and the state row is removed cleanly.
+ * malformed. The row is stamped `providerMode: "local"`, so the engine
+ * resolves the LOCAL provider's `delete` for it (an in-memory registry
+ * removal), and destroy succeeds with the state row removed cleanly.
  */
 test.provider("suppresses deletion of a dev-only queue", (stack) =>
   Effect.gen(function* () {
@@ -207,4 +214,81 @@ test.provider("suppresses deletion of a dev-only queue", (stack) =>
     });
     expect(persisted).toBeUndefined();
   }).pipe(logLevel),
+);
+
+/**
+ * Regression test for #1243 — producer and consumer split across two
+ * Workers, so the consuming Worker has no producer binding and learns its
+ * queue's name only from the `DedicatedQueue_queueName` env binding.
+ *
+ * Before the `packEnvValue` fix, that binding deployed as the JSON-packed
+ * `"the-name"` (quote characters on the wire): the raw-binding assertion
+ * below failed, and any consumer of the raw value — including the
+ * reporter's — could never match Cloudflare's bare `MessageBatch.queue`.
+ * The test pins both halves: the binding is the bare name, and the
+ * handler receives the message end-to-end.
+ */
+test.provider.skipIf(!!process.env.FAST)(
+  "dedicated consumer worker deploys a bare queue-name binding and receives messages",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const out = yield* stack.deploy(
+        Effect.gen(function* () {
+          const producer = yield* ProducerWorker;
+          const consumer = yield* ConsumerWorker;
+          return {
+            producer: producer.url.as<string>(),
+            consumer: consumer.url.as<string>(),
+          };
+        }),
+      );
+
+      const client = yield* HttpClient.HttpClient;
+      // Fresh workers.dev URLs 404 for a few seconds; retry through it.
+      const get = (url: string) =>
+        client.get(url).pipe(
+          Effect.flatMap((res) =>
+            res.status < 300
+              ? Effect.succeed(res)
+              : Effect.fail(new Error(`Worker not ready: ${res.status}`)),
+          ),
+          Effect.retry({
+            schedule: Schedule.max([
+              Schedule.min([
+                Schedule.exponential("500 millis"),
+                Schedule.spaced("3 seconds"),
+              ]),
+              Schedule.recurs(30),
+            ]),
+          }),
+          Effect.orDie,
+        );
+
+      // The raw env binding is the bare queue name — no quote characters
+      // on the wire (#1243: it deployed as `"the-name"`).
+      const binding = (yield* (yield* get(`${out.consumer}/binding`)).json) as {
+        queueName: string;
+      };
+      expect(binding.queueName).not.toMatch(/^"/);
+      expect(binding.queueName).toMatch(/queue/);
+
+      yield* get(`${out.producer}/send?text=dedicated`);
+
+      const received = yield* get(`${out.consumer}/received`).pipe(
+        Effect.flatMap((res) => res.json),
+        Effect.map((body) => (body as { bodies?: string[] })?.bodies ?? []),
+        Effect.repeat({
+          schedule: Schedule.spaced("2 seconds"),
+          until: (bodies) => bodies.includes("dedicated"),
+          times: 45,
+        }),
+        Effect.orDie,
+      );
+      expect(received).toContain("dedicated");
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 300_000 },
 );

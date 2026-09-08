@@ -15,6 +15,7 @@ import {
   type DerivedAction,
   type ActionVerb,
 } from "../../NamespaceTree.ts";
+import { formatModeNote } from "../../ModeTag.ts";
 
 export interface PlanProps {
   plan: AlchemyPlan;
@@ -146,6 +147,11 @@ export function Plan({ plan }: PlanProps): JSX.Element {
           }
 
           // Resource item
+          const modeNote = formatModeNote({
+            mode: item.providerMode,
+            priorMode: item.fromProviderMode,
+            defaultMode: plan.defaultMode,
+          });
           return (
             <Box key={key} flexDirection="row">
               <Text>{indent}</Text>
@@ -158,6 +164,11 @@ export function Plan({ plan }: PlanProps): JSX.Element {
               <Box marginLeft={1}>
                 <Text color="blackBright">({item.resourceType})</Text>
               </Box>
+              {modeNote && (
+                <Box marginLeft={1}>
+                  <Text color="blackBright">({modeNote})</Text>
+                </Box>
+              )}
               {item.bindingCount !== undefined && item.bindingCount > 0 && (
                 <Box marginLeft={1}>
                   <Text color="cyan">({item.bindingCount} bindings)</Text>

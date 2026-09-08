@@ -17,9 +17,8 @@ export interface SendInvitesRequest extends Omit<
  * Center accessor ids.
  * Provide the implementation with
  * `Effect.provide(AWS.RePostSpace.SendInvitesHttp)`.
- * @binding
- * @section Inviting Users
- * @example Invite users to the private re:Post
+ * ### Inviting Users
+ * **Example:** Invite users to the private re:Post
  * ```typescript
  * const sendInvites = yield* AWS.RePostSpace.SendInvites(space);
  *
@@ -29,6 +28,8 @@ export interface SendInvitesRequest extends Omit<
  *   body: "Ask and answer questions about our AWS workloads.",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SendInvites extends Binding.Service<
   SendInvites,

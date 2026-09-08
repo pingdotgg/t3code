@@ -12,9 +12,8 @@ import type { Directory } from "./Directory.ts";
  * prune before taking a new snapshot. The directory id is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.DirectoryService.GetSnapshotLimitsHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Check the Manual Snapshot Quota
+ * ### Managing Snapshots
+ * **Example:** Check the Manual Snapshot Quota
  * ```typescript
  * // init — bind the operation to the directory
  * const getSnapshotLimits = yield* AWS.DirectoryService.GetSnapshotLimits(directory);
@@ -25,6 +24,8 @@ import type { Directory } from "./Directory.ts";
  *   yield* Effect.logWarning("manual snapshot limit reached");
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetSnapshotLimits extends Binding.Service<
   GetSnapshotLimits,

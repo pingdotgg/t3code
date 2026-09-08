@@ -17,9 +17,8 @@ export interface ListSchemaVersionsRequest
  * visibility, or semantic version. Provide the implementation with
  * `Effect.provide(AWS.IoTManagedIntegrations.ListSchemaVersionsHttp)`.
  *
- * @binding
- * @section Working with the Schema Catalog
- * @example List Matter Capability Schemas
+ * ### Working with the Schema Catalog
+ * **Example:** List Matter Capability Schemas
  * ```typescript
  * const listSchemaVersions = yield* IoTManagedIntegrations.ListSchemaVersions();
  *
@@ -28,6 +27,8 @@ export interface ListSchemaVersionsRequest
  *   Namespace: "matter",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListSchemaVersions extends Binding.Service<
   ListSchemaVersions,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `ENABLED_BY_DEFAULT`). Account Management is an account singleton, so the
  * binding takes no resource argument. Provide the implementation with
  * `Effect.provide(AWS.Account.GetRegionOptStatusHttp)`.
- * @binding
- * @section Reading Region Opt Status
- * @example Check Whether an Opt-in Region Is Enabled
+ * ### Reading Region Opt Status
+ * **Example:** Check Whether an Opt-in Region Is Enabled
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getRegionOptStatus = yield* AWS.Account.GetRegionOptStatus();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const status = yield* getRegionOptStatus({ RegionName: "ap-east-1" });
  * console.log(status.RegionOptStatus);
  * ```
+ *
+ * @binding
  */
 export interface GetRegionOptStatus extends Binding.Service<
   GetRegionOptStatus,

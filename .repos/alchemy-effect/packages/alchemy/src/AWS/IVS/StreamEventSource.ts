@@ -90,8 +90,8 @@ export interface StreamEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on
  * the Function effect.
  *
- * @section Consuming Stream Events
- * @example React When a Broadcast Starts
+ * ### Consuming Stream Events
+ * **Example:** React When a Broadcast Starts
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

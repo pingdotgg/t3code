@@ -13,9 +13,8 @@ type InsightRules = [InsightRuleResource, ...InsightRuleResource[]];
  *
  * Provide `CloudWatch.DisableInsightRulesHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Managing Insight Rules
- * @example Pause a Contributor Insights Rule
+ * ### Managing Insight Rules
+ * **Example:** Pause a Contributor Insights Rule
  * ```typescript
  * // init — grants cloudwatch:DisableInsightRules on the rule
  * const disableInsightRules = yield* AWS.CloudWatch.DisableInsightRules(rule);
@@ -24,6 +23,8 @@ type InsightRules = [InsightRuleResource, ...InsightRuleResource[]];
  * const result = yield* disableInsightRules();
  * const failures = result.Failures ?? []; // empty on success
  * ```
+ *
+ * @binding
  */
 export interface DisableInsightRules extends Binding.Service<
   DisableInsightRules,

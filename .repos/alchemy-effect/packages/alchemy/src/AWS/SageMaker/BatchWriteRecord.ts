@@ -28,9 +28,8 @@ export interface BatchWriteRecordRequest {
  * callable that automatically scopes every entry to the bound feature group.
  * Per-record failures come back in the response's `Errors` /
  * `UnprocessedEntries` rather than failing the whole call.
- * @binding
- * @section Writing Records
- * @example Batch-Write Records
+ * ### Writing Records
+ * **Example:** Batch-Write Records
  * ```typescript
  * // init
  * const batchWriteRecord = yield* AWS.SageMaker.BatchWriteRecord(featureGroup);
@@ -48,6 +47,8 @@ export interface BatchWriteRecordRequest {
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchWriteRecord extends Binding.Service<
   BatchWriteRecord,

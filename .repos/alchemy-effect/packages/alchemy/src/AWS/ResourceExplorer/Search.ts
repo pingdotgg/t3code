@@ -12,9 +12,8 @@ export interface SearchRequest extends Omit<RE2.SearchInput, "ViewArn"> {}
  * callable that automatically injects the view's ARN. Results are the
  * intersection of the `QueryString` and the view's filter. Provide the
  * implementation with `Effect.provide(AWS.ResourceExplorer.SearchHttp)`.
- * @binding
- * @section Searching Resources
- * @example Search for S3 buckets
+ * ### Searching Resources
+ * **Example:** Search for S3 buckets
  * ```typescript
  * const search = yield* AWS.ResourceExplorer.Search(view);
  *
@@ -24,6 +23,8 @@ export interface SearchRequest extends Omit<RE2.SearchInput, "ViewArn"> {}
  * });
  * // results.Resources, results.Count?.TotalResources
  * ```
+ *
+ * @binding
  */
 export interface Search extends Binding.Service<
   Search,

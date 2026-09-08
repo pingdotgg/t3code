@@ -16,9 +16,8 @@ export interface GetClipRequest extends Omit<
  * callable that resolves the per-stream data endpoint (`GetDataEndpoint`)
  * and downloads an MP4 clip covering the requested fragment range. The
  * response `Payload` is a streaming body.
- * @binding
- * @section Reading Media
- * @example Download a Clip
+ * ### Reading Media
+ * **Example:** Download a Clip
  * ```typescript
  * // init
  * const getClip = yield* AWS.KinesisVideo.GetClip(stream);
@@ -31,6 +30,8 @@ export interface GetClipRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetClip extends Binding.Service<
   GetClip,

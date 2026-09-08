@@ -13,9 +13,8 @@ import type { Collection } from "./Collection.ts";
  * granted `aoss:CreateIndex` on the index pattern by a data
  * {@link AccessPolicy}. Provide the implementation with
  * `Effect.provide(AWS.OpenSearchServerless.CreateIndexHttp)`.
- * @binding
- * @section Managing Indexes at Runtime
- * @example Create a tenant's vector index
+ * ### Managing Indexes at Runtime
+ * **Example:** Create a tenant's vector index
  * ```typescript
  * // init — bind the operation to the collection
  * const createIndex = yield* AWS.OpenSearchServerless.CreateIndex(collection);
@@ -32,6 +31,8 @@ import type { Collection } from "./Collection.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateIndex extends Binding.Service<
   CreateIndex,

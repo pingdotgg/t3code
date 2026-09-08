@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * (`Resource: "*"`).
  * Provide the implementation with
  * `Effect.provide(AWS.SSMIncidents.ListRelatedItemsHttp)`.
- * @binding
- * @section Related Items
- * @example List An Incident's Related Items
+ * ### Related Items
+ * **Example:** List An Incident's Related Items
  * ```typescript
  * // init
  * const listRelatedItems = yield* AWS.SSMIncidents.ListRelatedItems();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { relatedItems } = yield* listRelatedItems({ incidentRecordArn });
  * ```
+ *
+ * @binding
  */
 export interface ListRelatedItems extends Binding.Service<
   ListRelatedItems,

@@ -65,9 +65,8 @@ export interface ArchiveProps {
  *
  * Archives do not support tags, so ownership is tracked by the
  * deterministic physical name.
- * @resource
- * @section Archiving Events
- * @example Archive All Events on a Bus
+ * ### Archiving Events
+ * **Example:** Archive All Events on a Bus
  * ```typescript
  * const bus = yield* AWS.EventBridge.EventBus("AppEvents", {});
  *
@@ -77,7 +76,7 @@ export interface ArchiveProps {
  * });
  * ```
  *
- * @example Archive a Filtered Subset of Events
+ * **Example:** Archive a Filtered Subset of Events
  * ```typescript
  * const archive = yield* AWS.EventBridge.Archive("OrderArchive", {
  *   eventSourceArn: bus.eventBusArn,
@@ -86,6 +85,8 @@ export interface ArchiveProps {
  *   retention: "90 days",
  * });
  * ```
+ *
+ * @resource
  */
 export interface Archive extends Resource<
   "AWS.EventBridge.Archive",

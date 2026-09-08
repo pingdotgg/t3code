@@ -56,7 +56,7 @@ const probe = <A, E extends { readonly _tag: string }>(
 export default GreengrassTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

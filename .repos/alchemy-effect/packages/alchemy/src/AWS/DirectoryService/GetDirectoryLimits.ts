@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * support resource-level permissions, so the grant is account-wide. Provide
  * the implementation with
  * `Effect.provide(AWS.DirectoryService.GetDirectoryLimitsHttp)`.
- * @binding
- * @section Reading Account Limits
- * @example Alert When the Directory Limit Is Near
+ * ### Reading Account Limits
+ * **Example:** Alert When the Directory Limit Is Near
  * ```typescript
  * // init — request the account-level capability
  * const getDirectoryLimits = yield* AWS.DirectoryService.GetDirectoryLimits();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logWarning("directory limit reached");
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetDirectoryLimits extends Binding.Service<
   GetDirectoryLimits,

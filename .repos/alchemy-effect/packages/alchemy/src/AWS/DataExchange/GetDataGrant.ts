@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * expiration.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.GetDataGrantHttp)`.
- * @binding
- * @section Data Grants
- * @example Check A Grant's Acceptance State
+ * ### Data Grants
+ * **Example:** Check A Grant's Acceptance State
  * ```typescript
  * const getDataGrant = yield* AWS.DataExchange.GetDataGrant();
  *
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const grant = yield* getDataGrant({ DataGrantId: grantId });
  * yield* Effect.log(`state: ${grant.AcceptanceState}`);
  * ```
+ *
+ * @binding
  */
 export interface GetDataGrant extends Binding.Service<
   GetDataGrant,

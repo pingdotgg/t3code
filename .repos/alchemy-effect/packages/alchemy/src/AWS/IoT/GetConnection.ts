@@ -12,14 +12,15 @@ export interface GetConnectionRequest extends iotdata.GetConnectionRequest {}
  * MQTT client ARNs (or all clients when the filter is omitted) and returns
  * a callable that reads a client's connection state. Provide the
  * implementation with `Effect.provide(AWS.IoT.GetConnectionHttp)`.
- * @binding
- * @section MQTT Connections
- * @example Check a Device's Connectivity
+ * ### MQTT Connections
+ * **Example:** Check a Device's Connectivity
  * ```typescript
  * const getConnection = yield* AWS.IoT.GetConnection("sensor-*");
  *
  * const { connected } = yield* getConnection({ clientId: "sensor-1" });
  * ```
+ *
+ * @binding
  */
 export interface GetConnection extends Binding.Service<
   GetConnection,

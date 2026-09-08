@@ -84,8 +84,8 @@ export interface ClusterEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Cluster Events
- * @example React When A Task Stops
+ * ### Consuming Cluster Events
+ * **Example:** React When A Task Stops
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -106,7 +106,7 @@ export interface ClusterEventSourceProps extends EventRouteProps {
  * );
  * ```
  *
- * @example Alert On Failed Deployments
+ * **Example:** Alert On Failed Deployments
  * ```typescript
  * yield* AWS.ECS.consumeClusterEvents(
  *   { kinds: ["deployment-state-change"] },

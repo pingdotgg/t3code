@@ -1,13 +1,13 @@
 # @alchemy.run/pr-package
 
-A self-hostable PR-package service for Cloudflare. Publish ephemeral, tag-addressable npm tarballs (e.g. one per PR commit) and install them with a pretty URL like `https://pkg.ing/<pkg>/<sha>`.
+A self-hostable PR-package service for Cloudflare. Publish content-addressed npm tarballs, point ephemeral tags at them, and install with a pretty URL like `https://pkg.ing/<pkg>/<sha>`.
 
 It packages four Cloudflare resources into a single Effect `handler`:
 
-- **R2** bucket — stores `.tgz` blobs
-- **KV** namespace — tag → resourceId index
+- **R2** bucket — stores `.tgz` blobs by `(package, sha256)`
+- **KV** namespace — tag → content-addressed tarball pointer
 - **Secrets Store** + a `Random`-generated **bearer token** — gates writes
-- **Durable Object** — per-resource download stats and TTL state
+- **Durable Object** — per-tarball download stats and scheduled TTL cleanup
 
 ## Install
 
@@ -91,7 +91,7 @@ The stack output gives you the worker URL and the auto-generated bearer token. S
 | Option          | Type                                | Default          | Notes                                                                |
 | --------------- | ----------------------------------- | ---------------- | -------------------------------------------------------------------- |
 | `parseAliasUrl` | `(url: URL) => AliasMatch \| null`  | `() => null`     | Maps any non-`/projects/...` GET to `{ pkgName, tag }` for a 301.    |
-| `defaultTtl`    | `string` (Effect Duration)          | `"3 weeks"`      | TTL applied when an upload doesn't pass `X-TTL`.                     |
+| `defaultTtl`    | `string` (Effect Duration)          | `"3 weeks"`      | TTL applied when a tag request doesn't pass `Alchemy-TTL`.           |
 
 `AliasMatch` is `{ pkgName: string; tag: string }`. Returning `null` falls through to the regular `/projects/:pkgName/...` matcher.
 
@@ -99,38 +99,46 @@ The stack output gives you the worker URL and the auto-generated bearer token. S
 
 All routes are scoped by `:pkgName`, which can be scoped (`@scope/name`) or unscoped (`name`) — matches npm package naming.
 
-### `PUT /projects/:pkgName/packages` — upload
+### `HEAD /projects/:pkgName/packages/:sha256` — probe
+
+Checks whether the backing tarball identified by `(package name, SHA-256)` already exists. Authentication is required. Returns 200 when present and 404 otherwise.
+
+### `PUT /projects/:pkgName/packages/:sha256` — upload
+
+Uploads the raw `.tgz` stream when the content-addressed backing tarball is absent. Authentication, `Content-Type: application/gzip`, and a matching `Content-Length` are required. Repeating the request is idempotent and does not overwrite existing content.
+
+### `PUT /projects/:pkgName/tags` — point tags
+
+Assigns tags to an existing backing tarball without uploading its bytes again.
 
 Headers:
+
 - `Authorization: Bearer <token>` (required)
-- `Content-Type: application/gzip`
-- `X-Tags: <json-array>` (required) — e.g. `["main","abc1234","abc1234abc1234..."]`
-- `X-TTL: <duration>` (optional) — e.g. `"7 hours"`, `"3 weeks"`. Effect `Duration` syntax.
-- `Content-Length` (required)
+- `Alchemy-Tarball-Hash: <sha256>` (required)
+- `Alchemy-Tags: <json-array>` (required) — e.g. `["main","abc1234","abc1234abc1234..."]`
+- `Alchemy-TTL: <duration>` (optional) — e.g. `"7 hours"`, `"3 weeks"`. Effect `Duration` syntax.
 
-Body: raw `.tgz` stream. Streamed straight to R2.
+If a tag already points elsewhere, it moves to the new tarball. A tarball is deleted after its final tag is removed.
 
-Returns `{ resourceId, project, tags, ttl, expiresAt }`.
-
-If a tag was already pointing somewhere, the old resource has the tag removed; if it was the resource's last tag, the blob and metadata are deleted.
+Assigning tags schedules a named Durable Object expiration event. When it fires, the service removes every KV tag that still points to that tarball, deletes the R2 blob, and clears the tarball state. Reassigning the tarball before expiry reschedules the event.
 
 ### `GET /<alias-path>` — pretty install URL → 301
 
 Whenever the path doesn't start with `/projects/`, the request URL is handed to `parseAliasUrl(url)`. If it returns a match, the worker 301s to `/projects/:pkgName/tags/:tag`. Otherwise 404.
 
-### `GET /projects/:pkgName/tags/:tag` — resolve tag → 302 to blob
+### `GET /projects/:pkgName/tags/:tag` — resolve tag → 302 to tarball
 
-Looks up `tag → resourceId`, records a download in the per-resource Durable Object, and 302s to `/projects/:pkgName/packages/:resourceId`.
+Looks up the tag's `(package name, SHA-256)` pointer, records a download, and redirects to the immutable tarball URL.
 
-### `GET /projects/:pkgName/packages/:resourceId` — serve blob
+### `GET /projects/:pkgName/packages/:sha256` — serve tarball
 
-Returns the `.tgz` with `cache-control: public, max-age=31536000, immutable`. No auth required (resourceIds are unguessable UUIDs).
+Returns the `.tgz` with `cache-control: public, max-age=31536000, immutable`. No auth required; the URL itself is content-addressed.
 
 ### `DELETE /projects/:pkgName/tags/:tag` — remove tag
 
-Auth required. If the tag was the resource's last one, the blob and metadata are also deleted.
+Auth required. If the tag was the tarball's last one, the backing blob is also deleted.
 
-### `GET /projects/:pkgName/packages/:resourceId/stats` — download stats
+### `GET /projects/:pkgName/packages/:sha256/stats` — download stats
 
 Auth required. Returns `{ downloads: { [tag]: number }, totalDownloads: number }`.
 
@@ -139,12 +147,20 @@ Auth required. Returns `{ downloads: { [tag]: number }, totalDownloads: number }
 ```sh
 bun pm pack --destination .
 tgz=$(ls *.tgz)
-curl -fsSL --show-error -X PUT \
-  "https://pkg.example.com/projects/my-pkg/packages" \
-  -H "Authorization: Bearer ${PR_PACKAGE_TOKEN}" \
-  -H "X-Tags: $(jq -nc --arg sha "$GITHUB_SHA" --arg short "${GITHUB_SHA:0:7}" '[$short, $sha, "main"]')" \
-  -H "Content-Type: application/gzip" \
-  --data-binary "@${tgz}"
+hash=$(sha256sum "$tgz" | cut -d ' ' -f 1)
+size=$(wc -c < "$tgz" | tr -d ' ')
+base="https://pkg.example.com/projects/my-pkg"
+
+curl -fsSI -H "Authorization: Bearer ${PR_PACKAGE_TOKEN}" \
+  "$base/packages/$hash" || \
+curl -fsS -X PUT -H "Authorization: Bearer ${PR_PACKAGE_TOKEN}" \
+  -H "Content-Type: application/gzip" -H "Content-Length: $size" \
+  --data-binary "@$tgz" "$base/packages/$hash"
+
+curl -fsS -X PUT -H "Authorization: Bearer ${PR_PACKAGE_TOKEN}" \
+  -H "Alchemy-Tarball-Hash: $hash" \
+  -H "Alchemy-Tags: [\"${GITHUB_SHA:0:7}\",\"$GITHUB_SHA\",\"main\"]" \
+  "$base/tags"
 ```
 
 Then consumers install with:

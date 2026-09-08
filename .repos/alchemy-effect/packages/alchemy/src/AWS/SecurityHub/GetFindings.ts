@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.GetFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Query High-Severity Findings
+ * ### Working with Findings
+ * **Example:** Query High-Severity Findings
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getFindings = yield* AWS.SecurityHub.GetFindings();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   MaxResults: 25,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetFindings extends Binding.Service<
   GetFindings,

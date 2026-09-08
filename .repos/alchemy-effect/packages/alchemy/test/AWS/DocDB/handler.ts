@@ -36,7 +36,7 @@ export class DocDBTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DocDBTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     build: { external: MONGODB_OPTIONAL_DEPS },
   },
   Effect.gen(function* () {

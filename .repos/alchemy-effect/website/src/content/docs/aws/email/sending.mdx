@@ -1,0 +1,407 @@
+---
+title: Sending & managing email
+description: Send email with SES — verify identities, send from a Lambda with the SendEmail binding, manage contact lists, tenants, dedicated IP pools, account settings, and deliverability insights.
+---
+
+**SES sending** starts with a verified **identity** — a domain or
+an email address you own — and a runtime **binding** that lets a
+Lambda send through it. Around that core, SES v2 adds the pieces
+you need to run email at scale: authorization policies, contact
+lists, dedicated IP pools, per-tenant isolation, multi-region
+endpoints, account-wide settings, and deliverability insights.
+
+The sending surface:
+
+- An **[`EmailIdentity`](/providers/aws/ses/emailidentity)** is a
+  verified domain or address, and
+  **[`SendEmail`](/providers/aws/ses/sendemail)** is the runtime
+  binding that sends through it.
+- An
+  **[`EmailIdentityPolicy`](/providers/aws/ses/emailidentitypolicy)**
+  authorizes other accounts to send as your identity.
+- A **[`ContactList`](/providers/aws/ses/contactlist)** and its
+  **[`Contact`](/providers/aws/ses/contact)** entries model a
+  managed audience with subscription topics.
+- A
+  **[`DedicatedIpPool`](/providers/aws/ses/dedicatedippool)**
+  isolates sending reputation onto dedicated IPs.
+- A **[`Tenant`](/providers/aws/ses/tenant)** groups identities,
+  configuration sets, and templates for a customer or business
+  unit.
+- A
+  **[`MultiRegionEndpoint`](/providers/aws/ses/multiregionendpoint)**
+  splits sending across regions.
+- **[`AccountSettings`](/providers/aws/ses/accountsettings)**
+  manages account-wide sending status, the suppression list, and
+  Virtual Deliverability Manager.
+
+:::note
+New SES accounts start in the **sandbox**: you can only send to
+verified identities or the mailbox simulator
+(`success@simulator.amazonses.com`), and volume is capped. Request
+production access from the SES console to lift both limits.
+:::
+
+## Create the Stack
+
+The resource snippets below run inside a Stack's `Effect.gen`
+body:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as SES from "alchemy/AWS/SES";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "Mailer",
+  { providers: AWS.providers(), state: AWS.state() },
+  Effect.gen(function* () {
+    // resources go here
+    return {};
+  }),
+);
+```
+
+## Verify a sending identity
+
+An identity is a domain or a single address. A domain identity
+generates Easy DKIM tokens you publish as CNAME records:
+
+```typescript
+const identity = yield* SES.EmailIdentity("Sender", {
+  emailIdentity: "mail.example.com",
+});
+// publish identity.dkimTokens as CNAME records to finish verifying
+```
+
+Each token in `identity.dkimTokens` is published as
+`{token}._domainkey.mail.example.com CNAME {token}.dkim.amazonses.com`.
+For an address identity (`hello@example.com` instead of a domain),
+SES emails a verification link and there are no DKIM records to
+publish. The identity is usable once `verificationStatus` reaches
+`SUCCESS`.
+
+## Send email from a Lambda
+
+`SES.SendEmail(identity)` binds sending to that identity and
+returns a callable. Provide its implementation with
+`SES.SendEmailHttp`, which mints the least-privilege
+`ses:SendEmail` policy scoped to the identity:
+
+```typescript
+// src/mailer.ts
+import * as AWS from "alchemy/AWS";
+import * as SES from "alchemy/AWS/SES";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Mailer extends AWS.Lambda.Function<Mailer>()(
+  "Mailer",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const identity = yield* SES.EmailIdentity("Sender", {
+      emailIdentity: "mail.example.com",
+    });
+    const sendEmail = yield* SES.SendEmail(identity);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* sendEmail({
+          FromEmailAddress: "hello@mail.example.com",
+          Destination: { ToAddresses: ["customer@example.com"] },
+          Content: {
+            Simple: {
+              Subject: { Data: "Welcome!" },
+              Body: { Text: { Data: "Hello from SES." } },
+            },
+          },
+        });
+        return yield* HttpServerResponse.json({ ok: true });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(SES.SendEmailHttp)),
+) {}
+```
+
+For a domain identity, pass `FromEmailAddress` explicitly (any
+address at the domain); for an address identity it defaults to the
+identity itself. The callable also accepts `Content.Raw` for a
+pre-built MIME message and `Content.Template` for templated sends.
+To route through a configuration set — for open/click tracking or
+event publishing — bind it too: `SES.SendEmail(identity, configSet)`.
+
+## Authorize another account to send
+
+An `EmailIdentityPolicy` attaches a sending-authorization policy to
+an identity, letting another AWS account or IAM principal send as
+it:
+
+```typescript
+const policy = yield* SES.EmailIdentityPolicy("AllowPartner", {
+  emailIdentity: identity.emailIdentity,
+  policy: {
+    Version: "2012-10-17",
+    Statement: [
+      {
+        Effect: "Allow",
+        Principal: { AWS: "arn:aws:iam::111122223333:root" },
+        Action: ["ses:SendEmail"],
+        Resource: identity.identityArn,
+      },
+    ],
+  },
+});
+```
+
+Alchemy serializes this typed IAM policy at the SES API boundary and
+compares normalized document content when detecting drift.
+
+## Build a contact list
+
+A `ContactList` is a managed audience with subscription topics —
+the backbone of SES's list-management and one-click unsubscribe
+handling:
+
+```typescript
+const list = yield* SES.ContactList("Newsletter", {
+  description: "Weekly product newsletter",
+  topics: [
+    {
+      TopicName: "product-updates",
+      DisplayName: "Product Updates",
+      DefaultSubscriptionStatus: "OPT_IN",
+    },
+    {
+      TopicName: "promotions",
+      DisplayName: "Promotions",
+      DefaultSubscriptionStatus: "OPT_OUT",
+    },
+  ],
+});
+```
+
+`updateContactList` replaces the topic set wholesale, so the full
+desired list of topics is sent on every change. Deleting the list
+deletes all of its contacts.
+
+## Add contacts
+
+A `Contact` is a single address on a list, with its own per-topic
+subscription preferences:
+
+```typescript
+const contact = yield* SES.Contact("Subscriber", {
+  contactListName: list.contactListName,
+  emailAddress: "reader@example.com",
+  topicPreferences: [
+    { TopicName: "product-updates", SubscriptionStatus: "OPT_IN" },
+    { TopicName: "promotions", SubscriptionStatus: "OPT_OUT" },
+  ],
+});
+```
+
+The `(list, emailAddress)` pair is the stable key — changing either
+replaces the contact. Set `unsubscribeAll: true` to opt the contact
+out of every topic at once.
+
+## Brand the verification email
+
+A `CustomVerificationEmailTemplate` is the branded email SES sends
+when you verify a new address identity — replacing the plain
+default message:
+
+```typescript
+const template = yield* SES.CustomVerificationEmailTemplate("Verify", {
+  fromEmailAddress: "verify@mail.example.com",
+  templateSubject: "Please confirm your email",
+  templateContent:
+    "<html><body>Click the link to verify your address.</body></html>",
+  successRedirectionURL: "https://example.com/verified",
+  failureRedirectionURL: "https://example.com/verify-failed",
+});
+```
+
+Creating and managing the template works on any account. To
+actually *send* one, bind `SES.SendCustomVerificationEmail` — an
+account-level binding (the template has no ARN to scope to) whose
+implementation is `SES.SendCustomVerificationEmailHttp`:
+
+```typescript
+// init — inside the Lambda's Effect.gen body
+const sendVerification = yield* SES.SendCustomVerificationEmail();
+
+// runtime
+const { MessageId } = yield* sendVerification({
+  EmailAddress: "new-user@example.com",
+  TemplateName: yield* template.templateName,
+});
+```
+
+Sending a custom verification email requires production access —
+in the sandbox the call fails with the typed `BadRequestException`.
+
+## Isolate reputation with a dedicated IP pool
+
+A `DedicatedIpPool` groups dedicated IPs so different kinds of mail
+(marketing vs. transactional) build reputation independently:
+
+```typescript
+const pool = yield* SES.DedicatedIpPool("Transactional", {
+  scalingMode: "MANAGED",
+});
+```
+
+:::caution
+A dedicated IP pool provisions dedicated IP capacity and **starts
+billing immediately** — `MANAGED` pools bill for managed dedicated
+IP usage as soon as they exist, and `STANDARD` pools bill per
+dedicated IP you add. Only create pools you intend to pay for.
+:::
+
+`STANDARD` → `MANAGED` is applied in place; `MANAGED` → `STANDARD`
+has no API and replaces the pool.
+
+## Group sending into tenants
+
+A `Tenant` isolates a customer or business unit's sending — its own
+reputation metrics, sending status, and optional tenant-scoped
+suppression list — inside one SES account:
+
+```typescript
+const tenant = yield* SES.Tenant("CustomerA", {
+  suppression: { reasons: ["BOUNCE", "COMPLAINT"], scope: "TENANT" },
+});
+```
+
+Attach identities, configuration sets, or templates to the tenant
+with a `TenantResourceAssociation`:
+
+```typescript
+const link = yield* SES.TenantResourceAssociation("SenderLink", {
+  tenantName: tenant.tenantName,
+  resourceArn: identity.identityArn,
+});
+```
+
+A single resource can belong to multiple tenants. Deleting the
+tenant removes its associations but leaves the underlying resources
+in place.
+
+## Route sending across regions
+
+A `MultiRegionEndpoint` (global endpoint) splits sending traffic
+across a primary region — where the endpoint is created — and one
+or more secondary regions:
+
+```typescript
+const endpoint = yield* SES.MultiRegionEndpoint("Global", {
+  regions: ["eu-west-1"],
+});
+```
+
+:::note
+Provisioning is asynchronous: creation returns immediately with
+status `CREATING`, and the endpoint only becomes usable once it
+reaches `READY`. This resource does **not** wait for `READY` — poll
+`getMultiRegionEndpoint` yourself if you need to block on readiness.
+:::
+
+There is no update API, so changing the name or routes replaces the
+endpoint.
+
+## Manage account-wide settings
+
+`AccountSettings` is an account/region singleton for account-wide
+sending status, the suppression list, and Virtual Deliverability
+Manager (VDM). Only the aspects you specify are managed — omit the
+rest to leave them untouched:
+
+```typescript
+const settings = yield* SES.AccountSettings("Account", {
+  vdm: {
+    enabled: "ENABLED",
+    dashboardEngagementMetrics: "ENABLED",
+  },
+  suppression: { reasons: ["BOUNCE", "COMPLAINT"] },
+});
+```
+
+:::caution
+`sendingEnabled: false` **stops all sending for the entire
+account**, not just this stack's mail. Only manage it when you
+intend to pause account-wide sending.
+:::
+
+Deleting this resource is a no-op: these are account-global toggles
+with no single safe default, so Alchemy leaves them exactly as they
+are. Change the props and re-deploy to adjust them.
+
+## Monitor deliverability
+
+Enabling VDM (above) unlocks a set of read-only deliverability
+bindings you can call from a Lambda. Look up a single message's
+per-recipient event timeline with `GetMessageInsights`:
+
+```typescript
+// init — account-level binding, no resource argument
+const getInsights = yield* SES.GetMessageInsights();
+
+// runtime — MessageId returned by a prior SendEmail
+const { Insights } = yield* getInsights({ MessageId: messageId });
+```
+
+Fetch aggregated metric time-series — sends, deliveries, bounces,
+complaints, opens, clicks — with `BatchGetMetricData`:
+
+```typescript
+const getMetrics = yield* SES.BatchGetMetricData();
+
+const { Results } = yield* getMetrics({
+  Queries: [
+    {
+      Id: "sends",
+      Namespace: "VDM",
+      Metric: "SEND",
+      StartDate: new Date(Date.now() - 7 * 24 * 3600 * 1000),
+      EndDate: new Date(),
+    },
+  ],
+});
+```
+
+Provide each with its `*Http` layer (`SES.GetMessageInsightsHttp`,
+`SES.BatchGetMetricDataHttp`). Two more account-level bindings round
+out the set: `GetBlacklistReports` reports which anti-spam
+blacklists your dedicated IPs appear on, and
+`GetDomainStatisticsReport` returns inbox-placement statistics for a
+domain — the latter requires the SES deliverability dashboard
+subscription.
+
+Some of the SES surface isn't modeled as resources yet: the
+deliverability dashboard *subscription* itself, and the dedicated-IP
+data plane (assigning specific IPs to a pool and warming them). Use
+the console or the AWS SDK for those.
+
+## Where next
+
+- [Lambda](/aws/compute/lambda) — the runtime that sends.
+- [Email receiving](/aws/email/receiving) — the inbound side: SES
+  receipt rules into S3, SNS, and Lambda.
+- [CloudWatch](/aws/observability/cloudwatch) — alarm on bounce and
+  complaint metrics.
+
+Reference:
+
+- [EmailIdentity API reference](/providers/aws/ses/emailidentity)
+- [SendEmail API reference](/providers/aws/ses/sendemail)
+- [EmailIdentityPolicy API reference](/providers/aws/ses/emailidentitypolicy)
+- [ContactList API reference](/providers/aws/ses/contactlist) ·
+  [Contact API reference](/providers/aws/ses/contact)
+- [CustomVerificationEmailTemplate API reference](/providers/aws/ses/customverificationemailtemplate)
+- [DedicatedIpPool API reference](/providers/aws/ses/dedicatedippool)
+- [Tenant API reference](/providers/aws/ses/tenant) ·
+  [TenantResourceAssociation API reference](/providers/aws/ses/tenantresourceassociation)
+- [MultiRegionEndpoint API reference](/providers/aws/ses/multiregionendpoint)
+- [AccountSettings API reference](/providers/aws/ses/accountsettings)

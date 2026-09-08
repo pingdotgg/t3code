@@ -1,0 +1,142 @@
+---
+title: Setup
+description: Create a Fly org, generate an API token, and store it in a profile.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import { effectVersion } from "../../../versions";
+
+export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+
+Everything you need before deploying to Fly.io: the alchemy package,
+a Fly organization, and an API token stored in a profile.
+
+## Prerequisites
+
+- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- A [Fly.io](https://fly.io) account
+- [Docker](https://docs.docker.com/get-docker/) for
+  [Services](/fly/compute/services) (Alchemy builds and pushes an
+  image). Raw [Machines](/fly/compute/machines) with a public image
+  do not need it. Neither do
+  [Sprites](/fly/compute/sprites).
+
+## Create a Fly organization
+
+Sign in at [fly.io/dashboard](https://fly.io/dashboard). A personal
+org is created with the account. Tokens are scoped to an org — the
+org slug is what `Fly.App` uses when you omit `orgSlug` (Alchemy
+reads it from the current token).
+
+## Generate an API token
+
+In the dashboard:
+
+1. Open **Account** → **Access Tokens** (or run `fly tokens create org`
+   if you have [flyctl](https://fly.io/docs/flyctl/install/)).
+2. Create an **organization** token with permission to manage Apps
+   and Machines.
+3. Copy the token — Fly shows it **only once**.
+
+The official environment variable is `FLY_API_TOKEN`. That token is
+enough for Apps, Machines, Services, Sprites, Postgres, Redis, and
+Tigris. Alchemy mints a Sprites bearer from it when you deploy a
+Sprite.
+
+## Create a project directory
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Install
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${pkgs}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Connect alchemy to Fly
+
+There is no separate credentials step. The first time you run
+`alchemy deploy` (or `plan`, `dev`, `destroy`) on a stack that uses
+`Fly.providers()`, alchemy walks you through an interactive login
+with two options:
+
+- **API Token** — paste the token you generated above. It's verified
+  against the Machines API and saved under
+  `~/.alchemy/credentials/<profile>/`.
+- **Environment Variables** — reads `FLY_API_TOKEN` from the
+  environment on every run (plus an optional `FLY_API_HOSTNAME` to
+  override the Machines API root, default
+  `https://api.machines.dev/v1`). This is the method for CI — when
+  alchemy detects `CI=true` it skips the prompt and uses the
+  environment automatically.
+
+Either choice is saved to your **`default`**
+[profile](/environments/profiles) and reused on every subsequent
+command.
+
+To re-run the setup later (e.g. to rotate the token, or configure a
+separate `prod` profile):
+
+```sh
+alchemy login --configure
+alchemy login --profile prod --configure
+```
+
+Inspect what's stored (secrets are redacted):
+
+```sh
+alchemy profile show
+```
+
+:::note[Docker is required for Services]
+[`Fly.Service`](/fly/compute/services) bundles your Effect program,
+builds a `linux/amd64` image, and pushes it to `registry.fly.io`.
+Have [Docker](https://docs.docker.com/get-docker/) running on the
+machine that runs `alchemy deploy`. Raw
+[`Fly.Machine`](/fly/compute/machines)s that use a public image
+(`nginx:alpine`) do not need it. Neither do
+[`Fly.Sprite`](/fly/compute/sprites)s — Alchemy writes the bundle
+onto the Sprite.
+:::
+
+## State storage
+
+Fly has no object-storage state backend of its own, so pick one of:
+
+- **`Alchemy.localState()`** — state on disk under `.alchemy/` next
+  to your code. Zero setup; right for solo projects and trying
+  things out.
+- **A cloud state store** — if you also use Cloudflare or AWS, pass
+  `Cloudflare.state()` or `AWS.state()` so state is shared with
+  your team and CI. See [State Store](/state-store).
+
+## Next steps
+
+- [Tutorial part 1](/fly/tutorial/part-1) — deploy your first App.
+- [Sprites](/fly/compute/sprites) — an Effect program that
+  hibernates. No Docker.
+- [Fly overview](/fly) — the map of resources and guides.

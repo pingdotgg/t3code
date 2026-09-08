@@ -141,36 +141,26 @@ A few patterns worth knowing:
 
 ## Credentials
 
-Lifecycle handlers that call an authenticated API depend on a lazy
-credentials service — a `Context.Service` whose value is an
-`Effect<{ apiKey: Redacted<string> }>`, so nothing resolves until a
-handler double-yields it while an operation is actually running.
-The [Custom Auth Provider](/environments/custom-auth-provider)
-guide builds `src/stripe/Credentials.ts` (the `StripeCredentials`
-service the snippets below import) and wires it to `alchemy login`
-and [Profiles](/environments/profiles); the concept is covered in
-[Auth Providers](/environments/auth-providers). Providers that wrap
-unauthenticated or locally-configured APIs don't need one at all.
+Handlers that call an authenticated API resolve a lazy credentials
+service — nothing touches the network until an operation actually runs.
+The [Custom Auth Provider](/environments/custom-auth-provider) guide
+builds the `StripeCredentials` service the snippets below import;
+providers wrapping unauthenticated APIs skip this entirely.
 
 ## Implement `reconcile`
 
-`reconcile` is the single lifecycle method that converges the
-cloud's actual state to the desired state. It runs on every apply
-— first-time provisioning, routine updates, and adoption
-takeovers — so its body must work correctly for all three.
+`reconcile` is the single lifecycle method that converges the cloud's
+actual state to the desired state (`news`). It runs on every apply, so
+one body must handle three situations, distinguished by `output` and
+`olds`:
 
-It receives `news` (resolved input props), `id` (logical ID),
-`instanceId` (deterministic suffix), `bindings`, plus two
-context-dependent inputs:
+| `output`    | `olds`      | Situation                                    |
+| ----------- | ----------- | -------------------------------------------- |
+| `undefined` | `undefined` | Greenfield — nothing exists yet              |
+| defined     | defined     | Routine update                               |
+| defined     | `undefined` | Adoption — the engine imported it via `read` |
 
-- **`output: Attributes | undefined`** — `undefined` on greenfield
-  creates; defined on updates and on adoption (where the engine
-  imported an existing cloud resource via `read`).
-- **`olds: Props | undefined`** — `undefined` on greenfield AND
-  on adoption (the engine has no prior props for a resource it
-  just discovered); defined only on routine updates.
-
-A reconciler is shaped like:
+Every reconciler follows the same shape:
 
 ```
 1. Observe   — derive the physical id; read live cloud state
@@ -181,29 +171,14 @@ A reconciler is shaped like:
 ```
 
 :::warning[Don't branch the body on `output === undefined`]
-Writing `if (output === undefined) { /* create body */ } else { /* update body */ }`
-just renames the old `create`/`update` split. The reconciler must be a single
-flow that produces correct cloud state regardless of starting point. Trust
-observed cloud state, not `olds`.
+Writing `if (output === undefined) { /* create */ } else { /* update */ }`
+just renames the old `create`/`update` split. Write one flow that
+converges from any starting point — trust observed cloud state, not `olds`.
 :::
 
-:::tip[Use `Effect.tryPromise`, not `Effect.promise`]
-`Effect.tryPromise` surfaces SDK errors as Effect failures the
-lifecycle machinery can report cleanly. `Effect.promise` swallows
-them and turns rejections into defects.
-:::
+Let's build the Stripe reconciler step by step.
 
-:::note[Bindings]
-The `bindings` argument carries data attached by upstream policies
-and event sources (IAM grants, queue subscriptions, etc.). If your
-resource type supports being a binding target, read them here. See
-[Binding](/infrastructure-as-effects/binding) for the full contract.
-:::
-
-For the Stripe product, the SDK gives us `retrieve`, `create`, and
-`update`. The reconciler observes via `retrieve`, ensures via
-`create` (catching the cached-id case), and syncs the mutable name
-+ description + active flag in a single `update` call:
+### Resolve the client
 
 ```diff lang="typescript"
 +import * as Redacted from "effect/Redacted";
@@ -215,56 +190,118 @@ return StripeProduct.Provider.of({
 +  reconcile: Effect.fn(function* ({ news, output }) {
 +    const { apiKey } = yield* yield* StripeCredentials;
 +    const stripe = new Stripe(Redacted.value(apiKey));
-+
-+    // Observe — fetch live state if we have a cached id.
-+    let product = output?.productId
-+      ? yield* Effect.tryPromise(() =>
-+          stripe.products.retrieve(output.productId),
-+        ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
-+      : undefined;
-+
-+    // Ensure — create if missing.
-+    if (!product) {
-+      product = yield* Effect.tryPromise(() =>
-+        stripe.products.create({
-+          name: news.name,
-+          description: news.description,
-+          active: news.active,
-+        }),
-+      );
-+    }
-+
-+    // Sync — patch any mutable field that drifted from desired.
-+    if (
-+      product.name !== news.name ||
-+      product.description !== (news.description ?? null) ||
-+      product.active !== (news.active ?? true)
-+    ) {
-+      product = yield* Effect.tryPromise(() =>
-+        stripe.products.update(product!.id, {
-+          name: news.name,
-+          description: news.description,
-+          active: news.active,
-+        }),
-+      );
-+    }
-+
-+    return {
-+      productId: product.id,
-+      created: product.created,
-+    };
 +  }),
   delete: () => Effect.die("not implemented"),
 });
 ```
 
-The reconciler is **idempotent** by construction — running it
-twice with the same `news` and a fresh `output` cache produces
-the same end state. Alchemy may retry it if state persistence
-fails, and the same body recovers gracefully. Adoption (where
-`output` is set but `olds` is `undefined`) goes through the same
-path: `retrieve` finds the resource, the sync step rewrites any
-fields that drifted from `news`, and we're converged.
+The double-yield resolves credentials lazily, inside the handler — the
+provider layer builds without ever touching the auth chain.
+
+### Observe
+
+```diff lang="typescript"
+ reconcile: Effect.fn(function* ({ news, output }) {
+   const { apiKey } = yield* yield* StripeCredentials;
+   const stripe = new Stripe(Redacted.value(apiKey));
++
++  let product = output?.productId
++    ? yield* Effect.tryPromise(() =>
++        stripe.products.retrieve(output.productId),
++      ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
++    : undefined;
+ }),
+```
+
+If a previous run cached a `productId`, look up its live state — a failed
+`retrieve` just means "missing". `output` is a cache of identifiers, never
+proof the resource still exists.
+
+:::tip[Use `Effect.tryPromise`, not `Effect.promise`]
+`Effect.tryPromise` surfaces SDK errors as Effect failures the lifecycle
+machinery can report cleanly; `Effect.promise` turns rejections into
+defects.
+:::
+
+### Ensure
+
+```diff lang="typescript"
+   let product = output?.productId
+     ? // ... observe ...
+     : undefined;
++
++  if (!product) {
++    product = yield* Effect.tryPromise(() =>
++      stripe.products.create({
++        name: news.name,
++        description: news.description,
++        active: news.active,
++      }),
++    );
++  }
+ }),
+```
+
+Create only when observation came back empty — greenfield creates and
+"the cached id points at nothing" recover through the same line.
+
+### Sync
+
+```diff lang="typescript"
+   if (!product) {
+     // ... ensure ...
+   }
++
++  if (
++    product.name !== news.name ||
++    product.description !== (news.description ?? null) ||
++    product.active !== (news.active ?? true)
++  ) {
++    product = yield* Effect.tryPromise(() =>
++      stripe.products.update(product!.id, {
++        name: news.name,
++        description: news.description,
++        active: news.active,
++      }),
++    );
++  }
+ }),
+```
+
+Compare each mutable field of the *observed* product against `news` and
+write only when something drifted — a no-drift deploy makes zero write
+calls.
+
+### Return fresh Attributes
+
+```diff lang="typescript"
+   if (/* drifted */) {
+     // ... sync ...
+   }
++
++  return {
++    productId: product.id,
++    created: product.created,
++  };
+ }),
+```
+
+The returned Attributes are persisted to state and become the next run's
+`output`.
+
+### Why this shape works
+
+The body is idempotent by construction: Alchemy can retry it after a
+failed state write and it re-converges. Adoption needs no special case —
+`retrieve` finds the imported resource and the sync step rewrites whatever
+drifted from `news`.
+
+:::note[Bindings]
+`reconcile` also receives `bindings` — data attached by upstream policies
+and event sources (IAM grants, queue subscriptions). Read them here if
+your resource is a binding target; see
+[Binding](/infrastructure-as-effects/binding).
+:::
 
 ## Implement `delete`
 
@@ -379,14 +416,10 @@ return StripeProduct.Provider.of({
 });
 ```
 
-This Stripe example only finds resources by an ID we previously
-saved (`output.productId`) — without a prior output it can't
-locate anything, so it returns `undefined`. That's a fine default.
+This example only finds resources by an ID we previously saved — without
+a prior `output` it returns `undefined`, and that's a fine default.
 
-**Ownership-aware reads.** If your provider can detect an existing
-resource from props alone (e.g. by tag-aware lookup or deterministic
-naming), brand the returned attributes with `Unowned` when they
-belong to someone else:
+### Ownership-aware reads
 
 ```typescript
 import { Unowned } from "alchemy/AdoptPolicy";
@@ -400,15 +433,11 @@ read: Effect.fn(function* ({ id, olds }) {
 }),
 ```
 
-The engine uses this to decide:
-
-- plain attrs → silently import the resource as our own
-- `Unowned(attrs)` → fail with `OwnedBySomeoneElse` unless the user
-  passed `--adopt` (or wrapped the effect in `adopt(true)`), in
-  which case it's a takeover.
-
-See [Resource Lifecycle › Adoption](/infrastructure-as-code/resource-lifecycle#adoption)
-for the full flow.
+If your provider can find an existing resource from props alone (tags,
+deterministic naming), brand foreign ones with `Unowned`. Plain attrs are
+silently imported as ours; `Unowned(attrs)` fails with `OwnedBySomeoneElse`
+unless the user opted into a takeover with `--adopt` — see
+[Resource Lifecycle › Adoption](/infrastructure-as-code/resource-lifecycle#adoption).
 
 ## Implement `list`
 
@@ -600,6 +629,9 @@ If you'd rather start from a real provider:
 
 ## Where next
 
+- [Local Providers](/infrastructure-as-code/local-provider) — give your
+  resource a second, dev-mode implementation that emulates it locally
+  (`ProviderLayer.dual`, `LocalProvider.make`).
 - [Custom Auth Provider](/environments/custom-auth-provider) — build
   the `StripeCredentials` service and `alchemy login` flow this guide
   consumes.

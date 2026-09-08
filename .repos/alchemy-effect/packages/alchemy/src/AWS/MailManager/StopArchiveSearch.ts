@@ -9,15 +9,16 @@ import type { Archive } from "./Archive.ts";
  * Cancels a queued or running archive search (by `SearchId`). IAM
  * access is granted on the bound archive's ARN. Provide the implementation with
  * `Effect.provide(AWS.MailManager.StopArchiveSearchHttp)`.
- * @binding
- * @section Searching the Archive
- * @example Cancel a Search
+ * ### Searching the Archive
+ * **Example:** Cancel a Search
  * ```typescript
  * const stopSearch = yield* MailManager.StopArchiveSearch(archive);
  *
  * // runtime
  * yield* stopSearch({ SearchId });
  * ```
+ *
+ * @binding
  */
 export interface StopArchiveSearch extends Binding.Service<
   StopArchiveSearch,

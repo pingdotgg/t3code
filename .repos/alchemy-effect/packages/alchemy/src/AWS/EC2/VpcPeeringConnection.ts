@@ -124,9 +124,8 @@ export interface VpcPeeringConnection extends Resource<
  * `active`, add {@link Route}s on both sides pointing the peer CIDR at the
  * connection to actually carry traffic.
  *
- * @resource
- * @section Creating a Peering Connection
- * @example Same-Account Peering (auto-accepted)
+ * ### Creating a Peering Connection
+ * **Example:** Same-Account Peering (auto-accepted)
  * ```typescript
  * const vpcA = yield* AWS.EC2.Vpc("VpcA", { cidrBlock: "10.0.0.0/16" });
  * const vpcB = yield* AWS.EC2.Vpc("VpcB", { cidrBlock: "10.1.0.0/16" });
@@ -139,7 +138,7 @@ export interface VpcPeeringConnection extends Resource<
  * Because both VPCs are in the same account and Region, the request is accepted
  * automatically and the connection reaches the `active` state.
  *
- * @example Cross-Account Peering (accepted out of band)
+ * **Example:** Cross-Account Peering (accepted out of band)
  * ```typescript
  * const peering = yield* AWS.EC2.VpcPeeringConnection("Peering", {
  *   vpcId: myVpc.vpcId,
@@ -150,8 +149,8 @@ export interface VpcPeeringConnection extends Resource<
  * With a different `peerOwnerId` the connection stays in `pending-acceptance`
  * until the peer account accepts it.
  *
- * @section Routing Traffic Across the Peering
- * @example Route the Peer CIDR at the Connection
+ * ### Routing Traffic Across the Peering
+ * **Example:** Route the Peer CIDR at the Connection
  * ```typescript
  * const peering = yield* AWS.EC2.VpcPeeringConnection("Peering", {
  *   vpcId: vpcA.vpcId,
@@ -166,6 +165,8 @@ export interface VpcPeeringConnection extends Resource<
  * ```
  * Each side needs a route pointing the other VPC's CIDR at the peering
  * connection; only then can instances reach each other over private IPs.
+ *
+ * @resource
  */
 export const VpcPeeringConnection = Resource<VpcPeeringConnection>(
   "AWS.EC2.VpcPeeringConnection",

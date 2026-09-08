@@ -16,15 +16,16 @@ export interface ListObjectVersionsRequest extends Omit<
  * versions and delete markers — the bucket name is injected automatically and
  * `s3:ListBucketVersions` is granted on the bucket. Provide the
  * implementation with `Effect.provide(AWS.S3.ListObjectVersionsHttp)`.
- * @binding
- * @section Listing Objects
- * @example List Versions Under a Prefix
+ * ### Listing Objects
+ * **Example:** List Versions Under a Prefix
  * ```typescript
  * const listObjectVersions = yield* AWS.S3.ListObjectVersions(bucket);
  *
  * const result = yield* listObjectVersions({ Prefix: "reports/" });
  * const versions = result.Versions ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListObjectVersions extends Binding.Service<
   ListObjectVersions,

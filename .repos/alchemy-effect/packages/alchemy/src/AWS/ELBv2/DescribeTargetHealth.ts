@@ -22,9 +22,8 @@ export interface DescribeTargetHealthRequest extends Omit<
  * `healthy` before shifting traffic, or an ops endpoint surfacing fleet
  * health. Provide the implementation with
  * `Effect.provide(AWS.ELBv2.DescribeTargetHealthHttp)`.
- * @binding
- * @section Target Health
- * @example Check the health of every target
+ * ### Target Health
+ * **Example:** Check the health of every target
  * ```typescript
  * // init — bind the operation to the target group
  * const describeTargetHealth = yield* AWS.ELBv2.DescribeTargetHealth(targetGroup);
@@ -35,6 +34,8 @@ export interface DescribeTargetHealthRequest extends Omit<
  *   (d) => d.TargetHealth?.State,
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeTargetHealth extends Binding.Service<
   DescribeTargetHealth,

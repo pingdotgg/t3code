@@ -53,16 +53,15 @@ export interface Application extends Resource<
  * groups related cloud resources and metadata under a single logical
  * application (surfaced in myApplications and the `awsApplication` tag).
  *
- * @resource
- * @section Creating an Application
- * @example Basic Application
+ * ### Creating an Application
+ * **Example:** Basic Application
  * ```typescript
  * import * as AppRegistry from "alchemy/AWS/AppRegistry";
  *
  * const app = yield* AppRegistry.Application("Storefront", {});
  * ```
  *
- * @example Application with Description and Tags
+ * **Example:** Application with Description and Tags
  * ```typescript
  * const app = yield* AppRegistry.Application("Storefront", {
  *   applicationName: "storefront",
@@ -70,6 +69,8 @@ export interface Application extends Resource<
  *   tags: { team: "commerce" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Application = Resource<Application>("AWS.AppRegistry.Application");
 

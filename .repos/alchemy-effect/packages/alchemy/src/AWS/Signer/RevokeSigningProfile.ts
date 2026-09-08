@@ -12,9 +12,8 @@ import type { SigningProfile } from "./SigningProfile.ts";
  * compromised. Revocation is irreversible. The profile name is injected from
  * the binding; pass the `profileVersion` to revoke. Provide the
  * implementation with `Effect.provide(AWS.Signer.RevokeSigningProfileHttp)`.
- * @binding
- * @section Revoking Signatures
- * @example Revoke a Compromised Profile Version
+ * ### Revoking Signatures
+ * **Example:** Revoke a Compromised Profile Version
  * ```typescript
  * // init — bind the operation to the profile
  * const revokeSigningProfile = yield* AWS.Signer.RevokeSigningProfile(profile);
@@ -26,6 +25,8 @@ import type { SigningProfile } from "./SigningProfile.ts";
  *   effectiveTime: new Date(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface RevokeSigningProfile extends Binding.Service<
   RevokeSigningProfile,

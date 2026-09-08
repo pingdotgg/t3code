@@ -16,13 +16,14 @@ export interface GetFindingV2Request extends Omit<
  * Retrieves a single finding with its typed `findingDetails` (external-access
  * or unused-access). Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.GetFindingV2Http)`.
- * @binding
- * @section Reading Findings
- * @example Get a Finding by Id
+ * ### Reading Findings
+ * **Example:** Get a Finding by Id
  * ```typescript
  * const getFinding = yield* AWS.AccessAnalyzer.GetFindingV2(analyzer);
  * const finding = yield* getFinding({ id: findingId });
  * ```
+ *
+ * @binding
  */
 export interface GetFindingV2 extends Binding.Service<
   GetFindingV2,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.CreateSampleFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Generate Sample Findings
+ * ### Working with Findings
+ * **Example:** Generate Sample Findings
  * ```typescript
  * // init — account-level binding, no resource argument
  * const createSampleFindings = yield* AWS.Macie2.CreateSampleFindings();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* createSampleFindings({});
  * ```
+ *
+ * @binding
  */
 export interface CreateSampleFindings extends Binding.Service<
   CreateSampleFindings,

@@ -14,9 +14,8 @@ import type { LinkedWhatsAppBusinessAccount } from "./LinkedWhatsAppBusinessAcco
  * the deploy-time half grants `social-messaging:DeleteWhatsAppMessageMedia` on `*`.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.DeleteWhatsAppMessageMediaHttp)`.
- * @binding
- * @section Managing Message Media
- * @example Delete Uploaded Media
+ * ### Managing Message Media
+ * **Example:** Delete Uploaded Media
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const deleteMedia = yield* AWS.SocialMessaging.DeleteWhatsAppMessageMedia(account);
@@ -27,6 +26,8 @@ import type { LinkedWhatsAppBusinessAccount } from "./LinkedWhatsAppBusinessAcco
  *   originationPhoneNumberId: "phone-number-id-0123456789abcdef",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteWhatsAppMessageMedia extends Binding.Service<
   DeleteWhatsAppMessageMedia,

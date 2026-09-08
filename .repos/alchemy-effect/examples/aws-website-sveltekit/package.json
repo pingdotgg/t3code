@@ -1,0 +1,34 @@
+{
+  "name": "aws-website-sveltekit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@distilled.cloud/aws": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "@sveltejs/kit": "catalog:frontend",
+    "@sveltejs/vite-plugin-svelte": "catalog:frontend",
+    "@tailwindcss/vite": "catalog:frontend",
+    "@types/node": "^24.12.0",
+    "svelte": "catalog:frontend",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/aws-website-sveltekit"
+  }
+}

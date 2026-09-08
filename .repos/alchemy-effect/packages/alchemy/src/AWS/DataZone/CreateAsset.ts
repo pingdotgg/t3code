@@ -14,9 +14,8 @@ export interface CreateAssetRequest extends Omit<
  * Creates an asset in the bound domain's inventory, e.g. to register data produced by the function itself. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.CreateAssetHttp)`.
- * @binding
- * @section Publishing Assets
- * @example Register an Asset
+ * ### Publishing Assets
+ * **Example:** Register an Asset
  * ```typescript
  * // init — bind the operation to the domain
  * const createAsset = yield* AWS.DataZone.CreateAsset(domain);
@@ -28,6 +27,8 @@ export interface CreateAssetRequest extends Omit<
  *   owningProjectIdentifier: projectId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateAsset extends Binding.Service<
   CreateAsset,

@@ -105,9 +105,8 @@ export interface Domain extends Resource<
  * `datazone.amazonaws.com`, with the `AmazonDataZoneDomainExecutionRolePolicy`
  * managed policy) unless an explicit `domainExecutionRole` is supplied.
  *
- * @resource
- * @section Creating Domains
- * @example Minimal Domain
+ * ### Creating Domains
+ * **Example:** Minimal Domain
  * ```typescript
  * import * as DataZone from "alchemy/AWS/DataZone";
  *
@@ -116,7 +115,7 @@ export interface Domain extends Resource<
  * });
  * ```
  *
- * @example Domain with an Explicit Execution Role
+ * **Example:** Domain with an Explicit Execution Role
  * ```typescript
  * const domain = yield* DataZone.Domain("governance", {
  *   name: "acme-governance",
@@ -125,14 +124,16 @@ export interface Domain extends Resource<
  * });
  * ```
  *
- * @section Using the Domain
- * @example Create a Project in the Domain
+ * ### Using the Domain
+ * **Example:** Create a Project in the Domain
  * ```typescript
  * const project = yield* DataZone.Project("analytics", {
  *   domainId: domain.domainId,
  *   description: "Analytics team project",
  * });
  * ```
+ *
+ * @resource
  */
 export const Domain = Resource<Domain>("AWS.DataZone.Domain");
 
@@ -148,11 +149,11 @@ export class DomainCreationFailed extends Data.TaggedError(
 const DOMAIN_TRANSIENT = new Set(["CREATING", "DELETING"]);
 
 /**
- * A freshly created IAM role is eventually consistent; `createDomain` can
- * transiently reject a role it cannot yet assume. Wrapped in an
- * explicitly-typed helper so the `Effect.retry` conditional return type does
- * not leak into declaration emit and widen the provider layer's requirement
- * to `unknown` (see PATTERNS §7).
+ * A freshly created (or re-observed) IAM role is eventually consistent;
+ * `createDomain` / `updateDomain` can transiently reject a role DataZone
+ * cannot yet assume. Wrapped in an explicitly-typed helper so the
+ * `Effect.retry` conditional return type does not leak into declaration emit
+ * and widen the provider layer's requirement to `unknown` (see PATTERNS §7).
  */
 const retryWhileRoleAssumeFails = <A, E extends { _tag: string }, R>(
   self: Effect.Effect<A, E, R>,
@@ -426,14 +427,16 @@ export const DomainProvider = () =>
               (news.serviceRole !== undefined &&
                 domain.serviceRole !== news.serviceRole);
             if (drifted) {
-              yield* datazone.updateDomain({
-                identifier: domain.id,
-                name,
-                description: news.description,
-                domainExecutionRole: executionRoleArn,
-                serviceRole: news.serviceRole,
-                singleSignOn: news.singleSignOn,
-              });
+              yield* retryWhileRoleAssumeFails(
+                datazone.updateDomain({
+                  identifier: domain.id,
+                  name,
+                  description: news.description,
+                  domainExecutionRole: executionRoleArn,
+                  serviceRole: news.serviceRole,
+                  singleSignOn: news.singleSignOn,
+                }),
+              );
               domain = (yield* getDomainOrUndefined(domain.id)) ?? domain;
             }
           }

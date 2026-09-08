@@ -12,9 +12,8 @@ import type { Stack } from "./Stack.ts";
  * inside a function runtime. Useful for deployment dashboards and failure
  * alerting. Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.DescribeStackEventsHttp)`.
- * @binding
- * @section Reading Stacks
- * @example Read Recent Stack Events
+ * ### Reading Stacks
+ * **Example:** Read Recent Stack Events
  * ```typescript
  * const describeStackEvents =
  *   yield* AWS.CloudFormation.DescribeStackEvents(stack);
@@ -24,6 +23,8 @@ import type { Stack } from "./Stack.ts";
  *   (e) => e.ResourceStatus?.endsWith("_FAILED"),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeStackEvents extends Binding.Service<
   DescribeStackEvents,

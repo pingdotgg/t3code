@@ -19,9 +19,8 @@ export interface GenerateDataKeyPairWithoutPlaintextRequest extends Omit<
  * never exists in this process; decrypt the blob later with the `Decrypt`
  * binding where it is actually needed.
  *
- * @binding
- * @section Data Key Pairs
- * @example Provision a Key Pair Without the Private Key
+ * ### Data Key Pairs
+ * **Example:** Provision a Key Pair Without the Private Key
  * ```typescript
  * const generatePair = yield* AWS.KMS.GenerateDataKeyPairWithoutPlaintext(key);
  *
@@ -29,6 +28,8 @@ export interface GenerateDataKeyPairWithoutPlaintextRequest extends Omit<
  * // pair.PublicKey                — hand out for encryption/verification
  * // pair.PrivateKeyCiphertextBlob — persist for the consuming service
  * ```
+ *
+ * @binding
  */
 export interface GenerateDataKeyPairWithoutPlaintext extends Binding.Service<
   GenerateDataKeyPairWithoutPlaintext,

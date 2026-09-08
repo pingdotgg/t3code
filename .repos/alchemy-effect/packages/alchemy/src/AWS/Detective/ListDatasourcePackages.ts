@@ -11,9 +11,8 @@ import type { Graph } from "./Graph.ts";
  * actually ingesting. The graph ARN is injected from the bound {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.ListDatasourcePackagesHttp)`.
- * @binding
- * @section Managing Data Source Packages
- * @example Audit Ingested Data Sources
+ * ### Managing Data Source Packages
+ * **Example:** Audit Ingested Data Sources
  * ```typescript
  * // init
  * const listDatasourcePackages =
@@ -22,6 +21,8 @@ import type { Graph } from "./Graph.ts";
  * // runtime
  * const { DatasourcePackages } = yield* listDatasourcePackages();
  * ```
+ *
+ * @binding
  */
 export interface ListDatasourcePackages extends Binding.Service<
   ListDatasourcePackages,

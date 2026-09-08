@@ -11,15 +11,16 @@ import * as Binding from "../../Binding.ts";
  * {@link BatchUpdateCluster} to build patch automation. Provide the
  * implementation with
  * `Effect.provide(AWS.MemoryDB.DescribeServiceUpdatesHttp)`.
- * @binding
- * @section Applying Service Updates
- * @example List Available Service Updates
+ * ### Applying Service Updates
+ * **Example:** List Available Service Updates
  * ```typescript
  * const describeServiceUpdates = yield* MemoryDB.DescribeServiceUpdates();
  *
  * const page = yield* describeServiceUpdates({ Status: ["available"] });
  * // page.ServiceUpdates[0].ServiceUpdateName
  * ```
+ *
+ * @binding
  */
 export interface DescribeServiceUpdates extends Binding.Service<
   DescribeServiceUpdates,

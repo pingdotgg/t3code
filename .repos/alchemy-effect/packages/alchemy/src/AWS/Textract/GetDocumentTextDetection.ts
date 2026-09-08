@@ -7,9 +7,8 @@ import * as Binding from "../../Binding.ts";
  * status and results of an asynchronous OCR job started with
  * `StartDocumentTextDetection`.
  *
- * @binding
- * @section Asynchronous Text Detection
- * @example Poll a Text Detection Job
+ * ### Asynchronous Text Detection
+ * **Example:** Poll a Text Detection Job
  * ```typescript
  * // init
  * const getDocumentTextDetection =
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   .filter((b) => b.BlockType === "LINE")
  *   .map((b) => b.Text);
  * ```
+ *
+ * @binding
  */
 export interface GetDocumentTextDetection extends Binding.Service<
   GetDocumentTextDetection,

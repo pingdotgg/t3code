@@ -14,9 +14,8 @@ export interface ListSubscriptionsRequest extends sns.ListSubscriptionsInput {}
  *
  * To list only the subscriptions of one topic, use
  * {@link ListSubscriptionsByTopic}.
- * @binding
- * @section Listing Subscriptions
- * @example List All Subscriptions
+ * ### Listing Subscriptions
+ * **Example:** List All Subscriptions
  * ```typescript
  * // init (provide SNS.ListSubscriptionsHttp on the Function)
  * const listSubscriptions = yield* SNS.ListSubscriptions();
@@ -25,6 +24,8 @@ export interface ListSubscriptionsRequest extends sns.ListSubscriptionsInput {}
  * const response = yield* listSubscriptions();
  * // response.Subscriptions
  * ```
+ *
+ * @binding
  */
 export interface ListSubscriptions extends Binding.Service<
   ListSubscriptions,

@@ -102,16 +102,13 @@ export type UserGroup = Resource<
  *
  * Account-scoped IAM (resource groups, user groups) is an Enterprise
  * feature.
- * @resource
- * @product IAM
- * @category Account & Identity
- * @section Creating a User Group
- * @example Empty group
+ * ### Creating a User Group
+ * **Example:** Empty group
  * ```typescript
  * const group = yield* Cloudflare.Iam.UserGroup("Operators", {});
  * ```
  *
- * @example Group with a policy
+ * **Example:** Group with a policy
  * ```typescript
  * const readers = yield* Cloudflare.Iam.UserGroup("Readers", {
  *   name: "zone-readers",
@@ -125,8 +122,8 @@ export type UserGroup = Resource<
  * });
  * ```
  *
- * @section Managing Members
- * @example Add an account member to the group
+ * ### Managing Members
+ * **Example:** Add an account member to the group
  * ```typescript
  * yield* Cloudflare.Iam.UserGroupMembership("SamInReaders", {
  *   userGroup: readers.userGroupId,
@@ -135,6 +132,10 @@ export type UserGroup = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-members/user-groups/
+ *
+ * @resource
+ * @product IAM
+ * @category Account & Identity
  */
 export const UserGroup = Resource<UserGroup>(TypeId);
 

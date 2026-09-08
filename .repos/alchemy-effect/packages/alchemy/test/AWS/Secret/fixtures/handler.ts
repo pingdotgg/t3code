@@ -34,7 +34,7 @@ export class SecretsTestFunction extends Lambda.Function<SecretsTestFunction>()(
 export const SecretsTestFunctionLive = SecretsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Secret from a literal — `Alchemy.Secret` coerces the literal to

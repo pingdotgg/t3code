@@ -6,7 +6,12 @@ import * as Command from "../../Command/index.ts";
 import type { Input, InputProps } from "../../Input.ts";
 import * as Namespace from "../../Namespace.ts";
 import * as Output from "../../Output.ts";
-import { effectClass } from "../../Util/effect.ts";
+import { renamedFrom } from "../../Rename.ts";
+import {
+  effectClass,
+  isYieldableEffectLike,
+  type YieldableEffectLike,
+} from "../../Util/effect.ts";
 import { asEffect } from "../../Util/types.ts";
 import type { Providers } from "../Providers.ts";
 import type { AssetsConfig } from "../Workers/Assets.ts";
@@ -17,6 +22,7 @@ import {
   type WorkerBindingProps,
   type WorkerProps,
 } from "../Workers/Worker.ts";
+import { isContainerDecl } from "../Workers/WorkerAsyncBindings.ts";
 
 export interface StaticSiteProps<Bindings extends WorkerBindingProps = {}>
   extends
@@ -72,10 +78,9 @@ export interface StaticSiteProps<Bindings extends WorkerBindingProps = {}>
 }
 
 type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
-  [binding in keyof NormalizedBindings<
-    Bindings,
-    WorkerAssetsConfig
-  >]: NormalizedBindings<Bindings, WorkerAssetsConfig>[binding];
+  [
+    binding in keyof NormalizedBindings<Bindings, WorkerAssetsConfig>
+  ]: NormalizedBindings<Bindings, WorkerAssetsConfig>[binding];
 }>;
 
 /**
@@ -90,18 +95,23 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  * For Vite-based projects, prefer `Cloudflare.Website.Vite` which handles
  * building automatically.
  *
- * @resource
- * @product Website
- * @category Workers & Compute
  *
- * @section Basic Usage
- * Point `command` at your build script, `outdir` at where it writes
- * output, and `main` at a Worker entrypoint that serves the assets.
- * Alchemy runs the command, hashes the output, and deploys the
- * Worker bound to the built assets.
+ * ### Basic Usage
+ * Point `command` at your build script and `outdir` at where it writes
+ * output. Alchemy runs the command, hashes the output, and deploys it as
+ * an assets-only Worker — no Worker code is uploaded, and Cloudflare's
+ * asset layer serves every request itself.
  *
- * The Worker receives an `ASSETS` binding it can delegate to. A
- * minimal passthrough Worker looks like:
+ * **Example:** Deploying a Hugo site
+ * ```typescript
+ * const site = yield* Cloudflare.Website.StaticSite("Blog", {
+ *   command: "hugo --minify",
+ *   outdir: "public",
+ * });
+ * ```
+ *
+ * Provide `main` to put your own Worker in front of the assets instead.
+ * The Worker receives an `ASSETS` binding it can delegate to:
  *
  * ```typescript
  * // src/worker.ts
@@ -111,7 +121,7 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  * };
  * ```
  *
- * @example Deploying a Hugo site
+ * **Example:** Custom Worker in front of the assets
  * ```typescript
  * const site = yield* Cloudflare.Website.StaticSite("Blog", {
  *   command: "hugo --minify",
@@ -120,11 +130,11 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  * });
  * ```
  *
- * @section Asset Configuration
+ * ### Asset Configuration
  * Use `assets` to control how Cloudflare handles routing for
  * your static files — HTML handling, not-found behavior, etc.
  *
- * @example SPA-style routing
+ * **Example:** SPA-style routing
  * ```typescript
  * const site = yield* Cloudflare.Website.StaticSite("App", {
  *   command: "npm run build",
@@ -137,11 +147,11 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  * });
  * ```
  *
- * @section Building from a Subdirectory
+ * ### Building from a Subdirectory
  * Set `cwd` to run the build command in a subdirectory (e.g. a
  * monorepo package). `outdir` is resolved relative to `cwd`.
  *
- * @example Building a frontend in a monorepo
+ * **Example:** Building a frontend in a monorepo
  * ```typescript
  * const site = yield* Cloudflare.Website.StaticSite("Web", {
  *   cwd: "apps/web",
@@ -151,11 +161,11 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  * });
  * ```
  *
- * @section Custom Rebuild Scope
+ * ### Custom Rebuild Scope
  * By default, all non-gitignored files are hashed to decide whether
  * the build should re-run. Use `memo` to narrow the scope.
  *
- * @example Narrowing the memo scope
+ * **Example:** Narrowing the memo scope
  * ```typescript
  * const site = yield* Cloudflare.Website.StaticSite("Docs", {
  *   command: "npm run build",
@@ -167,13 +177,32 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  * });
  * ```
  *
- * @section Class Form
+ * **Example:** Rebuilding when a sibling workspace package changes
+ * The default scope only hashes files under `cwd` (plus the nearest
+ * lockfile), so edits to a sibling workspace package the app imports do
+ * not retrigger the build on their own. Add the sibling's sources with a
+ * `../` include glob — and keep `lockfile: true`, since providing
+ * `include` otherwise drops the lockfile from the hash:
+ * ```typescript
+ * const site = yield* Cloudflare.Website.StaticSite("Web", {
+ *   cwd: "apps/web",
+ *   command: "npm run build",
+ *   outdir: "dist",
+ *   main: "./src/worker.ts",
+ *   memo: {
+ *     include: ["**\/*", "../../packages/env/src/**"],
+ *     lockfile: true,
+ *   },
+ * });
+ * ```
+ *
+ * ### Class Form
  * Calling `StaticSite` with no arguments returns a constructor you can
  * `extend` to declare the Worker as a named class. The class is both
  * an `Effect` you can `yield*` to deploy and a type you can reference
  * elsewhere — useful when other resources need to bind to this Worker.
  *
- * @example Declaring a Worker class
+ * **Example:** Declaring a Worker class
  * ```typescript
  * class Blog extends Cloudflare.Website.StaticSite<Blog>()("Blog", {
  *   command: "hugo --minify",
@@ -183,6 +212,10 @@ type StaticSiteWorker<Bindings extends WorkerBindingProps> = Worker<{
  *
  * const site = yield* Blog;
  * ```
+ *
+ * @resource
+ * @product Website
+ * @category Workers & Compute
  */
 export const StaticSite: {
   <Self>(): {
@@ -223,6 +256,14 @@ const makeStaticSite = <
     const ctx = yield* AlchemyContext;
     const props = yield* asEffect(propsEff);
 
+    // `Dev` and `Build` carry constant logical ids, so they are namespaced
+    // under `id` to keep two sites on one stack from colliding. Nothing
+    // else is: the site's own `props` — and the resources its `env`
+    // bindings declare — must resolve in the CALLER's namespace. Pushing
+    // the namespace around the whole body instead re-declares a shared
+    // resource referenced from `env` as a second copy under `<id>/`.
+    // `Vite` already passes `id` straight through to `Worker`.
+
     // In dev mode with a dev.command, declare a DevCommand resource so
     // the sidecar owns the process lifecycle (survives user-code HMR),
     // skip the build, and tell Worker not to start a local instance.
@@ -233,8 +274,9 @@ const makeStaticSite = <
             cwd:
               props.dev.cwd ??
               (typeof props.cwd === "string" ? props.cwd : undefined),
-            env: serializeEnv(props.dev.env ?? props.env),
+            env: yield* serializeEnv(props.dev.env ?? props.env),
           }).pipe(
+            Namespace.push(id),
             Effect.map((d) =>
               Output.map(d.url, (url) => ({
                 url: url ?? props.dev?.url,
@@ -250,23 +292,24 @@ const makeStaticSite = <
           cwd: props.cwd,
           memo: props.memo,
           outdir: props.outdir,
-          env: serializeEnv(props.env),
-        });
+          env: yield* serializeEnv(props.env),
+        }).pipe(Namespace.push(id));
 
-    // Pure-static sites don't need a custom Worker entrypoint —
-    // delegate every request straight to the ASSETS binding. Only
-    // injected when the user provided neither `main` nor `script`.
-    const fallbackScript =
-      props.main == null && props.script == null
-        ? `export default { fetch: (request, env) => env.ASSETS.fetch(request) };`
-        : undefined;
-
-    return yield* Worker<Bindings, WorkerAssetsConfig, Req>("Worker", {
+    // Pure-static sites (neither `main` nor `script`) deploy as
+    // assets-only Workers: no script is uploaded and Cloudflare's asset
+    // layer serves every request itself.
+    //
+    // The Worker's FQN was `<id>/Worker` before #1053 flattened it to
+    // `<id>`; `renamedFrom` migrates the pre-existing state row to the new
+    // FQN instead of letting the engine plan a create+delete replacement
+    // (a new physical name, a torn-down workers.dev URL, and a
+    // custom-domain handover that crashes the deploy).
+    return yield* Worker<Bindings, WorkerAssetsConfig, Req>(id, {
       ...props,
       assets: build
         ? cast({
             directory: build.outdir,
-            hash: build.hash,
+            hash: build.hash.output,
             ...props.assets,
           })
         : undefined,
@@ -274,21 +317,83 @@ const makeStaticSite = <
       // is serving the content. The Worker resource still exists in
       // state with a stub Attributes shape.
       dev: dev ? { mode: "external", url: dev.url } : undefined,
-      script: fallbackScript ?? props.script,
-    });
-  }).pipe(Namespace.push(id));
+      script: props.script,
+    }).pipe(renamedFrom(`${id}/Worker`));
+  });
 
-const serializeEnv = (
+/**
+ * Serialize the site's `env` for the build/dev subprocess. The same record
+ * doubles as the Worker's binding props, so entries may be plain strings,
+ * `Redacted` secrets, `effect/Config` values, `Output` references, or
+ * binding Effects:
+ *
+ * - strings and `Redacted` values pass through unchanged
+ * - `Config` (and any other runnable Effect) is resolved here, at stack
+ *   construction — passing it through unresolved would hand the subprocess
+ *   the JSON-serialized `Config` object (`{"_id":"Config"}`) instead of its
+ *   value (#796)
+ * - `Output` references resolve at reconcile; the resolved value is
+ *   serialized the same way inline values are (an `Output<object>` must
+ *   reach the subprocess as JSON, not `[object Object]`)
+ * - binding Effects (`~alchemy/Kind`-marked, e.g. a `WorkerLoader`) and
+ *   `Cloudflare.Container` declarations have no env-var representation and
+ *   are dropped
+ * - remaining plain values (`null`, numbers, JSON objects) are stringified
+ */
+const serializeEnv = Effect.fn(function* (
   env: Input<
     | WorkerBindingProps
     | Record<string, string | Redacted.Redacted<string>>
     | undefined
   >,
-) =>
-  Object.fromEntries(
-    Object.entries(env ?? {}).flatMap(([k, v]) => {
-      if (v === undefined) return [];
-      if (typeof v === "string" || Redacted.isRedacted(v)) return [[k, v]];
-      return [[k, JSON.stringify(v)]];
-    }),
-  );
+) {
+  const entries: [string, unknown][] = [];
+  for (const [k, v] of Object.entries(env ?? {})) {
+    if (v === undefined) continue;
+    if (typeof v === "string" || Redacted.isRedacted(v)) {
+      entries.push([k, v]);
+    } else if (Output.isOutput(v)) {
+      entries.push([k, Output.map(v, serializeEnvValue)]);
+    } else if (isContainerDecl(v)) {
+      // A `Cloudflare.Container` declaration is Effect-shaped but is a
+      // binding (DO namespace + ContainerApplication) — yielding it would
+      // resolve the started-instance tag, which only exists inside a
+      // Durable Object (#997). Deploy-time only, nothing to expose to the
+      // build subprocess.
+      continue;
+    } else if (isYieldableEffectLike(v)) {
+      const resolved = serializeEnvValue(
+        yield* asEffect(v as YieldableEffectLike<unknown, unknown, never>).pipe(
+          Effect.orDie,
+        ),
+      );
+      if (resolved === undefined) continue;
+      entries.push([k, resolved]);
+    } else if (v !== null && typeof v === "object" && "~alchemy/Kind" in v) {
+      // A binding Effect (e.g. WorkerLoader) — deploy-time only, nothing to
+      // expose to the build subprocess.
+      continue;
+    } else {
+      entries.push([k, JSON.stringify(v)]);
+    }
+  }
+  return Object.fromEntries(entries) as Record<
+    string,
+    string | Redacted.Redacted<string>
+  >;
+});
+
+/**
+ * Serialize one resolved env value for the build/dev subprocess: strings and
+ * `Redacted` pass through, everything else becomes JSON.
+ */
+const serializeEnvValue = (
+  value: unknown,
+): string | Redacted.Redacted<string> | undefined =>
+  value === undefined
+    ? undefined
+    : typeof value === "string"
+      ? value
+      : Redacted.isRedacted(value)
+        ? (value as Redacted.Redacted<string>)
+        : JSON.stringify(value);

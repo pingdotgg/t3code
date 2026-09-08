@@ -60,8 +60,8 @@ export interface InstanceStateEventSourceProps {
  * bound instance's id is an Output and cannot appear in the deploy-time rule
  * pattern.
  *
- * @section Observing Instance State
- * @example React to an instance stopping or terminating
+ * ### Observing Instance State
+ * **Example:** React to an instance stopping or terminating
  * ```typescript
  * yield* consumeInstanceStateEvents(
  *   instance,

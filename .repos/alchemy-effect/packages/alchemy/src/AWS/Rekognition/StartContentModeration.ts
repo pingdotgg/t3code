@@ -16,9 +16,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.StartContentModerationHttp)`.
  *
- * @binding
- * @section Video Analysis
- * @example Start Content Moderation
+ * ### Video Analysis
+ * **Example:** Start Content Moderation
  * ```typescript
  * // init
  * const startContentModeration = yield* AWS.Rekognition.StartContentModeration();
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // started.JobId
  * ```
+ *
+ * @binding
  */
 export interface StartContentModeration extends Binding.Service<
   StartContentModeration,

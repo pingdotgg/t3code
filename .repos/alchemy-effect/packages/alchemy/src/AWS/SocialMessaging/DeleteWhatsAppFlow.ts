@@ -23,9 +23,8 @@ export interface DeleteWhatsAppFlowRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.DeleteWhatsAppFlowHttp)`.
- * @binding
- * @section Managing WhatsApp Flows
- * @example Delete a Flow
+ * ### Managing WhatsApp Flows
+ * **Example:** Delete a Flow
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const deleteFlow = yield* AWS.SocialMessaging.DeleteWhatsAppFlow(account);
@@ -33,6 +32,8 @@ export interface DeleteWhatsAppFlowRequest extends Omit<
  * // runtime
  * yield* deleteFlow({ flowId: "1234567890" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteWhatsAppFlow extends Binding.Service<
   DeleteWhatsAppFlow,

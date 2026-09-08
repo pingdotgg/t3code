@@ -5,33 +5,12 @@ import sitemap from "@astrojs/sitemap";
 import starlight from "@astrojs/starlight";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "astro/config";
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import starlightBlog from "starlight-blog";
 import { pagefindIgnoreNoise } from "./plugins/pagefind-ignore-noise.mjs";
-
-/**
- * The Providers sidebar (Provider → Category → Service → Resource) is generated
- * by `scripts/generate-api-reference.ts` from `@category` JSDoc annotations and
- * written to `src/generated/providers-sidebar.json`. `bun run build:reference`
- * regenerates it before every build. If it hasn't been generated yet (e.g. a
- * fresh `astro dev` before running the generator), fall back to autogenerating
- * from the directory tree so the docs still build.
- */
-function providersSidebar() {
-  try {
-    const json = readFileSync(
-      fileURLToPath(
-        new URL("./src/generated/providers-sidebar.json", import.meta.url),
-      ),
-      "utf8",
-    );
-    return JSON.parse(json);
-  } catch {
-    return undefined;
-  }
-}
+import providersSidebar from "./src/generated/providers-sidebar.json" with { type: "json" };
 
 /**
  * Every provider has a docs hub: its reference tree renders inside the
@@ -46,8 +25,13 @@ function providersSidebarEntry() {
     items: [
       { label: "AWS", link: "/aws" },
       { label: "Cloudflare", link: "/cloudflare" },
+      { label: "Hetzner", link: "/hetzner" },
+      { label: "Fly", link: "/fly" },
+      { label: "Railway", link: "/railway" },
       { label: "PlanetScale", link: "/planetscale" },
       { label: "Neon", link: "/neon" },
+      { label: "Prisma", link: "/prisma" },
+      { label: "Better Auth", link: "/better-auth" },
       { label: "Axiom", link: "/axiom" },
       { label: "GitHub", link: "/github" },
       { label: "Docker", link: "/docker" },
@@ -67,9 +51,8 @@ function providersSidebarEntry() {
  * @param {...string} providers Provider labels / directory names (e.g. "Cloudflare")
  */
 function providerResourcesEntry(...providers) {
-  const sidebar = providersSidebar();
-  const entryItems = (provider) => {
-    const group = sidebar?.find((p) => p.label === provider);
+  const entryItems = (/** @type {string} */ provider) => {
+    const group = providersSidebar.find((p) => p.label === provider);
     if (group) return group.items;
     return [
       { autogenerate: { directory: `providers/${provider}`, collapsed: true } },
@@ -184,7 +167,12 @@ function buildOutputChecks() {
   return {
     name: "build-output-checks",
     hooks: {
-      "astro:build:done": async ({ dir, logger }) => {
+      "astro:build:done": async (
+        /** @type {{ dir: URL, logger: import("astro").AstroRuntimeLogger }} */ {
+          dir,
+          logger,
+        },
+      ) => {
         const distPath = fileURLToPath(dir);
 
         /** @type {Set<string>} */
@@ -372,7 +360,7 @@ export default defineConfig({
         !page.endsWith(".mdx"),
     }),
     starlight({
-      title: "alchemy",
+      title: "Alchemy",
       favicon: "/favicon.svg",
       customCss: ["./src/styles/global.css", "./src/styles/custom.css"],
       components: {
@@ -415,6 +403,10 @@ export default defineConfig({
                   label: "Resources",
                   link: "/infrastructure-as-code/resource",
                 },
+                {
+                  label: "Renaming Resources",
+                  link: "/infrastructure-as-code/renaming",
+                },
                 { label: "Actions", link: "/infrastructure-as-code/action" },
                 {
                   label: "Inputs & Outputs",
@@ -435,6 +427,10 @@ export default defineConfig({
                 {
                   label: "Custom Provider",
                   link: "/infrastructure-as-code/custom-provider",
+                },
+                {
+                  label: "Local Providers",
+                  link: "/infrastructure-as-code/local-provider",
                 },
               ],
             },
@@ -466,6 +462,10 @@ export default defineConfig({
                 {
                   label: "Circular Bindings",
                   link: "/infrastructure-as-effects/circular-bindings",
+                },
+                {
+                  label: "Telemetry",
+                  link: "/infrastructure-as-effects/telemetry",
                 },
                 {
                   label: "Custom Runtime",
@@ -618,6 +618,10 @@ export default defineConfig({
             { label: "Overview", link: "/cloudflare" },
             { label: "Setup", link: "/cloudflare/setup" },
             {
+              label: "Local development",
+              link: "/cloudflare/local-development",
+            },
+            {
               label: "Tutorial",
               items: [{ autogenerate: { directory: "cloudflare/tutorial" } }],
             },
@@ -625,6 +629,10 @@ export default defineConfig({
               label: "Compute",
               items: [
                 { label: "Workers", link: "/cloudflare/compute/workers" },
+                {
+                  label: "Gradual deployments",
+                  link: "/cloudflare/compute/gradual-deployments",
+                },
                 {
                   label: "Python Workers",
                   link: "/cloudflare/compute/python-workers",
@@ -669,31 +677,39 @@ export default defineConfig({
                   label: "Overview",
                   link: "/cloudflare/frontend/frontends",
                 },
-                { label: "Vite", link: "/cloudflare/frontend/vite" },
-                {
-                  label: "Static sites",
-                  link: "/cloudflare/frontend/static-site",
-                },
-                { label: "React SPA", link: "/cloudflare/frontend/vite-spa" },
-                {
-                  label: "TanStack Start",
-                  link: "/cloudflare/frontend/tanstack-start",
-                },
+                { label: "Astro", link: "/cloudflare/frontend/astro" },
+                { label: "Foldkit", link: "/cloudflare/frontend/foldkit" },
                 {
                   label: "Full-stack RPC + Drizzle",
                   link: "/cloudflare/frontend/full-stack-tanstack-rpc-drizzle",
                 },
+                { label: "Next.js", link: "/cloudflare/frontend/nextjs" },
+                { label: "Nuxt", link: "/cloudflare/frontend/nuxt" },
+                { label: "Octane", link: "/cloudflare/frontend/octane" },
                 {
                   label: "React Router",
                   link: "/cloudflare/frontend/react-router",
                 },
-                { label: "Vue", link: "/cloudflare/frontend/vue" },
+                { label: "React SPA", link: "/cloudflare/frontend/vite-spa" },
                 {
                   label: "SolidStart",
                   link: "/cloudflare/frontend/solidstart",
                 },
-                { label: "Astro", link: "/cloudflare/frontend/astro" },
-                { label: "Nuxt", link: "/cloudflare/frontend/nuxt" },
+                {
+                  label: "Static sites",
+                  link: "/cloudflare/frontend/static-site",
+                },
+                {
+                  label: "SvelteKit",
+                  link: "/cloudflare/frontend/sveltekit",
+                },
+                {
+                  label: "TanStack Start",
+                  link: "/cloudflare/frontend/tanstack-start",
+                },
+                { label: "Vite", link: "/cloudflare/frontend/vite" },
+                { label: "Vue", link: "/cloudflare/frontend/vue" },
+                { label: "Waku", link: "/cloudflare/frontend/waku" },
               ],
             },
             {
@@ -817,6 +833,7 @@ export default defineConfig({
           items: [
             { label: "Overview", link: "/aws" },
             { label: "Setup", link: "/aws/setup" },
+            { label: "Local development", link: "/aws/local-development" },
             {
               label: "Tutorial",
               items: [{ autogenerate: { directory: "aws/tutorial" } }],
@@ -839,8 +856,43 @@ export default defineConfig({
             {
               label: "Frontend",
               items: [
-                { label: "Websites", link: "/aws/frontend/websites" },
-                { label: "Static site", link: "/aws/frontend/static-site" },
+                {
+                  label: "Overview",
+                  link: "/aws/frontend/websites",
+                },
+                { label: "Astro", link: "/aws/frontend/astro" },
+                { label: "Foldkit", link: "/aws/frontend/foldkit" },
+                {
+                  label: "Full-stack RPC + Drizzle",
+                  link: "/aws/frontend/full-stack-tanstack-rpc-drizzle",
+                },
+                { label: "Next.js", link: "/aws/frontend/nextjs" },
+                { label: "Nuxt", link: "/aws/frontend/nuxt" },
+                { label: "Octane", link: "/aws/frontend/octane" },
+                {
+                  label: "React Router",
+                  link: "/aws/frontend/react-router",
+                },
+                { label: "React SPA", link: "/aws/frontend/vite-spa" },
+                {
+                  label: "SolidStart",
+                  link: "/aws/frontend/solidstart",
+                },
+                {
+                  label: "Static sites",
+                  link: "/aws/frontend/static-site",
+                },
+                {
+                  label: "SvelteKit",
+                  link: "/aws/frontend/sveltekit",
+                },
+                {
+                  label: "TanStack Start",
+                  link: "/aws/frontend/tanstack-start",
+                },
+                { label: "Vite", link: "/aws/frontend/vite" },
+                { label: "Vue", link: "/aws/frontend/vue" },
+                { label: "Waku", link: "/aws/frontend/waku" },
               ],
             },
             {
@@ -867,6 +919,12 @@ export default defineConfig({
               ],
             },
             {
+              label: "AI",
+              items: [
+                { label: "Bedrock & Effect AI", link: "/aws/ai/bedrock" },
+              ],
+            },
+            {
               label: "Messaging & events",
               items: [
                 { label: "SQS", link: "/aws/messaging/sqs" },
@@ -881,6 +939,19 @@ export default defineConfig({
                   link: "/aws/messaging/dynamodb-streams",
                 },
                 { label: "S3 events", link: "/aws/messaging/s3-events" },
+              ],
+            },
+            {
+              label: "Email",
+              items: [
+                {
+                  label: "Sending & managing email",
+                  link: "/aws/email/sending",
+                },
+                {
+                  label: "Receiving inbound email",
+                  link: "/aws/email/receiving",
+                },
               ],
             },
             {
@@ -906,6 +977,232 @@ export default defineConfig({
               ],
             },
             providerResourcesEntry("AWS"),
+          ],
+        },
+        {
+          label: "Hetzner",
+          items: [
+            { label: "Overview", link: "/hetzner" },
+            { label: "Setup", link: "/hetzner/setup" },
+            {
+              label: "Tutorial",
+              items: [{ autogenerate: { directory: "hetzner/tutorial" } }],
+            },
+            {
+              label: "Frontend",
+              items: [
+                {
+                  label: "Overview",
+                  link: "/hetzner/frontend/websites",
+                },
+                { label: "Astro", link: "/hetzner/frontend/astro" },
+                { label: "Foldkit", link: "/hetzner/frontend/foldkit" },
+                { label: "Next.js", link: "/hetzner/frontend/nextjs" },
+                { label: "Nuxt", link: "/hetzner/frontend/nuxt" },
+                { label: "Octane", link: "/hetzner/frontend/octane" },
+                {
+                  label: "React Router",
+                  link: "/hetzner/frontend/react-router",
+                },
+                {
+                  label: "SolidStart",
+                  link: "/hetzner/frontend/solidstart",
+                },
+                {
+                  label: "Static sites",
+                  link: "/hetzner/frontend/static-site",
+                },
+                {
+                  label: "SvelteKit",
+                  link: "/hetzner/frontend/sveltekit",
+                },
+                {
+                  label: "TanStack Start",
+                  link: "/hetzner/frontend/tanstack-start",
+                },
+                { label: "Vite", link: "/hetzner/frontend/vite" },
+                { label: "Vocs", link: "/hetzner/frontend/vocs" },
+                { label: "Waku", link: "/hetzner/frontend/waku" },
+              ],
+            },
+            {
+              label: "Compute",
+              items: [
+                { label: "Servers", link: "/hetzner/compute/servers" },
+                { label: "Services", link: "/hetzner/compute/services" },
+              ],
+            },
+            {
+              label: "Data",
+              items: [{ label: "Volumes", link: "/hetzner/data/volumes" }],
+            },
+            {
+              label: "Networking",
+              items: [
+                { label: "Networking", link: "/hetzner/networking" },
+                { label: "DNS", link: "/hetzner/networking/dns" },
+              ],
+            },
+            providerResourcesEntry("Hetzner"),
+          ],
+        },
+        {
+          label: "Fly",
+          items: [
+            { label: "Overview", link: "/fly" },
+            { label: "Setup", link: "/fly/setup" },
+            {
+              label: "Tutorial",
+              items: [{ autogenerate: { directory: "fly/tutorial" } }],
+            },
+            {
+              label: "Frontend",
+              items: [
+                {
+                  label: "Overview",
+                  link: "/fly/frontend/websites",
+                },
+                { label: "Astro", link: "/fly/frontend/astro" },
+                { label: "Foldkit", link: "/fly/frontend/foldkit" },
+                { label: "Next.js", link: "/fly/frontend/nextjs" },
+                { label: "Nuxt", link: "/fly/frontend/nuxt" },
+                { label: "Octane", link: "/fly/frontend/octane" },
+                {
+                  label: "React Router",
+                  link: "/fly/frontend/react-router",
+                },
+                {
+                  label: "SolidStart",
+                  link: "/fly/frontend/solidstart",
+                },
+                {
+                  label: "Static sites",
+                  link: "/fly/frontend/static-site",
+                },
+                {
+                  label: "SvelteKit",
+                  link: "/fly/frontend/sveltekit",
+                },
+                {
+                  label: "TanStack Start",
+                  link: "/fly/frontend/tanstack-start",
+                },
+                { label: "Vite", link: "/fly/frontend/vite" },
+                { label: "Vocs", link: "/fly/frontend/vocs" },
+                { label: "Waku", link: "/fly/frontend/waku" },
+              ],
+            },
+            {
+              label: "Compute",
+              items: [
+                { label: "Apps", link: "/fly/compute/apps" },
+                { label: "Machines", link: "/fly/compute/machines" },
+                { label: "Services", link: "/fly/compute/services" },
+                { label: "Sprites", link: "/fly/compute/sprites" },
+                { label: "Regions", link: "/fly/compute/regions" },
+              ],
+            },
+            {
+              label: "Data",
+              items: [
+                { label: "Volumes", link: "/fly/data/volumes" },
+                { label: "Postgres", link: "/fly/data/postgres" },
+                { label: "Redis", link: "/fly/data/redis" },
+                { label: "Tigris", link: "/fly/data/tigris" },
+                { label: "Secrets", link: "/fly/data/secrets" },
+              ],
+            },
+            {
+              label: "Networking",
+              items: [{ label: "IPs & certificates", link: "/fly/networking" }],
+            },
+            providerResourcesEntry("Fly"),
+          ],
+        },
+        {
+          label: "Railway",
+          items: [
+            { label: "Overview", link: "/railway" },
+            { label: "Setup", link: "/railway/setup" },
+            {
+              label: "Tutorial",
+              items: [{ autogenerate: { directory: "railway/tutorial" } }],
+            },
+            {
+              label: "Frontend",
+              items: [
+                {
+                  label: "Overview",
+                  link: "/railway/frontend/websites",
+                },
+                { label: "Astro", link: "/railway/frontend/astro" },
+                { label: "Foldkit", link: "/railway/frontend/foldkit" },
+                { label: "Next.js", link: "/railway/frontend/nextjs" },
+                { label: "Nuxt", link: "/railway/frontend/nuxt" },
+                { label: "Octane", link: "/railway/frontend/octane" },
+                {
+                  label: "React Router",
+                  link: "/railway/frontend/react-router",
+                },
+                {
+                  label: "SolidStart",
+                  link: "/railway/frontend/solidstart",
+                },
+                {
+                  label: "Static sites",
+                  link: "/railway/frontend/static-site",
+                },
+                {
+                  label: "SvelteKit",
+                  link: "/railway/frontend/sveltekit",
+                },
+                {
+                  label: "TanStack Start",
+                  link: "/railway/frontend/tanstack-start",
+                },
+                { label: "Vite", link: "/railway/frontend/vite" },
+                { label: "Vocs", link: "/railway/frontend/vocs" },
+                { label: "Waku", link: "/railway/frontend/waku" },
+              ],
+            },
+            {
+              label: "Compute",
+              items: [
+                { label: "Projects", link: "/railway/compute/projects" },
+                { label: "Services", link: "/railway/compute/services" },
+                {
+                  label: "Functions, templates & VMs",
+                  link: "/railway/compute/functions",
+                },
+                {
+                  label: "Environments",
+                  link: "/railway/compute/environments",
+                },
+                { label: "Regions", link: "/railway/compute/regions" },
+              ],
+            },
+            {
+              label: "Data",
+              items: [
+                { label: "Volumes", link: "/railway/data/volumes" },
+                { label: "Postgres", link: "/railway/data/postgres" },
+                { label: "MySQL", link: "/railway/data/mysql" },
+                { label: "Mongo", link: "/railway/data/mongo" },
+                { label: "Redis", link: "/railway/data/redis" },
+                { label: "Variables", link: "/railway/data/variables" },
+                { label: "Buckets", link: "/railway/data/buckets" },
+              ],
+            },
+            {
+              label: "Networking",
+              items: [
+                {
+                  label: "Custom domains, TCP & private networks",
+                  link: "/railway/networking",
+                },
+              ],
+            },
+            providerResourcesEntry("Railway"),
           ],
         },
         {
@@ -966,6 +1263,48 @@ export default defineConfig({
           ],
         },
         {
+          label: "Prisma",
+          items: [
+            { label: "Overview", link: "/prisma" },
+            { label: "Setup", link: "/prisma/setup" },
+            {
+              label: "Data",
+              items: [
+                { label: "Postgres", link: "/prisma/data/postgres" },
+                { label: "Branches", link: "/prisma/data/branches" },
+                { label: "Connections", link: "/prisma/data/connections" },
+                { label: "Buckets", link: "/prisma/data/buckets" },
+              ],
+            },
+            {
+              label: "Compute",
+              items: [
+                { label: "Apps", link: "/prisma/compute/apps" },
+                { label: "Deployments", link: "/prisma/compute/deployments" },
+              ],
+            },
+            {
+              label: "Guides",
+              items: [
+                {
+                  label: "Connect from Workers",
+                  link: "/prisma/guides/cloudflare-workers",
+                },
+              ],
+            },
+            providerResourcesEntry("Prisma"),
+          ],
+        },
+        {
+          label: "Better Auth",
+          items: [
+            { label: "Overview", link: "/better-auth" },
+            { label: "Database layers", link: "/better-auth/database-layers" },
+            { label: "Migrations", link: "/better-auth/migrations" },
+            providerResourcesEntry("BetterAuth"),
+          ],
+        },
+        {
           label: "Axiom",
           items: [
             { label: "Overview", link: "/axiom" },
@@ -1019,6 +1358,7 @@ export default defineConfig({
               label: "Effect SQL",
               items: [
                 { label: "Postgres", link: "/sql/effect-sql/postgres" },
+                { label: "MySQL", link: "/sql/effect-sql/mysql" },
                 { label: "D1", link: "/sql/effect-sql/d1" },
                 { label: "Migrations", link: "/sql/effect-sql/migrations" },
                 {
@@ -1031,6 +1371,7 @@ export default defineConfig({
               label: "Drizzle",
               items: [
                 { label: "Postgres", link: "/sql/drizzle/postgres" },
+                { label: "MySQL", link: "/sql/drizzle/mysql" },
                 { label: "D1", link: "/sql/drizzle/d1" },
                 { label: "Migrations", link: "/sql/drizzle/migrations" },
               ],
@@ -1070,5 +1411,8 @@ export default defineConfig({
       // (declared as a direct dependency) instead.
       external: ["satteri"],
     },
+  },
+  experimental: {
+    incrementalBuild: true,
   },
 });

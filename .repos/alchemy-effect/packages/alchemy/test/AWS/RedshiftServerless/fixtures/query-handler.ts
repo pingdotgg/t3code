@@ -16,7 +16,7 @@ export class RedshiftQueryFunction extends Lambda.Function<Lambda.Function>()(
 export default RedshiftQueryFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Redshift Data statements are submitted then polled — allow generous
     // time for the composite query to finish.
     timeout: Duration.seconds(120),

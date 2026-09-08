@@ -65,11 +65,8 @@ export type WarpConnector = Resource<
  * host joins it at runtime using the `token` attribute. Pair with
  * {@link Route} to route private CIDRs through the connector and
  * {@link VirtualNetwork} to isolate overlapping address space.
- * @resource
- * @product Tunnels
- * @category Cloudflare One (Zero Trust)
- * @section Creating a WARP Connector
- * @example Basic WARP Connector tunnel
+ * ### Creating a WARP Connector
+ * **Example:** Basic WARP Connector tunnel
  * ```typescript
  * const connector = yield* Cloudflare.Tunnel.WarpConnector("SiteA", {
  *   name: "site-a-connector",
@@ -77,7 +74,7 @@ export type WarpConnector = Resource<
  * // Provision the host with: warp-cli connector new <Redacted.value(connector.token)>
  * ```
  *
- * @example Route a private network through the connector
+ * **Example:** Route a private network through the connector
  * ```typescript
  * yield* Cloudflare.Tunnel.Route("SiteANet", {
  *   tunnelId: connector.tunnelId,
@@ -85,8 +82,8 @@ export type WarpConnector = Resource<
  * });
  * ```
  *
- * @section Renaming
- * @example Replace with a new name
+ * ### Renaming
+ * **Example:** Replace with a new name
  * ```typescript
  * // Renaming creates a new tunnel with a new tunnelId.
  * const connector = yield* Cloudflare.Tunnel.WarpConnector("SiteA", {
@@ -95,6 +92,10 @@ export type WarpConnector = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/private-net/warp-connector/
+ *
+ * @resource
+ * @product Tunnels
+ * @category Cloudflare One (Zero Trust)
  */
 export const WarpConnector = Resource<WarpConnector>(TypeId);
 
@@ -228,9 +229,9 @@ export const WarpConnectorProvider = () =>
   });
 
 interface ObservedConnector {
-  id?: string | null;
+  id?: string;
   name?: string | null;
-  status?: string | null;
+  status?: "inactive" | "degraded" | "healthy" | "down" | null;
   createdAt?: string | null;
   deletedAt?: string | null;
 }

@@ -1,0 +1,10 @@
+node_modules
+dist
+*.local
+*.tsbuildinfo
+.DS_Store
+
+# The root .gitignore excludes *.d.ts. These ambient declarations are source:
+# they reference vite/client for the CSS import and type the build id the
+# Foldkit plugin compiles in.
+!src/vite-env.d.ts

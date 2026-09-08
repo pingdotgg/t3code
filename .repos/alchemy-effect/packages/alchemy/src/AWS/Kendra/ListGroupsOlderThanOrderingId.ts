@@ -20,15 +20,16 @@ export interface ListGroupsOlderThanOrderingIdRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.ListGroupsOlderThanOrderingIdHttp)`.
  *
- * @binding
- * @section Principal Mapping
- * @example List Stale Groups
+ * ### Principal Mapping
+ * **Example:** List Stale Groups
  * ```typescript
  * const listGroups = yield* AWS.Kendra.ListGroupsOlderThanOrderingId(index);
  *
  * const stale = yield* listGroups({ OrderingId: orderingId });
  * console.log(stale.GroupsSummaries);
  * ```
+ *
+ * @binding
  */
 export interface ListGroupsOlderThanOrderingId extends Binding.Service<
   ListGroupsOlderThanOrderingId,

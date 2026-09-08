@@ -19,9 +19,8 @@ export interface ImportCertificateAuthorityCertificateRequest extends Omit<
  * `ACMPCA.ImportCertificateAuthorityCertificateHttp` on the Function effect
  * to implement the binding.
  *
- * @binding
- * @section CA Activation
- * @example Install a Signed CA Certificate
+ * ### CA Activation
+ * **Example:** Install a Signed CA Certificate
  * ```typescript
  * // init
  * const importCaCertificate =
@@ -33,6 +32,8 @@ export interface ImportCertificateAuthorityCertificateRequest extends Omit<
  *   CertificateChain: new TextEncoder().encode(chainPem),
  * });
  * ```
+ *
+ * @binding
  */
 export interface ImportCertificateAuthorityCertificate extends Binding.Service<
   ImportCertificateAuthorityCertificate,

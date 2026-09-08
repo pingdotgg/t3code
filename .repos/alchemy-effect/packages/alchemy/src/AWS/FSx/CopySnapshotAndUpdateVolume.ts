@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * for OpenZFS file system (on-demand data replication) — the cross-file-system
  * counterpart of {@link RestoreVolumeFromSnapshot}. Provide the
  * implementation with `Effect.provide(AWS.FSx.CopySnapshotAndUpdateVolumeHttp)`.
- * @binding
- * @section Managing Snapshots at Runtime
- * @example Replicate a snapshot from another file system into a volume
+ * ### Managing Snapshots at Runtime
+ * **Example:** Replicate a snapshot from another file system into a volume
  * ```typescript
  * const copySnapshotAndUpdateVolume =
  *   yield* AWS.FSx.CopySnapshotAndUpdateVolume();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`volume ${response.VolumeId} updating`);
  * ```
+ *
+ * @binding
  */
 export interface CopySnapshotAndUpdateVolume extends Binding.Service<
   CopySnapshotAndUpdateVolume,

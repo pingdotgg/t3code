@@ -2,6 +2,7 @@ import * as ecr from "@distilled.cloud/aws/ecr";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import type * as rolldown from "rolldown";
 import { AlchemyContext } from "../../AlchemyContext.ts";
 import * as Bundle from "../../Bundle/Bundle.ts";
@@ -12,7 +13,6 @@ import {
 } from "../../Bundle/TempRoot.ts";
 import { hashDirectory } from "../../Command/Memo.ts";
 import { Docker } from "../../Docker/Docker.ts";
-import { Self } from "../../Self.ts";
 import {
   isInlineDockerfile,
   type InlineDockerfile,
@@ -90,12 +90,13 @@ export interface BundledImageSource {
    */
   handler?: string;
   /**
-   * Bundler configuration for the entrypoint.
+   * Bundler configuration for the entrypoint: rolldown `input`/`output`
+   * overrides plus pure-annotation options (`pure`). `effect`, `@effect/*`,
+   * `alchemy`, `@alchemy.run/*`, and `@distilled.cloud/*` are annotated as
+   * pure by default so unused code from those packages is tree-shaken; list
+   * additional packages via `pure.packages`, or disable with `pure: false`.
    */
-  build?: {
-    input?: Partial<rolldown.InputOptions>;
-    output?: Partial<rolldown.OutputOptions>;
-  };
+  build?: Bundle.BundleConfig;
 }
 
 /**
@@ -258,93 +259,22 @@ export interface ResolveImageOptions {
 }
 
 /**
- * The standard bun bootstrap used by `AWS.ECS.Task` / `AWS.ECS.Service`
- * generated entries: resolves the bundled program's registered runners
- * (`host.run` loops and served `fetch`/`run` handlers) and runs them with a
- * Bun HTTP server bound to `PORT`.
+ * The generated entry for `AWS.ECS.Task` / `AWS.ECS.Service` containers: a
+ * shim importing only `alchemy/Runtime/Bootstrap/Ecs` (resolvable from any
+ * consumer — `alchemy` is its direct dependency) plus the user's `main`.
+ * Everything the runtime needs lives in that real module, so the virtual
+ * entry never imports alchemy's own dependencies (`@distilled.cloud/*`,
+ * `@effect/platform-bun`), which an isolated install cannot resolve from
+ * the consumer's project.
  */
 export const makeBunBootstrap =
   (handler: string) =>
   (importPath: string): string =>
     `
-import { BunServices } from "@effect/platform-bun";
-import { BunHttpServer } from "alchemy/Http";
-import { Stack } from "alchemy/Stack";
-import { makeEntrypointLayer, reifyBoundConfigProvider } from "alchemy/Runtime";
-import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Context from "effect/Context";
-import * as Credentials from "@distilled.cloud/aws/Credentials";
-import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
-import * as Region from "@distilled.cloud/aws/Region";
-
+import { bootstrap } from "alchemy/Runtime/Bootstrap/Ecs";
 import { ${handler} as entrypoint } from ${JSON.stringify(importPath)};
 
-// Normalize the entrypoint export: an inline-effect class default export is
-// an Effect resolving the platform instance, while the tagged form
-// (X.make(props, impl)) exports a Layer providing the Self tag. Both fold
-// into a Layer via makeEntrypointLayer (same pattern as the Lambda and
-// Cloudflare Container bridges).
-const tag = Context.Service("${Self.key}");
-const layer = makeEntrypointLayer(tag, entrypoint);
-
-const platform = Layer.mergeAll(
-  BunServices.layer,
-  FetchHttpClient.layer,
-  Logger.layer([Logger.consolePretty()]),
-);
-
-const stack = Layer.effect(
-  Stack,
-  Effect.all([
-    Config.string("ALCHEMY_STACK_NAME"),
-    Config.string("ALCHEMY_STAGE")
-  ]).pipe(
-    Effect.map(([name, stage]) => ({
-      name,
-      stage,
-      bindings: {},
-      resources: {}
-    }))
-  )
-);
-
-// Resolve the bundled program (the runners registered via host.run / serve)
-// and run it with a Bun HTTP server bound to PORT, so a returned { fetch }
-// handler is actually served and host.run loops stay alive. A pure one-shot
-// { run } program completes and the process exits 0.
-const program = tag.pipe(
-  Effect.flatMap((task) => task.RuntimeContext.exports),
-  Effect.flatMap((exports) => exports.program),
-  Effect.provide(
-    layer.pipe(
-      Layer.provideMerge(stack),
-      // Full provider chain, not fromEnv: Fargate tasks receive credentials
-      // from the container-credentials endpoint
-      // (AWS_CONTAINER_CREDENTIALS_RELATIVE_URI), not environment variables.
-      Layer.provideMerge(Credentials.fromChain()),
-      Layer.provideMerge(Region.fromEnv()),
-      Layer.provideMerge(BunHttpServer()),
-      Layer.provideMerge(platform),
-      Layer.provideMerge(
-        Layer.succeed(
-          ConfigProvider.ConfigProvider,
-          reifyBoundConfigProvider(ConfigProvider.fromEnv(), process.env)
-        )
-      ),
-    )
-  ),
-  Effect.scoped
-);
-
-console.log("Task bootstrap starting...");
-await Effect.runPromise(program).catch((err) => {
-  console.error("Task bootstrap failed:", err);
-  process.exit(1);
-});
+await bootstrap(entrypoint);
 `;
 
 /**
@@ -439,6 +369,48 @@ export const makeImageSource = Effect.gen(function* () {
   const { dotAlchemy } = yield* AlchemyContext;
   const virtualEntryPlugin = yield* Bundle.virtualEntryPlugin;
 
+  /**
+   * The exact rolldown input/output options `bundleProgram` hands to
+   * `Bundle.build` — shared with {@link watchMain} so a dev watcher's
+   * `Bundle.watch` observes the identical module graph.
+   */
+  const mainBundleOptions = (
+    source: BundledImageSource,
+    entry: string,
+    cwd: string,
+    plugins?: rolldown.RolldownPluginOption,
+  ): {
+    inputOptions: rolldown.InputOptions;
+    outputOptions: rolldown.OutputOptions;
+  } => ({
+    inputOptions: {
+      ...source.build?.input,
+      input: entry,
+      cwd,
+      platform: "node",
+      // The container runs on `bun`; keep `bun`/`bun:*` external (the
+      // runtime provides them) and resolve the `bun` export condition
+      // so `@effect/platform-bun` picks its Bun implementations.
+      external: [
+        "bun",
+        "bun:*",
+        ...((source.build?.input?.external as string[] | undefined) ?? []),
+      ],
+      resolve: {
+        conditionNames: [...Bundle.BUN_CONDITION_NAMES],
+        ...source.build?.input?.resolve,
+      },
+      plugins: [source.build?.input?.plugins, plugins],
+    },
+    outputOptions: {
+      ...source.build?.output,
+      format: "esm",
+      sourcemap: source.build?.output?.sourcemap ?? false,
+      minify: source.build?.output?.minify ?? false,
+      entryFileNames: "index.mjs",
+    },
+  });
+
   /** Bundle the Effect program behind a `main` source. */
   const bundleProgram = Effect.fn(function* (options: {
     source: BundledImageSource;
@@ -453,33 +425,11 @@ export const makeImageSource = Effect.gen(function* () {
       entry: string,
       plugins?: rolldown.RolldownPluginOption,
     ) {
+      const opts = mainBundleOptions(source, entry, cwd, plugins);
       return yield* Bundle.build(
-        {
-          ...source.build?.input,
-          input: entry,
-          cwd,
-          platform: "node",
-          // The container runs on `bun`; keep `bun`/`bun:*` external (the
-          // runtime provides them) and resolve the `bun` export condition
-          // so `@effect/platform-bun` picks its Bun implementations.
-          external: [
-            "bun",
-            "bun:*",
-            ...((source.build?.input?.external as string[] | undefined) ?? []),
-          ],
-          resolve: {
-            conditionNames: ["bun", "import", "module", "default"],
-            ...source.build?.input?.resolve,
-          },
-          plugins: [source.build?.input?.plugins, plugins],
-        },
-        {
-          ...source.build?.output,
-          format: "esm",
-          sourcemap: source.build?.output?.sourcemap ?? false,
-          minify: source.build?.output?.minify ?? false,
-          entryFileNames: "index.mjs",
-        },
+        opts.inputOptions,
+        opts.outputOptions,
+        source.build,
       );
     });
 
@@ -783,7 +733,13 @@ export const makeImageSource = Effect.gen(function* () {
       // push of a multi-arch tag sends every locally-present variant — a
       // stale other-arch variant in the local cache would reach ECR and the
       // task would crash with `exec format error`.
-      yield* docker.image.push(imageUri, credentials, platform);
+      yield* docker.image.push(imageUri, credentials, platform).pipe(
+        Effect.retry({
+          while: (): boolean => true,
+          schedule: Schedule.exponential("2 seconds"),
+          times: 3,
+        }),
+      );
       yield* session.note(`Pushed ${imageUri}`);
       return { imageUri, repositoryName, repositoryUri, codeHash };
     }
@@ -887,7 +843,29 @@ export const makeImageSource = Effect.gen(function* () {
     return yield* computeStaticSourceHash(options.source, platform);
   });
 
-  return { resolve, hash };
+  /**
+   * The rolldown watch plan for a `main` source — the exact input/output
+   * options `resolve` bundles with, reusable verbatim with `Bundle.watch`
+   * so a dev watcher observes the identical module graph and rebuild
+   * triggers.
+   */
+  const watchMain = Effect.fn(function* (options: {
+    source: BundledImageSource;
+    isExternal?: boolean;
+    bootstrap: (importPath: string) => string;
+  }) {
+    const realMain = yield* resolveMainPath(options.source.main);
+    const cwd = yield* findCwdForBundle(realMain);
+    const opts = mainBundleOptions(
+      options.source,
+      realMain,
+      cwd,
+      options.isExternal ? undefined : virtualEntryPlugin(options.bootstrap),
+    );
+    return { ...opts, extra: options.source.build };
+  });
+
+  return { resolve, hash, watchMain };
 });
 
 /** The resolver service returned by {@link makeImageSource}. */

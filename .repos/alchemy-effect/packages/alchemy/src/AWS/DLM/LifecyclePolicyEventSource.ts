@@ -70,8 +70,8 @@ export interface LifecyclePolicyEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on
  * the Function effect.
  *
- * @section Consuming Lifecycle Policy Events
- * @example Alert When A Policy Stops Running
+ * ### Consuming Lifecycle Policy Events
+ * **Example:** Alert When A Policy Stops Running
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

@@ -63,13 +63,13 @@ export interface AdminAccount extends Resource<
  * tracked by Alchemy state — adopting a pre-existing admin account that Alchemy
  * did not create requires `--adopt`, and destroy disassociates the admin.
  *
- * @section Designating the FMS admin
- * @example Designate the caller as the FMS admin
+ * ### Designating the FMS admin
+ * **Example:** Designate the caller as the FMS admin
  * ```typescript
  * const admin = yield* FMS.AdminAccount("FmsAdmin", {});
  * ```
  *
- * @example Designate a specific member account
+ * **Example:** Designate a specific member account
  * ```typescript
  * const admin = yield* FMS.AdminAccount("FmsAdmin", {
  *   adminAccount: "123456789012",
@@ -147,8 +147,8 @@ export const AdminAccountProvider = () =>
                 // the note on the disassociate retry in `delete` below.
                 while: (e): boolean =>
                   e._tag === "InvalidOperationException" &&
-                  (e.Message === "Operation is invalid." ||
-                    (e.Message?.includes("AWSServiceRoleForFMS") ?? false)),
+                  (e.message === "Operation is invalid." ||
+                    (e.message?.includes("AWSServiceRoleForFMS") ?? false)),
                 schedule: Schedule.spaced("5 seconds"),
                 times: 8,
               }),
@@ -179,7 +179,7 @@ export const AdminAccountProvider = () =>
               // `unknown`, which breaks the `catchTag` below.
               while: (e): boolean =>
                 e._tag === "InvalidOperationException" &&
-                (e.Message?.includes("cannot be offboarded") ?? false),
+                (e.message?.includes("cannot be offboarded") ?? false),
               schedule: Schedule.spaced("8 seconds"),
               times: 8,
             }),

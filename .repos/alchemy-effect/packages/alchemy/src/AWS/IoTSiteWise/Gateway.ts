@@ -83,9 +83,8 @@ export interface Gateway extends Resource<
  * software syncs to it asynchronously once the referenced core device is
  * online (the device does not need to exist to create the gateway).
  *
- * @resource
- * @section Creating Gateways
- * @example Greengrass V2 Gateway
+ * ### Creating Gateways
+ * **Example:** Greengrass V2 Gateway
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -95,6 +94,8 @@ export interface Gateway extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Gateway = Resource<Gateway>("AWS.IoTSiteWise.Gateway");
 

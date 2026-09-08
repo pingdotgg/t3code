@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * grants `forecast:ResumeResource` on `*`. Provide the implementation with
  * `Effect.provide(AWS.Forecast.ResumeResourceHttp)`.
  *
- * @binding
- * @section Managing Jobs
- * @example Resume a Stopped Monitor
+ * ### Managing Jobs
+ * **Example:** Resume a Stopped Monitor
  * ```typescript
  * // init
  * const resumeResource = yield* AWS.Forecast.ResumeResource();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* resumeResource({ ResourceArn: monitorArn });
  * ```
+ *
+ * @binding
  */
 export interface ResumeResource extends Binding.Service<
   ResumeResource,

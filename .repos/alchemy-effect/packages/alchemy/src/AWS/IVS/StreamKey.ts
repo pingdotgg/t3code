@@ -54,9 +54,8 @@ export interface StreamKey extends Resource<
  * channel's stream key*: if the channel already has its auto-created key,
  * the resource takes ownership of it (tagging it with Alchemy's internal
  * tags) instead of failing the per-channel quota.
- * @resource
- * @section Creating Stream Keys
- * @example Stream Key for a Channel
+ * ### Creating Stream Keys
+ * **Example:** Stream Key for a Channel
  * ```typescript
  * import * as IVS from "alchemy/AWS/IVS";
  *
@@ -65,6 +64,8 @@ export interface StreamKey extends Resource<
  *   channelArn: channel.channelArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const StreamKey = Resource<StreamKey>("AWS.IVS.StreamKey");
 

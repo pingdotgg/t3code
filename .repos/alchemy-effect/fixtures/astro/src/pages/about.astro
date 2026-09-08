@@ -1,0 +1,19 @@
+---
+// Prerendered at build time (workerd prerendering by default); served from
+// the ASSETS directory in production and through the entry worker's
+// dev-match path in dev.
+export const prerender = true;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>About — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>About</h1>
+    <p id="mode">prerendered</p>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

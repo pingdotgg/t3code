@@ -11,15 +11,16 @@ import * as Binding from "../../Binding.ts";
  * ARNs embed server-generated UUIDs and are runtime data, so the grant spans
  * the account's snapshots. Provide the implementation with
  * `Effect.provide(AWS.DocDBElastic.GetClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Poll a Snapshot Until Available
+ * ### Managing Snapshots
+ * **Example:** Poll a Snapshot Until Available
  * ```typescript
  * const getSnapshot = yield* DocDBElastic.GetClusterSnapshot();
  *
  * const result = yield* getSnapshot({ snapshotArn });
  * // result.snapshot.status → "AVAILABLE"
  * ```
+ *
+ * @binding
  */
 export interface GetClusterSnapshot extends Binding.Service<
   GetClusterSnapshot,

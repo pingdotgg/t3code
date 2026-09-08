@@ -1,0 +1,200 @@
+---
+title: "Part 4: Secrets and Cleanup"
+description: Store an App secret, read it from the Service at runtime, and destroy the stack.
+sidebar:
+  order: 4
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+A secret only this Service needs from `.env` is
+`Config.redacted`. See [Secrets](/fly/data/secrets).
+
+This part is for a value Fly should own: an App **Secret** Fly
+injects into every Machine. You will read it with `GetSecret`, then
+tear the stack down so billing stops.
+
+## Declare a Secret
+
+Add a Secret next to the App. Wrap the value with `Redacted.make` so
+it is never logged:
+
+```diff lang="typescript"
+// src/app.ts
+import * as Fly from "alchemy/Fly";
++import * as Redacted from "effect/Redacted";
+
+export const Site = Fly.App("Site");
+
+export const PublicIp = Fly.IpAssignment("Shared", { /* ... */ });
++
++export const ApiToken = Fly.Secret("ApiToken", {
++  app: Site,
++  name: "API_TOKEN",
++  value: Redacted.make("not-a-real-token"),
++});
+```
+
+`name` is the env-var Fly injects into Machines (`API_TOKEN`). Omit
+it and Alchemy generates an ownership-stamped name instead.
+
+## Bind `GetSecret`
+
+Inside the Service's init, bind the Secret — pass the declaration
+directly, no yielding required:
+
+```diff lang="typescript"
+// src/api.ts
+-import { Site } from "./app.ts";
++import { ApiToken, Site } from "./app.ts";
+
+  Effect.gen(function* () {
+    const mount = yield* Fly.MountVolume({ path: "/data", sizeGb: 1 });
+    const fs = yield* FileSystem.FileSystem;
++    const get = yield* Fly.GetSecret(ApiToken);
+
+    return {
+      fetch: /* ... */,
+    };
+  }).pipe(Effect.provide(Fly.MountVolumeLive)),
+```
+
+`GetSecret` is a **binding**: at deploy time it can mint an App
+deploy token for the Machine, and at runtime it hands you a
+`get()` for this Secret. Listing every secret on the App is
+`ListSecrets(Site)` — Fly's list API is app-scoped.
+
+## Provide the binding layer
+
+Bindings declare a capability; layers implement it. Provide
+`GetSecretHttp` next to `MountVolumeLive`:
+
+```typescript
+  }).pipe(
+    Effect.provide(Fly.MountVolumeLive),
+    Effect.provide(Fly.GetSecretHttp),
+  ),
+```
+
+## Serve the secret's name
+
+Add a `/secret` route that returns the secret's **name**, never the
+plaintext:
+
+```typescript
+if (url.pathname === "/health") {
+  return HttpServerResponse.json({ ok: true });
+}
+if (url.pathname === "/secret") {
+  const got = yield* get().pipe(Effect.orDie);
+  return HttpServerResponse.json({ name: got.name });
+}
+const file = `${mount.path}${url.pathname}`;
+```
+
+`secrets.get()` defaults to the bound Secret. Fly only returns
+plaintext from a Machine in the same App; from an Action you get
+metadata.
+
+## Yield the Secret from the Stack
+
+```diff lang="typescript"
+// alchemy.run.ts
+-import { PublicIp, Site } from "./src/app.ts";
++import { ApiToken, PublicIp, Site } from "./src/app.ts";
+
+  Effect.gen(function* () {
+    const site = yield* Site;
+    yield* PublicIp;
++    yield* ApiToken;
+    const api = yield* Api;
+```
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
+
+[g]+[/g] [b]ApiToken[/b] [d](Fly.Secret)[/d]
+[y]~[/y] [b]Api[/b] [d](Fly.Service)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]ApiToken[/b] [d](Fly.Secret)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](Fly.Service)[/d] [y]updated[/y]`} />
+
+## Try it out
+
+```sh
+curl https://myapp-site-dev-a1b2c3d4.fly.dev/secret
+# → {"name":"API_TOKEN"}
+```
+
+:::tip[Your own domain?]
+Declare a [`Fly.Certificate`](/fly/networking#certificates) for a
+hostname you control (`kind: "acme"`) and point DNS at the App —
+the ACME challenge records live on `cert.dnsRequirements`. Dedicated
+IPv4 (`IpAssignment` `type: "v4"`) is billed and quota-gated —
+prefer `shared_v4` or `v6` unless you need one.
+:::
+
+## Clean up
+
+You're done — tear everything down so Machine and Volume billing
+stops:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy destroy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+Alchemy deletes everything in reverse dependency order — Service,
+Secret, Volume, IP, App.
+
+## Recap
+
+Over four parts you built a complete Fly deployment:
+
+- An App with a generated globally unique name
+- An HTTP Service bundled into a Machine, updated only when its
+  code hash changes
+- A Volume mounted at `/data` whose contents outlive deploys
+- An App Secret readable from the Service, never logged
+
+## Where next
+
+- [Services](/fly/compute/services) — background workers, env,
+  multiple Services per App.
+- [Machines](/fly/compute/machines) — raw images without a bundle.
+- [Volumes](/fly/data/volumes) — snapshots, extend, region rules.
+- [Secrets](/fly/data/secrets) — `GetSecret` / `ListSecrets` / `WriteSecret`, plus
+  KMS `SecretKey` with `Encrypt` / `Decrypt` / `Sign` / `Verify`.
+- [Testing](/testing) — deploy this stack from an integration test
+  and drive it over HTTP.
+- [CI](/environments/ci) — run `alchemy deploy` from GitHub Actions
+  with `FLY_API_TOKEN`.

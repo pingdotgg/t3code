@@ -49,6 +49,10 @@ const FONTS: FontSource[] = [
     url: "https://cdn.jsdelivr.net/gh/adobe-fonts/source-serif@release/TTF/SourceSerif4-Regular.ttf",
   },
   {
+    file: "SourceSerif4-Semibold.ttf",
+    url: "https://cdn.jsdelivr.net/gh/adobe-fonts/source-serif@release/TTF/SourceSerif4-Semibold.ttf",
+  },
+  {
     file: "SourceSerif4-It.ttf",
     url: "https://cdn.jsdelivr.net/gh/adobe-fonts/source-serif@release/TTF/SourceSerif4-It.ttf",
   },

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.GetFindingsPublicationConfigurationHttp)`.
- * @binding
- * @section Publishing Findings
- * @example Read the Publication Configuration
+ * ### Publishing Findings
+ * **Example:** Read the Publication Configuration
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getFindingsPublicationConfiguration = yield* AWS.Macie2.GetFindingsPublicationConfiguration();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { securityHubConfiguration } = yield* getFindingsPublicationConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface GetFindingsPublicationConfiguration extends Binding.Service<
   GetFindingsPublicationConfiguration,

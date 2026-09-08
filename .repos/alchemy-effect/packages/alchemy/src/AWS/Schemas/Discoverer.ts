@@ -65,9 +65,8 @@ export interface Discoverer extends Resource<
  * events flowing through an event bus and publishes them (versioned) to the
  * AWS-managed `discovered-schemas` registry.
  *
- * @resource
- * @section Creating a Discoverer
- * @example Discover Schemas on an Event Bus
+ * ### Creating a Discoverer
+ * **Example:** Discover Schemas on an Event Bus
  * ```typescript
  * const bus = yield* AWS.EventBridge.EventBus("AppBus", {});
  *
@@ -77,7 +76,7 @@ export interface Discoverer extends Resource<
  * });
  * ```
  *
- * @example Stopped Discoverer
+ * **Example:** Stopped Discoverer
  * ```typescript
  * const discoverer = yield* AWS.Schemas.Discoverer("PausedDiscoverer", {
  *   sourceArn: bus.eventBusArn,
@@ -86,6 +85,8 @@ export interface Discoverer extends Resource<
  * ```
  * The discoverer is provisioned but paused; set `state: "STARTED"` (or omit
  * it) to resume discovery.
+ *
+ * @resource
  */
 export const Discoverer = Resource<Discoverer>("AWS.Schemas.Discoverer");
 

@@ -38,10 +38,8 @@ test.provider.skipIf(entitled)(
         .createAccessBookmark({
           accountId,
           bookmarkId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeffff0001",
-          body: {
-            name: "alchemy-access-bookmark-probe",
-            domain: "wiki.alchemy-test-2.us",
-          },
+          name: "alchemy-access-bookmark-probe",
+          domain: "wiki.alchemy-test-2.us",
         })
         .pipe(Effect.flip);
       expect(error._tag).toEqual("AccessBookmarkNotFound");

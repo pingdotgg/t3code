@@ -23,9 +23,8 @@ export interface DeleteAgentMemoryRequest extends Omit<
  * idempotent — deleting a session or memory id that holds no memory
  * succeeds.
  *
- * @binding
- * @section Deleting Agent Memory
- * @example Forget One Session
+ * ### Deleting Agent Memory
+ * **Example:** Forget One Session
  * ```typescript
  * // init
  * const deleteAgentMemory = yield* Bedrock.DeleteAgentMemory(alias);
@@ -34,10 +33,12 @@ export interface DeleteAgentMemoryRequest extends Omit<
  * yield* deleteAgentMemory({ sessionId });
  * ```
  *
- * @example Forget Everything for a Memory Id
+ * **Example:** Forget Everything for a Memory Id
  * ```typescript
  * yield* deleteAgentMemory({ memoryId: userId });
  * ```
+ *
+ * @binding
  */
 export interface DeleteAgentMemory extends Binding.Service<
   DeleteAgentMemory,

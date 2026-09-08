@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { deepEqual, isResolved } from "../../Diff.ts";
+import type { Input } from "../../Input.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -12,16 +13,13 @@ import {
   syncEventInvokeConfig,
   type EventInvokeConfig,
 } from "./EventInvokeConfig.ts";
+import type { Version } from "./Version.ts";
 
 export interface AliasProps {
   /**
-   * The name or ARN of the Lambda function.
+   * Managed Lambda version that this alias invokes.
    */
-  functionName: string;
-  /**
-   * Lambda function version that this alias invokes.
-   */
-  functionVersion: string;
+  version: Version;
   /**
    * Name of the alias. If omitted, a unique name is generated.
    */
@@ -85,25 +83,30 @@ export interface Alias extends Resource<
   Providers
 > {}
 
+type ResolvedAliasProps = Input.ResolveProps<AliasProps>;
+
+const resolvedProps = (props: AliasProps): ResolvedAliasProps =>
+  props as unknown as ResolvedAliasProps;
+
 /**
  * A Lambda alias for routing invocations to a stable function version.
  *
- * @section Creating Aliases
- * @example Production Alias
+ * ### Creating Aliases
+ * **Example:** Production Alias
  * ```typescript
+ * const version = yield* Version("ProductionVersion", { function: fn });
  * const alias = yield* Alias("ProductionAlias", {
- *   functionName: fn.functionName,
- *   functionVersion: "1",
+ *   version,
  *   aliasName: "production",
  * });
  * ```
  *
- * @section Weighted Routing
- * @example Shift Traffic to Another Version
+ * ### Weighted Routing
+ * **Example:** Shift Traffic to Another Version
  * ```typescript
+ * const version = yield* Version("LiveVersion", { function: fn });
  * const alias = yield* Alias("LiveAlias", {
- *   functionName: fn.functionName,
- *   functionVersion: "2",
+ *   version,
  *   aliasName: "live",
  *   routingConfig: {
  *     AdditionalVersionWeights: {
@@ -113,12 +116,12 @@ export interface Alias extends Resource<
  * });
  * ```
  *
- * @section Async Invocation
- * @example Alias-Scoped Retry Behavior
+ * ### Async Invocation
+ * **Example:** Alias-Scoped Retry Behavior
  * ```typescript
+ * const version = yield* Version("LiveVersion", { function: fn });
  * const alias = yield* Alias("LiveAlias", {
- *   functionName: fn.functionName,
- *   functionVersion: "2",
+ *   version,
  *   aliasName: "live",
  *   eventInvokeConfig: {
  *     maximumRetryAttempts: 0,
@@ -196,20 +199,35 @@ export const AliasProvider = () =>
         stables: ["aliasArn", "aliasName", "functionName"],
         diff: Effect.fn(function* ({ id, olds, news }) {
           if (!isResolved(news)) return;
-          const oldAliasName = yield* createAliasName(id, olds.aliasName);
-          const newAliasName = yield* createAliasName(id, news.aliasName);
+          const resolvedOlds = resolvedProps(olds);
+          const resolvedNews = resolvedProps(news);
+          const oldAliasName = yield* createAliasName(
+            id,
+            resolvedOlds.aliasName,
+          );
+          const newAliasName = yield* createAliasName(
+            id,
+            resolvedNews.aliasName,
+          );
           if (
-            olds.functionName !== news.functionName ||
+            resolvedOlds.version.functionName !==
+              resolvedNews.version.functionName ||
             oldAliasName !== newAliasName
           ) {
             return { action: "replace" } as const;
           }
         }),
         read: Effect.fn(function* ({ id, olds, output }) {
-          const functionName = output?.functionName ?? olds?.functionName;
+          const functionName =
+            output?.functionName ??
+            (olds ? resolvedProps(olds).version.functionName : undefined);
           if (!functionName) return undefined;
           const aliasName =
-            output?.aliasName ?? (yield* createAliasName(id, olds?.aliasName));
+            output?.aliasName ??
+            (yield* createAliasName(
+              id,
+              olds ? resolvedProps(olds).aliasName : undefined,
+            ));
           const { region } = yield* AWSEnvironment.current;
           const alias = yield* Lambda.getAlias({
             FunctionName: functionName,
@@ -254,14 +272,18 @@ export const AliasProvider = () =>
             return aliases.flat();
           }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
+          const resolvedNews = resolvedProps(news);
+          const functionName = resolvedNews.version.functionName;
+          const functionVersion = resolvedNews.version.version;
           const { region } = yield* AWSEnvironment.current;
           const aliasName =
-            output?.aliasName ?? (yield* createAliasName(id, news.aliasName));
+            output?.aliasName ??
+            (yield* createAliasName(id, resolvedNews.aliasName));
           const desiredRoutingConfig = normalizeRoutingConfig(
-            news.routingConfig,
+            resolvedNews.routingConfig,
           );
           const getAlias = Lambda.getAlias({
-            FunctionName: news.functionName,
+            FunctionName: functionName,
             Name: aliasName,
           }).pipe(
             Effect.catchTag("ResourceNotFoundException", () =>
@@ -273,10 +295,10 @@ export const AliasProvider = () =>
 
           if (!alias) {
             alias = yield* Lambda.createAlias({
-              FunctionName: news.functionName,
+              FunctionName: functionName,
               Name: aliasName,
-              FunctionVersion: news.functionVersion,
-              Description: news.description,
+              FunctionVersion: functionVersion,
+              Description: resolvedNews.description,
               RoutingConfig: desiredRoutingConfig,
             }).pipe(
               Effect.catchTag("ResourceConflictException", () => getAlias),
@@ -288,16 +310,16 @@ export const AliasProvider = () =>
           );
           if (
             !alias ||
-            alias.FunctionVersion !== news.functionVersion ||
-            (alias.Description || undefined) !== news.description ||
+            alias.FunctionVersion !== functionVersion ||
+            (alias.Description || undefined) !== resolvedNews.description ||
             !deepEqual(observedRoutingConfig, desiredRoutingConfig)
           ) {
             alias = yield* retryOnAliasConflict(
               Lambda.updateAlias({
-                FunctionName: news.functionName,
+                FunctionName: functionName,
                 Name: aliasName,
-                FunctionVersion: news.functionVersion,
-                Description: news.description ?? "",
+                FunctionVersion: functionVersion,
+                Description: resolvedNews.description ?? "",
                 RoutingConfig:
                   desiredRoutingConfig ??
                   (observedRoutingConfig
@@ -307,7 +329,7 @@ export const AliasProvider = () =>
             );
           }
 
-          const attrs = snapshotAlias(news.functionName, alias, region);
+          const attrs = snapshotAlias(functionName, alias, region);
           if (!attrs) {
             return yield* Effect.die(
               `Lambda alias ${aliasName} did not return complete attributes.`,
@@ -315,9 +337,9 @@ export const AliasProvider = () =>
           }
 
           yield* syncEventInvokeConfig({
-            functionName: news.functionName,
+            functionName,
             qualifier: attrs.aliasName,
-            config: news.eventInvokeConfig,
+            config: resolvedNews.eventInvokeConfig,
           });
 
           yield* session.note(

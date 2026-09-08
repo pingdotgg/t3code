@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Tracks the stage-by-stage progress of a domain's in-flight configuration change (blue/green deployment) — e.g. to report how far along a cluster resize is. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.DescribeDomainChangeProgressHttp)`.
- * @binding
- * @section Monitoring Domains
- * @example Track a Configuration Change
+ * ### Monitoring Domains
+ * **Example:** Track a Configuration Change
  * ```typescript
  * const describeDomainChangeProgress = yield* OpenSearch.DescribeDomainChangeProgress();
  *
  * const result = yield* describeDomainChangeProgress({ DomainName: name });
  * // result.ChangeProgressStatus?.Status → "COMPLETED"
  * ```
+ *
+ * @binding
  */
 export interface DescribeDomainChangeProgress extends Binding.Service<
   DescribeDomainChangeProgress,

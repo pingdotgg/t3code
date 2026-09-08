@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * `READY` — the undo for `DeleteBackup`, available for 7 days after the
  * delete. Provide the implementation with
  * `Effect.provide(AWS.CloudHSMV2.RestoreBackupHttp)`.
- * @binding
- * @section Managing Backups
- * @example Undo A Backup Deletion
+ * ### Managing Backups
+ * **Example:** Undo A Backup Deletion
  * ```typescript
  * const restoreBackup = yield* AWS.CloudHSMV2.RestoreBackup();
  *
  * const restored = yield* restoreBackup({ BackupId: backupId });
  * // restored.Backup?.BackupState === "READY"
  * ```
+ *
+ * @binding
  */
 export interface RestoreBackup extends Binding.Service<
   RestoreBackup,

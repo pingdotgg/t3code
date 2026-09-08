@@ -50,6 +50,19 @@ test.provider(
             type: "self_hosted",
             domain,
             sessionDuration: "24h",
+            oauthConfiguration: {
+              enabled: true,
+              grant: {
+                sessionDuration: "24h",
+                accessTokenLifetime: "15m",
+              },
+              dynamicClientRegistration: {
+                enabled: true,
+                allowedUris: [],
+                allowAnyOnLocalhost: true,
+                allowAnyOnLoopback: true,
+              },
+            },
             policies: [policy.policyId],
           });
           return { app, policy };
@@ -60,6 +73,15 @@ test.provider(
       expect(app.type).toEqual("self_hosted");
       expect(app.domain).toEqual(domain);
       expect(app.aud.length).toBeGreaterThan(0);
+      expect(app.oauthConfiguration?.enabled).toBe(true);
+      expect(app.oauthConfiguration?.grant?.sessionDuration).toBe("24h");
+      expect(app.oauthConfiguration?.grant?.accessTokenLifetime).toBe("15m");
+      expect(app.oauthConfiguration?.dynamicClientRegistration?.enabled).toBe(
+        true,
+      );
+      expect(
+        app.oauthConfiguration?.dynamicClientRegistration?.allowedUris ?? [],
+      ).toEqual([]);
       expect(policy.policyId.length).toBeGreaterThan(0);
 
       const live = yield* zeroTrust.getAccessApplicationForAccount({
@@ -70,12 +92,45 @@ test.provider(
         id?: string | null;
         type?: string | null;
         policies?: ReadonlyArray<{ id?: string | null }> | null;
+        oauthConfiguration?: {
+          enabled?: boolean | null;
+          grant?: {
+            sessionDuration?: string | null;
+            accessTokenLifetime?: string | null;
+          } | null;
+          dynamicClientRegistration?: {
+            enabled?: boolean | null;
+            allowedUris?: ReadonlyArray<string | null> | null;
+            allowAnyOnLocalhost?: boolean | null;
+            allowAnyOnLoopback?: boolean | null;
+          } | null;
+        } | null;
       };
       expect(liveRecord.id).toEqual(app.applicationId);
       expect(liveRecord.type).toEqual("self_hosted");
       expect(liveRecord.policies?.length ?? 0).toBeGreaterThanOrEqual(1);
       const liveIds = (liveRecord.policies ?? []).map((p) => p.id);
       expect(liveIds).toContain(policy.policyId);
+      expect(liveRecord.oauthConfiguration?.enabled).toBe(true);
+      expect(liveRecord.oauthConfiguration?.grant?.sessionDuration).toBe("24h");
+      expect(liveRecord.oauthConfiguration?.grant?.accessTokenLifetime).toBe(
+        "15m",
+      );
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration?.enabled,
+      ).toBe(true);
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration?.allowedUris ??
+          [],
+      ).toEqual([]);
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration
+          ?.allowAnyOnLocalhost,
+      ).toBe(true);
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration
+          ?.allowAnyOnLoopback,
+      ).toBe(true);
 
       yield* stack.destroy();
     }).pipe(logLevel),
@@ -198,6 +253,18 @@ test.provider(
           return yield* Cloudflare.Access.Application("UpdatePolicies", {
             type: "self_hosted",
             domain,
+            oauthConfiguration: {
+              enabled: true,
+              grant: {
+                sessionDuration: "24h",
+                accessTokenLifetime: "15m",
+              },
+              dynamicClientRegistration: {
+                enabled: true,
+                allowedUris: ["https://client.example.com/callback"],
+                allowAnyOnLocalhost: true,
+              },
+            },
             policies: [allow.policyId],
           });
         }),
@@ -221,6 +288,12 @@ test.provider(
           return yield* Cloudflare.Access.Application("UpdatePolicies", {
             type: "self_hosted",
             domain,
+            // Update one managed OAuth leaf while preserving omitted fields.
+            oauthConfiguration: {
+              dynamicClientRegistration: {
+                allowAnyOnLoopback: true,
+              },
+            },
             policies: [allow.policyId, deny.policyId],
           });
         }),
@@ -234,8 +307,42 @@ test.provider(
       });
       const liveRecord = live as unknown as {
         policies?: ReadonlyArray<unknown> | null;
+        oauthConfiguration?: {
+          enabled?: boolean | null;
+          grant?: {
+            sessionDuration?: string | null;
+            accessTokenLifetime?: string | null;
+          } | null;
+          dynamicClientRegistration?: {
+            enabled?: boolean | null;
+            allowedUris?: ReadonlyArray<string | null> | null;
+            allowAnyOnLocalhost?: boolean | null;
+            allowAnyOnLoopback?: boolean | null;
+          } | null;
+        } | null;
       };
       expect(liveRecord.policies?.length ?? 0).toEqual(2);
+      // The partial desired body must merge over the live managed OAuth
+      // configuration before the PUT-style application update.
+      expect(liveRecord.oauthConfiguration?.enabled).toBe(true);
+      expect(liveRecord.oauthConfiguration?.grant?.sessionDuration).toBe("24h");
+      expect(liveRecord.oauthConfiguration?.grant?.accessTokenLifetime).toBe(
+        "15m",
+      );
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration?.enabled,
+      ).toBe(true);
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration?.allowedUris,
+      ).toEqual(["https://client.example.com/callback"]);
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration
+          ?.allowAnyOnLocalhost,
+      ).toBe(true);
+      expect(
+        liveRecord.oauthConfiguration?.dynamicClientRegistration
+          ?.allowAnyOnLoopback,
+      ).toBe(true);
 
       yield* stack.destroy();
     }).pipe(logLevel),
@@ -310,4 +417,144 @@ test.provider(
 
       yield* stack.destroy();
     }).pipe(logLevel),
+);
+
+/** Structural view of live application policies for inline-policy asserts. */
+interface LiveInlineApp {
+  policies?: ReadonlyArray<{
+    id?: string | null;
+    decision?: string | null;
+    name?: string | null;
+    reusable?: boolean | null;
+    sessionDuration?: string | null;
+    include?: ReadonlyArray<unknown> | null;
+    exclude?: ReadonlyArray<unknown> | null;
+    require?: ReadonlyArray<unknown> | null;
+  }> | null;
+}
+
+test.provider(
+  "inline policies: scalar shorthand, update in place, switch to reusable, no mixing",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+
+      const domain = `alchemy-test-inline-policies.${zoneName}`;
+      const makeApp = (
+        policies: Cloudflare.Access.ApplicationProps["policies"],
+      ) =>
+        Effect.gen(function* () {
+          yield* Cloudflare.Zone.Zone("TestZone", { name: zoneName }).pipe(
+            AdoptPolicy.adopt(true),
+          );
+          return yield* Cloudflare.Access.Application("InlinePolicyApp", {
+            type: "self_hosted",
+            domain,
+            policies,
+          });
+        });
+
+      // v1 — one inline policy via scalar shorthand.
+      const first = yield* stack.deploy(
+        makeApp([
+          {
+            decision: "allow",
+            name: "primary",
+            include: [{ emailDomain: "example.com" }],
+          },
+        ]),
+      );
+      const live1 = (yield* zeroTrust.getAccessApplicationForAccount({
+        accountId,
+        appId: first.applicationId,
+      })) as unknown as LiveInlineApp;
+      expect(live1.policies?.length).toBe(1);
+      expect(live1.policies![0].reusable).toBe(false);
+      // Shorthand expanded to the wire shape on the way out.
+      expect(live1.policies![0].include).toEqual([
+        { emailDomain: { domain: "example.com" } },
+      ]);
+      const inlineId = live1.policies![0].id;
+      expect(inlineId).toBeDefined();
+
+      // v2 — mutate the same inline policy: more shorthand kinds, exclude,
+      // require, session duration. The policy must update IN PLACE (same
+      // id) — an id-less inline item in the update PUT would mint a fresh
+      // policy.
+      yield* stack.deploy(
+        makeApp([
+          {
+            decision: "allow",
+            name: "primary",
+            include: [{ emailDomain: "example.com" }, "everyone"],
+            exclude: [{ email: "intern@example.com" }],
+            require: [{ geo: "US" }],
+            sessionDuration: "12h",
+          },
+        ]),
+      );
+      const live2 = (yield* zeroTrust.getAccessApplicationForAccount({
+        accountId,
+        appId: first.applicationId,
+      })) as unknown as LiveInlineApp;
+      expect(live2.policies?.length).toBe(1);
+      expect(live2.policies![0].id).toBe(inlineId);
+      expect(live2.policies![0].include).toEqual([
+        { emailDomain: { domain: "example.com" } },
+        { everyone: {} },
+      ]);
+      expect(live2.policies![0].exclude).toEqual([
+        { email: { email: "intern@example.com" } },
+      ]);
+      expect(live2.policies![0].require).toEqual([
+        { geo: { countryCode: "US" } },
+      ]);
+      expect(live2.policies![0].sessionDuration).toBe("12h");
+
+      // v3 — switch the application from inline to a reusable Policy
+      // resource (passed directly).
+      const reusableProgram = Effect.gen(function* () {
+        yield* Cloudflare.Zone.Zone("TestZone", { name: zoneName }).pipe(
+          AdoptPolicy.adopt(true),
+        );
+        const reusable = yield* Cloudflare.Access.Policy("InlineSwapPolicy", {
+          name: "Reusable for inline-swap test",
+          decision: "allow",
+          include: [{ emailDomain: "example.com" }],
+        });
+        const app = yield* Cloudflare.Access.Application("InlinePolicyApp", {
+          type: "self_hosted",
+          domain,
+          policies: [reusable],
+        });
+        return { app, reusable };
+      });
+      const { reusable } = yield* stack.deploy(reusableProgram);
+      const live3 = (yield* zeroTrust.getAccessApplicationForAccount({
+        accountId,
+        appId: first.applicationId,
+      })) as unknown as LiveInlineApp;
+      expect(live3.policies?.length).toBe(1);
+      expect(live3.policies![0].id).toBe(reusable.policyId);
+      expect(live3.policies![0].reusable).toBe(true);
+
+      // Mixing inline and reusable forms on one application fails fast.
+      const mixed = yield* stack
+        .deploy(
+          makeApp([
+            reusable.policyId,
+            {
+              decision: "allow",
+              include: [{ emailDomain: "example.com" }],
+            },
+          ]),
+        )
+        .pipe(Effect.flip);
+      expect(String(mixed)).toMatch(/mix/i);
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 300_000 },
 );

@@ -184,9 +184,8 @@ export interface Policy extends Resource<
  * `Policy` owns the lifecycle of the policy metadata and its default version,
  * rotating versions on updates while keeping the current document attached to a
  * stable policy ARN.
- * @resource
- * @section Creating Policies
- * @example Managed Policy
+ * ### Creating Policies
+ * **Example:** Managed Policy
  * ```typescript
  * const policy = yield* Policy("AppPolicy", {
  *   policyDocument: {
@@ -199,6 +198,8 @@ export interface Policy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Policy = Resource<Policy>("AWS.IAM.Policy");
 

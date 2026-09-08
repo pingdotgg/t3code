@@ -16,9 +16,8 @@ export interface GetQueueAttributesRequest extends Omit<
  * monitoring or backpressure decisions. The binding grants the host function
  * `sqs:GetQueueAttributes` on the queue. Provide the
  * `GetQueueAttributesHttp` layer on the Function to implement the binding.
- * @binding
- * @section Reading Queue Attributes
- * @example Monitor Queue Depth
+ * ### Reading Queue Attributes
+ * **Example:** Monitor Queue Depth
  * ```typescript
  * // init (provide SQS.GetQueueAttributesHttp on the Function)
  * const getQueueAttributes = yield* SQS.GetQueueAttributes(queue);
@@ -29,6 +28,8 @@ export interface GetQueueAttributesRequest extends Omit<
  * });
  * const depth = Number(result.Attributes?.ApproximateNumberOfMessages ?? 0);
  * ```
+ *
+ * @binding
  */
 export interface GetQueueAttributes extends Binding.Service<
   GetQueueAttributes,

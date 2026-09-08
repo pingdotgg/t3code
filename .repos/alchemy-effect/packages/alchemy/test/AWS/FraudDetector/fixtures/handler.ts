@@ -25,7 +25,7 @@ export class FraudDetectorTestFunction extends Lambda.Function<Lambda.Function>(
 export default FraudDetectorTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // getEventPrediction fans out over the detector's active version; give it
     // headroom over the 3s default.
     timeout: Duration.seconds(30),

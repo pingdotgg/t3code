@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DetectCustomLabelsHttp)`.
  *
- * @binding
- * @section Custom Labels
- * @example Detect Custom Labels
+ * ### Custom Labels
+ * **Example:** Detect Custom Labels
  * ```typescript
  * // init
  * const detectCustomLabels = yield* AWS.Rekognition.DetectCustomLabels();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const labels = (result.CustomLabels ?? []).map((l) => l.Name);
  * ```
+ *
+ * @binding
  */
 export interface DetectCustomLabels extends Binding.Service<
   DetectCustomLabels,

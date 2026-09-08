@@ -44,15 +44,16 @@ export interface Label extends Resource<
  * used to tag stored events for supervised model training. Event types
  * reference labels; they are cheap metadata objects.
  *
- * @resource
- * @section Creating a Label
- * @example Fraud and Legit Labels
+ * ### Creating a Label
+ * **Example:** Fraud and Legit Labels
  * ```typescript
  * const fraud = yield* FraudDetector.Label("fraud", {
  *   description: "confirmed fraudulent event",
  * });
  * const legit = yield* FraudDetector.Label("legit", {});
  * ```
+ *
+ * @resource
  */
 export const Label = Resource<Label>("AWS.FraudDetector.Label");
 

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `LogArchiveBaseline`). Useful for governance functions that discover the
  * baseline ARN to enable on an organizational unit. Provide the
  * implementation with `Effect.provide(AWS.ControlTower.ListBaselinesHttp)`.
- * @binding
- * @section Browsing the Baseline Catalog
- * @example List the Available Baselines
+ * ### Browsing the Baseline Catalog
+ * **Example:** List the Available Baselines
  * ```typescript
  * // init — account-level binding takes no resource
  * const listBaselines = yield* AWS.ControlTower.ListBaselines();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   (b) => b.name === "AWSControlTowerBaseline",
  * );
  * ```
+ *
+ * @binding
  */
 export interface ListBaselines extends Binding.Service<
   ListBaselines,

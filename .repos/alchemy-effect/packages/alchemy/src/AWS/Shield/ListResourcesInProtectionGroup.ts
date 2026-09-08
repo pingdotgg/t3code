@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `ResourceNotFoundException`.
  * Provide the implementation with
  * `Effect.provide(AWS.Shield.ListResourcesInProtectionGroupHttp)`.
- * @binding
- * @section Grouping Protections
- * @example List a Group's Members
+ * ### Grouping Protections
+ * **Example:** List a Group's Members
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listResourcesInProtectionGroup =
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *   ProtectionGroupId: group.protectionGroupId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListResourcesInProtectionGroup extends Binding.Service<
   ListResourcesInProtectionGroup,

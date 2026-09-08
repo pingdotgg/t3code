@@ -15,9 +15,8 @@ export interface GetCanaryRunsRequest extends Omit<
  *
  * Provide `Synthetics.GetCanaryRunsHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Reading Canary Runs
- * @example List Recent Runs
+ * ### Reading Canary Runs
+ * **Example:** List Recent Runs
  * ```typescript
  * // init — grants synthetics:GetCanaryRuns on the canary
  * const getCanaryRuns = yield* AWS.Synthetics.GetCanaryRuns(canary);
@@ -26,6 +25,8 @@ export interface GetCanaryRunsRequest extends Omit<
  * const { CanaryRuns } = yield* getCanaryRuns({ MaxResults: 10 });
  * const failed = CanaryRuns?.filter((run) => run.Status?.State === "FAILED");
  * ```
+ *
+ * @binding
  */
 export interface GetCanaryRuns extends Binding.Service<
   GetCanaryRuns,

@@ -19,9 +19,8 @@ export interface ExecuteQueryRequest extends Omit<
  *
  * The response `payload` is a streaming body — collect it to parse the JSON
  * result document.
- * @binding
- * @section Querying a Graph
- * @example Run an openCypher query
+ * ### Querying a Graph
+ * **Example:** Run an openCypher query
  * ```typescript
  * const executeQuery = yield* AWS.NeptuneGraph.ExecuteQuery(graph);
  *
@@ -35,7 +34,7 @@ export interface ExecuteQueryRequest extends Omit<
  * const { results } = JSON.parse(body);
  * ```
  *
- * @example Write data with parameters
+ * **Example:** Write data with parameters
  * ```typescript
  * yield* executeQuery({
  *   queryString: "CREATE (n:Person {name: $name})",
@@ -43,6 +42,8 @@ export interface ExecuteQueryRequest extends Omit<
  *   parameters: { name: "Ada" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface ExecuteQuery extends Binding.Service<
   ExecuteQuery,

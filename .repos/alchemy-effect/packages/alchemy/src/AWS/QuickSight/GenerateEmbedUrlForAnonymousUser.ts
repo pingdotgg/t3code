@@ -43,9 +43,8 @@ export interface GenerateEmbedUrlForAnonymousUserRequest extends Omit<
  * {@link Dashboard}. Requires a QuickSight account with session-capacity
  * pricing. Provide the implementation with
  * `Effect.provide(AWS.QuickSight.GenerateEmbedUrlForAnonymousUserHttp)`.
- * @binding
- * @section Embedding Dashboards
- * @example Embed The Bound Dashboard Anonymously
+ * ### Embedding Dashboards
+ * **Example:** Embed The Bound Dashboard Anonymously
  * ```typescript
  * // init — bind the operation to the dashboard
  * const generateEmbedUrl =
@@ -56,6 +55,8 @@ export interface GenerateEmbedUrlForAnonymousUserRequest extends Omit<
  *   SessionLifetimeInMinutes: 60,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateEmbedUrlForAnonymousUser extends Binding.Service<
   GenerateEmbedUrlForAnonymousUser,

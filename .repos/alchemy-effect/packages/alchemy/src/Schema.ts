@@ -25,14 +25,8 @@ export const isRecordLikeSchema = (schema: S.Schema<any>) =>
   isClassSchema(schema) ||
   false;
 
-export const isMapSchema = (schema: S.Schema<any>): boolean => {
-  const ast = schema.ast;
-  if (AST.isDeclaration(ast)) {
-    const typeConstructor = (ast.annotations as any)?.typeConstructor;
-    return typeConstructor?._tag === "ReadonlyMap";
-  }
-  return false;
-};
+export const isMapSchema = (schema: S.Schema<any>): boolean =>
+  getDeclarationRepresentationId(schema.ast) === "effect/schema/ReadonlyMap";
 
 export const isClassSchema = (schema: S.Schema<any>) => {
   const ast = schema.ast;
@@ -55,13 +49,18 @@ export const isListSchema = (schema: S.Schema<any>) => {
   return AST.isArrays(schema.ast);
 };
 
-export const isSetSchema = (schema: S.Schema<any>): boolean => {
-  const ast = schema.ast;
+export const isSetSchema = (schema: S.Schema<any>): boolean =>
+  getDeclarationRepresentationId(schema.ast) === "effect/schema/ReadonlySet";
+
+/**
+ * Effect's built-in declaration schemas (ReadonlyMap, ReadonlySet, ...) carry a
+ * `representation` annotation identifying the underlying type constructor.
+ */
+const getDeclarationRepresentationId = (ast: AST.AST): string | undefined => {
   if (AST.isDeclaration(ast)) {
-    const typeConstructor = (ast.annotations as any)?.typeConstructor;
-    return typeConstructor?._tag === "ReadonlySet";
+    return (ast.annotations as any)?.representation?.id;
   }
-  return false;
+  return undefined;
 };
 
 export const getSetValueAST = (schema: S.Schema<any>): AST.AST | undefined => {

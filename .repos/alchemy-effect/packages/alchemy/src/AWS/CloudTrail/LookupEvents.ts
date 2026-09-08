@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * 90 days of management events recorded in the region — the classic "who did
  * what" audit read, available without any trail or event data store. Provide
  * the implementation with `Effect.provide(AWS.CloudTrail.LookupEventsHttp)`.
- * @binding
- * @section Reading Event History
- * @example Look Up Recent Events
+ * ### Reading Event History
+ * **Example:** Look Up Recent Events
  * ```typescript
  * // init — account-level binding takes no resource
  * const lookupEvents = yield* AWS.CloudTrail.LookupEvents();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(result.Events?.map((e) => e.EventName));
  * ```
+ *
+ * @binding
  */
 export interface LookupEvents extends Binding.Service<
   LookupEvents,

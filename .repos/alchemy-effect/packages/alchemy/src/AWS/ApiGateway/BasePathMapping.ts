@@ -43,8 +43,8 @@ export interface BasePathMapping extends Resource<
 /**
  * Maps a custom domain name path to a REST API stage.
  *
- * @section Custom domain
- * @example Root mapping
+ * ### Custom domain
+ * **Example:** Root mapping
  * ```typescript
  * yield* ApiGateway.BasePathMapping("Root", {
  *   domainName: domain.domainName,

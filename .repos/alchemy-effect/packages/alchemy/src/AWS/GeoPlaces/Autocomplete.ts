@@ -11,13 +11,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-places:Autocomplete`. Requests and responses are raw distilled types
  * (no marshalling).
  *
- * @binding
- * @section Autocompleting Queries
+ * ### Autocompleting Queries
  * Provide the `AutocompleteHttp` implementation layer on the Function effect
  * (`.pipe(Effect.provide(AWS.GeoPlaces.AutocompleteHttp))`), bind in the init
  * phase, then call the client at runtime.
  *
- * @example Autocomplete a partial address
+ * **Example:** Autocomplete a partial address
  * ```typescript
  * // init
  * const autocomplete = yield* AWS.GeoPlaces.Autocomplete();
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const first = result.ResultItems?.[0]?.Title;
  * ```
+ *
+ * @binding
  */
 export interface Autocomplete extends Binding.Service<
   Autocomplete,

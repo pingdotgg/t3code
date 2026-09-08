@@ -71,18 +71,15 @@ export type AccountSetting = Resource<
  * desired ones; destroy restores the values the account had before Alchemy
  * first managed it (captured as `initialDefaultUsageModel` /
  * `initialGreenCompute`).
- * @resource
- * @product Workers
- * @category Workers & Compute
- * @section Managing account settings
- * @example Enable Green Compute for scheduled Workers
+ * ### Managing account settings
+ * **Example:** Enable Green Compute for scheduled Workers
  * ```typescript
  * yield* Cloudflare.Workers.AccountSetting("GreenCompute", {
  *   greenCompute: true,
  * });
  * ```
  *
- * @example Pin the default usage model
+ * **Example:** Pin the default usage model
  * ```typescript
  * yield* Cloudflare.Workers.AccountSetting("UsageModel", {
  *   defaultUsageModel: "standard",
@@ -91,6 +88,10 @@ export type AccountSetting = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api/resources/workers/subresources/account_settings/
+ *
+ * @resource
+ * @product Workers
+ * @category Workers & Compute
  */
 export const AccountSetting = Resource<AccountSetting>(TypeId);
 

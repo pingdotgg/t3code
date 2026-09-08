@@ -5,9 +5,8 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:GetClusterSessionCredentials` — mints temporary HTTP basic credentials for the bound cluster's endpoints (runtime-role / fine-grained access control clusters). The returned `Password` is `Redacted` — unwrap with `Redacted.value`.
- * @binding
- * @section Connecting to the Cluster
- * @example Mint Session Credentials
+ * ### Connecting to the Cluster
+ * **Example:** Mint Session Credentials
  * ```typescript
  * const getCredentials = yield* AWS.EMR.GetClusterSessionCredentials(cluster);
  *
@@ -18,6 +17,8 @@ import type { Cluster } from "./Cluster.ts";
  *   Credentials!.UsernamePassword.Password! as Redacted.Redacted<string>,
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetClusterSessionCredentials extends Binding.Service<
   GetClusterSessionCredentials,

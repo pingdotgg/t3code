@@ -1,0 +1,96 @@
+---
+title: Connect from Cloudflare Workers
+description: Two ways to reach Prisma Postgres from a Worker — the Connect binding for credentials, or Hyperdrive in front of the direct origin for edge-pooled SQL.
+---
+
+A Worker can consume a Prisma Postgres database two ways. Both start
+from the same resources:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as Prisma from "alchemy/Prisma";
+import * as SQL from "alchemy/SQL/Postgres";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+const project = yield* Prisma.Project("app", { createDatabase: false });
+const postgres = yield* Prisma.Postgres("db", { project });
+const connection = yield* Prisma.Connection("api", {
+  database: postgres,
+});
+```
+
+## Over Hyperdrive
+
+Front the connection's direct `origin` with a Hyperdrive config and
+query it with `SQL.Postgres` — Hyperdrive pools and accelerates the
+TCP connection at the edge:
+
+```typescript
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("api-hd", {
+  origin: connection.origin.as<Prisma.PostgresOrigin>(),
+});
+
+export default Cloudflare.Worker(
+  "api",
+  {
+    main: import.meta.filename,
+    compatibility: { flags: ["nodejs_compat"] },
+  },
+  Effect.gen(function* () {
+    const hd = yield* Cloudflare.Hyperdrive.Connect(hyperdrive);
+    const sql = yield* SQL.Postgres({ url: hd.connectionString });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* sql`SELECT * FROM users`;
+        return yield* HttpServerResponse.json(users);
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+);
+```
+
+Prefer [Drizzle](/cloudflare/data/drizzle)? Swap the client:
+`Drizzle.Postgres(hd.connectionString, { relations })`.
+
+## With the Connect binding
+
+When you don't need edge pooling, bind the connection directly. The
+binding carries the connection's outputs into the Worker as secret
+text bindings, and the runtime client hands back `Redacted` URLs:
+
+```typescript
+export default Cloudflare.Worker(
+  "api",
+  {
+    main: import.meta.filename,
+    compatibility: { flags: ["nodejs_compat"] },
+  },
+  Effect.gen(function* () {
+    const db = yield* Prisma.Connect(connection);
+    const sql = yield* SQL.Postgres({ url: db.databaseUrl });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* sql`SELECT * FROM users`;
+        return yield* HttpServerResponse.json(users);
+      }),
+    };
+  }).pipe(Effect.provide(Prisma.ConnectBinding)),
+);
+```
+
+`db.databaseUrl` prefers the pooled endpoint, so short-lived Worker
+connections share Prisma's pooler instead of opening a direct
+connection per request. Both examples enable `nodejs_compat` because
+the Postgres driver uses Node.js networking and crypto APIs.
+
+## Where next
+
+- [Hyperdrive](/cloudflare/data/hyperdrive) — caching, mTLS, and the
+  rest of the Hyperdrive surface.
+- [Connections](/prisma/data/connections) — every connection output
+  and the origin shape.
+- [SQL clients](/sql) — `SQL.Postgres`, layers, and Drizzle.

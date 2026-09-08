@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `StartImagePipelineExecution` or found via `ListImagePipelineImages`.
  * Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.GetImageHttp)`.
- * @binding
- * @section Observing Builds
- * @example Poll a Build's State
+ * ### Observing Builds
+ * **Example:** Poll a Build's State
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getImage = yield* AWS.ImageBuilder.GetImage();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * const { image } = yield* getImage({ imageBuildVersionArn });
  * yield* Effect.log(`build is ${image?.state?.status}`);
  * ```
+ *
+ * @binding
  */
 export interface GetImage extends Binding.Service<
   GetImage,

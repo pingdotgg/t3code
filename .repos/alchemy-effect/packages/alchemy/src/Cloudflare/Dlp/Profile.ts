@@ -98,11 +98,8 @@ export type Profile = Resource<
  *
  * Requires the Cloudflare DLP entitlement (a paid Zero Trust add-on);
  * accounts without it receive the typed `Forbidden` error on all writes.
- * @resource
- * @product DLP
- * @category Cloudflare One (Zero Trust)
- * @section Creating a DLP profile
- * @example Profile with a custom regex entry
+ * ### Creating a DLP profile
+ * **Example:** Profile with a custom regex entry
  * ```typescript
  * const profile = yield* Cloudflare.Dlp.Profile("EmployeeIds", {
  *   description: "Detects internal employee identifiers",
@@ -117,7 +114,7 @@ export type Profile = Resource<
  * });
  * ```
  *
- * @example Credit-card-like entry with Luhn validation
+ * **Example:** Credit-card-like entry with Luhn validation
  * ```typescript
  * const cards = yield* Cloudflare.Dlp.Profile("Cards", {
  *   entries: [
@@ -131,6 +128,10 @@ export type Profile = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/policies/data-loss-prevention/dlp-profiles/
+ *
+ * @resource
+ * @product DLP
+ * @category Cloudflare One (Zero Trust)
  */
 export const Profile = Resource<Profile>(TypeId);
 

@@ -85,13 +85,12 @@ export interface RouteTableAssociation extends Resource<
  * a different route table is applied in place via
  * `ReplaceRouteTableAssociation`.
  *
- * @resource
- * @section Associating Subnets
+ * ### Associating Subnets
  * Associating a subnet overrides the VPC's main route table for that subnet.
  * This is how you make a subnet "public" (associate it with a table that has an
  * internet-gateway route) or "private" (associate it with a NAT-gateway table).
  *
- * @example Associate a Subnet with a Route Table
+ * **Example:** Associate a Subnet with a Route Table
  * ```typescript
  * const association = yield* AWS.EC2.RouteTableAssociation("PublicSubnetAssociation", {
  *   routeTableId: publicRouteTable.routeTableId,
@@ -102,7 +101,7 @@ export interface RouteTableAssociation extends Resource<
  * table's routes. The returned `associationId` (prefixed `rtbassoc-`) can be
  * used to track or replace the association.
  *
- * @example Share One Route Table Across Multiple Subnets
+ * **Example:** Share One Route Table Across Multiple Subnets
  * ```typescript
  * const subnet1Association = yield* AWS.EC2.RouteTableAssociation("PublicSubnet1Association", {
  *   routeTableId: publicRouteTable.routeTableId,
@@ -118,13 +117,13 @@ export interface RouteTableAssociation extends Resource<
  * listed subnet identical routing — a concise way to apply one public (or
  * private) routing policy across all subnets in a tier.
  *
- * @section Associating Gateways (Edge Routing)
+ * ### Associating Gateways (Edge Routing)
  * Instead of a subnet, an association can target an internet gateway or
  * virtual private gateway via `gatewayId`. This "gateway route table
  * association" enables edge routing, where inbound traffic is inspected or
  * redirected (e.g. to a firewall appliance) as it enters the VPC.
  *
- * @example Associate a Route Table with an Internet Gateway
+ * **Example:** Associate a Route Table with an Internet Gateway
  * ```typescript
  * const edgeAssociation = yield* AWS.EC2.RouteTableAssociation("EdgeAssociation", {
  *   routeTableId: ingressRouteTable.routeTableId,
@@ -134,6 +133,8 @@ export interface RouteTableAssociation extends Resource<
  * Attaches the route table at the gateway rather than at a subnet, so traffic
  * arriving from the internet is steered by this table — typically toward an
  * inspection appliance before reaching its destination subnet.
+ *
+ * @resource
  */
 export const RouteTableAssociation = Resource<RouteTableAssociation>(
   "AWS.EC2.RouteTableAssociation",

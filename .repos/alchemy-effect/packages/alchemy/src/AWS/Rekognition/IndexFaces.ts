@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.IndexFacesHttp)`.
  *
- * @binding
- * @section Face Collections
- * @example Index Faces into a Collection
+ * ### Face Collections
+ * **Example:** Index Faces into a Collection
  * ```typescript
  * // init
  * const indexFaces = yield* AWS.Rekognition.IndexFaces();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const faceIds = (result.FaceRecords ?? []).map((r) => r.Face?.FaceId);
  * ```
+ *
+ * @binding
  */
 export interface IndexFaces extends Binding.Service<
   IndexFaces,

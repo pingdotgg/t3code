@@ -433,9 +433,8 @@ export interface DBInstance extends Resource<
  * observed cloud state; immutable fields (`engine`, `dbName`,
  * `masterUsername`, `availabilityZone`, `storageEncrypted`, `kmsKeyId`,
  * `dbSubnetGroupName`) force a replacement.
- * @resource
- * @section Standalone Instance
- * @example A gp3 MySQL instance
+ * ### Standalone Instance
+ * **Example:** A gp3 MySQL instance
  * ```typescript
  * const db = yield* DBInstance("Db", {
  *   engine: "mysql",
@@ -449,8 +448,8 @@ export interface DBInstance extends Resource<
  * });
  * ```
  *
- * @section Cluster Member
- * @example An Aurora writer instance
+ * ### Cluster Member
+ * **Example:** An Aurora writer instance
  * ```typescript
  * const writer = yield* DBInstance("Writer", {
  *   dbClusterIdentifier: cluster.dbClusterIdentifier,
@@ -459,8 +458,8 @@ export interface DBInstance extends Resource<
  * });
  * ```
  *
- * @section Monitoring & Logs
- * @example Enhanced monitoring + log export
+ * ### Monitoring & Logs
+ * **Example:** Enhanced monitoring + log export
  * ```typescript
  * const db = yield* DBInstance("Db", {
  *   engine: "postgres",
@@ -472,6 +471,8 @@ export interface DBInstance extends Resource<
  *   enableCloudwatchLogsExports: ["postgresql", "upgrade"],
  * });
  * ```
+ *
+ * @resource
  */
 export const DBInstance = Resource<DBInstance>("AWS.RDS.DBInstance");
 

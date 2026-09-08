@@ -11,13 +11,14 @@ export interface CreateSMSSandboxPhoneNumberRequest
  * An account-scoped operation — registers a destination phone number in
  * the SMS sandbox, which sends it a one-time verification code.
  * Provide the `CreateSMSSandboxPhoneNumberHttp` layer on the Function to implement the binding.
- * @binding
- * @section SMS Sandbox
- * @example Register a Sandbox Number
+ * ### SMS Sandbox
+ * **Example:** Register a Sandbox Number
  * ```typescript
  * const createSandboxNumber = yield* SNS.CreateSMSSandboxPhoneNumber();
  * yield* createSandboxNumber({ PhoneNumber: "+15555550123" });
  * ```
+ *
+ * @binding
  */
 export interface CreateSMSSandboxPhoneNumber extends Binding.Service<
   CreateSMSSandboxPhoneNumber,

@@ -14,9 +14,8 @@ export interface ListShardsRequest extends Omit<
  * Bind this operation to a `Stream` to enumerate its shards — typically the
  * first step before obtaining a shard iterator and reading records. Provide
  * the implementation with `Effect.provide(AWS.Kinesis.ListShardsHttp)`.
- * @binding
- * @section Inspecting Streams
- * @example List the Stream's Shards
+ * ### Inspecting Streams
+ * **Example:** List the Stream's Shards
  * ```typescript
  * // init
  * const listShards = yield* AWS.Kinesis.ListShards(stream);
@@ -25,6 +24,8 @@ export interface ListShardsRequest extends Omit<
  * const result = yield* listShards();
  * const shardIds = (result.Shards ?? []).map((shard) => shard.ShardId);
  * ```
+ *
+ * @binding
  */
 export interface ListShards extends Binding.Service<
   ListShards,

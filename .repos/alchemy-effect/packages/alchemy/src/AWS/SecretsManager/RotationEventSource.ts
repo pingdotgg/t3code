@@ -115,9 +115,8 @@ export function onSecretRotation<S extends Secret, Req = never>(
  * {@link RotationSchedule}; at runtime it narrows incoming invocations to
  * rotation events for the bound secret. Consume it through the
  * {@link onSecretRotation} helper.
- * @binding
- * @section Rotating Secrets
- * @example Rotation Function in a Lambda
+ * ### Rotating Secrets
+ * **Example:** Rotation Function in a Lambda
  * ```typescript
  * export default RotationFunction.make(
  *   { main: import.meta.url },
@@ -139,6 +138,8 @@ export function onSecretRotation<S extends Secret, Req = never>(
  *   }).pipe(Effect.provide(Lambda.SecretRotationEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface RotationEventSource extends Binding.Service<
   RotationEventSource,

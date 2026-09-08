@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.DisassociateMembersHttp)`.
- * @binding
- * @section Members & Organization
- * @example Disassociate Members
+ * ### Members & Organization
+ * **Example:** Disassociate Members
  * ```typescript
  * // init — account-level binding, no resource argument
  * const disassociateMembers = yield* AWS.SecurityHub.DisassociateMembers();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* disassociateMembers({ AccountIds: ["111122223333"] });
  * ```
+ *
+ * @binding
  */
 export interface DisassociateMembers extends Binding.Service<
   DisassociateMembers,

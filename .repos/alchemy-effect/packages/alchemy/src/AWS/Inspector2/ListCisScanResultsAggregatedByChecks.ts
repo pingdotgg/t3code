@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.ListCisScanResultsAggregatedByChecksHttp)`.
- * @binding
- * @section CIS Scan Results
- * @example CIS Results by Check
+ * ### CIS Scan Results
+ * **Example:** CIS Results by Check
  * ```typescript
  * // init
  * const listCisScanResultsAggregatedByChecks = yield* AWS.Inspector2.ListCisScanResultsAggregatedByChecks();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { checkAggregations } = yield* listCisScanResultsAggregatedByChecks({ scanArn });
  * ```
+ *
+ * @binding
  */
 export interface ListCisScanResultsAggregatedByChecks extends Binding.Service<
   ListCisScanResultsAggregatedByChecks,

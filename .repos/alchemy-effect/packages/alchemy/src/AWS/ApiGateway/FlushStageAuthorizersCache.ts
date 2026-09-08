@@ -13,9 +13,8 @@ import type { ApiGatewayStage } from "./Stage.ts";
  * `ApiGateway.FlushStageAuthorizersCacheHttp` on the Function effect to
  * implement the binding.
  *
- * @binding
- * @section Flushing caches
- * @example Revoke cached authorizer verdicts
+ * ### Flushing caches
+ * **Example:** Revoke cached authorizer verdicts
  * ```typescript
  * // init
  * const flushAuthorizers = yield* ApiGateway.FlushStageAuthorizersCache(stage);
@@ -23,6 +22,8 @@ import type { ApiGatewayStage } from "./Stage.ts";
  * // runtime
  * yield* flushAuthorizers();
  * ```
+ *
+ * @binding
  */
 export interface FlushStageAuthorizersCache extends Binding.Service<
   FlushStageAuthorizersCache,

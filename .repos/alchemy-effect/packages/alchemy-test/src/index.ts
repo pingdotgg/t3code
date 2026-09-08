@@ -39,6 +39,7 @@ export {
   type Expect,
   type Matchers,
 } from "./Expect.ts";
+export { currentFile } from "./Registry.ts";
 export type {
   FileSuite,
   Hook,

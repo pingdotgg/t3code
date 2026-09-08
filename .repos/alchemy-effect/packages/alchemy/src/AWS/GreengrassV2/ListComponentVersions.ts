@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * (`arn:aws:greengrass:…:components:{name}`, without the `:versions:`
  * suffix). Provide the implementation with
  * `Effect.provide(AWS.GreengrassV2.ListComponentVersionsHttp)`.
- * @binding
- * @section Reading Components
- * @example List A Component's Versions
+ * ### Reading Components
+ * **Example:** List A Component's Versions
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listComponentVersions = yield* AWS.GreengrassV2.ListComponentVersions();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   arn: componentBaseArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListComponentVersions extends Binding.Service<
   ListComponentVersions,

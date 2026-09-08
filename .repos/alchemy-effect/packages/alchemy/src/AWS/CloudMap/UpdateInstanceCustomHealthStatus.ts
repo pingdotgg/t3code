@@ -19,9 +19,8 @@ export interface UpdateInstanceCustomHealthStatusRequest extends Omit<
  * health mechanism: the workload reports its own health instead of being
  * probed by Route 53. Provide the implementation with
  * `Effect.provide(AWS.CloudMap.UpdateInstanceCustomHealthStatusHttp)`.
- * @binding
- * @section Instance Health
- * @example Report the Instance Healthy
+ * ### Instance Health
+ * **Example:** Report the Instance Healthy
  * ```typescript
  * const updateInstanceCustomHealthStatus =
  *   yield* AWS.CloudMap.UpdateInstanceCustomHealthStatus(service);
@@ -31,6 +30,8 @@ export interface UpdateInstanceCustomHealthStatusRequest extends Omit<
  *   Status: "HEALTHY",
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateInstanceCustomHealthStatus extends Binding.Service<
   UpdateInstanceCustomHealthStatus,

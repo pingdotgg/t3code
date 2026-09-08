@@ -14,9 +14,8 @@ import * as Binding from "../../Binding.ts";
  * replacement-data-source role. Provide the implementation with
  * `Effect.provide(AWS.Forecast.CreateWhatIfForecastHttp)`.
  *
- * @binding
- * @section What-If Scenarios
- * @example Create a Price-Drop Scenario
+ * ### What-If Scenarios
+ * **Example:** Create a Price-Drop Scenario
  * ```typescript
  * // init
  * const createWhatIfForecast = yield* AWS.Forecast.CreateWhatIfForecast();
@@ -36,6 +35,8 @@ import * as Binding from "../../Binding.ts";
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateWhatIfForecast extends Binding.Service<
   CreateWhatIfForecast,

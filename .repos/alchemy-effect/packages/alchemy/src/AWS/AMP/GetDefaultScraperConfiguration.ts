@@ -11,15 +11,16 @@ import * as Binding from "../../Binding.ts";
  * `GetDefaultScraperConfigurationHttp` layer on the Function to satisfy the
  * binding.
  *
- * @binding
- * @section Scraper Configuration
- * @example Read the Default Scraper Configuration
+ * ### Scraper Configuration
+ * **Example:** Read the Default Scraper Configuration
  * ```typescript
  * const getDefaultScraperConfiguration =
  *   yield* AMP.GetDefaultScraperConfiguration();
  *
  * const yaml = yield* getDefaultScraperConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface GetDefaultScraperConfiguration extends Binding.Service<
   GetDefaultScraperConfiguration,

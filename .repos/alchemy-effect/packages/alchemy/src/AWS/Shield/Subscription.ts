@@ -51,13 +51,13 @@ export interface Subscription extends Resource<
  * cancelled for real.
  * :::
  *
- * @section Subscribing to Shield Advanced
- * @example Subscribe with Auto-Renew
+ * ### Subscribing to Shield Advanced
+ * **Example:** Subscribe with Auto-Renew
  * ```typescript
  * const subscription = yield* Shield.Subscription("Shield", {});
  * ```
  *
- * @example Subscribe and Disable Auto-Renew
+ * **Example:** Subscribe and Disable Auto-Renew
  * ```typescript
  * const subscription = yield* Shield.Subscription("Shield", {
  *   autoRenew: "DISABLED",

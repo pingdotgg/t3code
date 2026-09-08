@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * for a security dashboard or attack-alerting handler. Requires an active
  * Shield Advanced subscription.
  * Provide the implementation with `Effect.provide(AWS.Shield.ListAttacksHttp)`.
- * @binding
- * @section Attack Visibility
- * @example List Ongoing Attacks
+ * ### Attack Visibility
+ * **Example:** List Ongoing Attacks
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listAttacks = yield* AWS.Shield.ListAttacks();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime — omitting the time range returns ongoing attacks
  * const { AttackSummaries } = yield* listAttacks();
  * ```
+ *
+ * @binding
  */
 export interface ListAttacks extends Binding.Service<
   ListAttacks,

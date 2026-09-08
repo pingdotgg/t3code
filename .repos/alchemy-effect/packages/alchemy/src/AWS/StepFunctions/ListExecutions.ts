@@ -15,14 +15,15 @@ export interface ListExecutionsRequest extends Omit<
  * to list that machine's executions (optionally filtered by status) with
  * the state machine ARN injected automatically. Not supported by `EXPRESS`
  * state machines.
- * @binding
- * @section Polling Executions
- * @example List running executions
+ * ### Polling Executions
+ * **Example:** List running executions
  * ```typescript
  * const listExecutions = yield* StepFunctions.ListExecutions(machine);
  *
  * const { executions } = yield* listExecutions({ statusFilter: "RUNNING" });
  * ```
+ *
+ * @binding
  */
 export interface ListExecutions extends Binding.Service<
   ListExecutions,

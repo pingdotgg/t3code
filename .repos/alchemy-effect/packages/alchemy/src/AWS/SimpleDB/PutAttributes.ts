@@ -14,9 +14,8 @@ export interface PutAttributesRequest extends Omit<
  *
  * Bind this operation to a {@link Domain} inside a function runtime to get a
  * callable that automatically injects the domain name.
- * @binding
- * @section Writing Items
- * @example Put Attributes on an Item
+ * ### Writing Items
+ * **Example:** Put Attributes on an Item
  * ```typescript
  * const putAttributes = yield* AWS.SimpleDB.PutAttributes(domain);
  *
@@ -28,6 +27,8 @@ export interface PutAttributesRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutAttributes extends Binding.Service<
   PutAttributes,

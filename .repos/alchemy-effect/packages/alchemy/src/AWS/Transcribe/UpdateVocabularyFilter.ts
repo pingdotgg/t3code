@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:UpdateVocabularyFilter` on `*`.
  *
- * @binding
- * @section Vocabulary Filters
- * @example Update a Vocabulary Filter
+ * ### Vocabulary Filters
+ * **Example:** Update a Vocabulary Filter
  * ```typescript
  * // init
  * const updateVocabularyFilter = yield* AWS.Transcribe.UpdateVocabularyFilter();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   Words: ["unwanted", "words", "more"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateVocabularyFilter extends Binding.Service<
   UpdateVocabularyFilter,

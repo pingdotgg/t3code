@@ -4,6 +4,7 @@ import { Task } from "@/AWS/ECS/Task.ts";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import * as ecs from "@distilled.cloud/aws/ecs";
+import * as iam from "@distilled.cloud/aws/iam";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { reclaimTaskDefinitionFamily } from "./reclaimTaskDefinitionFamily.ts";
@@ -261,6 +262,62 @@ test.provider(
           ),
         );
       expect(activeRevisions).toEqual([]);
+    }),
+  { timeout: 240_000 },
+);
+
+// `environmentFiles` parity: the prop lands on the primary container of the
+// registered task definition, and the execution role is granted read access
+// to the referenced S3 objects via the `alchemy-environment-files` inline
+// policy (registration does not require the S3 object to exist). Requires a
+// local Docker daemon (registry-image mirror, cached busybox).
+test.provider(
+  "environmentFiles land on the primary container with execution-role read access",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const envFileArn = "arn:aws:s3:::alchemy-test-ecs-env-files/app.env";
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Task("EnvFilesTask", {
+            image: "busybox:stable",
+            command: ["sh", "-c", "true"],
+            cpu: 256,
+            memory: 512,
+            environmentFiles: [{ value: envFileArn, type: "s3" }],
+          });
+        }),
+      );
+
+      // Out-of-band: the registered revision carries the environment file.
+      const described = yield* ecs.describeTaskDefinition({
+        taskDefinition: deployed.taskDefinitionArn,
+      });
+      expect(
+        described.taskDefinition?.containerDefinitions?.[0]?.environmentFiles,
+      ).toEqual([{ value: envFileArn, type: "s3" }]);
+
+      // Out-of-band: the execution role can read the referenced object.
+      const policy = yield* iam.getRolePolicy({
+        RoleName: deployed.executionRoleName,
+        PolicyName: "alchemy-environment-files",
+      });
+      const document = decodeURIComponent(policy.PolicyDocument ?? "");
+      expect(document).toContain("s3:GetObject");
+      expect(document).toContain(envFileArn);
+      expect(document).toContain("arn:aws:s3:::alchemy-test-ecs-env-files");
+
+      yield* stack.destroy();
+
+      // Destroy sweeps the role (inline policy included) and the family.
+      const roleGone = yield* iam
+        .getRole({ RoleName: deployed.executionRoleName })
+        .pipe(
+          Effect.map(() => false),
+          Effect.catchTag("NoSuchEntityException", () => Effect.succeed(true)),
+        );
+      expect(roleGone).toBe(true);
     }),
   { timeout: 240_000 },
 );

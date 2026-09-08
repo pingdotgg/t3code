@@ -64,8 +64,8 @@ export interface AwsLogSource extends Resource<
  * data lake. Requires `SecurityLake.DataLake` to already be enabled in every
  * configured Region.
  *
- * @section Collecting AWS logs
- * @example Route 53 resolver query logs
+ * ### Collecting AWS logs
+ * **Example:** Route 53 resolver query logs
  * ```typescript
  * const lake = yield* SecurityLake.DataLake("Lake", {
  *   configurations: [{ region: "us-west-2" }],
@@ -77,7 +77,7 @@ export interface AwsLogSource extends Resource<
  * });
  * ```
  *
- * @example VPC Flow Logs from specific accounts
+ * **Example:** VPC Flow Logs from specific accounts
  * ```typescript
  * const vpcFlow = yield* SecurityLake.AwsLogSource("VpcFlow", {
  *   sourceName: "VPC_FLOW",

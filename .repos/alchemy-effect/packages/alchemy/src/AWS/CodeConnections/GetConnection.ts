@@ -11,9 +11,8 @@ import type { Connection } from "./Connection.ts";
  * from inside a function runtime. Useful for workloads that gate work on the
  * connection's OAuth handshake having been completed. Provide the
  * implementation with `Effect.provide(AWS.CodeConnections.GetConnectionHttp)`.
- * @binding
- * @section Inspecting a Connection
- * @example Gate on the Connection Being AVAILABLE
+ * ### Inspecting a Connection
+ * **Example:** Gate on the Connection Being AVAILABLE
  * ```typescript
  * // init — bind the operation to the connection
  * const getConnection = yield* AWS.CodeConnections.GetConnection(connection);
@@ -24,6 +23,8 @@ import type { Connection } from "./Connection.ts";
  *   return yield* HttpServerResponse.text("handshake pending", { status: 409 });
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetConnection extends Binding.Service<
   GetConnection,

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DescribeProjectsHttp)`.
  *
- * @binding
- * @section Custom Labels
- * @example List Projects
+ * ### Custom Labels
+ * **Example:** List Projects
  * ```typescript
  * // init
  * const describeProjects = yield* AWS.Rekognition.DescribeProjects();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const page = yield* describeProjects({ MaxResults: 10 });
  * // page.ProjectDescriptions
  * ```
+ *
+ * @binding
  */
 export interface DescribeProjects extends Binding.Service<
   DescribeProjects,

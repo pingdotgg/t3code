@@ -69,9 +69,8 @@ export interface DomainName extends Resource<
  * Requires a validated ACM certificate in the same region. Point DNS
  * (a Route 53 alias or CNAME) at the returned `ApiGatewayDomainName`
  * target and map APIs onto the domain with {@link ApiMapping}.
- * @resource
- * @section Custom domains
- * @example Regional custom domain
+ * ### Custom domains
+ * **Example:** Regional custom domain
  * ```typescript
  * const domain = yield* ApiGatewayV2.DomainName("Domain", {
  *   domainName: "api.example.com",
@@ -88,6 +87,8 @@ export interface DomainName extends Resource<
  *   stage: stage.stageName,
  * });
  * ```
+ *
+ * @resource
  */
 export const DomainName = Resource<DomainName>("AWS.ApiGatewayV2.DomainName");
 

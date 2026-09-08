@@ -28,7 +28,7 @@ export class SFNTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SFNTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // routes long-poll SQS/GetActivityTask (up to 60s when no task is
     // scheduled) and round-trip whole workflows — AWS's 3s default
     // intermittently times out under cold starts

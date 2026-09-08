@@ -15,9 +15,8 @@ export type CancelJobRunInput = Omit<emr.CancelJobRunRequest, "applicationId">;
  * Cancels a running or queued job run on the bound {@link Application} — the
  * kill switch for a runaway or superseded job. Provide the implementation
  * with `Effect.provide(AWS.EMRServerless.CancelJobRunHttp)`.
- * @binding
- * @section Running Jobs
- * @example Cancel A Job Run
+ * ### Running Jobs
+ * **Example:** Cancel A Job Run
  * ```typescript
  * // init
  * const cancelJobRun = yield* AWS.EMRServerless.CancelJobRun(app);
@@ -25,6 +24,8 @@ export type CancelJobRunInput = Omit<emr.CancelJobRunRequest, "applicationId">;
  * // runtime
  * yield* cancelJobRun({ jobRunId });
  * ```
+ *
+ * @binding
  */
 export interface CancelJobRun extends Binding.Service<
   CancelJobRun,

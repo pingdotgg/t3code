@@ -55,9 +55,8 @@ export interface EmailTemplate extends Resource<
  * An Amazon SES v2 email template — reusable subject/text/HTML content with
  * `{{variable}}` personalization tags, rendered server-side when you send
  * templated email.
- * @resource
- * @section Creating Templates
- * @example Welcome Email Template
+ * ### Creating Templates
+ * **Example:** Welcome Email Template
  * ```typescript
  * import * as SES from "alchemy/AWS/SES";
  *
@@ -68,8 +67,8 @@ export interface EmailTemplate extends Resource<
  * });
  * ```
  *
- * @section Sending Templated Email
- * @example Send with Template Data
+ * ### Sending Templated Email
+ * **Example:** Send with Template Data
  * ```typescript
  * const sendEmail = yield* SES.SendEmail(identity);
  *
@@ -83,6 +82,8 @@ export interface EmailTemplate extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const EmailTemplate = Resource<EmailTemplate>("AWS.SES.EmailTemplate");
 

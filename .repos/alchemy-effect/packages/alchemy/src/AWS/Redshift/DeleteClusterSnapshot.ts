@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * snapshot-rotation job (automated snapshots cannot be deleted; they expire
  * with the retention period). Provide the implementation with
  * `Effect.provide(AWS.Redshift.DeleteClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Delete an Expired Manual Snapshot
+ * ### Managing Snapshots
+ * **Example:** Delete an Expired Manual Snapshot
  * ```typescript
  * const deleteClusterSnapshot = yield* AWS.Redshift.DeleteClusterSnapshot();
  *
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   SnapshotIdentifier: expired.SnapshotIdentifier!,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteClusterSnapshot extends Binding.Service<
   DeleteClusterSnapshot,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.GetClassificationScopeHttp)`.
- * @binding
- * @section Automated Discovery
- * @example Read a Classification Scope
+ * ### Automated Discovery
+ * **Example:** Read a Classification Scope
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getClassificationScope = yield* AWS.Macie2.GetClassificationScope();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const scope = yield* getClassificationScope({ id: scopeId });
  * ```
+ *
+ * @binding
  */
 export interface GetClassificationScope extends Binding.Service<
   GetClassificationScope,

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DetectProtectiveEquipmentHttp)`.
  *
- * @binding
- * @section Image Analysis
- * @example Check for Face Covers
+ * ### Image Analysis
+ * **Example:** Check for Face Covers
  * ```typescript
  * // init
  * const detectProtectiveEquipment = yield* AWS.Rekognition.DetectProtectiveEquipment();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface DetectProtectiveEquipment extends Binding.Service<
   DetectProtectiveEquipment,

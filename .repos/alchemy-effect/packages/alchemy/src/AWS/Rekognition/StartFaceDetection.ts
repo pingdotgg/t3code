@@ -16,9 +16,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.StartFaceDetectionHttp)`.
  *
- * @binding
- * @section Video Analysis
- * @example Start Face Detection
+ * ### Video Analysis
+ * **Example:** Start Face Detection
  * ```typescript
  * // init
  * const startFaceDetection = yield* AWS.Rekognition.StartFaceDetection();
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // started.JobId
  * ```
+ *
+ * @binding
  */
 export interface StartFaceDetection extends Binding.Service<
   StartFaceDetection,

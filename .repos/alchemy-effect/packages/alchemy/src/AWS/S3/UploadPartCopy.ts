@@ -18,9 +18,8 @@ export interface UploadPartCopyRequest extends Omit<
  * bucket's objects. Copying from a *different* source bucket additionally
  * requires read access to that bucket (bind `GetObject` on it). Provide the
  * implementation with `Effect.provide(AWS.S3.UploadPartCopyHttp)`.
- * @binding
- * @section Multipart Uploads
- * @example Copy an Existing Object as a Part
+ * ### Multipart Uploads
+ * **Example:** Copy an Existing Object as a Part
  * ```typescript
  * const uploadPartCopy = yield* AWS.S3.UploadPartCopy(bucket);
  *
@@ -31,6 +30,8 @@ export interface UploadPartCopyRequest extends Omit<
  *   CopySource: `${bucketName}/source.bin`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface UploadPartCopy extends Binding.Service<
   UploadPartCopy,

@@ -13,9 +13,8 @@ export interface GetInsightImpactGraphRequest
  * provide the implementation with `Effect.provide(XRay.GetInsightImpactGraphHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetInsightImpactGraph`, so the binding grants it on `*`.
- * @binding
- * @section Insights
- * @example Graph the services an insight impacted
+ * ### Insights
+ * **Example:** Graph the services an insight impacted
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -31,6 +30,8 @@ export interface GetInsightImpactGraphRequest
  * });
  * const services = graph.Services ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetInsightImpactGraph extends Binding.Service<
   GetInsightImpactGraph,

@@ -53,6 +53,7 @@ export interface MountedFileSystem {
  * Provide the `EFS.MountLive` layer on the Function/Task Effect to satisfy
  * the binding. Mount targets for the file system's VPC/subnets must already
  * exist (`AWS.EFS.MountTarget`).
+ *
  * @binding
  */
 export interface Mount extends Binding.Service<

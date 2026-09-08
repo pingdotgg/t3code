@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.AssociateMemberHttp)`.
- * @binding
- * @section Organization & Members
- * @example Associate a Member Account
+ * ### Organization & Members
+ * **Example:** Associate a Member Account
  * ```typescript
  * // init
  * const associateMember = yield* AWS.Inspector2.AssociateMember();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* associateMember({ accountId });
  * ```
+ *
+ * @binding
  */
 export interface AssociateMember extends Binding.Service<
   AssociateMember,

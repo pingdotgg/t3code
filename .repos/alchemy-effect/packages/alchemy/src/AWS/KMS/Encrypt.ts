@@ -17,9 +17,8 @@ export interface EncryptRequest extends Omit<kms.EncryptRequest, "KeyId"> {}
  * IAM is scoped to least privilege: the exact key ARN for a `Key` resource,
  * or the `kms:RequestAlias` condition for an alias name.
  *
- * @binding
- * @section Encrypting Data
- * @example Encrypt a Payload
+ * ### Encrypting Data
+ * **Example:** Encrypt a Payload
  * ```typescript
  * const encrypt = yield* AWS.KMS.Encrypt(key);
  *
@@ -29,7 +28,7 @@ export interface EncryptRequest extends Omit<kms.EncryptRequest, "KeyId"> {}
  * // response.CiphertextBlob is a Uint8Array
  * ```
  *
- * @example Encrypt with an Encryption Context
+ * **Example:** Encrypt with an Encryption Context
  * ```typescript
  * const response = yield* encrypt({
  *   Plaintext: payload,
@@ -37,21 +36,21 @@ export interface EncryptRequest extends Omit<kms.EncryptRequest, "KeyId"> {}
  * });
  * ```
  *
- * @section Pre-Existing Keys
- * @example Bind by Alias Name
+ * ### Pre-Existing Keys
+ * **Example:** Bind by Alias Name
  * ```typescript
  * // Uses a key managed outside this stack; IAM is scoped via kms:RequestAlias.
  * const encrypt = yield* AWS.KMS.Encrypt("alias/app-key");
  * ```
  *
- * @section Wiring
- * @example Provide the Implementation on a Lambda Function
+ * ### Wiring
+ * **Example:** Provide the Implementation on a Lambda Function
  * ```typescript
  * // Bind in the init phase, call in the handler, and provide the
  * // EncryptHttp layer on the Function's init Effect (merge the other
  * // KMS layers with Layer.mergeAll when using several bindings).
  * export default CryptoFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const key = yield* AWS.KMS.Key("AppKey");
  *     const encrypt = yield* AWS.KMS.Encrypt(key);
@@ -70,6 +69,8 @@ export interface EncryptRequest extends Omit<kms.EncryptRequest, "KeyId"> {}
  *   }).pipe(Effect.provide(AWS.KMS.EncryptHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface Encrypt extends Binding.Service<
   Encrypt,

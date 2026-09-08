@@ -27,7 +27,7 @@ export const NeonDb = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("DrizzleWorkflowBranch", {
     project,
-    migrationsDir,
+    migrations: migrationsDir,
   });
 
   return { project, branch };

@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Resolves a user's `UserId` from a unique attribute (e.g. the user name) — the canonical login-to-id lookup for apps federated through Identity Center. The instance's
  * `IdentityStoreId` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.GetUserIdHttp)`.
- * @binding
- * @section Looking Up Users
- * @example Resolve a UserId From a User Name
+ * ### Looking Up Users
+ * **Example:** Resolve a UserId From a User Name
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const getUserId = yield* AWS.IdentityCenter.GetUserId(instance);
@@ -27,6 +26,8 @@ import type { Instance } from "./Instance.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetUserId extends Binding.Service<
   GetUserId,

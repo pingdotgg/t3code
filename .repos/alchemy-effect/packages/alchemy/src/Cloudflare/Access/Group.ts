@@ -24,6 +24,20 @@ import type { Providers } from "../Providers.ts";
 export type GroupRule =
   zeroTrust.CreateAccessGroupForAccountRequest["include"][number];
 
+/**
+ * One arm of the exclude-side rule union, and its require-side twin.
+ * Cloudflare's spec types the exclude/require rule lists separately from
+ * include — a few rule kinds (e.g. the GitHub-organization rule) carry the
+ * raw wire shape there — so these props use the SDK's own unions rather
+ * than reusing {@link GroupRule}.
+ */
+export type GroupExcludeRule = NonNullable<
+  zeroTrust.CreateAccessGroupForAccountRequest["exclude"]
+>[number];
+export type GroupRequireRule = NonNullable<
+  zeroTrust.CreateAccessGroupForAccountRequest["require"]
+>[number];
+
 export type GroupProps = {
   /**
    * Display name for the group. Used as a stable identifier so the provider
@@ -42,12 +56,12 @@ export type GroupProps = {
    * Rules combined with logical NOT. A user matching any Exclude rule does
    * not match the group, even if they satisfied an Include rule.
    */
-  exclude?: GroupRule[];
+  exclude?: GroupExcludeRule[];
   /**
    * Rules combined with logical AND. A user must satisfy every Require rule
    * in addition to an Include rule.
    */
-  require?: GroupRule[];
+  require?: GroupRequireRule[];
   /**
    * Whether this is the default group for the Zero Trust organization.
    *
@@ -78,18 +92,15 @@ export type Group = Resource<
  * Access rule criteria. Groups are referenced from Access policies via a
  * `{ group: { id } }` rule, letting many policies share one membership
  * definition.
- * @resource
- * @product Access
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Group
- * @example Allow a single email domain
+ * ### Creating a Group
+ * **Example:** Allow a single email domain
  * ```typescript
  * const group = yield* Cloudflare.Access.Group("ExampleDomain", {
  *   include: [{ emailDomain: { domain: "example.com" } }],
  * });
  * ```
  *
- * @example Combine include, exclude and require rules
+ * **Example:** Combine include, exclude and require rules
  * ```typescript
  * const group = yield* Cloudflare.Access.Group("UsEngineers", {
  *   include: [{ emailDomain: { domain: "example.com" } }],
@@ -98,8 +109,8 @@ export type Group = Resource<
  * });
  * ```
  *
- * @section Referencing a Group from a Policy
- * @example Allow members of the group
+ * ### Referencing a Group from a Policy
+ * **Example:** Allow members of the group
  * ```typescript
  * const group = yield* Cloudflare.Access.Group("Team", {
  *   include: [{ emailDomain: { domain: "example.com" } }],
@@ -110,6 +121,10 @@ export type Group = Resource<
  *   include: [{ group: { id: group.groupId } }],
  * });
  * ```
+ *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  */
 export const Group = Resource<Group>("Cloudflare.Access.Group");
 

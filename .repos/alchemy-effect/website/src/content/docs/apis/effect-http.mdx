@@ -167,7 +167,7 @@ return {
 
 `HttpRouter.toHttpEffect` builds the Layer once at boot and yields
 the request handler — the same `{ fetch }` shape a Worker or a
-Lambda Function with `url: true` serves. The `platform` Layers are
+Lambda Function with `functionUrl: true` serves. The `platform` Layers are
 the host-specific part of the wiring — see
 [Workers](/cloudflare/apis/effect-http-api) and
 [Lambda](/aws/apis/effect-http-api) for the exact set, plus storage

@@ -14,15 +14,16 @@ export interface ListPartsRequest extends Omit<S3.ListPartsRequest, "Bucket"> {}
  * automatically and `s3:ListMultipartUploadParts` is granted on the bucket's
  * objects. Provide the implementation with
  * `Effect.provide(AWS.S3.ListPartsHttp)`.
- * @binding
- * @section Multipart Uploads
- * @example List Uploaded Parts
+ * ### Multipart Uploads
+ * **Example:** List Uploaded Parts
  * ```typescript
  * const listParts = yield* AWS.S3.ListParts(bucket);
  *
  * const result = yield* listParts({ Key: "large.bin", UploadId: uploadId });
  * const parts = result.Parts ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListParts extends Binding.Service<
   ListParts,

@@ -118,6 +118,28 @@ you want a dedicated store per Cloudflare account or per team:
 state: Cloudflare.state({ workerName: "alchemy-state-store-team-a" }),
 ```
 
+## Postgres state store
+
+`postgresState()` persists state in a Postgres database you already run, and it locks: each `(stack, stage)` holds a session advisory lock for the duration of a run, so two concurrent deploys of the same stage cannot interleave.
+
+```typescript
+import { postgresState } from "alchemy/State/PostgresState";
+import * as Config from "effect/Config";
+
+Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Prisma.providers(),
+    state: postgresState({ url: Config.redacted("STATE_DATABASE_URL") }),
+  },
+  Effect.gen(function* () {
+    // ...
+  }),
+);
+```
+
+It is imported from `alchemy/State/PostgresState` rather than the `State` barrel because it depends on the optional `pg` driver, which must stay out of bundled worker code. Install `pg` and `@effect/sql-pg` to use it.
+
 ## State and lifecycle
 
 State transitions track the lifecycle of each resource:

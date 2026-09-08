@@ -19,14 +19,15 @@ export interface GetUserRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.GetUserHttp)`.
  *
- * @binding
- * @section User Management
- * @example Read a User
+ * ### User Management
+ * **Example:** Read a User
  * ```typescript
  * const getUser = yield* AWS.QBusiness.GetUser(app);
  *
  * const { userAliases } = yield* getUser({ userId: "user@example.com" });
  * ```
+ *
+ * @binding
  */
 export interface GetUser extends Binding.Service<
   GetUser,

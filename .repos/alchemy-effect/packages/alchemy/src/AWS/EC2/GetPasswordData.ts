@@ -21,9 +21,8 @@ export interface GetPasswordDataRequest extends Omit<
  * `Redacted.Redacted<string>` — decrypt it with the launch key pair's private
  * key. Linux instances return an empty value. Provide the implementation with
  * `Effect.provide(AWS.EC2.GetPasswordDataHttp)`.
- * @binding
- * @section Diagnostics
- * @example Fetch the encrypted Windows administrator password
+ * ### Diagnostics
+ * **Example:** Fetch the encrypted Windows administrator password
  * ```typescript
  * // init — bind the operation to the instance
  * const getPasswordData = yield* AWS.EC2.GetPasswordData(instance);
@@ -32,6 +31,8 @@ export interface GetPasswordDataRequest extends Omit<
  * const result = yield* getPasswordData();
  * const ciphertext = result.PasswordData; // Redacted<string>
  * ```
+ *
+ * @binding
  */
 export interface GetPasswordData extends Binding.Service<
   GetPasswordData,

@@ -70,11 +70,8 @@ export type SecuritySettings = Resource<
  * AI Security for Apps is entitlement-gated: on accounts without the
  * feature every call fails with the typed `AiSecurityNotEntitled` error
  * (Cloudflare error code 13101).
- * @resource
- * @product AI Security
- * @category Application Security
- * @section Enabling AI Security
- * @example Enable AI Security for Apps on a zone
+ * ### Enabling AI Security
+ * **Example:** Enable AI Security for Apps on a zone
  * ```typescript
  * const securitySettings = yield* Cloudflare.AI.SecuritySettings("AiSecurity", {
  *   zoneId: zone.zoneId,
@@ -82,7 +79,7 @@ export type SecuritySettings = Resource<
  * });
  * ```
  *
- * @example Pin AI Security off
+ * **Example:** Pin AI Security off
  * ```typescript
  * yield* Cloudflare.AI.SecuritySettings("AiSecurity", {
  *   zoneId: zone.zoneId,
@@ -91,6 +88,10 @@ export type SecuritySettings = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/waf/detections/firewall-for-ai/
+ *
+ * @resource
+ * @product AI Security
+ * @category Application Security
  */
 export const SecuritySettings = Resource<SecuritySettings>(
   AiSecuritySettingsTypeId,
@@ -101,6 +102,7 @@ export const SecuritySettings = Resource<SecuritySettings>(
 
 export const SecuritySettingsProvider = () =>
   Provider.succeed(SecuritySettings, {
+    nuke: { singleton: true },
     stables: ["zoneId", "initialEnabled"],
 
     list: Effect.fn(function* () {

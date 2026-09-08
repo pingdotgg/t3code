@@ -81,9 +81,8 @@ export interface DeploymentStrategy extends Resource<
  * rolls out to an environment: the total duration, the per-interval growth,
  * and the final bake time during which alarms can trigger a rollback.
  *
- * @resource
- * @section Creating a Deployment Strategy
- * @example All-At-Once (instant, no bake)
+ * ### Creating a Deployment Strategy
+ * **Example:** All-At-Once (instant, no bake)
  * ```typescript
  * const strategy = yield* AppConfig.DeploymentStrategy("Fast", {
  *   deploymentDuration: 0,
@@ -93,7 +92,7 @@ export interface DeploymentStrategy extends Resource<
  * });
  * ```
  *
- * @example Linear rollout over 10 minutes
+ * **Example:** Linear rollout over 10 minutes
  * ```typescript
  * const strategy = yield* AppConfig.DeploymentStrategy("Linear", {
  *   deploymentDuration: "10 minutes",
@@ -102,6 +101,8 @@ export interface DeploymentStrategy extends Resource<
  *   finalBakeTime: "5 minutes",
  * });
  * ```
+ *
+ * @resource
  */
 export const DeploymentStrategy = Resource<DeploymentStrategy>(
   "AWS.AppConfig.DeploymentStrategy",

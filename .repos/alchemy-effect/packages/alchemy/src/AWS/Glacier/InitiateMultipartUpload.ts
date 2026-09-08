@@ -22,9 +22,8 @@ export interface InitiateMultipartUploadRequest extends Omit<
  * multiple of 1 MiB (as a string of bytes).
  * Provide the implementation with
  * `Effect.provide(AWS.Glacier.InitiateMultipartUploadHttp)`.
- * @binding
- * @section Uploading Archives
- * @example Start a multipart upload
+ * ### Uploading Archives
+ * **Example:** Start a multipart upload
  * ```typescript
  * const initiateMultipartUpload =
  *   yield* AWS.Glacier.InitiateMultipartUpload(vault);
@@ -34,6 +33,8 @@ export interface InitiateMultipartUploadRequest extends Omit<
  *   partSize: String(8 * 1024 * 1024),
  * });
  * ```
+ *
+ * @binding
  */
 export interface InitiateMultipartUpload extends Binding.Service<
   InitiateMultipartUpload,

@@ -17,9 +17,8 @@ export interface ListPackageVersionsRequest extends Omit<
  *
  * Lists a package's versions in the bound repository. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.ListPackageVersionsHttp)`.
- * @binding
- * @section Browsing Package Versions
- * @example List Published Versions
+ * ### Browsing Package Versions
+ * **Example:** List Published Versions
  * ```typescript
  * const listVersions = yield* AWS.CodeArtifact.ListPackageVersions(repo);
  *
@@ -31,6 +30,8 @@ export interface ListPackageVersionsRequest extends Omit<
  * });
  * console.log(res.versions?.map((v) => v.version));
  * ```
+ *
+ * @binding
  */
 export interface ListPackageVersions extends Binding.Service<
   ListPackageVersions,

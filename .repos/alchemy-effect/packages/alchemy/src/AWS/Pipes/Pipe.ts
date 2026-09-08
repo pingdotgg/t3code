@@ -121,9 +121,8 @@ export interface Pipe extends Resource<
  * error rather than hanging. Prefer the {@link from} builder for the common
  * pairs — it synthesizes the `pipes.amazonaws.com` execution role with
  * source-read and target-invoke policies for you.
- * @resource
- * @section Creating Pipes
- * @example SQS to Lambda (builder — role synthesized automatically)
+ * ### Creating Pipes
+ * **Example:** SQS to Lambda (builder — role synthesized automatically)
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -131,7 +130,7 @@ export interface Pipe extends Resource<
  * const pipe = yield* AWS.Pipes.from(queue, { batchSize: 1 }).toLambda(fn);
  * ```
  *
- * @example SQS to SQS (canonical resource with an explicit role)
+ * **Example:** SQS to SQS (canonical resource with an explicit role)
  * ```typescript
  * const pipe = yield* AWS.Pipes.Pipe("OrdersPipe", {
  *   source: source.queueArn,
@@ -143,24 +142,24 @@ export interface Pipe extends Resource<
  * });
  * ```
  *
- * @section Filtering
- * @example Only deliver matching events
+ * ### Filtering
+ * **Example:** Only deliver matching events
  * ```typescript
  * const pipe = yield* AWS.Pipes.from(queue)
  *   .filter(JSON.stringify({ body: { type: ["order.created"] } }))
  *   .toLambda(fn);
  * ```
  *
- * @section Enrichment
- * @example Enrich events with a Lambda function before delivery
+ * ### Enrichment
+ * **Example:** Enrich events with a Lambda function before delivery
  * ```typescript
  * const pipe = yield* AWS.Pipes.from(queue)
  *   .enrich(enricherFn)
  *   .toQueue(target);
  * ```
  *
- * @section Stream Sources
- * @example Kinesis stream source
+ * ### Stream Sources
+ * **Example:** Kinesis stream source
  * ```typescript
  * const pipe = yield* AWS.Pipes.from(stream, {
  *   startingPosition: "TRIM_HORIZON",
@@ -168,7 +167,7 @@ export interface Pipe extends Resource<
  * }).toLambda(fn);
  * ```
  *
- * @example Stop a pipe without deleting it
+ * **Example:** Stop a pipe without deleting it
  * ```typescript
  * const pipe = yield* AWS.Pipes.Pipe("OrdersPipe", {
  *   source: source.queueArn,
@@ -177,6 +176,8 @@ export interface Pipe extends Resource<
  *   desiredState: "STOPPED",
  * });
  * ```
+ *
+ * @resource
  */
 export const Pipe = Resource<Pipe>("AWS.Pipes.Pipe");
 

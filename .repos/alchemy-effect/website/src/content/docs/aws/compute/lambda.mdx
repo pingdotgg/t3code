@@ -131,7 +131,7 @@ envelope under the hood, so your handler never sees the raw
 
 ## Expose a public URL
 
-`fetch` exists, but no one can call it yet. Set `url: true` on
+`fetch` exists, but no one can call it yet. Set `functionUrl: true` on
 the props to ask AWS for a public **Function URL** — no API
 Gateway, no auth, just a public HTTPS endpoint:
 
@@ -139,7 +139,7 @@ Gateway, no auth, just a public HTTPS endpoint:
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
 -  { main: import.meta.url },
-+  { main: import.meta.url, url: true },
++  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     return {
       fetch: Effect.succeed(HttpServerResponse.text("Hello from Lambda!")),
@@ -168,10 +168,10 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
--  { main: import.meta.url, url: true },
+-  { main: import.meta.url, functionUrl: true },
 +  Stack.useSync((stack) => ({
 +    main: import.meta.url,
-+    url: true,
++    functionUrl: true,
 +    memory: stack.stage === "prod" ? 1024 : 512,
 +  })),
   Effect.gen(function* () {
@@ -216,7 +216,7 @@ export default Alchemy.Stack(
 
 Yielding `Api` returns the resolved Lambda outputs — the function
 ARN, role ARN, log group, and the public Function URL we asked
-for with `url: true`. We surface `functionUrl` as the Stack's
+for with `functionUrl: true`. We surface `functionUrl` as the Stack's
 `url` so the test harness can find it.
 
 ## Deploy

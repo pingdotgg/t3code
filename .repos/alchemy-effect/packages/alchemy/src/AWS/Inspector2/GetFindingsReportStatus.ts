@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetFindingsReportStatusHttp)`.
- * @binding
- * @section Findings Reports & SBOM Exports
- * @example Poll a Findings Report
+ * ### Findings Reports & SBOM Exports
+ * **Example:** Poll a Findings Report
  * ```typescript
  * // init
  * const getFindingsReportStatus = yield* AWS.Inspector2.GetFindingsReportStatus();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { status } = yield* getFindingsReportStatus({ reportId });
  * ```
+ *
+ * @binding
  */
 export interface GetFindingsReportStatus extends Binding.Service<
   GetFindingsReportStatus,

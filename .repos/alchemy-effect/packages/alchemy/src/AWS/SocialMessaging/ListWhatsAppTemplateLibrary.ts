@@ -23,9 +23,8 @@ export interface ListWhatsAppTemplateLibraryRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.ListWhatsAppTemplateLibraryHttp)`.
- * @binding
- * @section Managing Message Templates
- * @example Browse Meta's Template Library
+ * ### Managing Message Templates
+ * **Example:** Browse Meta's Template Library
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const browseLibrary = yield* AWS.SocialMessaging.ListWhatsAppTemplateLibrary(account);
@@ -35,6 +34,8 @@ export interface ListWhatsAppTemplateLibraryRequest extends Omit<
  *   filters: { category: "UTILITY" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListWhatsAppTemplateLibrary extends Binding.Service<
   ListWhatsAppTemplateLibrary,

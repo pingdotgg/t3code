@@ -10,9 +10,8 @@ export interface GetQueryResultsRequest extends Logs.GetQueryResultsRequest {}
  *
  * Bind this operation to the `LogGroup` an Insights query was started against
  * (via {@link import("./StartQuery.ts").StartQuery}) to poll for its results.
- * @binding
- * @section Logs Insights
- * @example Poll Query Results
+ * ### Logs Insights
+ * **Example:** Poll Query Results
  * ```typescript
  * const getQueryResults = yield* AWS.Logs.GetQueryResults(logGroup);
  *
@@ -22,7 +21,7 @@ export interface GetQueryResultsRequest extends Logs.GetQueryResultsRequest {}
  * }
  * ```
  *
- * @example Poll Until Complete
+ * **Example:** Poll Until Complete
  * ```typescript
  * // Bounded, declarative polling — never a while-loop.
  * const results = yield* getQueryResults({ queryId }).pipe(
@@ -34,12 +33,12 @@ export interface GetQueryResultsRequest extends Logs.GetQueryResultsRequest {}
  * );
  * ```
  *
- * @example Wire into a Lambda Function
+ * **Example:** Wire into a Lambda Function
  * ```typescript
  * // Provide the layer on the Function's init Effect, merged with
  * // StartQueryHttp since the two bindings are always used together.
  * export default InsightsFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const logGroup = yield* AWS.Logs.LogGroup("AppLogs", {});
  *     const startQuery = yield* AWS.Logs.StartQuery(logGroup);
@@ -53,6 +52,8 @@ export interface GetQueryResultsRequest extends Logs.GetQueryResultsRequest {}
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetQueryResults extends Binding.Service<
   GetQueryResults,

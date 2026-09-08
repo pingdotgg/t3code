@@ -11,15 +11,16 @@ export interface DescribeJobRunRequest extends Omit<
 /**
  * Runtime binding for `databrew:DescribeJobRun` — reads the state,
  * timings, and outputs of one run of the bound DataBrew job.
- * @binding
- * @section Observing Job Runs
- * @example Poll a Run's State
+ * ### Observing Job Runs
+ * **Example:** Poll a Run's State
  * ```typescript
  * const describeJobRun = yield* AWS.DataBrew.DescribeJobRun(job);
  *
  * const run = yield* describeJobRun({ RunId: runId });
  * // run.State: "STARTING" | "RUNNING" | "SUCCEEDED" | ...
  * ```
+ *
+ * @binding
  */
 export interface DescribeJobRun extends Binding.Service<
   DescribeJobRun,

@@ -1,0 +1,18 @@
+{
+  "name": "@fixtures/vite-hmr",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts dev",
+    "build": "tsc && bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "pretest": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@playwright/test": "catalog:testing",
+    "vite": "catalog:build"
+  }
+}

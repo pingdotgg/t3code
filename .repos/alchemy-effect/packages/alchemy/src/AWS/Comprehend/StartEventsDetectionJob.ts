@@ -32,9 +32,8 @@ export interface StartEventsDetectionJobRequest extends Omit<
  * {@link DescribeEventsDetectionJob} and stop it with
  * {@link StopEventsDetectionJob}.
  *
- * @binding
- * @section Starting Analysis Jobs
- * @example Start an Asynchronous Events Detection Job
+ * ### Starting Analysis Jobs
+ * **Example:** Start an Asynchronous Events Detection Job
  * ```typescript
  * // deploy time — bind the Comprehend data-access role
  * const startEventsDetectionJob = yield* AWS.Comprehend.StartEventsDetectionJob(dataAccessRole);
@@ -48,6 +47,8 @@ export interface StartEventsDetectionJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartEventsDetectionJob extends Binding.Service<
   StartEventsDetectionJob,

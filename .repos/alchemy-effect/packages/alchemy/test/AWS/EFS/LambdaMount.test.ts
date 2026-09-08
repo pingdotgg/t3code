@@ -75,7 +75,7 @@ const infra = (marker: string) =>
       main: handlerPath,
       handler: "handler",
       isExternal: true,
-      url: true,
+      functionUrl: true,
       memorySize: 256,
       timeout: Duration.seconds(30),
       vpc: { subnetIds: [subnetId], securityGroupIds: [securityGroupId] },

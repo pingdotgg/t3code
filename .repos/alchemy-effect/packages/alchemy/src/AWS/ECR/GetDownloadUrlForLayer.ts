@@ -17,15 +17,16 @@ export interface GetDownloadUrlForLayerRequest extends Omit<
  *
  * Resolves a pre-signed S3 download URL for an image layer in the bound repository — the blob-download half of a registry pull. Provide the implementation with
  * `Effect.provide(AWS.ECR.GetDownloadUrlForLayerHttp)`.
- * @binding
- * @section Pulling Images
- * @example Download a Layer Blob
+ * ### Pulling Images
+ * **Example:** Download a Layer Blob
  * ```typescript
  * const getDownloadUrl = yield* AWS.ECR.GetDownloadUrlForLayer(repository);
  *
  * const res = yield* getDownloadUrl({ layerDigest: "sha256:…" });
  * console.log(res.downloadUrl);
  * ```
+ *
+ * @binding
  */
 export interface GetDownloadUrlForLayer extends Binding.Service<
   GetDownloadUrlForLayer,

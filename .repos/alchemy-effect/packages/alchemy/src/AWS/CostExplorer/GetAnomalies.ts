@@ -18,9 +18,8 @@ export interface GetAnomaliesRequest extends Omit<
  * Retrieve the cost anomalies a monitor detected during a date
  * interval (available for up to 90 days). Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetAnomaliesHttp)`.
- * @binding
- * @section Anomaly Detection at Runtime
- * @example List a Monitor's Anomalies
+ * ### Anomaly Detection at Runtime
+ * **Example:** List a Monitor's Anomalies
  * ```typescript
  * // init — bind the operation to the monitor
  * const getAnomalies = yield* AWS.CostExplorer.GetAnomalies(monitor);
@@ -31,6 +30,8 @@ export interface GetAnomaliesRequest extends Omit<
  * });
  * const anomalies = result.Anomalies;
  * ```
+ *
+ * @binding
  */
 export interface GetAnomalies extends Binding.Service<
   GetAnomalies,

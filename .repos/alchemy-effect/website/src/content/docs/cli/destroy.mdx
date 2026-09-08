@@ -44,6 +44,22 @@ alchemy destroy --stage pr-42 --yes
 alchemy destroy --stage dev_sam
 ```
 
+## Retained resources
+
+Resources declared with `RemovalPolicy.retain()` are skipped by
+`destroy`: the provider's `delete` is never called and only the state
+row is dropped, so the cloud object outlives the stack. The same is
+true of a resource whose declaration you simply delete — the orphan
+sweep reads the policy from the state row, not from your code.
+
+```typescript
+import * as RemovalPolicy from "alchemy/RemovalPolicy";
+
+const data = yield* R2.Bucket("Data").pipe(RemovalPolicy.retain());
+```
+
+See [Resource lifecycle › Removal policy](/infrastructure-as-code/resource-lifecycle#removal-policy).
+
 `destroy` is scoped to one stack + stage and driven by the state store; to enumerate and delete everything a set of providers can see in the live account, see [nuke](/cli/nuke).
 
 ## Where next
@@ -52,3 +68,4 @@ alchemy destroy --stage dev_sam
 - [nuke](/cli/nuke) — account-wide teardown, not scoped to a stack
 - [state](/cli/state) — inspect and clear the state the plan is driven by
 - [Stages](/environments/stages) — how environments are isolated
+- [Resource lifecycle › Removal policy](/infrastructure-as-code/resource-lifecycle#removal-policy) — keep a resource when its stack goes away

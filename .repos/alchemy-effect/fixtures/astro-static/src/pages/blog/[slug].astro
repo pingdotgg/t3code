@@ -1,0 +1,22 @@
+---
+import Layout from "../../components/Layout.astro";
+
+// Under `output: "static"` every dynamic route MUST enumerate its paths at
+// build time — this is the defining static behavior (contrast with
+// fixtures/astro-ssr, where any param resolves at request time).
+export function getStaticPaths() {
+  return [
+    { params: { slug: "first-post" }, props: { title: "First post" } },
+    { params: { slug: "second-post" }, props: { title: "Second post" } },
+  ];
+}
+
+const { slug } = Astro.params;
+const { title } = Astro.props;
+---
+
+<Layout title={title}>
+  <h1 id="title">{title}</h1>
+  <p id="slug">{slug}</p>
+  <p id="mode">static</p>
+</Layout>

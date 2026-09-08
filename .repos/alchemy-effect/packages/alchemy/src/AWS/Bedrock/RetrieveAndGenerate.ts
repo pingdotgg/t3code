@@ -25,9 +25,8 @@ export interface RetrieveAndGenerateRequest
  * `bedrock:InvokeModel` scoped to the bound models (or all foundation models
  * and cross-region inference profiles when none are named).
  *
- * @binding
- * @section Retrieving and Generating
- * @example One-Shot Grounded Answer
+ * ### Retrieving and Generating
+ * **Example:** One-Shot Grounded Answer
  * ```typescript
  * // init
  * const rag = yield* Bedrock.RetrieveAndGenerate(
@@ -48,6 +47,8 @@ export interface RetrieveAndGenerateRequest
  * });
  * const answer = result.output.text;
  * ```
+ *
+ * @binding
  */
 export interface RetrieveAndGenerate extends Binding.Service<
   RetrieveAndGenerate,

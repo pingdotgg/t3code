@@ -67,12 +67,12 @@ including each PR stage — forks its own branch:
 ```typescript
 const branch = yield* Planetscale.PostgresBranch("app-branch", {
   database,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
 Branches fork from `main` by default and carry their own
-`migrationsDir`: pending `.sql` files are applied to the branch on
+`migrations`: pending `.sql` files are applied to the branch on
 every deploy, so each preview migrates itself independently — see
 [Migrations](/planetscale/data/migrations) for ordering, hashing, and the
 tracking table. To fork data as well as schema, `seedData:
@@ -115,7 +115,7 @@ const database = stage.startsWith("pr-")
 const branch = yield* Planetscale.MySQLBranch("app-branch", {
   database,
   isProduction: false,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 
 const password = yield* Planetscale.MySQLPassword("app-password", {
@@ -179,7 +179,7 @@ and
 
 - [Drizzle ORM with PlanetScale](/planetscale/guides/drizzle) —
   generate the migrations each preview branch applies.
-- [Migrations](/planetscale/data/migrations) — how `migrationsDir` files
+- [Migrations](/planetscale/data/migrations) — how migration files
   are ordered, hashed, and tracked.
 - [Postgres](/planetscale/data/postgres) and [MySQL](/planetscale/data/mysql)
   — the two resource families used above.

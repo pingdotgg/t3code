@@ -12,9 +12,8 @@ export interface SendTaskSuccessRequest extends sfn.SendTaskSuccessInput {}
  * {@link Activity} task successfully. Bind without arguments for task
  * tokens issued by service-integration Task states (IAM cannot scope
  * those), or pass an `Activity` to scope access to its tasks.
- * @binding
- * @section Callback Pattern
- * @example Complete a waiting task
+ * ### Callback Pattern
+ * **Example:** Complete a waiting task
  * ```typescript
  * const sendTaskSuccess = yield* StepFunctions.SendTaskSuccess();
  *
@@ -23,6 +22,8 @@ export interface SendTaskSuccessRequest extends sfn.SendTaskSuccessInput {}
  *   output: JSON.stringify({ approved: true }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface SendTaskSuccess extends Binding.Service<
   SendTaskSuccess,

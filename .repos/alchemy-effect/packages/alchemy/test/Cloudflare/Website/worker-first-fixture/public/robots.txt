@@ -1,0 +1,1 @@
+worker-first-static-asset

@@ -37,9 +37,8 @@ export interface StartTextTranslationJobRequest extends Omit<
  * Track the job with {@link DescribeTextTranslationJob} and stop it with
  * {@link StopTextTranslationJob}.
  *
- * @binding
- * @section Batch Translation Jobs
- * @example Start a batch translation job
+ * ### Batch Translation Jobs
+ * **Example:** Start a batch translation job
  * ```typescript
  * // deploy time — bind the Translate data-access role
  * const startJob = yield* AWS.Translate.StartTextTranslationJob(dataAccessRole);
@@ -53,6 +52,8 @@ export interface StartTextTranslationJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartTextTranslationJob extends Binding.Service<
   StartTextTranslationJob,

@@ -68,11 +68,8 @@ export type UniversalSsl = Resource<
  * **Warning:** disabling Universal SSL removes any active Universal SSL
  * certificates for the zone from the edge. Visitors will see TLS errors
  * unless advanced/custom certificates cover the zone's hostnames.
- * @resource
- * @product SSL/TLS
- * @category SSL/TLS & Certificates
- * @section Managing Universal SSL
- * @example Disable Universal SSL for a zone
+ * ### Managing Universal SSL
+ * **Example:** Disable Universal SSL for a zone
  * ```typescript
  * yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
  *   zoneId: zone.zoneId,
@@ -80,7 +77,7 @@ export type UniversalSsl = Resource<
  * });
  * ```
  *
- * @example Pin Universal SSL enabled
+ * **Example:** Pin Universal SSL enabled
  * ```typescript
  * yield* Cloudflare.Ssl.UniversalSsl("UniversalSsl", {
  *   zoneId: zone.zoneId,
@@ -89,6 +86,10 @@ export type UniversalSsl = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api/resources/ssl/subresources/universal/subresources/settings/
+ *
+ * @resource
+ * @product SSL/TLS
+ * @category SSL/TLS & Certificates
  */
 export const UniversalSsl = Resource<UniversalSsl>(TypeId);
 

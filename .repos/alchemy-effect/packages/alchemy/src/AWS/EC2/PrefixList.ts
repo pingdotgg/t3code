@@ -122,9 +122,8 @@ export interface PrefixList extends Resource<
  * only grow it, never shrink it, in place). `addressFamily` fixes whether the
  * list holds IPv4 or IPv6 CIDRs and is immutable.
  *
- * @resource
- * @section Creating a Prefix List
- * @example Basic IPv4 Prefix List
+ * ### Creating a Prefix List
+ * **Example:** Basic IPv4 Prefix List
  * ```typescript
  * const corpNetworks = yield* AWS.EC2.PrefixList("CorpNetworks", {
  *   maxEntries: 10,
@@ -137,7 +136,7 @@ export interface PrefixList extends Resource<
  * Creates a prefix list with two IPv4 CIDRs. The resulting `prefixListId`
  * (prefixed `pl-`) can be referenced from security group rules and routes.
  *
- * @example IPv6 Prefix List
+ * **Example:** IPv6 Prefix List
  * ```typescript
  * const ipv6List = yield* AWS.EC2.PrefixList("Ipv6List", {
  *   addressFamily: "IPv6",
@@ -148,8 +147,8 @@ export interface PrefixList extends Resource<
  * `addressFamily: "IPv6"` makes the list accept IPv6 CIDRs. Because the family
  * is intrinsic to the list, changing it later replaces the resource.
  *
- * @section Referencing a Prefix List from a Security Group Rule
- * @example Allow Inbound from a Prefix List
+ * ### Referencing a Prefix List from a Security Group Rule
+ * **Example:** Allow Inbound from a Prefix List
  * ```typescript
  * const corpNetworks = yield* AWS.EC2.PrefixList("CorpNetworks", {
  *   maxEntries: 10,
@@ -167,6 +166,8 @@ export interface PrefixList extends Resource<
  * ```
  * The rule allows HTTPS from every CIDR in the list. Editing the list's
  * `entries` updates what the rule permits without touching the rule itself.
+ *
+ * @resource
  */
 export const PrefixList = Resource<PrefixList>("AWS.EC2.PrefixList");
 

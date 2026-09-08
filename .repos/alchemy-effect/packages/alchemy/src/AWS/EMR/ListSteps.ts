@@ -5,14 +5,15 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:ListSteps` — lists the bound cluster's steps, newest first (optionally filtered by state or id). Page with `Marker`.
- * @binding
- * @section Running Steps
- * @example List Running Steps
+ * ### Running Steps
+ * **Example:** List Running Steps
  * ```typescript
  * const listSteps = yield* AWS.EMR.ListSteps(cluster);
  *
  * const { Steps } = yield* listSteps({ StepStates: ["RUNNING"] });
  * ```
+ *
+ * @binding
  */
 export interface ListSteps extends Binding.Service<
   ListSteps,

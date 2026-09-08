@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.UpdateFindingsFeedbackHttp)`.
- * @binding
- * @section Working with Findings
- * @example Mark Findings Useful
+ * ### Working with Findings
+ * **Example:** Mark Findings Useful
  * ```typescript
  * // init
  * const updateFindingsFeedback = yield* AWS.GuardDuty.UpdateFindingsFeedback(detector);
@@ -23,6 +22,8 @@ import type { Detector } from "./Detector.ts";
  *   Feedback: "USEFUL",
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateFindingsFeedback extends Binding.Service<
   UpdateFindingsFeedback,

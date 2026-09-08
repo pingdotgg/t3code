@@ -81,8 +81,8 @@ export interface HealthEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Health Events
- * @example Page on Availability Drops
+ * ### Consuming Health Events
+ * **Example:** Page on Availability Drops
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

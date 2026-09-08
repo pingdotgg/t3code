@@ -69,9 +69,8 @@ export interface TrafficPolicy extends Resource<
  *
  * All aspects (name, statements, default action, size cap, tags) update in
  * place.
- * @resource
- * @section Creating Traffic Policies
- * @example Deny-by-Default with an Allowed CIDR
+ * ### Creating Traffic Policies
+ * **Example:** Deny-by-Default with an Allowed CIDR
  * ```typescript
  * import * as MailManager from "alchemy/AWS/MailManager";
  *
@@ -94,13 +93,15 @@ export interface TrafficPolicy extends Resource<
  * });
  * ```
  *
- * @example Allow All with a Size Cap
+ * **Example:** Allow All with a Size Cap
  * ```typescript
  * const policy = yield* MailManager.TrafficPolicy("Edge", {
  *   defaultAction: "ALLOW",
  *   maxMessageSizeBytes: 10 * 1024 * 1024,
  * });
  * ```
+ *
+ * @resource
  */
 export const TrafficPolicy = Resource<TrafficPolicy>(
   "AWS.MailManager.TrafficPolicy",

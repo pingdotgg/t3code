@@ -72,11 +72,8 @@ export type SmartRouting = Resource<
  * the Argo subscription every read or patch of this setting fails with
  * the typed `NotAuthorized` error (Cloudflare code 1015) — purchase the
  * add-on on the zone before managing this resource.
- * @resource
- * @product Argo
- * @category Performance & Reliability
- * @section Enabling Smart Routing
- * @example Enable Argo Smart Routing on a zone
+ * ### Enabling Smart Routing
+ * **Example:** Enable Argo Smart Routing on a zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -85,7 +82,7 @@ export type SmartRouting = Resource<
  * });
  * ```
  *
- * @example Explicitly disable Argo Smart Routing
+ * **Example:** Explicitly disable Argo Smart Routing
  * ```typescript
  * yield* Cloudflare.Argo.SmartRouting("SmartRouting", {
  *   zoneId: zone.zoneId,
@@ -94,6 +91,10 @@ export type SmartRouting = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/argo-smart-routing/
+ *
+ * @resource
+ * @product Argo
+ * @category Performance & Reliability
  */
 export const SmartRouting = Resource<SmartRouting>(TypeId);
 

@@ -8,6 +8,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
+import { emailRoutingScoped } from "./scope.ts";
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const logLevel = Effect.provideService(
@@ -47,8 +48,8 @@ const getEmailRouting = (zoneId: string) =>
 
 const setEnabled = (zoneId: string, enabled: boolean) =>
   (enabled
-    ? emailRouting.enableEmailRouting({ zoneId, body: {} })
-    : emailRouting.disableEmailRouting({ zoneId, body: {} })
+    ? emailRouting.enableEmailRouting({ zoneId })
+    : emailRouting.disableEmailRouting({ zoneId })
   ).pipe(
     Effect.retry({
       while: (e) => e._tag === "Forbidden",
@@ -57,7 +58,7 @@ const setEnabled = (zoneId: string, enabled: boolean) =>
     }),
   );
 
-describe.sequential("EmailRouting", () => {
+describe.sequential.skipIf(!emailRoutingScoped)("EmailRouting", () => {
   // Canonical `list()` test (zone-scoped singleton): there is no account-wide
   // API for these per-zone settings, so `list()` enumerates every zone via
   // `listAllZones` and reads the singleton in each. Assert the result is

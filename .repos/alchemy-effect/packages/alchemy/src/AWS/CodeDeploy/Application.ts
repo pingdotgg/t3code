@@ -50,16 +50,15 @@ export interface Application extends Resource<
  * deployment groups and revisions for a single deployable unit on a given
  * compute platform (EC2/on-prem `Server`, `Lambda`, or `ECS`).
  *
- * @resource
- * @section Creating an Application
- * @example Lambda Application
+ * ### Creating an Application
+ * **Example:** Lambda Application
  * ```typescript
  * const app = yield* CodeDeploy.Application("api", {
  *   computePlatform: "Lambda",
  * });
  * ```
  *
- * @example EC2/On-Premises Application
+ * **Example:** EC2/On-Premises Application
  * ```typescript
  * const app = yield* CodeDeploy.Application("web", {
  *   applicationName: "web-fleet",
@@ -67,6 +66,8 @@ export interface Application extends Resource<
  *   tags: { team: "platform" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Application = Resource<Application>("AWS.CodeDeploy.Application");
 

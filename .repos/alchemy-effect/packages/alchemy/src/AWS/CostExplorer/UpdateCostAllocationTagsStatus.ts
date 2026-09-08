@@ -15,9 +15,8 @@ export interface UpdateCostAllocationTagsStatusRequest
  * per call). Activation makes the tag usable in cost queries, categories,
  * and CUR reports. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.UpdateCostAllocationTagsStatusHttp)`.
- * @binding
- * @section Cost Allocation Tags
- * @example Activate a Tag Key
+ * ### Cost Allocation Tags
+ * **Example:** Activate a Tag Key
  * ```typescript
  * // init — account-level binding takes no resource
  * const updateCostAllocationTagsStatus = yield* AWS.CostExplorer.UpdateCostAllocationTagsStatus();
@@ -27,6 +26,8 @@ export interface UpdateCostAllocationTagsStatusRequest
  *   CostAllocationTagsStatus: [{ TagKey: "team", Status: "Active" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateCostAllocationTagsStatus extends Binding.Service<
   UpdateCostAllocationTagsStatus,

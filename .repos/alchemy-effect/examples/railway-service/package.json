@@ -1,0 +1,31 @@
+{
+  "name": "railway-service",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/railway-service"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@distilled.cloud/railway": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/sql-pg": "catalog:effect",
+    "alchemy": "workspace:*",
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "pg": "catalog:database"
+  },
+  "devDependencies": {
+    "@types/pg": "catalog:database"
+  }
+}

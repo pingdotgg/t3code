@@ -73,8 +73,7 @@ const toScheduleExpression = (value: string) =>
  * Plain English durations like `"1 hour"` are normalized to `rate(...)`
  * expressions automatically. Full `rate(...)` and `cron(...)` expressions are
  * also accepted as-is.
- * @binding
- * @example Run a task every hour
+ * **Example:** Run a task every hour
  * ```typescript
  * yield* AWS.ECS.every("HourlyJob", "1 hour", {
  *   cluster,
@@ -84,7 +83,7 @@ const toScheduleExpression = (value: string) =>
  * });
  * ```
  *
- * @example Use an explicit cron expression
+ * **Example:** Use an explicit cron expression
  * ```typescript
  * yield* AWS.ECS.every("NightlyJob", "cron(0 3 * * ? *)", {
  *   cluster,
@@ -94,7 +93,7 @@ const toScheduleExpression = (value: string) =>
  * });
  * ```
  *
- * @example Run multiple copies with static input
+ * **Example:** Run multiple copies with static input
  * ```typescript
  * yield* AWS.ECS.every("BatchJob", "30 minutes", {
  *   cluster,
@@ -105,6 +104,8 @@ const toScheduleExpression = (value: string) =>
  *   input: JSON.stringify({ source: "scheduler" }),
  * });
  * ```
+ *
+ * @binding
  */
 export const every = (id: string, schedule: string, props: ScheduleProps) =>
   Scheduler.every(toScheduleExpression(schedule)).named(id).toEcsTask({

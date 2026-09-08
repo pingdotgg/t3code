@@ -1,0 +1,6 @@
+/* Imported by session.astro so the build emits a content-hashed asset under
+ * /_astro/ — the smoke test asserts the generated _headers immutable
+ * Cache-Control rule applies to it end-to-end in live mode. */
+#count {
+  font-weight: 700;
+}

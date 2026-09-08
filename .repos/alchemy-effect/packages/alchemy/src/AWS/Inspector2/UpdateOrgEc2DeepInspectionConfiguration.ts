@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.UpdateOrgEc2DeepInspectionConfigurationHttp)`.
- * @binding
- * @section Organization & Members
- * @example Set Org-Wide Deep Inspection Paths
+ * ### Organization & Members
+ * **Example:** Set Org-Wide Deep Inspection Paths
  * ```typescript
  * // init
  * const updateOrgEc2DeepInspectionConfiguration = yield* AWS.Inspector2.UpdateOrgEc2DeepInspectionConfiguration();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* updateOrgEc2DeepInspectionConfiguration({ orgPackagePaths: ["/opt/app"] });
  * ```
+ *
+ * @binding
  */
 export interface UpdateOrgEc2DeepInspectionConfiguration extends Binding.Service<
   UpdateOrgEc2DeepInspectionConfiguration,

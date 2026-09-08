@@ -8,12 +8,14 @@
  * fixed badge width (~360px) so it reads as a brand mark, not a banner.
  */
 
-import { yantraSvg } from "./yantra";
+import { YANTRA_THEMES, yantraSvg } from "./yantra";
 
 const COLORS = {
   bg: "#f5efe3",
   fg: "#2a2620",
-  accent: "#3f5a2a",
+  // The mark is painted from the shared brand palette.
+  accent: YANTRA_THEMES.light.stroke,
+  dot: YANTRA_THEMES.light.dot,
 } as const;
 
 export const README_HERO_W = 1200;
@@ -23,7 +25,7 @@ export function ReadmeHero(): any {
   const yantra = yantraSvg({
     size: 280,
     stroke: COLORS.accent,
-    dot: COLORS.accent,
+    dot: COLORS.dot,
     strokeWidth: 0.7,
   });
   const yantraDataUrl = `data:image/svg+xml;base64,${Buffer.from(yantra).toString("base64")}`;

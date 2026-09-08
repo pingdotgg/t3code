@@ -77,9 +77,8 @@ export interface CostCategory extends Resource<
  * regardless of the stack region. Rules, the default value, and split-charge
  * rules are mutable in place; changing the name replaces the category.
  *
- * @resource
- * @section Creating Cost Categories
- * @example Categorize by linked account name
+ * ### Creating Cost Categories
+ * **Example:** Categorize by linked account name
  * ```typescript
  * import * as CostExplorer from "alchemy/AWS/CostExplorer";
  *
@@ -101,7 +100,7 @@ export interface CostCategory extends Resource<
  * });
  * ```
  *
- * @example Categorize by cost allocation tag
+ * **Example:** Categorize by cost allocation tag
  * ```typescript
  * const category = yield* CostExplorer.CostCategory("Team", {
  *   rules: [
@@ -115,6 +114,8 @@ export interface CostCategory extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const CostCategory = Resource<CostCategory>(
   "AWS.CostExplorer.CostCategory",

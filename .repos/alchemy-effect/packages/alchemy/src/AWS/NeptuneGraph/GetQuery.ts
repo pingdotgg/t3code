@@ -9,15 +9,16 @@ import type { Graph } from "./Graph.ts";
  *
  * Retrieves the status of a query running on the bound graph (IAM action `neptune-graph:GetQueryStatus`). Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.GetQueryHttp)`.
- * @binding
- * @section Managing Queries
- * @example Check a running query
+ * ### Managing Queries
+ * **Example:** Check a running query
  * ```typescript
  * const getQuery = yield* NeptuneGraph.GetQuery(graph);
  *
  * const status = yield* getQuery({ queryId });
  * // status.state → "RUNNING" | "WAITING" | "CANCELLING"
  * ```
+ *
+ * @binding
  */
 export interface GetQuery extends Binding.Service<
   GetQuery,

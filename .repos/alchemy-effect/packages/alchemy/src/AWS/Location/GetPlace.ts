@@ -19,15 +19,16 @@ export interface GetPlaceRequest extends Omit<
  * `geo:GetPlace`), scoped to one {@link PlaceIndex}. Provide the implementation with
  * `Effect.provide(AWS.Location.GetPlaceHttp)`.
  *
- * @binding
- * @section Searching Places
- * @example Fetch Place Details
+ * ### Searching Places
+ * **Example:** Fetch Place Details
  * ```typescript
  * const getPlace = yield* Location.GetPlace(index);
  *
  * const place = yield* getPlace({ PlaceId: placeId });
  * // place.Place.Label, place.Place.Geometry.Point
  * ```
+ *
+ * @binding
  */
 export interface GetPlace extends Binding.Service<
   GetPlace,

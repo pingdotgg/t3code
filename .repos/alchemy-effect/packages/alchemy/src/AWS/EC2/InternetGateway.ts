@@ -16,6 +16,7 @@ import { AWSEnvironment, type AccountID } from "../Environment.ts";
 import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import { getDefaultVpcScope } from "./defaultVpcScope.ts";
+import { retryWhileLingeringEnis } from "./LingeringEnis.ts";
 import type { VpcId } from "./Vpc.ts";
 
 export type InternetGatewayId<ID extends string = string> = `igw-${ID}`;
@@ -80,14 +81,13 @@ export interface InternetGateway extends Resource<
  * `0.0.0.0/0` {@link Route} pointing at the gateway and a
  * {@link RouteTableAssociation} binding the subnet to that route table.
  *
- * @resource
- * @section Creating an Internet Gateway
+ * ### Creating an Internet Gateway
  * Pass `vpcId` to create and attach the gateway in one step, or omit it to
  * create a standalone gateway and attach it later by setting the prop. Updating
  * `vpcId` moves the gateway between VPCs (detach then attach) without
  * recreating it.
  *
- * @example Internet Gateway Attached to a VPC
+ * **Example:** Internet Gateway Attached to a VPC
  * ```typescript
  * const internetGateway = yield* AWS.EC2.InternetGateway("InternetGateway", {
  *   vpcId: myVpc.vpcId,
@@ -97,7 +97,7 @@ export interface InternetGateway extends Resource<
  * `internetGatewayId` (prefixed `igw-`) is what you reference from a route's
  * `gatewayId`.
  *
- * @example Detached Internet Gateway
+ * **Example:** Detached Internet Gateway
  * ```typescript
  * const internetGateway = yield* AWS.EC2.InternetGateway("InternetGateway", {});
  * ```
@@ -105,7 +105,7 @@ export interface InternetGateway extends Resource<
  * when the VPC is provisioned separately; add the `vpcId` prop later to attach
  * it.
  *
- * @example Internet Gateway with Tags
+ * **Example:** Internet Gateway with Tags
  * ```typescript
  * const internetGateway = yield* AWS.EC2.InternetGateway("InternetGateway", {
  *   vpcId: myVpc.vpcId,
@@ -115,12 +115,12 @@ export interface InternetGateway extends Resource<
  * The `tags` map is merged with the alchemy auto-tags and can be changed in
  * place. A `Name` tag makes the gateway easy to identify in the AWS console.
  *
- * @section Enabling Public Internet Access
+ * ### Enabling Public Internet Access
  * An internet gateway only carries traffic once a route table sends traffic to
  * it and a subnet is associated with that table. The full pattern below makes a
  * subnet public.
  *
- * @example Internet Gateway with a Default Route
+ * **Example:** Internet Gateway with a Default Route
  * ```typescript
  * const internetGateway = yield* AWS.EC2.InternetGateway("InternetGateway", {
  *   vpcId: myVpc.vpcId,
@@ -139,6 +139,8 @@ export interface InternetGateway extends Resource<
  * With the default route in place, any subnet associated with
  * `publicRouteTable` can send and receive internet traffic. Add an analogous
  * route with `destinationIpv6CidrBlock: "::/0"` to enable IPv6.
+ *
+ * @resource
  */
 export const InternetGateway = Resource<InternetGateway>(
   "AWS.EC2.InternetGateway",
@@ -376,41 +378,36 @@ export const InternetGatewayProvider = () =>
           }
           const attachments = igw.Attachments ?? [];
 
-          // 1. Detach from all VPCs first
+          // 1. Detach from all VPCs first. DetachInternetGateway fails with
+          // DependencyViolation ("has some mapped public address(es)") while
+          // any ENI in the VPC still holds a public IP — a just-deleted VPC
+          // Lambda's Hyperplane ENIs or draining Fargate task ENIs can hold
+          // theirs for 5-20 minutes after the owner is gone. Ride that
+          // window out on the same budget the subnet delete uses, reaping
+          // detached Lambda ENIs between attempts to accelerate the release.
           if (attachments.length > 0) {
             for (const attachment of attachments) {
-              yield* ec2
-                .detachInternetGateway({
-                  InternetGatewayId: internetGatewayId,
-                  VpcId: attachment.VpcId!,
-                })
-                .pipe(
-                  Effect.tapError(Effect.logDebug),
-                  Effect.catchTag("Gateway.NotAttached", () => Effect.void),
-                  Effect.catchTag(
-                    "InvalidInternetGatewayID.NotFound",
-                    () => Effect.void,
-                  ),
-                  // Retry on dependency violations (e.g., NAT Gateway with EIP still attached)
-                  Effect.retry({
-                    while: (e) => {
-                      return e._tag === "DependencyViolation";
-                    },
-                    // Public addresses on a draining EKS/HyperPod control
-                    // plane's ENIs can take several minutes to release —
-                    // 5s x 60 = ~5 min.
-                    schedule: Schedule.max([
-                      Schedule.fixed(5000),
-                      Schedule.recurs(60),
-                    ]).pipe(
-                      Schedule.tap(({ attempt }) =>
-                        session.note(
-                          `Waiting for VPC dependencies to clear before detaching... (attempt ${attempt})`,
-                        ),
-                      ),
+              yield* retryWhileLingeringEnis(
+                ec2
+                  .detachInternetGateway({
+                    InternetGatewayId: internetGatewayId,
+                    VpcId: attachment.VpcId!,
+                  })
+                  .pipe(
+                    Effect.tapError(Effect.logDebug),
+                    Effect.catchTag("Gateway.NotAttached", () => Effect.void),
+                    Effect.catchTag(
+                      "InvalidInternetGatewayID.NotFound",
+                      () => Effect.void,
                     ),
-                  }),
-                );
+                  ),
+                {
+                  scope: { name: "vpc-id", value: attachment.VpcId! },
+                  isDependencyViolation: (e) =>
+                    e._tag === "DependencyViolation",
+                  session,
+                },
+              );
               yield* session.note(`Detached from VPC: ${attachment.VpcId}`);
             }
           }

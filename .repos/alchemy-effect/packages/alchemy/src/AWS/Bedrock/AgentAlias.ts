@@ -84,9 +84,8 @@ export interface AgentAlias extends Resource<
  * to it, so redeploying an updated + prepared agent and recreating the alias
  * publishes a new version.
  *
- * @resource
- * @section Creating Aliases
- * @example Alias Pointing at the Current Agent
+ * ### Creating Aliases
+ * **Example:** Alias Pointing at the Current Agent
  * ```typescript
  * import * as Bedrock from "alchemy/AWS/Bedrock";
  *
@@ -100,13 +99,15 @@ export interface AgentAlias extends Resource<
  * });
  * ```
  *
- * @example Alias Pinned to a Specific Version
+ * **Example:** Alias Pinned to a Specific Version
  * ```typescript
  * const alias = yield* Bedrock.AgentAlias("prod", {
  *   agentId: agent.agentId,
  *   routingConfiguration: [{ agentVersion: "3" }],
  * });
  * ```
+ *
+ * @resource
  */
 export const AgentAlias = Resource<AgentAlias>("AWS.Bedrock.AgentAlias");
 

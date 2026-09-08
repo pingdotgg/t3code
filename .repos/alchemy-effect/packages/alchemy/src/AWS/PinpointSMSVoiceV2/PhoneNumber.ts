@@ -114,9 +114,8 @@ export interface PhoneNumber extends Resource<
  * Requesting a number incurs a monthly leasing fee and most number types
  * require account-level entitlement (spending limits, registration).
  * `SIMULATOR` numbers are the cheap, entitlement-free option for testing.
- * @resource
- * @section Requesting Phone Numbers
- * @example Simulator Number
+ * ### Requesting Phone Numbers
+ * **Example:** Simulator Number
  * ```typescript
  * import * as PinpointSMSVoiceV2 from "alchemy/AWS/PinpointSMSVoiceV2";
  *
@@ -128,7 +127,7 @@ export interface PhoneNumber extends Resource<
  * });
  * ```
  *
- * @example Toll-Free Number with a Custom Opt-Out List
+ * **Example:** Toll-Free Number with a Custom Opt-Out List
  * ```typescript
  * const optOuts = yield* PinpointSMSVoiceV2.OptOutList("OptOuts");
  * const number = yield* PinpointSMSVoiceV2.PhoneNumber("Sender", {
@@ -139,6 +138,8 @@ export interface PhoneNumber extends Resource<
  *   optOutListName: optOuts.optOutListName,
  * });
  * ```
+ *
+ * @resource
  */
 export const PhoneNumber = Resource<PhoneNumber>(
   "AWS.PinpointSMSVoiceV2.PhoneNumber",

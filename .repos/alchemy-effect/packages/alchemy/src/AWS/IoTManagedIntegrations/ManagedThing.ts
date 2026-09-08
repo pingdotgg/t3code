@@ -109,9 +109,8 @@ export interface ManagedThing extends Resource<
  * is a regional service available in a limited set of regions (e.g.
  * `eu-west-1`, `ca-central-1`).
  *
- * @resource
- * @section Creating Managed Things
- * @example Controller from a Wi-Fi Setup QR Code
+ * ### Creating Managed Things
+ * **Example:** Controller from a Wi-Fi Setup QR Code
  * ```typescript
  * const thing = yield* ManagedThing("Hub", {
  *   role: "CONTROLLER",
@@ -120,7 +119,7 @@ export interface ManagedThing extends Resource<
  * });
  * ```
  *
- * @example Device with a Credential Locker
+ * **Example:** Device with a Credential Locker
  * ```typescript
  * const locker = yield* CredentialLocker("DeviceCredentials", {});
  * const thing = yield* ManagedThing("Sensor", {
@@ -131,6 +130,8 @@ export interface ManagedThing extends Resource<
  *   serialNumber: "SN-0001",
  * });
  * ```
+ *
+ * @resource
  */
 export const ManagedThing = Resource<ManagedThing>(
   "AWS.IoTManagedIntegrations.ManagedThing",

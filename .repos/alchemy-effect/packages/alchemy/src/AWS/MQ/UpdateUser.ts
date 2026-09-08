@@ -12,9 +12,8 @@ import type { Broker } from "./Broker.ts";
  * applied at the next broker reboot or maintenance window; on RabbitMQ it
  * takes effect immediately. Provide the implementation with
  * `Effect.provide(AWS.MQ.UpdateUserHttp)`.
- * @binding
- * @section Managing Users
- * @example Rotate a User's Password
+ * ### Managing Users
+ * **Example:** Rotate a User's Password
  * ```typescript
  * const updateUser = yield* MQ.UpdateUser(broker);
  *
@@ -23,6 +22,8 @@ import type { Broker } from "./Broker.ts";
  *   Password: Redacted.make("NewSecretPassw0rd"),
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateUser extends Binding.Service<
   UpdateUser,

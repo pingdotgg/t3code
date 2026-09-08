@@ -20,14 +20,15 @@ export interface GetDocumentContentRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.GetDocumentContentHttp)`.
  *
- * @binding
- * @section Document Ingestion
- * @example Fetch a Document's Content
+ * ### Document Ingestion
+ * **Example:** Fetch a Document's Content
  * ```typescript
  * const getContent = yield* AWS.QBusiness.GetDocumentContent(index);
  *
  * const { presignedUrl } = yield* getContent({ documentId: "welcome" });
  * ```
+ *
+ * @binding
  */
 export interface GetDocumentContent extends Binding.Service<
   GetDocumentContent,

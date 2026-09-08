@@ -14,9 +14,8 @@ export interface DeleteItemRequest extends Omit<
  * Bind this operation to a `Table` inside a function runtime to get a callable
  * that deletes a single item by key, automatically injecting the table name.
  * Provide the `DeleteItemHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Writing Data
- * @example Delete an Item by Key
+ * ### Writing Data
+ * **Example:** Delete an Item by Key
  * ```typescript
  * const deleteItem = yield* AWS.DynamoDB.DeleteItem(table);
  *
@@ -27,6 +26,8 @@ export interface DeleteItemRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteItem extends Binding.Service<
   DeleteItem,

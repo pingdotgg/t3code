@@ -20,9 +20,8 @@ export interface ListAssociationsForLicenseConfigurationRequest extends Omit<
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.ListAssociationsForLicenseConfigurationHttp)`.
- * @binding
- * @section Reading License Configurations
- * @example List the Configuration's Resource Associations
+ * ### Reading License Configurations
+ * **Example:** List the Configuration's Resource Associations
  * ```typescript
  * // init
  * const listAssociations =
@@ -33,6 +32,8 @@ export interface ListAssociationsForLicenseConfigurationRequest extends Omit<
  * // runtime
  * const { LicenseConfigurationAssociations } = yield* listAssociations();
  * ```
+ *
+ * @binding
  */
 export interface ListAssociationsForLicenseConfiguration extends Binding.Service<
   ListAssociationsForLicenseConfiguration,

@@ -12,9 +12,8 @@ import type { Channel } from "./Channel.ts";
  * permanently, first delete or rotate the channel's stream key. The
  * channel ARN is injected from the binding. Provide the implementation
  * with `Effect.provide(AWS.IVS.StopStreamHttp)`.
- * @binding
- * @section Controlling Live Streams
- * @example Kick the Current Broadcast
+ * ### Controlling Live Streams
+ * **Example:** Kick the Current Broadcast
  * ```typescript
  * // init — bind the operation to the channel
  * const stopStream = yield* AWS.IVS.StopStream(channel);
@@ -24,6 +23,8 @@ import type { Channel } from "./Channel.ts";
  *   Effect.catchTag("ChannelNotBroadcasting", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface StopStream extends Binding.Service<
   StopStream,

@@ -107,11 +107,8 @@ export type ShareResource = Resource<
  * resource — the last entry cannot be deleted (delete the `Share` instead).
  * Do not manage the same entry both inline on `Share.resources` and through
  * this resource.
- * @resource
- * @product Resource Sharing
- * @category Account & Identity
- * @section Adding a Resource to a Share
- * @example Share an additional gateway policy
+ * ### Adding a Resource to a Share
+ * **Example:** Share an additional gateway policy
  * ```typescript
  * const entry = yield* Cloudflare.ResourceSharing.ShareResource("ExtraPolicy", {
  *   shareId: share.shareId,
@@ -120,8 +117,8 @@ export type ShareResource = Resource<
  * });
  * ```
  *
- * @section Updating Metadata
- * @example Update `meta` in place
+ * ### Updating Metadata
+ * **Example:** Update `meta` in place
  * ```typescript
  * const entry = yield* Cloudflare.ResourceSharing.ShareResource("ExtraPolicy", {
  *   shareId: share.shareId,
@@ -132,6 +129,10 @@ export type ShareResource = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-account-resources/
+ *
+ * @resource
+ * @product Resource Sharing
+ * @category Account & Identity
  */
 export const ShareResource = Resource<ShareResource>(TypeId);
 

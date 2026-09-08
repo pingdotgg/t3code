@@ -25,7 +25,7 @@ export class IoTBindingsFunction extends AWS.Lambda.Function<AWS.Lambda.Function
 export default IoTBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const thing = yield* AWS.IoT.Thing("BindingsThing", {

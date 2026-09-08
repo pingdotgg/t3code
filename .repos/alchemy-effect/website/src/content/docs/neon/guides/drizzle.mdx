@@ -50,10 +50,10 @@ writes a new `{timestamp}_migration/` directory containing
 be checked in, and removing the resource from the stack never
 deletes them.
 
-## Feed `migrationsDir` from the schema
+## Feed `migrations` from the schema
 
 Wire the schema's `out` output into the Neon resource's
-`migrationsDir`:
+`migrations`:
 
 ```typescript
 import * as Neon from "alchemy/Neon";
@@ -64,14 +64,14 @@ const project = yield* Neon.Project("app-db", {
 
 const branch = yield* Neon.Branch("app-branch", {
   project,
-  migrationsDir: schema.out,
+  migrations: schema,
 });
 ```
 
 Because `Neon.Branch` depends on `schema.out`, the engine orders
 them for you: `Drizzle.Schema` regenerates pending migration SQL
 first, then `Neon.Branch` scans the directory and applies any new
-files transactionally, recording each in the `neon_migrations`
+files transactionally, recording each in the `__alchemy_migrations`
 tracking table so it runs exactly once. The same prop works on
 `Neon.Project` if you migrate the default branch directly — see
 [Migrations](/neon/data/migrations) for the tracking and hashing

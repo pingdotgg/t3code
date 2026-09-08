@@ -1,0 +1,181 @@
+---
+title: Next.js
+description: Deploy a Next.js app to AWS with AWS.Website.Nextjs — the OpenNext serverless topology with streaming SSR, image optimization, and ISR wiring, plus next dev under alchemy dev.
+sidebar:
+  order: 9
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks @opennextjs/aws";
+
+`AWS.Website.Nextjs` deploys a [Next.js](https://nextjs.org) app to
+AWS using the [OpenNext](https://opennext.js.org/aws) serverless
+topology:
+
+- the Next server on a Lambda Function URL with response streaming
+- static assets and the prerender cache in S3, served through
+  CloudFront's edge router
+- a dedicated image-optimization Lambda behind `/_next/image`
+- ISR wiring: an SQS revalidation queue with a consumer Lambda and a
+  DynamoDB tag-cache table
+
+App Router and Pages Router both work — server components, API
+routes, middleware, server actions, dynamic segments, streaming SSR,
+and `getServerSideProps` pages all run in the Lambda.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks` and its OpenNext peer; the
+resource loads the package's `/nextjs/aws` export from your project
+at deploy time. They are only used at build time, so dev dependencies
+are enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure OpenNext
+
+Your `next.config.*` is loaded and honored as-is — the build runs a
+real `next build`, and Alchemy never rewrites the file. An
+`open-next.config.ts` is optional: when the project has none, a
+minimal default with the streaming server wrapper is generated for
+you. Keep your own file next to `next.config.*` to customize the
+OpenNext build:
+
+```typescript
+// open-next.config.ts
+export default {
+  default: {
+    override: {
+      wrapper: "aws-lambda-streaming",
+    },
+  },
+};
+```
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.Nextjs("Website");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyNextjsSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Statically-rendered pages are served from the S3 prerender cache;
+dynamic pages and route handlers stream from the server Lambda;
+`next/image` requests are handled by the dedicated optimizer.
+
+See
+[examples/aws-website-nextjs](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-website-nextjs)
+for the checked-in example.
+
+## Add environment variables
+
+The server function's environment is configured under `env` — plain
+values, or outputs from other resources in the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Nextjs("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: api.url,
++  },
+});
+```
+
+The values are set on the server Lambda at deploy time and injected
+into the dev server's process environment under `alchemy dev`, so
+server code reads the same values in both modes.
+
+## Read the environment in server code
+
+The OpenNext server runs in a plain Node Lambda, so route handlers,
+server components, and server actions read the environment from
+`process.env`:
+
+```typescript
+// app/api/hello/route.ts
+export function GET() {
+  return Response.json({ greeting: process.env.GREETING ?? "hello" });
+}
+```
+
+## ISR
+
+Incremental Static Regeneration works out of the box — the resource
+provisions the OpenNext cache infrastructure for you:
+
+- the ISR/fetch cache lives in a dedicated S3 bucket
+- `revalidatePath` / `revalidateTag` purge entries through the
+  DynamoDB tag-cache table
+- time-based `revalidate` windows regenerate pages in the background
+  through the SQS FIFO revalidation queue and its consumer Lambda
+
+There is no cache configuration to write — the resource wires
+OpenNext's standard cache environment (`CACHE_BUCKET_NAME`,
+`CACHE_DYNAMO_TABLE`, `REVALIDATION_QUEUE_URL`) onto the server
+Lambda automatically, so OpenNext's default S3 / DynamoDB / SQS
+overrides just work.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs `next dev` (native HMR, Turbopack) instead of
+deploying; `site.url` is the local address and no AWS resources are
+created. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* AWS.Website.Nextjs("Web", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The hosted zone is inferred from the hostname. Pass `hostedZoneId` to
+pin it when several zones could match.

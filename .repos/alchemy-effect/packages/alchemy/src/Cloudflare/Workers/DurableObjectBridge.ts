@@ -9,6 +9,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { HttpServerResponse } from "effect/unstable/http";
+import { buildEventTelemetry } from "../../Telemetry.ts";
 import type {
   DurableObjectExport,
   DurableObjectShape,
@@ -62,7 +63,7 @@ export const makeDurableObjectBridge =
 
         this.#instance = state.blockConcurrencyWhile(() =>
           build((promise) => void (state as any).waitUntil?.(promise)).then(
-            ({ context, export: exported }) => {
+            ({ context, export: exported, telemetry }) => {
               const { constructor, services } = exported;
               const doContext = Layer.succeed(
                 DurableObjectState,
@@ -76,7 +77,12 @@ export const makeDurableObjectBridge =
                 Effect.flatMap((instance) =>
                   instance.pipe(Effect.provide(doContext)),
                 ),
-                Effect.map((instance) => ({ instance, services, context })),
+                Effect.map((instance) => ({
+                  instance,
+                  services,
+                  context,
+                  telemetry,
+                })),
                 Effect.runPromise,
               );
             },
@@ -124,16 +130,25 @@ export const makeDurableObjectBridge =
       ) {
         const scope = Scope.makeUnsafe();
 
-        const { instance, services, context } = await this.#instance;
+        const { instance, services, context, telemetry } = await this.#instance;
 
         return fn(instance)
           .pipe(
             Effect.provide(
-              Layer.succeed(
-                DurableObjectState,
-                fromDurableObjectState(this.#state),
+              Layer.mergeAll(
+                Layer.succeed(
+                  DurableObjectState,
+                  fromDurableObjectState(this.#state),
+                ),
+                Layer.succeed(Scope.Scope, scope),
+                // The configured telemetry exporters, attached to the *call*
+                // scope by `buildEventTelemetry` so buffered telemetry
+                // flushes when the scope closes into `waitUntil` below (the
+                // isolate scope never finalizes on workerd).
+                Layer.effectContext(
+                  buildEventTelemetry(context, scope, telemetry()),
+                ),
               ).pipe(
-                Layer.provideMerge(Layer.succeed(Scope.Scope, scope)),
                 Layer.provideMerge(Layer.succeedContext(services)),
                 Layer.provideMerge(Layer.succeedContext(context)),
               ),
@@ -150,9 +165,13 @@ export const makeDurableObjectBridge =
           .finally(() =>
             isScopeEjected(scope)
               ? undefined
-              : Scope.close(scope, Exit.void).pipe(
-                  Effect.runPromise,
-                  (promise) => this.ctx.waitUntil(promise),
+              : this.ctx.waitUntil(
+                  // Match WorkerBridge: yield one macrotask so the
+                  // HttpMiddleware tracer's late span-end reaches the
+                  // telemetry exporter before the scope's flush finalizer.
+                  new Promise((resolve) => setTimeout(resolve, 0)).then(() =>
+                    Effect.runPromise(Scope.close(scope, Exit.void)),
+                  ),
                 ),
           );
       }

@@ -29,9 +29,8 @@ export interface StartRestoreJobRequest extends Omit<
  * overrides it. `backup:StartRestoreJob` authorizes on the recovery point's
  * underlying resource ARN, so the grant is on `*`. Provide the
  * implementation with `Effect.provide(AWS.Backup.StartRestoreJobHttp)`.
- * @binding
- * @section Restoring Recovery Points
- * @example Restore The Latest Recovery Point
+ * ### Restoring Recovery Points
+ * **Example:** Restore The Latest Recovery Point
  * ```typescript
  * const startRestoreJob = yield* AWS.Backup.StartRestoreJob(restoreRole);
  *
@@ -41,6 +40,8 @@ export interface StartRestoreJobRequest extends Omit<
  * });
  * yield* Effect.log(`restore job ${job.RestoreJobId} started`);
  * ```
+ *
+ * @binding
  */
 export interface StartRestoreJob extends Binding.Service<
   StartRestoreJob,

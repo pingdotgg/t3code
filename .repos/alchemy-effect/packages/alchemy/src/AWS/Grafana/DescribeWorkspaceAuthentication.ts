@@ -12,9 +12,8 @@ import type { Workspace } from "./Workspace.ts";
  * (`AWS_SSO`, `SAML`) and, for SAML, the IdP metadata, assertion-attribute
  * mapping, and role values. Provide the implementation with
  * `Effect.provide(AWS.Grafana.DescribeWorkspaceAuthenticationHttp)`.
- * @binding
- * @section Managing Authentication
- * @example Inspect the SAML Configuration Status
+ * ### Managing Authentication
+ * **Example:** Inspect the SAML Configuration Status
  * ```typescript
  * const describeAuth = yield* Grafana.DescribeWorkspaceAuthentication(workspace);
  *
@@ -22,6 +21,8 @@ import type { Workspace } from "./Workspace.ts";
  * // authentication.providers → ["SAML"]
  * // authentication.saml?.status → "CONFIGURED" | "NOT_CONFIGURED"
  * ```
+ *
+ * @binding
  */
 export interface DescribeWorkspaceAuthentication extends Binding.Service<
   DescribeWorkspaceAuthentication,

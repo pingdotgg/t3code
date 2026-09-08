@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Lists the members of a group in the bound instance's identity store, one page per call (`NextToken` paginates). The instance's
  * `IdentityStoreId` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.ListGroupMembershipsHttp)`.
- * @binding
- * @section Querying Group Memberships
- * @example Enumerate a Group's Members
+ * ### Querying Group Memberships
+ * **Example:** Enumerate a Group's Members
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const listGroupMemberships = yield* AWS.IdentityCenter.ListGroupMemberships(instance);
@@ -22,6 +21,8 @@ import type { Instance } from "./Instance.ts";
  *   GroupId: groupId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListGroupMemberships extends Binding.Service<
   ListGroupMemberships,

@@ -16,9 +16,8 @@ export interface DisassociateQAppFromUserRequest extends Omit<
  *
  * Removes the bound Q App from the calling identity's inventory of favorited apps. Provide the implementation with
  * `Effect.provide(AWS.QApps.DisassociateQAppFromUserHttp)`.
- * @binding
- * @section User Inventory
- * @example Unfavorite the App
+ * ### User Inventory
+ * **Example:** Unfavorite the App
  * ```typescript
  * // init — bind the operation to the Q App
  * const disassociateQAppFromUser = yield* AWS.QApps.DisassociateQAppFromUser(app);
@@ -26,6 +25,8 @@ export interface DisassociateQAppFromUserRequest extends Omit<
  * // runtime
  * yield* disassociateQAppFromUser();
  * ```
+ *
+ * @binding
  */
 export interface DisassociateQAppFromUser extends Binding.Service<
   DisassociateQAppFromUser,

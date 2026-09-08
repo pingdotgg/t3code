@@ -18,13 +18,12 @@ export interface GetWirelessDeviceStatisticsRequest extends Omit<
  * gateway metadata, battery level, device state) from a deployed Lambda or
  * Task.
  *
- * @binding
- * @section Reading Device Statistics
+ * ### Reading Device Statistics
  * Provide the `GetWirelessDeviceStatisticsHttp` implementation layer on the
  * Function effect, bind the device in the init phase, then call the
  * returned client at runtime.
  *
- * @example Check When the Device Last Reported
+ * **Example:** Check When the Device Last Reported
  * ```typescript
  * // init
  * const getStats = yield* AWS.IoTWireless.GetWirelessDeviceStatistics(device);
@@ -35,6 +34,8 @@ export interface GetWirelessDeviceStatisticsRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTWireless.GetWirelessDeviceStatisticsHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetWirelessDeviceStatistics extends Binding.Service<
   GetWirelessDeviceStatistics,

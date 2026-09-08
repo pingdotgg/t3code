@@ -115,9 +115,8 @@ export interface ResolverEndpoint extends Resource<
  * Endpoint provisioning is asynchronous (typically 1-2 minutes); the
  * provider waits (bounded) for the endpoint to become `OPERATIONAL` so
  * dependent resolver rules can use it immediately.
- * @resource
- * @section Creating Endpoints
- * @example Inbound Endpoint
+ * ### Creating Endpoints
+ * **Example:** Inbound Endpoint
  * ```typescript
  * import * as Route53Resolver from "alchemy/AWS/Route53Resolver";
  *
@@ -131,7 +130,7 @@ export interface ResolverEndpoint extends Resource<
  * });
  * ```
  *
- * @example Outbound Endpoint with Fixed IPs
+ * **Example:** Outbound Endpoint with Fixed IPs
  * ```typescript
  * const outbound = yield* Route53Resolver.ResolverEndpoint("Outbound", {
  *   direction: "OUTBOUND",
@@ -143,8 +142,8 @@ export interface ResolverEndpoint extends Resource<
  * });
  * ```
  *
- * @section Forwarding Queries
- * @example Forward a Domain through an Outbound Endpoint
+ * ### Forwarding Queries
+ * **Example:** Forward a Domain through an Outbound Endpoint
  * ```typescript
  * const rule = yield* Route53Resolver.ResolverRule("CorpForward", {
  *   domainName: "corp.example.com",
@@ -152,6 +151,8 @@ export interface ResolverEndpoint extends Resource<
  *   targetIps: [{ ip: "192.168.1.10" }],
  * });
  * ```
+ *
+ * @resource
  */
 export const ResolverEndpoint = Resource<ResolverEndpoint>(
   "AWS.Route53Resolver.ResolverEndpoint",

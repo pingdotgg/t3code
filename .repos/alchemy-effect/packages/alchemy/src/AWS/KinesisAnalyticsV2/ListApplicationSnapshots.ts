@@ -12,14 +12,15 @@ export interface ListApplicationSnapshotsRequest extends Omit<
  * Runtime binding for `kinesisanalytics:ListApplicationSnapshots` — pages
  * through the bound application's snapshots, e.g. to find the newest
  * savepoint or prune old ones with {@link DeleteApplicationSnapshot}.
- * @binding
- * @section Managing Snapshots
- * @example List snapshots
+ * ### Managing Snapshots
+ * **Example:** List snapshots
  * ```typescript
  * const listSnapshots = yield* AWS.KinesisAnalyticsV2.ListApplicationSnapshots(app);
  *
  * const { SnapshotSummaries } = yield* listSnapshots({ Limit: 50 });
  * ```
+ *
+ * @binding
  */
 export interface ListApplicationSnapshots extends Binding.Service<
   ListApplicationSnapshots,

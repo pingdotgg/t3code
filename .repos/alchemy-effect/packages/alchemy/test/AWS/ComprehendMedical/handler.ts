@@ -20,7 +20,7 @@ export class ComprehendMedicalTestFunction extends Lambda.Function<Lambda.Functi
 export default ComprehendMedicalTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Comprehend Medical inference can exceed Lambda's 3s default under load.
     timeout: Duration.seconds(30),
   },

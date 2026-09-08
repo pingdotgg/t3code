@@ -104,9 +104,8 @@ export interface RuleGroup extends Resource<
  * The `capacity` (web ACL capacity units, WCU) is fixed at creation;
  * changing it replaces the rule group.
  *
- * @resource
- * @section Creating Rule Groups
- * @example Rule Group with a Byte-Match Rule
+ * ### Creating Rule Groups
+ * **Example:** Rule Group with a Byte-Match Rule
  * ```typescript
  * const group = yield* AWS.WAFv2.RuleGroup("BlockAdminPaths", {
  *   capacity: 50,
@@ -133,7 +132,7 @@ export interface RuleGroup extends Resource<
  * });
  * ```
  *
- * @example Reference from a Web ACL
+ * **Example:** Reference from a Web ACL
  * ```typescript
  * const acl = yield* AWS.WAFv2.WebACL("Firewall", {
  *   rules: [
@@ -153,6 +152,8 @@ export interface RuleGroup extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const RuleGroup = Resource<RuleGroup>("AWS.WAFv2.RuleGroup");
 

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * status (`HEALTHY` / `UNHEALTHY`), thing group, or nucleus runtime — the
  * entry point for fleet-health dashboards. Provide the implementation with
  * `Effect.provide(AWS.GreengrassV2.ListCoreDevicesHttp)`.
- * @binding
- * @section Managing Core Devices
- * @example Find Unhealthy Core Devices
+ * ### Managing Core Devices
+ * **Example:** Find Unhealthy Core Devices
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listCoreDevices = yield* AWS.GreengrassV2.ListCoreDevices();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { coreDevices } = yield* listCoreDevices({ status: "UNHEALTHY" });
  * ```
+ *
+ * @binding
  */
 export interface ListCoreDevices extends Binding.Service<
   ListCoreDevices,

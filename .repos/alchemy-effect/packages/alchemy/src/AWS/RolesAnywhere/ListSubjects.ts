@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * authenticated, and when they were last seen.
  * Account-level operation — the binding takes no resource argument. Provide
  * the implementation with `Effect.provide(AWS.RolesAnywhere.ListSubjectsHttp)`.
- * @binding
- * @section Auditing Certificate Identities
- * @example List Authenticated Subjects
+ * ### Auditing Certificate Identities
+ * **Example:** List Authenticated Subjects
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listSubjects = yield* AWS.RolesAnywhere.ListSubjects();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { subjects } = yield* listSubjects();
  * ```
+ *
+ * @binding
  */
 export interface ListSubjects extends Binding.Service<
   ListSubjects,

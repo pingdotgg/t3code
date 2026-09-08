@@ -10,9 +10,8 @@ import type { Queue } from "./Queue.ts";
  * expressions (name, status, user, parameters, dates). The queue's
  * `farmId`/`queueIds: [queueId]` are injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.Deadline.SearchJobsHttp)`.
- * @binding
- * @section Monitoring Jobs
- * @example Find Failed Jobs
+ * ### Monitoring Jobs
+ * **Example:** Find Failed Jobs
  * ```typescript
  * // init — bind the operation to the queue
  * const searchJobs = yield* AWS.Deadline.SearchJobs(queue);
@@ -34,6 +33,8 @@ import type { Queue } from "./Queue.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface SearchJobs extends Binding.Service<
   SearchJobs,

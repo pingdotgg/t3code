@@ -171,11 +171,8 @@ export type Rule = Resource<
  * `dns` rule with `action: "override"` that points an internal hostname at
  * a Cloudflare Tunnel — without it, WARP intercepts the lookup but has
  * nowhere to send the answer.
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section DNS override for a private app
- * @example Resolve an internal hostname through a Cloudflare Tunnel
+ * ### DNS override for a private app
+ * **Example:** Resolve an internal hostname through a Cloudflare Tunnel
  * ```typescript
  * const adminDns = yield* Cloudflare.Gateway.Rule("AdminMicroagiDns", {
  *   name: "research-admin-microagi-dns-override",
@@ -189,8 +186,8 @@ export type Rule = Resource<
  * });
  * ```
  *
- * @section Block a category
- * @example Block known phishing on HTTP
+ * ### Block a category
+ * **Example:** Block known phishing on HTTP
  * ```typescript
  * yield* Cloudflare.Gateway.Rule("BlockPhishing", {
  *   name: "block-phishing",
@@ -199,6 +196,10 @@ export type Rule = Resource<
  *   traffic: "any(http.request.uri.content_category[*] in {178})",
  * });
  * ```
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const Rule = Resource<Rule>("Cloudflare.Gateway.Rule");
 

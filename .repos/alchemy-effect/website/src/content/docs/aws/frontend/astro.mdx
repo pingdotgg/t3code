@@ -1,0 +1,230 @@
+---
+title: Astro
+description: Deploy an Astro app to AWS with AWS.Website.Astro — SSR on a streaming Lambda Function URL, static output on S3 + CloudFront, and Astro's own dev server under alchemy dev.
+sidebar:
+  order: 11
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`AWS.Website.Astro` deploys an [Astro](https://astro.build) project
+to AWS. It runs Astro's programmatic build with a wrangler-free AWS
+Lambda adapter: server-rendered pages stream from a Lambda Function
+URL, prerendered pages and client assets are served from a private S3
+bucket through CloudFront, routed at the edge. Your `astro.config.*`
+loads natively — there is no adapter to install into it and no
+CloudFormation to write.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/astro`
+and `/astro/aws` exports from your project at deploy time. It is only
+used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Astro
+
+Your `astro.config.*` file loads natively — integrations, Vite
+plugins, and any other non-serializable options work exactly as they
+do outside Alchemy. Alchemy merges a programmatic config *over* it:
+the AWS Lambda adapter is injected for you (don't declare an
+`adapter` in your config — that fails the build with an actionable
+error), and options passed via the `astro` prop override the file's —
+see [Astro configuration](#astro-configuration) below for the
+details.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.Astro("Website");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyAstroSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages are server-rendered by default. Pages that
+`export const prerender = true` are uploaded to S3 and served from
+the edge without invoking the server.
+
+See
+[examples/aws-website-astro](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-website-astro)
+for the checked-in example.
+
+## Add environment variables
+
+The server function's environment is configured under `env` — plain
+values, or outputs from other resources in the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Astro("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: api.url,
++  },
+});
+```
+
+The values are set on the Lambda at deploy time and injected into the
+dev server's process environment under `alchemy dev`, so server code
+reads the same values in both modes.
+
+## Read the environment in server code
+
+The Astro server runs in a plain Node Lambda, so server-rendered
+pages and endpoints read the environment from `process.env`:
+
+```astro
+---
+// src/pages/index.astro
+const greeting = process.env.GREETING ?? "hello";
+---
+
+<h1>{greeting}</h1>
+```
+
+## Fully static sites
+
+With `astro: { output: "static" }` every page is prerendered at
+build time and the deploy is assets-only — no Lambda is created, and
+the S3 + CloudFront asset layer answers every request:
+
+```typescript
+export const Website = AWS.Website.Astro("Website", {
+  astro: { output: "static" },
+  errorPage: "404.html",
+});
+```
+
+`errorPage` serves the built `404.html` for unmatched routes; `spa`
+answers misses with the index page (200) instead.
+
+## Astro configuration
+
+Your `astro.config.*` is the primary place to configure Astro —
+integrations, Vite plugins, and every other option (serializable or
+not) work as usual:
+
+```typescript
+// astro.config.ts
+import { defineConfig } from "astro/config";
+import react from "@astrojs/react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  site: "https://blog.example.com",
+  integrations: [react()],
+  vite: {
+    plugins: [tailwindcss()],
+  },
+});
+```
+
+A config file can't consume Alchemy `Output`s or vary by stage. For
+those values the `astro` prop is a deploy-time override bag — a
+serializable subset (`site`, `base`, `output`, `srcDir`, `publicDir`,
+`outDir`, `trailingSlash`) merged *over* the config file, so a value
+set here wins:
+
+```typescript
+// alchemy.run.ts
+import { Stack } from "alchemy/Stack";
+
+Effect.gen(function* () {
+  const { stage } = yield* Stack;
+
+  const site = yield* AWS.Website.Astro("Website", {
+    astro: {
+      site:
+        stage === "prod"
+          ? "https://blog.example.com"
+          : `https://${stage}.example.com`,
+    },
+  });
+});
+```
+
+Use `config` to load an alternate config file (relative to
+`rootDir`) instead of astro's own `astro.config.*` discovery:
+
+```typescript
+export const Website = AWS.Website.Astro("Website", {
+  config: "astro.deploy.config.ts",
+});
+```
+
+Two options are managed for you regardless of the config file:
+
+- `adapter` — Alchemy injects its wrangler-free AWS Lambda adapter.
+  Declaring an adapter in `astro.config.*` fails the build with an
+  actionable error.
+- `output` — Alchemy defaults it to `"server"` (superseding a
+  file-level `output`), so pages render on demand in the Lambda.
+  Opt into a fully prerendered site with `astro: { output: "static" }`
+  on the resource.
+
+## Local dev
+
+`alchemy dev` runs Astro's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no AWS resources are
+created. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* AWS.Website.Astro("Web", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The hosted zone is inferred from the hostname. Pass `hostedZoneId` to
+pin it when several zones could match.
+
+:::note
+Astro's default image service uses `sharp`. To use Astro image
+optimization on AWS, add `sharp` as a project dependency so it ships
+with the server bundle.
+:::

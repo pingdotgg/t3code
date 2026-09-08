@@ -22,14 +22,13 @@ export interface UpdateListRequest extends Omit<
  * deploy (a `REPLACE` update), so elements appended at runtime are removed by
  * the next deploy unless they are also added to the resource's props.
  *
- * @binding
- * @section Updating List Elements
+ * ### Updating List Elements
  * Provide the `UpdateListHttp` implementation layer on the Function effect,
  * bind the list in the init phase, then call the returned client at runtime.
  * The binding grants `frauddetector:UpdateList` on the list and injects its
  * `name` automatically.
  *
- * @example Append from a Lambda
+ * **Example:** Append from a Lambda
  * ```typescript
  * // init
  * const updateList = yield* FraudDetector.UpdateList(blockedIps);
@@ -44,6 +43,8 @@ export interface UpdateListRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.UpdateListHttp))
  * ```
+ *
+ * @binding
  */
 export interface UpdateList extends Binding.Service<
   UpdateList,

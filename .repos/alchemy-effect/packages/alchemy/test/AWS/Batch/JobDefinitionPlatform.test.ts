@@ -92,7 +92,11 @@ test.provider.skipIf(!process.env.AWS_TEST_SLOW)(
           times: 60,
         }),
       );
-      expect(job?.status).toBe("SUCCEEDED");
+      // Include the reason so a FAILED run shows why (placement, pull, or a
+      // bootstrap crash all land here with different statusReasons).
+      expect(`${job?.status}: ${job?.statusReason ?? ""}`).toMatch(
+        /^SUCCEEDED:/,
+      );
 
       // The bundled Effect actually executed: its marker is in the job's
       // log stream (log delivery can lag the state change slightly).

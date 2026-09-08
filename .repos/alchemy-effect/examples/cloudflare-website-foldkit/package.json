@@ -1,0 +1,32 @@
+{
+  "name": "cloudflare-website-foldkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "effect": "catalog:effect",
+    "foldkit": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@foldkit/vite-plugin": "catalog:frontend",
+    "@tailwindcss/vite": "catalog:frontend",
+    "alchemy": "workspace:*",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-foldkit"
+  }
+}

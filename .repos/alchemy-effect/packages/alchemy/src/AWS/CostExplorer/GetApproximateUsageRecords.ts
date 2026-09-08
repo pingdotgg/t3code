@@ -15,9 +15,8 @@ export interface GetApproximateUsageRecordsRequest
  * usage records per service — useful for sizing Data Exports and CUR
  * deliveries before enabling them. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetApproximateUsageRecordsHttp)`.
- * @binding
- * @section Querying Cost and Usage
- * @example Estimate Usage Record Volume
+ * ### Querying Cost and Usage
+ * **Example:** Estimate Usage Record Volume
  * ```typescript
  * // init — account-level binding takes no resource
  * const getApproximateUsageRecords = yield* AWS.CostExplorer.GetApproximateUsageRecords();
@@ -29,6 +28,8 @@ export interface GetApproximateUsageRecordsRequest
  * });
  * const total = result.TotalRecords;
  * ```
+ *
+ * @binding
  */
 export interface GetApproximateUsageRecords extends Binding.Service<
   GetApproximateUsageRecords,

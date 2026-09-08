@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * operation spans many channels, so it is account-scoped. Provide the
  * implementation with
  * `Effect.provide(AWS.IVS.BatchStartViewerSessionRevocationHttp)`.
- * @binding
- * @section Revoking Viewer Sessions
- * @example Revoke a Viewer Across Channels
+ * ### Revoking Viewer Sessions
+ * **Example:** Revoke a Viewer Across Channels
  * ```typescript
  * // init — bind the account-level operation
  * const revokeViewerSessions =
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchStartViewerSessionRevocation extends Binding.Service<
   BatchStartViewerSessionRevocation,

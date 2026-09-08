@@ -11,9 +11,8 @@ import type { EnabledControl } from "./EnabledControl.ts";
  * Useful for drift-monitoring functions that alert when a guardrail drifts.
  * Provide the implementation with
  * `Effect.provide(AWS.ControlTower.GetEnabledControlHttp)`.
- * @binding
- * @section Inspecting an Enabled Control
- * @example Read the Enabled Control's Drift Status
+ * ### Inspecting an Enabled Control
+ * **Example:** Read the Enabled Control's Drift Status
  * ```typescript
  * // init — bind the operation to the enabled control
  * const getEnabledControl = yield* AWS.ControlTower.GetEnabledControl(guardrail);
@@ -22,6 +21,8 @@ import type { EnabledControl } from "./EnabledControl.ts";
  * const { enabledControlDetails } = yield* getEnabledControl();
  * console.log(enabledControlDetails.driftStatusSummary?.driftStatus);
  * ```
+ *
+ * @binding
  */
 export interface GetEnabledControl extends Binding.Service<
   GetEnabledControl,

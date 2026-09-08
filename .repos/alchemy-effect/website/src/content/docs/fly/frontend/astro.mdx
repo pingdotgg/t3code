@@ -1,0 +1,229 @@
+---
+title: Astro
+description: Deploy an Astro app to Fly with Fly.Website.Astro — Node SSR on a Machine, static output as a file server, and Astro's own dev server under alchemy dev.
+sidebar:
+  order: 11
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Fly.Website.Astro` deploys an [Astro](https://astro.build) project
+to Fly as a Node server on a Machine. Server-rendered pages run on
+a [`Fly.Service`](/fly/compute/services) (port 3000); static files
+are served first, then the Astro handler. Omit `app` and Alchemy
+creates a [`Fly.App`](/fly/compute/apps) plus a shared IPv4 so
+`https://{app}.fly.dev` answers. Your `astro.config.*` loads
+natively — don't declare an `adapter`.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/astro`
+and `/astro/node` exports from your project at deploy time. It is
+only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Astro
+
+Your `astro.config.*` file loads natively — integrations, Vite
+plugins, and any other non-serializable options work exactly as they
+do outside Alchemy. Alchemy merges a programmatic config *over* it:
+the Node adapter is injected for you (don't declare an `adapter` in
+your config — that fails the build with an actionable error), and
+options passed via the `astro` prop override the file's — see
+[Astro configuration](#astro-configuration) below for the details.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Fly from "alchemy/Fly";
+
+export const Website = Fly.Website.Astro("Website");
+```
+
+Pass `rootDir` if `package.json` is not at `.`. Pass `app` to put
+the Service on an App you already declared; otherwise the site
+creates `Fly.App("App")` under its namespace.
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyAstroSite",
+  {
+    providers: Fly.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages are server-rendered by default. Pages that
+`export const prerender = true` are prerendered at build time and
+served as static files.
+
+On deploy the site is one App, one Service on port 3000, and a
+shared IPv4. `site.url` is `https://{app}.fly.dev` (or
+`https://{domain}` when you set `domain`). `site.app`,
+`site.service`, `site.ip`, and `site.certificate` are undefined
+under `alchemy dev`.
+
+## Add environment variables
+
+Process environment is the top-level `env` prop — plain strings, or
+`Redacted` values. They are copied onto `process.env` before build
+and `alchemy dev`, and onto the Machine at deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Fly.Website.Astro("Website", {
++  env: {
++    GREETING: "Hello from Alchemy!",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+This is the hosted Node process, not Worker bindings.
+
+## Read the environment in server code
+
+The Astro server runs in Node on the Machine, so server-rendered
+pages and endpoints read the environment from `process.env`:
+
+```astro
+---
+// src/pages/index.astro
+const greeting = process.env.GREETING ?? "hello";
+---
+
+<h1>{greeting}</h1>
+```
+
+Astro inlines `PUBLIC_*` keys at build time. Because `env` is
+applied before the build, those keys behave the same as in a local
+`astro build`.
+
+## Fully static sites
+
+With `astro: { output: "static" }` every page is prerendered at
+build time and the deploy is assets-only — no Astro handler, just a
+static-file server on the Machine:
+
+```typescript
+export const Website = Fly.Website.Astro("Website", {
+  astro: { output: "static" },
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+`assets.notFoundHandling` applies only to `output: "static"`.
+`"404-page"` serves the built `404.html` for unmatched routes;
+`"single-page-application"` answers misses with the index page
+(200) instead.
+
+## Astro configuration
+
+Your `astro.config.*` is the primary place to configure Astro —
+integrations, Vite plugins, and every other option (serializable or
+not) work as usual:
+
+```typescript
+// astro.config.ts
+import { defineConfig } from "astro/config";
+import react from "@astrojs/react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  site: "https://blog.example.com",
+  integrations: [react()],
+  vite: {
+    plugins: [tailwindcss()],
+  },
+});
+```
+
+The `astro` prop on the resource exposes common serializable options
+for deploy-specific overrides; Astro merges them *over* the config
+file (scalars override, arrays like `integrations` and
+`vite.plugins` concatenate after the file's):
+
+```typescript
+// alchemy.run.ts
+export const Website = Fly.Website.Astro("Website", {
+  astro: {
+    site: "https://preview.example.com",
+  },
+});
+```
+
+Two options are managed for you regardless of the config file:
+
+- `adapter` — Alchemy injects the Node adapter. Declaring an
+  adapter in `astro.config.*` fails the build with an actionable
+  error.
+- `output` — Alchemy defaults it to `"server"` (superseding a
+  file-level `output`), so pages render on demand on the Machine.
+  Opt into a fully prerendered site with `astro: { output: "static" }`
+  on the resource.
+
+`site`, `base`, `srcDir`, `publicDir`, `outDir`, and
+`trailingSlash` are the other serializable keys on `astro`.
+
+## Local dev
+
+`alchemy dev` runs Astro's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Fly resources are
+created. Wrap the site in `Alchemy.remote()` to deploy the real
+App and Service even during dev.
+
+## Custom domain
+
+`domain` is a hostname string. The site requests an ACME
+[`Fly.Certificate`](/fly/networking#use-your-own-hostname) on the
+App and `url` becomes `https://{domain}`. Point DNS at the App
+yourself — v1 does not create DNS records:
+
+```typescript
+export const Website = Fly.Website.Astro("Website", {
+  domain: "app.example.com",
+});
+```
+
+## Where next
+
+- [`Fly.Website.Astro` reference](/providers/fly/website/astro) —
+  every prop and attribute.
+- [Services](/fly/compute/services) and [Apps](/fly/compute/apps) —
+  the Service and App the site creates.
+- [IPs & certificates](/fly/networking) — shared IPv4 and ACME.
+- [Setup](/fly/setup) — org, API token, and alchemy login.

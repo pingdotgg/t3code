@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DescribeProjectVersionsHttp)`.
  *
- * @binding
- * @section Custom Labels
- * @example Describe Model Versions
+ * ### Custom Labels
+ * **Example:** Describe Model Versions
  * ```typescript
  * // init
  * const describeProjectVersions = yield* AWS.Rekognition.DescribeProjectVersions();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const page = yield* describeProjectVersions({ ProjectArn: projectArn });
  * // page.ProjectVersionDescriptions
  * ```
+ *
+ * @binding
  */
 export interface DescribeProjectVersions extends Binding.Service<
   DescribeProjectVersions,

@@ -15,6 +15,8 @@ export * from "./DescribeTasks.ts";
 export * from "./DescribeTasksHttp.ts";
 export * from "./ExecuteCommand.ts";
 export * from "./ExecuteCommandHttp.ts";
+export * from "./FlociServiceProvider.ts";
+export * from "./FlociTaskProvider.ts";
 export * from "./GetTaskProtection.ts";
 export * from "./GetTaskProtectionHttp.ts";
 export * from "./ListContainerInstances.ts";

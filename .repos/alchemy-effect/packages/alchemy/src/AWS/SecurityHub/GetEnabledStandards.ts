@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.GetEnabledStandardsHttp)`.
- * @binding
- * @section Standards & Controls
- * @example List Enabled Standards
+ * ### Standards & Controls
+ * **Example:** List Enabled Standards
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getEnabledStandards = yield* AWS.SecurityHub.GetEnabledStandards();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { StandardsSubscriptions } = yield* getEnabledStandards();
  * ```
+ *
+ * @binding
  */
 export interface GetEnabledStandards extends Binding.Service<
   GetEnabledStandards,

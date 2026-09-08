@@ -12,9 +12,8 @@ export interface UpdateApiKeyRequest extends ag.UpdateApiKeyRequest {}
  * Provide `ApiGateway.UpdateApiKeyHttp` on the Function effect to
  * implement the binding.
  *
- * @binding
- * @section Managing API keys
- * @example Disable a key
+ * ### Managing API keys
+ * **Example:** Disable a key
  * ```typescript
  * // init
  * const updateApiKey = yield* ApiGateway.UpdateApiKey();
@@ -25,6 +24,8 @@ export interface UpdateApiKeyRequest extends ag.UpdateApiKeyRequest {}
  *   patchOperations: [{ op: "replace", path: "/enabled", value: "false" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateApiKey extends Binding.Service<
   UpdateApiKey,

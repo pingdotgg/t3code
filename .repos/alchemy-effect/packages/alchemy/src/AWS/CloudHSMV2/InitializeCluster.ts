@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * root certificate — lets a Function automate the activation ceremony
  * around your CA. The certificates are public key material. Provide the
  * implementation with `Effect.provide(AWS.CloudHSMV2.InitializeClusterHttp)`.
- * @binding
- * @section Activating a Cluster
- * @example Submit The Signed Cluster Certificate
+ * ### Activating a Cluster
+ * **Example:** Submit The Signed Cluster Certificate
  * ```typescript
  * const initializeCluster = yield* AWS.CloudHSMV2.InitializeCluster();
  *
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.State === "INITIALIZE_IN_PROGRESS"
  * ```
+ *
+ * @binding
  */
 export interface InitializeCluster extends Binding.Service<
   InitializeCluster,

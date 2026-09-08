@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.DescribeSolutionVersionHttp)`.
  *
- * @binding
- * @section Retraining Loop
- * @example Poll a Training Run
+ * ### Retraining Loop
+ * **Example:** Poll a Training Run
  * ```typescript
  * // init
  * const describeSolutionVersion = yield* Personalize.DescribeSolutionVersion();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const trained = solutionVersion?.status === "ACTIVE";
  * ```
+ *
+ * @binding
  */
 export interface DescribeSolutionVersion extends Binding.Service<
   DescribeSolutionVersion,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Deletes a manual Aurora cluster snapshot — the pruning half of a
  * snapshot-rotation function. Provide the implementation with
  * `Effect.provide(AWS.RDS.DeleteDBClusterSnapshotHttp)`.
- * @binding
- * @section Managing Cluster Snapshots
- * @example Prune an Old Cluster Snapshot
+ * ### Managing Cluster Snapshots
+ * **Example:** Prune an Old Cluster Snapshot
  * ```typescript
  * const deleteDBClusterSnapshot = yield* AWS.RDS.DeleteDBClusterSnapshot();
  *
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   DBClusterSnapshotIdentifier: oldSnapshotId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteDBClusterSnapshot extends Binding.Service<
   DeleteDBClusterSnapshot,

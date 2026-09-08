@@ -83,9 +83,8 @@ const normalize = (expression: LFTagPairSpec[]): LFTagPairSpec[] =>
  * `GRANT_WITH_LF_TAG_EXPRESSION` on the underlying LF-tag pairs — see
  * {@link DataLakeSettings | AWS.LakeFormation.DataLakeSettings}.
  *
- * @resource
- * @section Creating LF-Tag Expressions
- * @example Saved Expression over an Environment Tag
+ * ### Creating LF-Tag Expressions
+ * **Example:** Saved Expression over an Environment Tag
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -99,6 +98,8 @@ const normalize = (expression: LFTagPairSpec[]): LFTagPairSpec[] =>
  *   expression: [{ tagKey: tag.tagKey, tagValues: ["prod"] }],
  * });
  * ```
+ *
+ * @resource
  */
 export const LFTagExpression = Resource<LFTagExpression>(
   "AWS.LakeFormation.LFTagExpression",

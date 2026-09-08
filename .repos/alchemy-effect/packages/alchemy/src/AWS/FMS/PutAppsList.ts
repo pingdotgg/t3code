@@ -12,9 +12,8 @@ export interface PutAppsListRequest extends fms.PutAppsListRequest {}
  *
  * Creates or updates a Firewall Manager applications list. Provide the
  * implementation with `Effect.provide(AWS.FMS.PutAppsListHttp)`.
- * @binding
- * @section Applications Lists
- * @example Create an Applications List
+ * ### Applications Lists
+ * **Example:** Create an Applications List
  * ```typescript
  * // init — account-level binding takes no resource
  * const putAppsList = yield* AWS.FMS.PutAppsList();
@@ -28,6 +27,8 @@ export interface PutAppsListRequest extends fms.PutAppsListRequest {}
  * });
  * console.log(result.AppsList?.ListId);
  * ```
+ *
+ * @binding
  */
 export interface PutAppsList extends Binding.Service<
   PutAppsList,

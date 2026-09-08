@@ -15,15 +15,16 @@ export interface GetTaskProtectionRequest extends Omit<
  * callable that reads the scale-in protection status of service-managed tasks
  * in the bound cluster. The cluster ARN is injected automatically and the
  * host is granted `ecs:GetTaskProtection` on the cluster's tasks.
- * @binding
- * @section Task Protection
- * @example Read a Task's Protection Status
+ * ### Task Protection
+ * **Example:** Read a Task's Protection Status
  * ```typescript
  * const getTaskProtection = yield* AWS.ECS.GetTaskProtection(cluster);
  *
  * const response = yield* getTaskProtection({ tasks: [taskArn] });
  * const protected_ = response.protectedTasks?.[0]?.protectionEnabled;
  * ```
+ *
+ * @binding
  */
 export interface GetTaskProtection extends Binding.Service<
   GetTaskProtection,

@@ -23,9 +23,8 @@ export interface CreateWhatsAppMessageTemplateMediaRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.CreateWhatsAppMessageTemplateMediaHttp)`.
- * @binding
- * @section Managing Message Templates
- * @example Upload Template Header Media
+ * ### Managing Message Templates
+ * **Example:** Upload Template Header Media
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const uploadTemplateMedia = yield* AWS.SocialMessaging.CreateWhatsAppMessageTemplateMedia(account);
@@ -35,6 +34,8 @@ export interface CreateWhatsAppMessageTemplateMediaRequest extends Omit<
  *   sourceS3File: { bucketName: "my-assets", key: "header.png" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateWhatsAppMessageTemplateMedia extends Binding.Service<
   CreateWhatsAppMessageTemplateMedia,

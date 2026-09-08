@@ -12,9 +12,8 @@ import type { ExperimentTemplate } from "./ExperimentTemplate.ts";
  * both the template and the `experiment/*` ARN the started experiment is
  * created under. Provide the implementation with
  * `Effect.provide(AWS.FIS.StartExperimentHttp)`.
- * @binding
- * @section Running Experiments
- * @example Start an Experiment from the Bound Template
+ * ### Running Experiments
+ * **Example:** Start an Experiment from the Bound Template
  * ```typescript
  * // init — bind the operation to the experiment template
  * const startExperiment = yield* AWS.FIS.StartExperiment(template);
@@ -23,6 +22,8 @@ import type { ExperimentTemplate } from "./ExperimentTemplate.ts";
  * const { experiment } = yield* startExperiment();
  * console.log(experiment?.id, experiment?.state?.status);
  * ```
+ *
+ * @binding
  */
 export interface StartExperiment extends Binding.Service<
   StartExperiment,

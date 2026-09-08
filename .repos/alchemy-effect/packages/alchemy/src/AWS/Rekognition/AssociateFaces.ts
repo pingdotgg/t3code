@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.AssociateFacesHttp)`.
  *
- * @binding
- * @section User Search
- * @example Associate Faces with a User
+ * ### User Search
+ * **Example:** Associate Faces with a User
  * ```typescript
  * // init
  * const associateFaces = yield* AWS.Rekognition.AssociateFaces();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.AssociatedFaces, result.UserStatus
  * ```
+ *
+ * @binding
  */
 export interface AssociateFaces extends Binding.Service<
   AssociateFaces,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.DeclineInvitationsHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Decline Invitations
+ * ### Administrator & Invitations
+ * **Example:** Decline Invitations
  * ```typescript
  * // init — account-level binding, no resource argument
  * const declineInvitations = yield* AWS.Macie2.DeclineInvitations();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* declineInvitations({ accountIds });
  * ```
+ *
+ * @binding
  */
 export interface DeclineInvitations extends Binding.Service<
   DeclineInvitations,

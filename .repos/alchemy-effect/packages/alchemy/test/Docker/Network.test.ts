@@ -6,7 +6,6 @@ import * as Test from "@/Test/Alchemy";
 import { describe, expect } from "alchemy-test";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import { isDockerReady } from "./Runtime.ts";
 
 const { test } = Test.make({
   providers: Docker.providers(),
@@ -37,8 +36,38 @@ test.provider("diff replaces a network when labels change", () =>
   }),
 );
 
+test.provider("diff replaces a network when its Docker context changes", () =>
+  Effect.gen(function* () {
+    const networkProvider = yield* Provider.findProvider(Docker.Network);
+    const networkDiff = yield* networkProvider.diff!({
+      id: "app",
+      fqn: "app",
+      instanceId: "instance",
+      olds: {
+        name: "app",
+        context: "default",
+      },
+      news: {
+        name: "app",
+        context: "remote-build",
+      },
+      oldBindings: [],
+      newBindings: [],
+      output: {
+        id: "app",
+        name: "app",
+        driver: "bridge",
+        enableIPv6: false,
+        labels: {},
+        createdAt: 0,
+      },
+    });
+    expect(networkDiff).toEqual({ action: "replace", deleteFirst: true });
+  }),
+);
+
 describe("Docker.Network", { concurrent: false }, () => {
-  test.provider.skipIf(!isDockerReady)("creates a bridge network", (stack) =>
+  test.provider("creates a bridge network", (stack) =>
     Effect.gen(function* () {
       const network = yield* stack.deploy(
         Docker.Network("created-network", {
@@ -54,7 +83,7 @@ describe("Docker.Network", { concurrent: false }, () => {
     }),
   );
 
-  test.provider.skipIf(!isDockerReady)(
+  test.provider(
     "refuses a pre-existing network unless explicitly adopted",
     (stack) =>
       Effect.gen(function* () {
@@ -88,7 +117,7 @@ describe("Docker.Network", { concurrent: false }, () => {
       }),
   );
 
-  test.provider.skipIf(!isDockerReady)(
+  test.provider(
     "adopts an existing same-name network with stack adoption",
     (stack) =>
       Effect.gen(function* () {
@@ -115,32 +144,30 @@ describe("Docker.Network", { concurrent: false }, () => {
       }),
   );
 
-  test.provider.skipIf(!isDockerReady)(
-    "replaces a network when its labels change",
-    (stack) =>
-      Effect.gen(function* () {
-        const docker = yield* Docker.Docker;
-        const name = "alchemy-test-network-replace";
-        yield* docker.network
-          .remove(name)
-          .pipe(
-            Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
-          );
-        const first = yield* stack.deploy(
-          Docker.Network("replaceable-network", {
-            name,
-            labels: { generation: "1" },
-          }),
+  test.provider("replaces a network when its labels change", (stack) =>
+    Effect.gen(function* () {
+      const docker = yield* Docker.Docker;
+      const name = "alchemy-test-network-replace";
+      yield* docker.network
+        .remove(name)
+        .pipe(
+          Effect.catchReason("PlatformError", "NotFound", () => Effect.void),
         );
-        const second = yield* stack.deploy(
-          Docker.Network("replaceable-network", {
-            name,
-            labels: { generation: "2" },
-          }),
-        );
-        expect(second.id).not.toBe(first.id);
-        expect(second.labels.generation).toBe("2");
-      }),
+      const first = yield* stack.deploy(
+        Docker.Network("replaceable-network", {
+          name,
+          labels: { generation: "1" },
+        }),
+      );
+      const second = yield* stack.deploy(
+        Docker.Network("replaceable-network", {
+          name,
+          labels: { generation: "2" },
+        }),
+      );
+      expect(second.id).not.toBe(first.id);
+      expect(second.labels.generation).toBe("2");
+    }),
   );
 });
 

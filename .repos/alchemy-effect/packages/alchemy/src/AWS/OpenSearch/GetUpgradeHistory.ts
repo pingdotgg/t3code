@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Lists a domain's past engine-version upgrades and upgrade-eligibility checks, with per-step progress. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.GetUpgradeHistoryHttp)`.
- * @binding
- * @section Engine Upgrades
- * @example List Past Upgrades
+ * ### Engine Upgrades
+ * **Example:** List Past Upgrades
  * ```typescript
  * const getUpgradeHistory = yield* OpenSearch.GetUpgradeHistory();
  *
  * const result = yield* getUpgradeHistory({ DomainName: name });
  * // result.UpgradeHistories → past upgrades
  * ```
+ *
+ * @binding
  */
 export interface GetUpgradeHistory extends Binding.Service<
   GetUpgradeHistory,

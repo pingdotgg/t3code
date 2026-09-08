@@ -16,9 +16,8 @@ export interface UploadLayerPartRequest extends Omit<
  * {@link PublicRepository}. Provide the implementation with
  * `Effect.provide(AWS.ECRPublic.UploadLayerPartHttp)`.
  *
- * @binding
- * @section Pushing Images
- * @example Upload A Layer Part
+ * ### Pushing Images
+ * **Example:** Upload A Layer Part
  * ```typescript
  * // init
  * const uploadLayerPart = yield* AWS.ECRPublic.UploadLayerPart(repository);
@@ -31,6 +30,8 @@ export interface UploadLayerPartRequest extends Omit<
  *   layerPartBlob: blob,
  * });
  * ```
+ *
+ * @binding
  */
 export interface UploadLayerPart extends Binding.Service<
   UploadLayerPart,

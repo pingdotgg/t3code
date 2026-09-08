@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Polls one table-restore request started with
  * {@link RestoreTableFromSnapshot} or {@link RestoreTableFromRecoveryPoint}. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.GetTableRestoreStatusHttp)`.
- * @binding
- * @section Restoring Data
- * @example Poll a Table Restore
+ * ### Restoring Data
+ * **Example:** Poll a Table Restore
  * ```typescript
  * // init — resolve the runtime client
  * const getTableRestoreStatus = yield* AWS.RedshiftServerless.GetTableRestoreStatus();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   tableRestoreRequestId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetTableRestoreStatus extends Binding.Service<
   GetTableRestoreStatus,

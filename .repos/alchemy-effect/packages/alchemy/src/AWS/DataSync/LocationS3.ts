@@ -70,9 +70,8 @@ export interface LocationS3 extends Resource<
  * Reconcile is idempotent across state loss — the location is re-discovered
  * by its deterministic `s3://…` URI.
  *
- * @resource
- * @section Creating S3 Locations
- * @example Bucket root
+ * ### Creating S3 Locations
+ * **Example:** Bucket root
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -82,7 +81,7 @@ export interface LocationS3 extends Resource<
  * });
  * ```
  *
- * @example Prefix + storage class
+ * **Example:** Prefix + storage class
  * ```typescript
  * const dest = yield* AWS.DataSync.LocationS3("Dest", {
  *   s3BucketArn: bucket.bucketArn,
@@ -91,6 +90,8 @@ export interface LocationS3 extends Resource<
  *   s3StorageClass: "STANDARD_IA",
  * });
  * ```
+ *
+ * @resource
  */
 export const LocationS3 = Resource<LocationS3>("AWS.DataSync.LocationS3");
 

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * The binding takes no arguments and grants the action on `*` (job APIs
  * have no resource-level IAM).
  *
- * @binding
- * @section Monitoring Analysis Jobs
- * @example Poll a PiiEntitiesDetection Job
+ * ### Monitoring Analysis Jobs
+ * **Example:** Poll a PiiEntitiesDetection Job
  * ```typescript
  * // init
  * const describePiiEntitiesDetectionJob = yield* AWS.Comprehend.DescribePiiEntitiesDetectionJob();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const job = yield* describePiiEntitiesDetectionJob({ JobId: jobId });
  * // job.PiiEntitiesDetectionJobProperties?.JobStatus: "SUBMITTED" | "IN_PROGRESS" | "COMPLETED" | …
  * ```
+ *
+ * @binding
  */
 export interface DescribePiiEntitiesDetectionJob extends Binding.Service<
   DescribePiiEntitiesDetectionJob,

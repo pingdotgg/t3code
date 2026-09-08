@@ -113,11 +113,8 @@ export type List = Resource<
  * description, and items all converge in place. Items are managed as a
  * full set — the provider PUTs the complete desired item set and removes
  * anything not declared.
- * @resource
- * @product Gateway
- * @category Cloudflare One (Zero Trust)
- * @section Creating a List
- * @example Domain list
+ * ### Creating a List
+ * **Example:** Domain list
  * ```typescript
  * const blocked = yield* Cloudflare.Gateway.List("BlockedDomains", {
  *   type: "DOMAIN",
@@ -129,7 +126,7 @@ export type List = Resource<
  * });
  * ```
  *
- * @example IP list
+ * **Example:** IP list
  * ```typescript
  * const egress = yield* Cloudflare.Gateway.List("OfficeEgress", {
  *   type: "IP",
@@ -137,8 +134,8 @@ export type List = Resource<
  * });
  * ```
  *
- * @section Referencing from a Gateway Rule
- * @example Block DNS lookups for every domain in the list
+ * ### Referencing from a Gateway Rule
+ * **Example:** Block DNS lookups for every domain in the list
  * ```typescript
  * yield* Cloudflare.Gateway.Rule("BlockListedDomains", {
  *   action: "block",
@@ -148,6 +145,10 @@ export type List = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cloudflare-one/policies/gateway/lists/
+ *
+ * @resource
+ * @product Gateway
+ * @category Cloudflare One (Zero Trust)
  */
 export const List = Resource<List>(TypeId);
 

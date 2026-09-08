@@ -64,16 +64,13 @@ export type Setting = Resource<
  * ({@link Certificate}) and your origin is configured to
  * verify it — enabling the flag alone does not break traffic unless the
  * origin enforces mTLS.
- * @resource
- * @product Origin TLS Client Auth
- * @category SSL/TLS & Certificates
- * @section Enabling Authenticated Origin Pulls
- * @example Enable zone-level AOP
+ * ### Enabling Authenticated Origin Pulls
+ * **Example:** Enable zone-level AOP
  * ```typescript
  * const cert = yield* Cloudflare.OriginTlsClientAuth.Certificate("AopCert", {
  *   zoneId: zone.zoneId,
  *   certificate: clientCertPem,
- *   privateKey: alchemy.secret.env.AOP_CLIENT_KEY,
+ *   privateKey: yield* Config.redacted("AOP_CLIENT_KEY"),
  * });
  *
  * yield* Cloudflare.OriginTlsClientAuth.Setting("Aop", {
@@ -82,7 +79,7 @@ export type Setting = Resource<
  * });
  * ```
  *
- * @example Pin AOP off
+ * **Example:** Pin AOP off
  * ```typescript
  * yield* Cloudflare.OriginTlsClientAuth.Setting("Aop", {
  *   zoneId: zone.zoneId,
@@ -91,6 +88,10 @@ export type Setting = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/
+ *
+ * @resource
+ * @product Origin TLS Client Auth
+ * @category SSL/TLS & Certificates
  */
 export const Setting = Resource<Setting>(TypeId);
 

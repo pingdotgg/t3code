@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Returns the most recently recorded feedback (e.g. `VALID` / `NOT_VALID`) for an insight.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.DescribeFeedbackHttp)`.
- * @binding
- * @section Feedback
- * @example Read Recorded Feedback
+ * ### Feedback
+ * **Example:** Read Recorded Feedback
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeFeedback = yield* AWS.DevOpsGuru.DescribeFeedback();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const { InsightFeedback } = yield* describeFeedback({ InsightId: insightId });
  * yield* Effect.log(`feedback: ${InsightFeedback?.Feedback}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeFeedback extends Binding.Service<
   DescribeFeedback,

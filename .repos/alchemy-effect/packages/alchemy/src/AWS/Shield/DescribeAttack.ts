@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `AccessDeniedException`.
  * Provide the implementation with
  * `Effect.provide(AWS.Shield.DescribeAttackHttp)`.
- * @binding
- * @section Attack Visibility
- * @example Hydrate Attack Details
+ * ### Attack Visibility
+ * **Example:** Hydrate Attack Details
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeAttack = yield* AWS.Shield.DescribeAttack();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Attack } = yield* describeAttack({ AttackId: attackId });
  * ```
+ *
+ * @binding
  */
 export interface DescribeAttack extends Binding.Service<
   DescribeAttack,

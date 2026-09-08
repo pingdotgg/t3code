@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.DeleteMembersHttp)`.
- * @binding
- * @section Member Administration
- * @example Delete Members
+ * ### Member Administration
+ * **Example:** Delete Members
  * ```typescript
  * // init
  * const deleteMembers = yield* AWS.GuardDuty.DeleteMembers(detector);
@@ -20,6 +19,8 @@ import type { Detector } from "./Detector.ts";
  * // runtime
  * yield* deleteMembers({ AccountIds: ["111122223333"] });
  * ```
+ *
+ * @binding
  */
 export interface DeleteMembers extends Binding.Service<
   DeleteMembers,

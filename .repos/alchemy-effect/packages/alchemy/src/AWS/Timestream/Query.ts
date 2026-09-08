@@ -16,9 +16,8 @@ export interface QueryRequest extends TSQ.QueryRequest {}
  *
  * Provide `Timestream.QueryHttp` on the Function to implement the binding.
  *
- * @binding
- * @section Querying Data
- * @example Count rows in a table
+ * ### Querying Data
+ * **Example:** Count rows in a table
  * ```typescript
  * // init — bind the operation to the table
  * const query = yield* Timestream.Query(table);
@@ -29,6 +28,8 @@ export interface QueryRequest extends TSQ.QueryRequest {}
  * });
  * // result.Rows / result.ColumnInfo hold the result set
  * ```
+ *
+ * @binding
  */
 export interface Query extends Binding.Service<
   Query,

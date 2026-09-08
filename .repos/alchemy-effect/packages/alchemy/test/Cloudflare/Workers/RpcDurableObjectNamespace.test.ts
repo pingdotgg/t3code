@@ -52,7 +52,9 @@ const resetCounter = (url: string, id: string) =>
     yield* client.post(`${url}/counter/${id}/reset`).pipe(retryHttp);
   });
 
-const readinessRetries = 15;
+// Full-suite concurrency + workers.dev propagation routinely needs more than
+// a dozen attempts before the DO binding / subdomain is routable.
+const readinessRetries = 30;
 
 // The `*DO` RPC handlers forward to the Durable Object via `getByName(...)`.
 // On a freshly-deployed worker the DO-namespace binding hasn't propagated to
@@ -72,7 +74,20 @@ const retryReadyN =
 
 const retryReady = retryReadyN(readinessRetries);
 
-const stack = beforeAll(deploy(Stack));
+// Gate HTTP deploy on workers.dev + DO binding readiness. Without this the
+// first test burns its 30s budget on 404s while the subdomain propagates.
+const stack = beforeAll(
+  deploy(Stack).pipe(
+    Effect.tap((outputs) =>
+      Effect.gen(function* () {
+        const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+        yield* client
+          .post(`${outputs.url}/counter/${k("warmup")}/reset`)
+          .pipe(retryReadyN(readinessRetries));
+      }),
+    ),
+  ),
+);
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
 // Gate the deploy on the worker→DO binding having propagated to the edge:
@@ -117,7 +132,7 @@ test(
     const got = (yield* getRes.json) as { count: number };
     expect(got.count).toBe(3);
   }).pipe(logLevel),
-  { timeout: 30_000 },
+  { timeout: 60_000 },
 );
 
 test(

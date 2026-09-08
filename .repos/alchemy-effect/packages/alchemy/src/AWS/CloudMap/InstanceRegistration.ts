@@ -58,9 +58,8 @@ export interface InstanceRegistration extends Resource<
  * attributes and Cloud Map converges the records. Registration and
  * deregistration are asynchronous; the provider polls the operations API
  * (bounded) until they complete.
- * @resource
- * @section Registering Instances
- * @example Register a Static IP
+ * ### Registering Instances
+ * **Example:** Register a Static IP
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -71,7 +70,7 @@ export interface InstanceRegistration extends Resource<
  * });
  * ```
  *
- * @example Register an API-only Instance with Custom Attributes
+ * **Example:** Register an API-only Instance with Custom Attributes
  * ```typescript
  * const instance = yield* AWS.CloudMap.InstanceRegistration("Worker", {
  *   serviceId: service.serviceId,
@@ -79,6 +78,8 @@ export interface InstanceRegistration extends Resource<
  *   attributes: { endpoint: "https://worker-1.internal:8443", zone: "us-west-2a" },
  * });
  * ```
+ *
+ * @resource
  */
 export const InstanceRegistration = Resource<InstanceRegistration>(
   "AWS.CloudMap.InstanceRegistration",

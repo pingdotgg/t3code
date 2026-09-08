@@ -107,8 +107,8 @@ export interface DataSet extends Resource<
  * one, create operations fail with the typed `QuickSightSubscriptionRequired`
  * error.
  *
- * @section Creating a Dataset
- * @example SPICE Dataset from a Relational Table
+ * ### Creating a Dataset
+ * **Example:** SPICE Dataset from a Relational Table
  * ```typescript
  * const dataset = yield* DataSet("sales", {
  *   name: "Sales",

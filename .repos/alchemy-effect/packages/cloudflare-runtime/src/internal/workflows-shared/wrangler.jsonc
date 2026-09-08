@@ -1,0 +1,19 @@
+// Alchemy modifications are licensed under Apache-2.0.
+// This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+{
+  "name": "workflows-shared-test",
+  "main": "test/test-entry.ts",
+  "compatibility_date": "2025-02-04",
+  "compatibility_flags": ["enable_ctx_exports"],
+  "durable_objects": {
+    "bindings": [{ "name": "ENGINE", "class_name": "Engine" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Engine"] }],
+  "services": [
+    {
+      "binding": "USER_WORKFLOW",
+      "service": "workflows-shared-test",
+      "entrypoint": "TestWorkflow",
+    },
+  ],
+}

@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Reads a domain's full configuration, with per-option status metadata (update date, state, pending values) — the authoritative view of what a blue/green change is converging toward. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.DescribeDomainConfigHttp)`.
- * @binding
- * @section Monitoring Domains
- * @example Read a Domain's Configuration
+ * ### Monitoring Domains
+ * **Example:** Read a Domain's Configuration
  * ```typescript
  * const describeDomainConfig = yield* OpenSearch.DescribeDomainConfig();
  *
  * const result = yield* describeDomainConfig({ DomainName: name });
  * // result.DomainConfig.ClusterConfig?.Status.State → "Active"
  * ```
+ *
+ * @binding
  */
 export interface DescribeDomainConfig extends Binding.Service<
   DescribeDomainConfig,

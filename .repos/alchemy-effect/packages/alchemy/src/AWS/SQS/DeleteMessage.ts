@@ -15,9 +15,8 @@ export interface DeleteMessageRequest extends Omit<
  * a message after it has been received and processed. The binding grants the
  * host function `sqs:DeleteMessage` on the queue. Provide the
  * `DeleteMessageHttp` layer on the Function to implement the binding.
- * @binding
- * @section Deleting Messages
- * @example Delete a Processed Message
+ * ### Deleting Messages
+ * **Example:** Delete a Processed Message
  * ```typescript
  * // init (provide SQS.DeleteMessageHttp on the Function)
  * const deleteMessage = yield* SQS.DeleteMessage(queue);
@@ -29,6 +28,8 @@ export interface DeleteMessageRequest extends Omit<
  *   yield* deleteMessage({ ReceiptHandle: message.ReceiptHandle });
  * }
  * ```
+ *
+ * @binding
  */
 export interface DeleteMessage extends Binding.Service<
   DeleteMessage,

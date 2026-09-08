@@ -98,8 +98,8 @@ export interface WorkflowRunEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Workflow Run Events
- * @example Alert On Failed Runs
+ * ### Consuming Workflow Run Events
+ * **Example:** Alert On Failed Runs
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

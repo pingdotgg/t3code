@@ -11,9 +11,8 @@ import type { DeliveryChannel } from "./DeliveryChannel.ts";
  *
  * Provide `Config.DeliverConfigSnapshotHttp` on the hosting Lambda Function
  * to satisfy the requirement.
- * @binding
- * @section Delivering Snapshots
- * @example Deliver a Snapshot On Demand
+ * ### Delivering Snapshots
+ * **Example:** Deliver a Snapshot On Demand
  * ```typescript
  * // init — grants config:DeliverConfigSnapshot
  * const deliverSnapshot = yield* AWS.Config.DeliverConfigSnapshot(channel);
@@ -22,6 +21,8 @@ import type { DeliveryChannel } from "./DeliveryChannel.ts";
  * const result = yield* deliverSnapshot();
  * console.log(result.configSnapshotId);
  * ```
+ *
+ * @binding
  */
 export interface DeliverConfigSnapshot extends Binding.Service<
   DeliverConfigSnapshot,

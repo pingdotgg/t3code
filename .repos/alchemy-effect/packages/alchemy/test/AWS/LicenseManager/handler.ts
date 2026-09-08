@@ -25,7 +25,7 @@ export class LicenseManagerTestFunction extends Lambda.Function<Lambda.Function>
 export default LicenseManagerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

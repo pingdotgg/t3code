@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:ListPHIDetectionJobs` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.ListPHIDetectionJobsHttp)`.
  *
- * @binding
- * @section Batch PHI Detection Jobs
- * @example List Submitted Jobs
+ * ### Batch PHI Detection Jobs
+ * **Example:** List Submitted Jobs
  * ```typescript
  * // init
  * const listPHIDetectionJobs = yield* AWS.ComprehendMedical.ListPHIDetectionJobs();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const jobs = yield* listPHIDetectionJobs({});
  * console.log(jobs.ComprehendMedicalAsyncJobPropertiesList?.length ?? 0);
  * ```
+ *
+ * @binding
  */
 export interface ListPHIDetectionJobs extends Binding.Service<
   ListPHIDetectionJobs,

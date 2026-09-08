@@ -1,0 +1,108 @@
+---
+title: Apps
+description: Prisma Compute apps as Stack resources — framework builds or Effect-native services, env wiring, custom domains, and a local dev command.
+---
+
+`Prisma.Compute` deploys an application onto Prisma's managed
+runtime. One resource covers the whole path: optional build, artifact
+upload, deployment, health check, and promotion — see
+[Deployments](/prisma/compute/deployments) for the lifecycle.
+
+## Framework apps
+
+Point `path` at the app. With `build: "auto"`, alchemy detects the
+framework, builds it, archives the output, and deploys the correct
+server entrypoint:
+
+```typescript
+const app = yield* Prisma.Compute("api", {
+  project,
+  path: "./app",
+  build: "auto",
+  healthCheck: { path: "/api/health" },
+  destroyOldDeployment: true,
+});
+```
+
+The server must listen on `PORT` (injected at runtime). Auto-build
+supports Bun, Next.js, Nuxt, Astro, TanStack Start, and NestJS. Use an
+explicit build object when an app needs a custom command, output
+directory, or entrypoint.
+
+When `Prisma.Project` creates its default database, Prisma injects
+system-managed `DATABASE_URL` and `DATABASE_URL_POOLED` values into
+Compute deployments. Leave those keys out of `env`. For a standalone
+`Prisma.Postgres` database, create a `Prisma.Connection` and pass its
+outputs explicitly as shown in [Connections](/prisma/data/connections).
+
+`app.url` is the deployed endpoint.
+
+## Effect-native apps
+
+Pass `main` and an Effect body instead of a build, and the app is
+bundled from your Stack file — same shape as an Effect-native
+Cloudflare Worker or Lambda:
+
+```typescript
+export default Prisma.Compute(
+  "api",
+  { project, main: import.meta.filename },
+  Effect.gen(function* () {
+    const db = yield* Prisma.Connect(connection);
+    const sql = yield* SQL.Postgres({ url: db.databaseUrl });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* sql`SELECT * FROM users`;
+        return yield* HttpServerResponse.json(users);
+      }),
+    };
+  }).pipe(Effect.provide(Prisma.ConnectBinding)),
+);
+```
+
+## Custom domains
+
+Custom domains can only attach to an app on the project's current
+default branch. Creating the resource starts DNS and certificate
+provisioning; use `domain.dnsRecords` to configure DNS and inspect
+`domain.status` before directing production traffic:
+
+```typescript
+const domain = yield* Prisma.CustomDomain("api-domain", {
+  app,
+  hostname: "api.example.com",
+});
+```
+
+Changing the hostname or app in place is intentionally rejected.
+Create a second domain, verify DNS and TLS, cut traffic over, and then
+remove the old resource.
+
+## Local dev
+
+Under `bun alchemy dev`, `dev.command` runs your app locally (e.g.
+`vite dev`) with the same env the deployed app would see — including
+connection bindings, which resolve to the local
+[dev database](/prisma/data/postgres#local-dev):
+
+```typescript
+const app = yield* Prisma.Compute("web", {
+  project,
+  path: ".",
+  dev: { command: "bun run dev" },
+  env: { DATABASE_URL: connection.databaseUrl },
+});
+```
+
+## Where next
+
+- [Deployments](/prisma/compute/deployments) — health-checked
+  promotion, rollback, and deployment reuse.
+- [Connections](/prisma/data/connections) — the env and binding
+  wiring in detail.
+
+Reference:
+
+- [Compute API reference](/providers/prisma/compute)
+- [CustomDomain API reference](/providers/prisma/customdomain)

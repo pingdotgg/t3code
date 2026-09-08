@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.SearchFacesByImageHttp)`.
  *
- * @binding
- * @section Face Collections
- * @example Search by Image
+ * ### Face Collections
+ * **Example:** Search by Image
  * ```typescript
  * // init
  * const searchFacesByImage = yield* AWS.Rekognition.SearchFacesByImage();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const bestMatch = result.FaceMatches?.[0]?.Face?.ExternalImageId;
  * ```
+ *
+ * @binding
  */
 export interface SearchFacesByImage extends Binding.Service<
   SearchFacesByImage,

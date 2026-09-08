@@ -11,9 +11,8 @@ export interface DescribeAlarmsForMetricRequest
  *
  * Provide `CloudWatch.DescribeAlarmsForMetricHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Alarm State
- * @example Find Alarms Watching a Metric
+ * ### Reading Alarm State
+ * **Example:** Find Alarms Watching a Metric
  * ```typescript
  * // init — grants cloudwatch:DescribeAlarmsForMetric
  * const describeAlarmsForMetric = yield* AWS.CloudWatch.DescribeAlarmsForMetric();
@@ -27,6 +26,8 @@ export interface DescribeAlarmsForMetricRequest
  * });
  * const alarmNames = (result.MetricAlarms ?? []).map((a) => a.AlarmName);
  * ```
+ *
+ * @binding
  */
 export interface DescribeAlarmsForMetric extends Binding.Service<
   DescribeAlarmsForMetric,

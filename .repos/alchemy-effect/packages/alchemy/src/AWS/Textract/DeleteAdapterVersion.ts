@@ -8,9 +8,8 @@ import type { Adapter } from "./Adapter.ts";
  * of the bound adapter (e.g. retire superseded versions from a retraining
  * pipeline).
  *
- * @binding
- * @section Managing Adapters
- * @example Delete an Adapter Version
+ * ### Managing Adapters
+ * **Example:** Delete an Adapter Version
  * ```typescript
  * // init
  * const deleteAdapterVersion = yield* AWS.Textract.DeleteAdapterVersion(adapter);
@@ -18,6 +17,8 @@ import type { Adapter } from "./Adapter.ts";
  * // runtime
  * yield* deleteAdapterVersion({ AdapterVersion: "1" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteAdapterVersion extends Binding.Service<
   DeleteAdapterVersion,

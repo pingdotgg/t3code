@@ -30,7 +30,7 @@ export class AICapabilitiesTestFunction extends Lambda.Function<Lambda.Function>
 export default AICapabilitiesTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Vision/speech inference regularly exceeds Lambda's 3s default timeout.
     timeout: Duration.seconds(30),
   },

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.cloudflare.json",
+  "include": ["src/**/*.ts"],
+  "compilerOptions": {
+    "tsBuildInfoFile": ".cache/tsconfig.tsbuildinfo",
+    "outDir": ".cache/types",
+    "rootDir": "src",
+    "emitDeclarationOnly": true,
+    "types": ["node"]
+  }
+}

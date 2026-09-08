@@ -1,0 +1,49 @@
+{
+  "name": "@alchemy.run/node-utils",
+  "version": "2.0.0-beta.76",
+  "description": "Gitignore-compatible path matching for Alchemy packages.",
+  "homepage": "https://alchemy.run",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "gitignore",
+    "node",
+    "utilities"
+  ],
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "packages/node-utils"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "src",
+    "lib",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md"
+  ],
+  "scripts": {
+    "build": "tsc -b && bun ../../scripts/copy-package-files.ts node-utils",
+    "test": "bun test ./test"
+  },
+  "exports": {
+    "./ignore": {
+      "types": "./lib/ignore.d.ts",
+      "bun": "./src/ignore.ts",
+      "import": "./lib/ignore.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:tooling",
+    "typescript": "catalog:build"
+  }
+}

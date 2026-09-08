@@ -20,9 +20,8 @@ export interface ResendValidationEmailRequest extends Omit<
  * onboarding flow. Calling it on a DNS-validated certificate fails with the
  * typed `InvalidStateException`. Provide the implementation with
  * `Effect.provide(AWS.ACM.ResendValidationEmailHttp)`.
- * @binding
- * @section Validating Certificates
- * @example Re-send the Validation Email
+ * ### Validating Certificates
+ * **Example:** Re-send the Validation Email
  * ```typescript
  * // init — bind the operation to the certificate
  * const resendValidationEmail =
@@ -34,6 +33,8 @@ export interface ResendValidationEmailRequest extends Omit<
  *   ValidationDomain: "example.com",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ResendValidationEmail extends Binding.Service<
   ResendValidationEmail,

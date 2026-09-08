@@ -6,6 +6,7 @@ import * as Schedule from "effect/Schedule";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { createHash } from "node:crypto";
 import Stack from "../alchemy.run.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -22,6 +23,13 @@ afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
 
 type Client = HttpClient.HttpClient;
 
+// Tarballs are content-addressed: the client computes the sha256 up front and
+// PUTs the bytes to /packages/<hash>. Fixture contents (and therefore hashes)
+// are module-scope constants so every run addresses the same objects.
+const sha256 = (content: string) =>
+  createHash("sha256").update(content).digest("hex");
+const WARMUP_HASH = "0".repeat(64);
+
 // A fresh workers.dev URL serves Cloudflare's "nothing here yet" 404 page
 // until the new route propagates (often 30s+, occasionally over a minute for
 // a just-enabled subdomain), and can also return connection errors or edge
@@ -36,9 +44,9 @@ type Client = HttpClient.HttpClient;
 const warmUp = (client: Client, url: string) =>
   client
     .execute(
-      HttpClientRequest.put(`${url}/projects/_warmup/packages`).pipe(
-        HttpClientRequest.bearerToken("warmup-not-the-token"),
-      ),
+      HttpClientRequest.put(
+        `${url}/projects/_warmup/packages/${WARMUP_HASH}`,
+      ).pipe(HttpClientRequest.bearerToken("warmup-not-the-token")),
     )
     .pipe(
       Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 10 }),
@@ -52,16 +60,32 @@ const warmUp = (client: Client, url: string) =>
 const upload = (
   client: Client,
   url: string,
+  token: string | undefined,
+  project: string,
+  content: string,
+) => {
+  let req = HttpClientRequest.put(
+    `${url}/projects/${project}/packages/${sha256(content)}`,
+  ).pipe(HttpClientRequest.setBody(HttpBody.text(content)));
+  if (token !== undefined) {
+    req = req.pipe(HttpClientRequest.bearerToken(token));
+  }
+  return client.execute(req);
+};
+
+const assignTags = (
+  client: Client,
+  url: string,
   token: string,
   project: string,
+  hash: string,
   tags: string[],
-  content: string,
 ) =>
   client.execute(
-    HttpClientRequest.put(`${url}/projects/${project}/packages`).pipe(
+    HttpClientRequest.put(`${url}/projects/${project}/tags`).pipe(
       HttpClientRequest.bearerToken(token),
-      HttpClientRequest.setHeader("X-Tags", JSON.stringify(tags)),
-      HttpClientRequest.setBody(HttpBody.text(content)),
+      HttpClientRequest.setHeader("Alchemy-Tags", JSON.stringify(tags)),
+      HttpClientRequest.setHeader("Alchemy-Tarball-Hash", hash),
     ),
   );
 
@@ -69,8 +93,8 @@ const getPackage = (
   client: Client,
   url: string,
   project: string,
-  resourceId: string,
-) => client.get(`${url}/projects/${project}/packages/${resourceId}`);
+  hash: string,
+) => client.get(`${url}/projects/${project}/packages/${hash}`);
 
 const getTag = (client: Client, url: string, project: string, tag: string) =>
   client.get(`${url}/projects/${project}/tags/${tag}`);
@@ -141,19 +165,9 @@ test(
     const { url, authToken } = yield* stack;
     const client = yield* HttpClient.HttpClient;
 
-    // `PUT /projects/:pkg/packages` is bearer-protected by the pr-package
-    // handler (auth runs before any body/header validation).
-    const packagesUrl = `${url}/projects/test-pkg/packages`;
-    const put = (token?: string) => {
-      let req = HttpClientRequest.put(packagesUrl).pipe(
-        HttpClientRequest.setHeader("X-Tags", JSON.stringify(["v1"])),
-        HttpClientRequest.setBody(HttpBody.text("hello-package-body")),
-      );
-      if (token !== undefined) {
-        req = req.pipe(HttpClientRequest.bearerToken(token));
-      }
-      return client.execute(req);
-    };
+    const project = "test-pkg";
+    const content = "hello-package-body";
+    const hash = sha256(content);
 
     // Warm up through edge propagation and assert the Worker actually
     // answered (401) - if the route never propagated we want to fail here,
@@ -161,34 +175,43 @@ test(
     const warmed = yield* warmUp(client, url);
     expect(warmed.status).toBe(401);
 
-    // Valid token -> 200 with a resourceId. The first real write can hit a
-    // cold R2/DO binding and 500, so poll until it converges.
-    const ok = yield* pollUntilStatus(put(authToken), 200);
+    // Valid token -> 200 with the content-addressed hash. The first real
+    // write can hit a cold R2/DO binding and 500, so poll until it converges.
+    const ok = yield* pollUntilStatus(
+      upload(client, url, authToken, project, content),
+      200,
+    );
     expect(ok.status).toBe(200);
-    const body = (yield* ok.json) as { resourceId: string };
-    expect(body.resourceId).toBeString();
+    const body = (yield* ok.json) as { hash: string };
+    expect(body.hash).toBe(hash);
 
     // Invalid token -> 401.
-    const bad = yield* put("not-the-token");
+    const bad = yield* upload(client, url, "not-the-token", project, content);
     expect(bad.status).toBe(401);
 
     // No Authorization header -> 401.
-    const none = yield* put(undefined);
+    const none = yield* upload(client, url, undefined, project, content);
     expect(none.status).toBe(401);
 
     // The literal "<redacted>" (what both old bugs produced) -> 401.
     // Pre-fix this matched and returned 200.
-    const redacted = yield* put("<redacted>");
+    const redacted = yield* upload(client, url, "<redacted>", project, content);
     expect(redacted.status).toBe(401);
 
     // Clean up the uploaded object so afterAll's destroy() can delete the R2
-    // bucket - deleting the only tag orphans and removes the stored package.
-    const del = yield* client.execute(
-      HttpClientRequest.make("DELETE")(`${url}/projects/test-pkg/tags/v1`).pipe(
-        HttpClientRequest.bearerToken(authToken),
-      ),
+    // bucket - deleting the tarball's only tag orphans and removes it.
+    const tagged = yield* pollUntilStatus(
+      assignTags(client, url, authToken, project, hash, ["v1"]),
+      200,
     );
+    expect(tagged.status).toBe(200);
+    const del = yield* deleteTag(client, url, authToken, project, "v1");
     expect(del.status).toBe(200);
+    const gone = yield* pollUntilStatus(
+      getPackage(client, url, project, hash),
+      404,
+    );
+    expect(gone.status).toBe(404);
   }),
   // Warmup alone can legitimately take ~90s on a fresh workers.dev route.
   { timeout: 180_000 },
@@ -203,19 +226,25 @@ test(
 
     const project = "download-test";
     const content = "fake-tarball-contents- -12345";
+    const hash = sha256(content);
 
-    // Upload a bundle under a single tag (retry through cold-binding 5xx).
+    // Upload the content-addressed bundle (retry through cold-binding 5xx).
     const put = yield* pollUntilStatus(
-      upload(client, url, authToken, project, ["1.0.0"], content),
+      upload(client, url, authToken, project, content),
       200,
     );
     expect(put.status).toBe(200);
-    const { resourceId } = (yield* put.json) as { resourceId: string };
-    expect(resourceId).toBeString();
 
-    // Download directly by resourceId - the stored bytes round-trip exactly.
+    // Point a tag at the uploaded tarball.
+    const tagged = yield* pollUntilStatus(
+      assignTags(client, url, authToken, project, hash, ["1.0.0"]),
+      200,
+    );
+    expect(tagged.status).toBe(200);
+
+    // Download directly by hash - the stored bytes round-trip exactly.
     const dl = yield* pollUntilStatus(
-      getPackage(client, url, project, resourceId),
+      getPackage(client, url, project, hash),
       200,
     );
     expect(dl.status).toBe(200);
@@ -234,7 +263,7 @@ test(
     const del = yield* deleteTag(client, url, authToken, project, "1.0.0");
     expect(del.status).toBe(200);
     const gone = yield* pollUntilStatus(
-      getPackage(client, url, project, resourceId),
+      getPackage(client, url, project, hash),
       404,
     );
     expect(gone.status).toBe(404);
@@ -251,18 +280,23 @@ test(
 
     const project = "gc-test";
     const content = "gc-bundle-body";
+    const hash = sha256(content);
 
     // One bundle, two tags pointing at it (retry through cold-binding 5xx).
     const put = yield* pollUntilStatus(
-      upload(client, url, authToken, project, ["1.0.0", "latest"], content),
+      upload(client, url, authToken, project, content),
       200,
     );
     expect(put.status).toBe(200);
-    const { resourceId } = (yield* put.json) as { resourceId: string };
+    const tagged = yield* pollUntilStatus(
+      assignTags(client, url, authToken, project, hash, ["1.0.0", "latest"]),
+      200,
+    );
+    expect(tagged.status).toBe(200);
 
     // The bundle is downloadable (R2 is read-after-write consistent).
     const present = yield* pollUntilStatus(
-      getPackage(client, url, project, resourceId),
+      getPackage(client, url, project, hash),
       200,
     );
     expect(present.status).toBe(200);
@@ -277,16 +311,14 @@ test(
       404,
     );
     expect(removedTag.status).toBe(404);
-    expect((yield* getPackage(client, url, project, resourceId)).status).toBe(
-      200,
-    );
+    expect((yield* getPackage(client, url, project, hash)).status).toBe(200);
 
     // Remove the last tag - the bundle is garbage-collected.
     expect(
       (yield* deleteTag(client, url, authToken, project, "latest")).status,
     ).toBe(200);
     const collected = yield* pollUntilStatus(
-      getPackage(client, url, project, resourceId),
+      getPackage(client, url, project, hash),
       404,
     );
     expect(collected.status).toBe(404);

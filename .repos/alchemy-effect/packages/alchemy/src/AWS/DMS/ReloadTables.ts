@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * {@link DescribeTableStatistics} reports table errors or validation
  * failures. Provide the implementation with
  * `Effect.provide(AWS.DMS.ReloadTablesHttp)`.
- * @binding
- * @section Monitoring Migration Progress
- * @example Reload a Failed Table
+ * ### Monitoring Migration Progress
+ * **Example:** Reload a Failed Table
  * ```typescript
  * // init — account-level, no target resource
  * const reloadTables = yield* AWS.DMS.ReloadTables();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   TablesToReload: [{ SchemaName: "public", TableName: "orders" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface ReloadTables extends Binding.Service<
   ReloadTables,

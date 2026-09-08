@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `nextToken` continues), optionally filtered to one cluster's ARN or to
  * `manual`/`automated` snapshots. Provide the implementation with
  * `Effect.provide(AWS.DocDBElastic.ListClusterSnapshotsHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example List a Cluster's Manual Snapshots
+ * ### Managing Snapshots
+ * **Example:** List a Cluster's Manual Snapshots
  * ```typescript
  * const listSnapshots = yield* DocDBElastic.ListClusterSnapshots();
  *
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logInfo(`${snapshot.snapshotName}: ${snapshot.status}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListClusterSnapshots extends Binding.Service<
   ListClusterSnapshots,

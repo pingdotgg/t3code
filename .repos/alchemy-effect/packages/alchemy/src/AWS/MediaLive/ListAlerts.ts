@@ -13,9 +13,8 @@ import type { Channel } from "./Channel.ts";
  * Lambda that pages an operator while any alert is SET. The channel id is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.MediaLive.ListAlertsHttp)`.
- * @binding
- * @section Observing Channels
- * @example List the Channel's Active Alerts
+ * ### Observing Channels
+ * **Example:** List the Channel's Active Alerts
  * ```typescript
  * // init — bind the operation to the channel
  * const listAlerts = yield* AWS.MediaLive.ListAlerts(channel);
@@ -23,6 +22,8 @@ import type { Channel } from "./Channel.ts";
  * // runtime
  * const { Alerts } = yield* listAlerts({ StateFilter: "SET" });
  * ```
+ *
+ * @binding
  */
 export interface ListAlerts extends Binding.Service<
   ListAlerts,

@@ -1,10 +1,10 @@
 ---
 title: Migrations
-description: Commit a directory of ordered .sql files and point a database resource's migrationsDir at it — pending files apply as part of every deploy.
+description: Commit a directory of ordered .sql files and point a database resource's migrations prop at it — pending files apply as part of every deploy, tracked in one Alchemy-owned table.
 ---
 
 Migrations without an ORM: commit `.sql` files to a directory and
-wire it into the database resource with `migrationsDir`. Each deploy
+wire it into the database resource with `migrations`. Each deploy
 applies the pending files — there is nothing else to run.
 
 ## Write the migrations
@@ -31,12 +31,12 @@ CREATE TABLE posts (
 
 ```typescript
 const db = yield* Cloudflare.D1.Database("app-db", {
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
-The same prop exists on `Neon.Branch` and
-`Planetscale.PostgresBranch`.
+The same prop exists on `Neon.Project`, `Neon.Branch`,
+`Fly.Postgres`, and the PlanetScale databases and branches.
 
 ## How files are applied
 
@@ -48,27 +48,88 @@ The same prop exists on `Neon.Branch` and
 - Application is ordered and stops on the first failure; the failed
   file is retried on the next deploy.
 
-Each database documents its own mechanics — tracking table,
-transactionality, and quirks:
+## The tracking table
+
+Applied migrations are recorded in one Alchemy-owned table,
+`__alchemy_migrations`, on every database:
+
+```sql
+CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
+  id SERIAL PRIMARY KEY,     -- INTEGER on SQLite
+  hash text NOT NULL,        -- sha256 of the file
+  created_at bigint,         -- millis from a timestamp prefix, if any
+  name text,                 -- the applied-detection key
+  applied_at timestamp with time zone DEFAULT now()
+);
+```
+
+Detection is by `name`, so renaming an applied file is a schema
+change, not a cosmetic one.
+
+To put the bookkeeping in a differently-named table, use the object
+form of the prop:
+
+```typescript
+const db = yield* Cloudflare.D1.Database("app-db", {
+  migrations: {
+    dir: "./migrations",
+    table: "my_migrations", // default: "__alchemy_migrations"
+  },
+});
+```
+
+## Adopting an existing database
+
+A database previously migrated with **drizzle-kit**, **Prisma**, or
+**wrangler** needs no baselining. On the first deploy, Alchemy finds
+the old tool's tracking table — `__drizzle_migrations` (in the
+`drizzle` schema on Postgres), `_prisma_migrations`, or
+`d1_migrations` — copies its applied history into
+`__alchemy_migrations` once, and leaves the old table **frozen**:
+never written, never dropped. Only migrations the old tool hadn't
+applied yet actually run.
+
+This is a one-way move. After adoption, Alchemy's table is the only
+bookkeeping — the old tool's table stops reflecting reality, so stop
+running its migrate command.
+
+Two guard rails:
+
+- Every recorded row must match a local migration file; an orphaned
+  row fails the deploy with `MigrationHistoryConflictError` — it
+  means migrations were applied that your checkout doesn't have.
+- A **failed** Prisma migration (`finished_at` NULL) blocks adoption
+  until repaired with `prisma migrate resolve`; rolled-back rows are
+  skipped.
+
+Databases migrated by older versions of Alchemy are upgraded to the
+current table shape in place, at whatever table name their state
+recorded — no action needed.
+
+Each database documents its own mechanics — transactionality and
+quirks:
 
 | Database | Mechanics |
 | --- | --- |
-| Cloudflare D1 | [D1 migrations](/cloudflare/data/d1#migrations) — wrangler-compatible tracking table, `migrationsTable` for drizzle compatibility |
+| Cloudflare D1 | [D1 migrations](/cloudflare/data/d1#migrations) — batched application (no transactions over HTTP) |
 | Neon | [Neon migrations](/neon/data/migrations) — applied transactionally on the branch |
 | PlanetScale | [PlanetScale migrations](/planetscale/data/migrations) — the same contract on Postgres and MySQL branches |
+| Fly Managed Postgres | [Fly Postgres](/fly/data/postgres#migrations) — applied over the direct URI |
 
 ## Generated migrations target the same contract
 
 [`Drizzle.Schema`](/sql/drizzle/migrations) emits into the same
 shape: its `out` output is a migrations directory, so
-`migrationsDir: schema.out` orders generation before application in
-one deploy. Any tool that writes ordered `.sql` files into a
-directory already works.
+`migrations: schema` orders generation before application in one
+deploy. Any tool that writes ordered `.sql` files into a directory
+already works — drizzle-kit's `<timestamp>_<name>/migration.sql`
+layout is recognized and keyed by directory name.
 
 ## Where next
 
 - [Postgres](/sql/effect-sql/postgres) /
-  [D1](/sql/effect-sql/d1) — query the migrated database.
+  [MySQL](/sql/effect-sql/mysql) / [D1](/sql/effect-sql/d1) — query
+  the migrated database.
 - [Drizzle migrations](/sql/drizzle/migrations) — generate the
   files from a schema module instead of writing them by hand.
 - [Branch from a shared database](/cloudflare/data/branch-from-shared-database)

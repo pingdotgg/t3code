@@ -104,9 +104,8 @@ export interface AnomalyDetector extends Resource<
  * Prometheus workspace — continuously evaluates a PromQL query and emits
  * anomaly scores as new metrics in the same workspace.
  *
- * @resource
- * @section Creating an Anomaly Detector
- * @example Detect Anomalies on a Request-Rate Query
+ * ### Creating an Anomaly Detector
+ * **Example:** Detect Anomalies on a Request-Rate Query
  * ```typescript
  * const workspace = yield* AMP.Workspace("Metrics", {});
  * const detector = yield* AMP.AnomalyDetector("RequestSpikes", {
@@ -117,6 +116,8 @@ export interface AnomalyDetector extends Resource<
  *   missingDataAction: { skip: true },
  * });
  * ```
+ *
+ * @resource
  */
 export const AnomalyDetector = Resource<AnomalyDetector>(
   "AWS.AMP.AnomalyDetector",

@@ -15,13 +15,14 @@ export interface ApplyArchiveRuleRequest extends Omit<
  * Retroactively applies an archive rule to the analyzer's existing findings.
  * Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.ApplyArchiveRuleHttp)`.
- * @binding
- * @section Managing Findings
- * @example Apply an Archive Rule to Existing Findings
+ * ### Managing Findings
+ * **Example:** Apply an Archive Rule to Existing Findings
  * ```typescript
  * const applyRule = yield* AWS.AccessAnalyzer.ApplyArchiveRule(analyzer);
  * yield* applyRule({ ruleName: rule.ruleName });
  * ```
+ *
+ * @binding
  */
 export interface ApplyArchiveRule extends Binding.Service<
   ApplyArchiveRule,

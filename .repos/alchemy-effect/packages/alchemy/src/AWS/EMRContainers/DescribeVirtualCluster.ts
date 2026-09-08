@@ -12,9 +12,8 @@ import type { VirtualCluster } from "./VirtualCluster.ts";
  * cluster ID is injected from the binding — the runtime callable takes no
  * arguments. Provide the implementation with
  * `Effect.provide(AWS.EMRContainers.DescribeVirtualClusterHttp)`.
- * @binding
- * @section Virtual Clusters
- * @example Read The Bound Virtual Cluster
+ * ### Virtual Clusters
+ * **Example:** Read The Bound Virtual Cluster
  * ```typescript
  * // init — bind the operation to the virtual cluster
  * const describeVirtualCluster =
@@ -24,6 +23,8 @@ import type { VirtualCluster } from "./VirtualCluster.ts";
  * const { virtualCluster } = yield* describeVirtualCluster();
  * yield* Effect.log(`virtual cluster is ${virtualCluster?.state}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeVirtualCluster extends Binding.Service<
   DescribeVirtualCluster,

@@ -55,8 +55,8 @@ export interface ExpiryEventSourceProps extends EventRouteProps {
  * resource). Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Expiry Events
- * @example Alert Before Certificates Expire
+ * ### Consuming Expiry Events
+ * **Example:** Alert Before Certificates Expire
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -75,7 +75,7 @@ export interface ExpiryEventSourceProps extends EventRouteProps {
  * );
  * ```
  *
- * @example Watch a Specific Certificate
+ * **Example:** Watch a Specific Certificate
  * ```typescript
  * yield* AWS.ACM.consumeExpiryEvents(
  *   { certificateArns: [certificateArn] },

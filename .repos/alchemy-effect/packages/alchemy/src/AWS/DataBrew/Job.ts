@@ -252,9 +252,8 @@ export interface Job extends Resource<
  * applies a published recipe's transformations and writes the result to S3.
  * The definition is free and instant; job *runs* are billed per node-hour
  * and are started with `StartJobRun`.
- * @resource
- * @section Profile Jobs
- * @example Profile a Dataset
+ * ### Profile Jobs
+ * **Example:** Profile a Dataset
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -267,8 +266,8 @@ export interface Job extends Resource<
  * });
  * ```
  *
- * @section Recipe Jobs
- * @example Transform with a Published Recipe
+ * ### Recipe Jobs
+ * **Example:** Transform with a Published Recipe
  * ```typescript
  * const transform = yield* AWS.DataBrew.Job("Transform", {
  *   type: "RECIPE",
@@ -284,6 +283,8 @@ export interface Job extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const Job = Resource<Job>("AWS.DataBrew.Job");
 

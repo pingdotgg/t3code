@@ -24,9 +24,8 @@ export interface CreateWhatsAppMessageTemplateRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.CreateWhatsAppMessageTemplateHttp)`.
- * @binding
- * @section Managing Message Templates
- * @example Create a Template from a Definition
+ * ### Managing Message Templates
+ * **Example:** Create a Template from a Definition
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const createTemplate = yield* AWS.SocialMessaging.CreateWhatsAppMessageTemplate(account);
@@ -43,6 +42,8 @@ export interface CreateWhatsAppMessageTemplateRequest extends Omit<
  *   ),
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateWhatsAppMessageTemplate extends Binding.Service<
   CreateWhatsAppMessageTemplate,

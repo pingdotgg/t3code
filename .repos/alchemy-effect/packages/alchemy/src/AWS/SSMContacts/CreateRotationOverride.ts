@@ -11,9 +11,8 @@ import type { Rotation } from "./Rotation.ts";
  * is injected as `RotationId`.
  * Provide the implementation with
  * `Effect.provide(AWS.SSMContacts.CreateRotationOverrideHttp)`.
- * @binding
- * @section Managing On-Call Rotations
- * @example Cover the Next Eight Hours
+ * ### Managing On-Call Rotations
+ * **Example:** Cover the Next Eight Hours
  * ```typescript
  * const createRotationOverride =
  *   yield* AWS.SSMContacts.CreateRotationOverride(rotation);
@@ -24,6 +23,8 @@ import type { Rotation } from "./Rotation.ts";
  *   EndTime: new Date(Date.now() + 8 * 60 * 60 * 1000),
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateRotationOverride extends Binding.Service<
   CreateRotationOverride,

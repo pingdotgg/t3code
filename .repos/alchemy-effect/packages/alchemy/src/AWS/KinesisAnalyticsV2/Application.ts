@@ -318,9 +318,8 @@ export interface Application extends Resource<
  * until started. Set `start: true` to have the reconciler start the job and
  * wait for `RUNNING` — this requires the code object to be a real Flink
  * application jar.
- * @resource
- * @section Creating Applications
- * @example Flink application from S3 code
+ * ### Creating Applications
+ * **Example:** Flink application from S3 code
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -334,7 +333,7 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @example Runtime properties and parallelism
+ * **Example:** Runtime properties and parallelism
  * ```typescript
  * const app = yield* AWS.KinesisAnalyticsV2.Application("Enrichment", {
  *   runtimeEnvironment: "FLINK-1_20",
@@ -357,8 +356,8 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @section VPC Connectivity
- * @example Place the application in a VPC
+ * ### VPC Connectivity
+ * **Example:** Place the application in a VPC
  * ```typescript
  * const app = yield* AWS.KinesisAnalyticsV2.Application("Enrichment", {
  *   runtimeEnvironment: "FLINK-1_20",
@@ -370,8 +369,8 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @section Maintenance Window
- * @example Pin the daily maintenance window
+ * ### Maintenance Window
+ * **Example:** Pin the daily maintenance window
  * ```typescript
  * const app = yield* AWS.KinesisAnalyticsV2.Application("Enrichment", {
  *   runtimeEnvironment: "FLINK-1_20",
@@ -380,8 +379,8 @@ export interface Application extends Resource<
  * });
  * ```
  *
- * @section Running the Application
- * @example Start the Flink job and keep it running
+ * ### Running the Application
+ * **Example:** Start the Flink job and keep it running
  * ```typescript
  * const app = yield* AWS.KinesisAnalyticsV2.Application("Enrichment", {
  *   runtimeEnvironment: "FLINK-1_20",
@@ -389,6 +388,8 @@ export interface Application extends Resource<
  *   start: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const Application = Resource<Application>(
   "AWS.KinesisAnalyticsV2.Application",
@@ -467,7 +468,7 @@ const retryThroughRolePropagation = <A, E extends { _tag: string }, R>(
     while: (e) =>
       e._tag === "InvalidArgumentException" &&
       /role|assume|trust|principal/i.test(
-        (e as { Message?: string }).Message ?? "",
+        (e as { message?: string }).message ?? "",
       ),
     schedule: Schedule.max([Schedule.fixed("2 seconds"), Schedule.recurs(15)]),
   });

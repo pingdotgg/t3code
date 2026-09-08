@@ -1,10 +1,5 @@
 import { Retry } from "@distilled.cloud/cloudflare";
-import * as Duration from "effect/Duration";
-import * as Effect from "effect/Effect";
-import { pipe } from "effect/Function";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
-import * as Schedule from "effect/Schedule";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
 import { ProfileLive } from "../Auth/Profile.ts";
 import * as Command from "../Command/index.ts";
@@ -18,6 +13,7 @@ import * as Bookmark from "./Access/Bookmark.ts";
 import * as AccessCert from "./Access/Certificate.ts";
 import * as CustomPage from "./Access/CustomPage.ts";
 import * as Group from "./Access/Group.ts";
+import { GetIdentityProviderHttp } from "./Access/GetIdentityProviderHttp.ts";
 import * as AccessIdp from "./Access/IdentityProvider.ts";
 import * as AccessInfraTarget from "./Access/InfrastructureTarget.ts";
 import * as AccessKeyConfig from "./Access/KeyConfiguration.ts";
@@ -78,7 +74,6 @@ import * as KeylessCertificate from "./KeylessCertificate/index.ts";
 import * as KV from "./KV/index.ts";
 import * as LeakedCredentialCheck from "./LeakedCredentialCheck/index.ts";
 import * as LoadBalancer from "./LoadBalancer/index.ts";
-import { localRuntimeServices } from "./LocalRuntime.ts";
 import * as Logpush from "./Logpush/index.ts";
 import * as LogsControl from "./LogsControl/index.ts";
 import * as MagicCloudNetworking from "./MagicCloudNetworking/index.ts";
@@ -682,8 +677,13 @@ export const providers = () =>
         RandomProvider(),
       ),
     ),
+    // Plan-executable data-source capabilities (`Binding.Service.execute`).
+    Layer.provideMerge(GetIdentityProviderHttp),
     Layer.provide(DockerLive),
-    Layer.provideMerge(localRuntimeServices()),
+    // Note: `localRuntimeServices()` is no longer provided globally — each
+    // local provider composes it into its `ProviderLayer.dual` local thunk,
+    // so workerd machinery only builds when a local variant is actually
+    // demanded (dev runs, or deleting a local-mode row during deploy).
     Layer.provideMerge(CloudflareApiLive()),
     Layer.orDie,
   );
@@ -702,19 +702,14 @@ export const providers = () =>
  * policy and surface throttling ("Please wait and consider throttling
  * your request speed") to users.
  *
- * The retry policy extends `Retry.makeDefault`'s transient detection
- * (throttling / 5xx / network) with Cloudflare-specific
- * misleadingly-tagged transient cases the SDK doesn't yet mark
- * retryable — see `cloudflareRetryFactory` below. Deliberately
- * narrow: we ONLY add cases where the message unambiguously indicates
- * a transient infrastructure failure (not a real auth/permission
- * failure). Auto-retrying ambiguous cases like `Unauthorized:
- * Authentication error` would silently loop on genuinely invalid
- * tokens.
- *
- * TODO(distilled): once
- * https://github.com/alchemy-run/distilled/pull/233 lands, the retry
- * wrapper can collapse back to `Retry.makeDefault`.
+ * The policy is the SDK's `Retry.makeDefault` (throttling / 5xx /
+ * network, server retry-after hints, bounded backoff). The
+ * Cloudflare-specific misleadingly-tagged transient cases that used
+ * to live here as a custom factory (10001 "internal error", 10001
+ * "Unable to authenticate request", 10000 "Authentication error"
+ * under load) are now tagged retryable at the source in the SDK's
+ * global error map, so `makeDefault`'s transient detection covers
+ * them.
  */
 export const CloudflareApiLive = () =>
   Credentials.fromAuthProvider().pipe(
@@ -723,73 +718,5 @@ export const CloudflareApiLive = () =>
     Layer.provideMerge(Access.AccessLive),
     Layer.provideMerge(ProfileLive),
     Layer.provideMerge(CredentialsStoreLive),
-    Layer.provideMerge(Layer.succeed(Retry.Retry, cloudflareRetryFactory)),
+    Layer.provideMerge(Layer.succeed(Retry.Retry, Retry.makeDefault)),
   );
-
-const cloudflareRetryFactory: Retry.Factory = (lastError) => {
-  const defaults = Retry.makeDefault(lastError);
-  return {
-    while: (error) =>
-      defaults.while?.(error) === true || isMisleadinglyTaggedTransient(error),
-    schedule: Schedule.max([
-      pipe(
-        Schedule.exponential(Duration.millis(250), 2),
-        Schedule.modifyDelay(
-          Effect.fn(function* ({ duration }) {
-            const error = yield* Ref.get(lastError);
-            // Throttling errors (429): honor a 500ms floor matching the
-            // distilled default.
-            const isThrottling =
-              (error as { _tag?: unknown })?._tag === "TooManyRequests";
-            if (isThrottling && Duration.toMillis(duration) < 500) {
-              return Duration.toMillis(Duration.millis(500));
-            }
-            return Duration.toMillis(duration);
-          }),
-        ),
-        Retry.capped(Duration.seconds(5)),
-        Retry.jittered,
-      ),
-      Schedule.recurs(8),
-    ]),
-  };
-};
-
-const isMisleadinglyTaggedTransient = (error: unknown): boolean => {
-  if (!error || typeof error !== "object") return false;
-  const tag = (error as { _tag?: unknown })._tag;
-  const message = ((error as { message?: unknown }).message ?? "") as string;
-  // CF code 10001: "Method not allowed for token" is a real permission
-  // failure (NOT retryable), but the same code is also returned with
-  // message "internal error" during Cloudflare-side hiccups. The two
-  // messages are unambiguously distinct, so we can safely retry only
-  // the internal-error variant.
-  if (tag === "Forbidden" && /internal error/i.test(message)) return true;
-  // CF code 10001: "Unable to authenticate request" intermittently 403s
-  // otherwise-valid, long-lived credentials during Cloudflare-side auth/edge
-  // blips — it is transient, not a real credential problem (a genuinely
-  // invalid/expired token surfaces as `Unauthorized: Authentication error`,
-  // code 10000). The retry is bounded (see `cloudflareRetryFactory`), so even
-  // a persistent auth failure that somehow used this message would just fail
-  // fast after backoff rather than loop forever.
-  if (tag === "Forbidden" && /unable to authenticate request/i.test(message))
-    return true;
-  // CF code 10000: "Authentication error" is a transient throttle Cloudflare
-  // returns under high request concurrency — the same call against the same
-  // zone succeeds in isolation (verified: an account whose zones are all
-  // active and reachable still intermittently rejects with "Authentication
-  // error" only when hundreds of calls fan out at once). It surfaces under
-  // both a 403 (`Forbidden`) and a 401 (`Unauthorized`) tag depending on the
-  // edge node. The retry is bounded (see `cloudflareRetryFactory`: ~8 tries,
-  // capped 5s), so a genuinely invalid/expired token — which produces the same
-  // message persistently — still fails fast after a few seconds of backoff
-  // rather than looping forever; the win is that valid tokens stop flaking
-  // under load.
-  if (
-    (tag === "Forbidden" || tag === "Unauthorized") &&
-    /authentication error/i.test(message)
-  ) {
-    return true;
-  }
-  return false;
-};

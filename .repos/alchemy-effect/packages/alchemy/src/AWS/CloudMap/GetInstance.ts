@@ -17,15 +17,16 @@ export interface GetInstanceRequest extends Omit<
  * registered instance of the bound {@link Service} by its instance ID,
  * returning its full attribute map. Provide the implementation with
  * `Effect.provide(AWS.CloudMap.GetInstanceHttp)`.
- * @binding
- * @section Reading Instances
- * @example Read an Instance's Attributes
+ * ### Reading Instances
+ * **Example:** Read an Instance's Attributes
  * ```typescript
  * const getInstance = yield* AWS.CloudMap.GetInstance(service);
  *
  * const { Instance } = yield* getInstance({ InstanceId: "worker-1" });
  * console.log(Instance?.Attributes?.AWS_INSTANCE_IPV4);
  * ```
+ *
+ * @binding
  */
 export interface GetInstance extends Binding.Service<
   GetInstance,

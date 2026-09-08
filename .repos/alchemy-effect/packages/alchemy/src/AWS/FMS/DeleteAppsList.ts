@@ -12,9 +12,8 @@ export interface DeleteAppsListRequest extends fms.DeleteAppsListRequest {}
  *
  * Permanently deletes the specified Firewall Manager applications list. Provide the
  * implementation with `Effect.provide(AWS.FMS.DeleteAppsListHttp)`.
- * @binding
- * @section Applications Lists
- * @example Delete an Applications List
+ * ### Applications Lists
+ * **Example:** Delete an Applications List
  * ```typescript
  * // init — account-level binding takes no resource
  * const deleteAppsList = yield* AWS.FMS.DeleteAppsList();
@@ -22,6 +21,8 @@ export interface DeleteAppsListRequest extends fms.DeleteAppsListRequest {}
  * // runtime
  * yield* deleteAppsList({ ListId: listId });
  * ```
+ *
+ * @binding
  */
 export interface DeleteAppsList extends Binding.Service<
   DeleteAppsList,

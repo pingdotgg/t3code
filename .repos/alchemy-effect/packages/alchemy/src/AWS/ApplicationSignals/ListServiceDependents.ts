@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * monitors) that invoked a discovered service during a time range. Provide
  * the implementation with
  * `Effect.provide(AWS.ApplicationSignals.ListServiceDependentsHttp)`.
- * @binding
- * @section Exploring the Service Topology
- * @example List a Service's Dependents
+ * ### Exploring the Service Topology
+ * **Example:** List a Service's Dependents
  * ```typescript
  * // init — account-level, no resource argument
  * const listServiceDependents =
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListServiceDependents extends Binding.Service<
   ListServiceDependents,

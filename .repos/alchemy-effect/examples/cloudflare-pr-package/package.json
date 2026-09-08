@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "@alchemy.run/pr-package": "workspace:*",
-    "@cloudflare/workers-types": "catalog:",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
     "alchemy": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:effect"
   }
 }

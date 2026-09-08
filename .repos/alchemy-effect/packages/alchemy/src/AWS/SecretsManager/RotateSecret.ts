@@ -15,9 +15,8 @@ export interface RotateSecretRequest extends Omit<
  * immediate rotation using the secret's configured rotation function (see
  * {@link onSecretRotation} for wiring one up). Provide the implementation
  * with `Effect.provide(AWS.SecretsManager.RotateSecretHttp)`.
- * @binding
- * @section Rotating Secrets
- * @example Trigger an On-Demand Rotation
+ * ### Rotating Secrets
+ * **Example:** Trigger an On-Demand Rotation
  * ```typescript
  * // init — bind the operation to the secret
  * const rotateSecret = yield* AWS.SecretsManager.RotateSecret(secret);
@@ -26,6 +25,8 @@ export interface RotateSecretRequest extends Omit<
  * const result = yield* rotateSecret();
  * const pendingVersionId = result.VersionId;
  * ```
+ *
+ * @binding
  */
 export interface RotateSecret extends Binding.Service<
   RotateSecret,

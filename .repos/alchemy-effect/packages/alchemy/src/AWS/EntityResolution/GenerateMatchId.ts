@@ -10,9 +10,8 @@ import type { MatchingWorkflow } from "./MatchingWorkflow.ts";
  * against the bound rule-based matching workflow: existing records return
  * their Match IDs, unmatched records get new ones. Provide the
  * implementation with `Effect.provide(AWS.EntityResolution.GenerateMatchIdHttp)`.
- * @binding
- * @section Real-Time Matching
- * @example Generate Match IDs for Records
+ * ### Real-Time Matching
+ * **Example:** Generate Match IDs for Records
  * ```typescript
  * // init — bind the operation to the workflow
  * const generateMatchId = yield* AWS.EntityResolution.GenerateMatchId(workflow);
@@ -28,6 +27,8 @@ import type { MatchingWorkflow } from "./MatchingWorkflow.ts";
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateMatchId extends Binding.Service<
   GenerateMatchId,

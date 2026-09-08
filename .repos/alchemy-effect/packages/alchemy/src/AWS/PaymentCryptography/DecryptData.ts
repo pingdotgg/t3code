@@ -12,9 +12,8 @@ export interface DecryptDataRequest extends Omit<
  * Runtime binding for `payment-cryptography:DecryptData` — decrypts
  * ciphertext under a {@link Key}. Provide `DecryptDataHttp` on the Function
  * to satisfy this service.
- * @binding
- * @section Decrypting Data
- * @example Decrypt ciphertext
+ * ### Decrypting Data
+ * **Example:** Decrypt ciphertext
  * ```typescript
  * // init
  * const decrypt = yield* PaymentCryptography.DecryptData(key);
@@ -27,6 +26,8 @@ export interface DecryptDataRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface DecryptData extends Binding.Service<
   DecryptData,

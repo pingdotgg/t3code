@@ -119,9 +119,8 @@ export interface Webhook extends Resource<
  * {@link import("./RepositoryEventSource.ts").events | events(repository, handler)}
  * inside a Cloudflare Worker, which provisions the webhook, wires the
  * delivery URL to the Worker, and forwards verified events to your handler.
- * @resource
- * @section Creating a Webhook
- * @example Forward push events to a URL
+ * ### Creating a Webhook
+ * **Example:** Forward push events to a URL
  * ```typescript
  * yield* GitHub.Webhook("ci-webhook", {
  *   owner: "my-org",
@@ -132,7 +131,7 @@ export interface Webhook extends Resource<
  * });
  * ```
  *
- * @example Point a webhook at a Worker
+ * **Example:** Point a webhook at a Worker
  * ```typescript
  * const worker = yield* Cloudflare.Worker("Api", { ... });
  *
@@ -143,6 +142,8 @@ export interface Webhook extends Resource<
  *   events: ["*"],
  * });
  * ```
+ *
+ * @resource
  */
 export const Webhook = Resource<Webhook>("GitHub.Webhook");
 

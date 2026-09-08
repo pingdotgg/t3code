@@ -16,9 +16,8 @@ export interface GetSchemaVersionRequest extends mi.GetSchemaVersionRequest {}
  * commands are expressed in. Provide the implementation with
  * `Effect.provide(AWS.IoTManagedIntegrations.GetSchemaVersionHttp)`.
  *
- * @binding
- * @section Working with the Schema Catalog
- * @example Fetch the On/Off Capability Schema
+ * ### Working with the Schema Catalog
+ * **Example:** Fetch the On/Off Capability Schema
  * ```typescript
  * const getSchemaVersion = yield* IoTManagedIntegrations.GetSchemaVersion();
  *
@@ -27,6 +26,8 @@ export interface GetSchemaVersionRequest extends mi.GetSchemaVersionRequest {}
  *   SchemaVersionedId: "matter.OnOff@1.4",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetSchemaVersion extends Binding.Service<
   GetSchemaVersion,

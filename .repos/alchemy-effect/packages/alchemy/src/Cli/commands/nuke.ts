@@ -9,6 +9,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import picomatch from "picomatch";
 
 import type { ProviderService } from "../../Provider.ts";
+import type { ProviderMode } from "../../ProviderMode.ts";
 import * as Clank from "../../Util/Clank.ts";
 import type { ScopedPlanStatusSession } from "../Cli.ts";
 import { isNonInteractive } from "../selectCli.ts";
@@ -96,9 +97,27 @@ const retriesFlag = Flag.integer("retries").pipe(
   Flag.withDefault(10),
 );
 
+const localFlag = Flag.boolean("local").pipe(
+  Flag.withDescription(
+    "Enumerate and delete LOCAL (emulated) resources instead of real cloud " +
+      "ones — the floci-emulated AWS account and the Cloudflare local " +
+      "runtime that `alchemy dev` provisions into. Only providers with a " +
+      "local implementation participate, so nothing in the real cloud is " +
+      "touched.",
+  ),
+  Flag.withDefault(false),
+);
+
 interface DiscoveredProvider {
   id: string;
-  provider: ProviderService;
+  /**
+   * Builds the provider service to enumerate/delete with. For the default
+   * (live) mode this is the service already registered in context; with
+   * `--local` it is the dual registration's lazily-built local variant, so
+   * only the providers actually selected pay for constructing the local
+   * runtime they emulate against (the floci container, workerd, ...).
+   */
+  resolve: Effect.Effect<ProviderService>;
 }
 
 const isProviderCollection = (
@@ -120,9 +139,18 @@ const hasListAndDelete = (value: unknown): value is ProviderService =>
  * {@link ProviderCollectionService}; we also pick up any directly-registered
  * provider whose key looks like a resource type. Only providers exposing a
  * `list` method are returned — policies and bindings are skipped.
+ *
+ * With `mode: "local"` only providers registered via `ProviderLayer.dual`
+ * (the ones carrying {@link ProviderService.modes}) are returned, resolving
+ * to their local variant — an AWS resource emulated by floci, a Cloudflare
+ * resource emulated by the local runtime. Mode-agnostic providers are
+ * deliberately dropped: they have a single implementation that talks to the
+ * real cloud, so including them would make `--local` delete live
+ * infrastructure.
  */
 const discoverProviders = (
   context: Context.Context<never>,
+  mode: ProviderMode,
 ): DiscoveredProvider[] => {
   // Resources opted out of teardown (`nuke.singleton` settings whose delete
   // only resets, or `nuke.skip` resources that can never be deleted) would be
@@ -151,7 +179,12 @@ const discoverProviders = (
     }
   }
   return [...out.entries()]
-    .map(([id, provider]) => ({ id, provider }))
+    .flatMap(([id, provider]): DiscoveredProvider[] => {
+      if (mode === "live") return [{ id, resolve: Effect.succeed(provider) }];
+      // No `modes` => mode-agnostic (single, live implementation).
+      const local = provider.modes?.local;
+      return local ? [{ id, resolve: local }] : [];
+    })
     .sort((a, b) => a.id.localeCompare(b.id));
 };
 
@@ -357,6 +390,7 @@ const nukeCommand = Command.make(
     include: includeFlag,
     exclude: excludeFlag,
     filter: filterFlag,
+    local: localFlag,
   },
   instrumentCommand("unsafe.nuke", (a: { profile: string; main: string }) => ({
     "alchemy.profile": a.profile,
@@ -376,6 +410,7 @@ const nukeCommand = Command.make(
       include,
       exclude,
       filter,
+      local,
     }) {
       // DEBUG=1 routes provider logs to the console (instead of the
       // .alchemy/log/out file) at Debug level and disables the TUI so the
@@ -395,7 +430,11 @@ const nukeCommand = Command.make(
         extra: Layer.succeed(MinimumLogLevel, debug ? "Debug" : "Info"),
       });
 
-      const discovered = discoverProviders(context as Context.Context<never>);
+      const mode: ProviderMode = local ? "local" : "live";
+      const discovered = discoverProviders(
+        context as Context.Context<never>,
+        mode,
+      );
 
       const matchInclude =
         include.length > 0 ? picomatch([...include]) : () => true;
@@ -405,8 +444,19 @@ const nukeCommand = Command.make(
         (p) => matchInclude(p.id) && !matchExclude(p.id),
       );
 
+      if (local) {
+        yield* Console.log(
+          `Local mode: ${selected.length} emulated provider(s). ` +
+            "Real cloud resources are never touched.",
+        );
+      }
+
       if (selected.length === 0) {
-        yield* Console.log("No providers match the given --include/--exclude.");
+        yield* Console.log(
+          local
+            ? "No local providers match the given --include/--exclude."
+            : "No providers match the given --include/--exclude.",
+        );
         return;
       }
 
@@ -427,11 +477,21 @@ const nukeCommand = Command.make(
         scanUI ? Effect.sync(() => scanUI.emit(event)) : Effect.void;
 
       const listed = yield* Effect.all(
-        selected.map(({ id, provider }) =>
+        selected.map(({ id, resolve }) =>
           Effect.gen(function* () {
             yield* emitScan({ kind: "start", id });
-            const attrs = yield* provider.list().pipe(
-              Effect.timeout(`${timeout} seconds`),
+            // Resolving is a no-op in live mode; in local mode it builds the
+            // provider's local variant (and, on first use, whatever runtime
+            // it emulates against). Both it and the listing are guarded, so
+            // a provider whose local runtime can't start is skipped with a
+            // logged warning instead of aborting the whole run.
+            const scanned = yield* Effect.gen(function* () {
+              const provider = yield* resolve;
+              const attrs = yield* provider
+                .list()
+                .pipe(Effect.timeout(`${timeout} seconds`));
+              return { provider, attrs };
+            }).pipe(
               // Log inside the provided scope so the failure lands in the
               // stack's file logger (.alchemy/log/out), then swallow it so a
               // single broken/slow provider doesn't abort the whole scan.
@@ -440,11 +500,11 @@ const nukeCommand = Command.make(
               ),
               Effect.provide(context),
               Effect.matchCause({
-                onSuccess: (attrs: unknown[]) => attrs,
-                onFailure: () => [] as unknown[],
+                onSuccess: (scanned) => scanned,
+                onFailure: () => undefined,
               }),
             );
-            const items = attrs.map((raw) => {
+            const items = (scanned?.attrs ?? []).map((raw) => {
               const attr = (raw ?? {}) as Record<string, unknown>;
               return {
                 attr,
@@ -457,7 +517,7 @@ const nukeCommand = Command.make(
               id,
               count: items.filter((i) => !i.spared).length,
             });
-            return { id, provider, items };
+            return { id, provider: scanned?.provider, items };
           }),
         ),
         { concurrency },
@@ -470,13 +530,17 @@ const nukeCommand = Command.make(
 
       // ---- Filter phase ------------------------------------------------
       const candidates = listed.flatMap(({ id, provider, items }) =>
-        items.map(({ attr, name, spared }) => ({
-          id,
-          provider,
-          attr,
-          name,
-          spared,
-        })),
+        // `provider` is only undefined when the scan failed, in which case
+        // `items` is empty and nothing is emitted.
+        provider === undefined
+          ? []
+          : items.map(({ attr, name, spared }) => ({
+              id,
+              provider,
+              attr,
+              name,
+              spared,
+            })),
       );
 
       const targets = candidates.filter((c) => !c.spared);
@@ -535,7 +599,8 @@ const nukeCommand = Command.make(
         ? true
         : yield* Clank.confirm({
             message:
-              `Permanently DELETE ${targets.length} resource(s)? ` +
+              `Permanently DELETE ${targets.length} ` +
+              `${local ? "locally emulated " : ""}resource(s)? ` +
               `This cannot be undone.`,
             initialValue: false,
           });
@@ -799,10 +864,12 @@ const nukeCommand = Command.make(
   ),
 ).pipe(
   // hide the command because it's dangerous and we don't want agents to discover and use it
-  Command.withHidden,
+  Command.unlisted,
   Command.withDescription(
     "Enumerate every live resource across the stack's providers and delete " +
-      "them. DESTRUCTIVE — use --include/--exclude/--filter to scope it.",
+      "them. DESTRUCTIVE — use --include/--exclude/--filter to scope it. " +
+      "Pass --local to target locally emulated resources (floci, the " +
+      "Cloudflare local runtime) instead of the real cloud.",
   ),
 );
 

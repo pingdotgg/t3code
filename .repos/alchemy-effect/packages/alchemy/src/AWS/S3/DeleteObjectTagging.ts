@@ -17,14 +17,15 @@ export interface DeleteObjectTaggingRequest extends Omit<
  * `s3:DeleteObjectTagging`/`s3:DeleteObjectVersionTagging` are granted on the
  * bucket's objects. Provide the implementation with
  * `Effect.provide(AWS.S3.DeleteObjectTaggingHttp)`.
- * @binding
- * @section Object Tagging
- * @example Remove All Tags from an Object
+ * ### Object Tagging
+ * **Example:** Remove All Tags from an Object
  * ```typescript
  * const deleteObjectTagging = yield* AWS.S3.DeleteObjectTagging(bucket);
  *
  * yield* deleteObjectTagging({ Key: "reports/q3.csv" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteObjectTagging extends Binding.Service<
   DeleteObjectTagging,

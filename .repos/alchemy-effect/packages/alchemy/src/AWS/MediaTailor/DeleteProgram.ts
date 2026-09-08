@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * account-level and grants `mediatailor:DeleteProgram` on `*`. Provide the
  * implementation with `Effect.provide(AWS.MediaTailor.DeleteProgramHttp)`.
  *
- * @binding
- * @section Channel Assembly
- * @example Remove a program from the schedule
+ * ### Channel Assembly
+ * **Example:** Remove a program from the schedule
  * ```typescript
  * const deleteProgram = yield* AWS.MediaTailor.DeleteProgram();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   ProgramName: `episode-${id}`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeleteProgram extends Binding.Service<
   DeleteProgram,

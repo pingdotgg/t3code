@@ -102,8 +102,8 @@ export interface CustomLogSource extends Resource<
  * Every configuration property is create-only — changing any of them
  * replaces the source.
  *
- * @section Registering a custom source
- * @example Custom source with a crawler role
+ * ### Registering a custom source
+ * **Example:** Custom source with a crawler role
  * ```typescript
  * const custom = yield* SecurityLake.CustomLogSource("AppLogs", {
  *   sourceName: "my-app-logs",

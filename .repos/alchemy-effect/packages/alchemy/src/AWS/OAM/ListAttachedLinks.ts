@@ -20,9 +20,8 @@ export interface ListAttachedLinksRequest extends Omit<
  *
  * Provide `AWS.OAM.ListAttachedLinksHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Listing Attached Links
- * @example Enumerate the source accounts connected to a sink
+ * ### Listing Attached Links
+ * **Example:** Enumerate the source accounts connected to a sink
  * ```typescript
  * // init — grants oam:ListAttachedLinks on the sink
  * const listAttachedLinks = yield* AWS.OAM.ListAttachedLinks(sink);
@@ -33,6 +32,8 @@ export interface ListAttachedLinksRequest extends Omit<
  *   yield* Effect.log(`${item.Label} shares ${item.ResourceTypes?.join(", ")}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListAttachedLinks extends Binding.Service<
   ListAttachedLinks,

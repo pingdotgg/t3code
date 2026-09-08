@@ -108,9 +108,8 @@ export interface KxEnvironment extends Resource<
  * gated to onboarded accounts. Live lifecycle tests are gated behind
  * `AWS_TEST_FINSPACE=1`.
  * :::
- * @resource
- * @section Creating kdb Environments
- * @example Basic kdb Environment
+ * ### Creating kdb Environments
+ * **Example:** Basic kdb Environment
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -121,8 +120,8 @@ export interface KxEnvironment extends Resource<
  * });
  * ```
  *
- * @section Connecting to On-Prem Networks
- * @example Attach a Transit Gateway
+ * ### Connecting to On-Prem Networks
+ * **Example:** Attach a Transit Gateway
  * ```typescript
  * const env = yield* AWS.FinSpace.KxEnvironment("Kdb", {
  *   kmsKeyId: key.keyArn,
@@ -135,6 +134,8 @@ export interface KxEnvironment extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const KxEnvironment = Resource<KxEnvironment>(
   "AWS.FinSpace.KxEnvironment",

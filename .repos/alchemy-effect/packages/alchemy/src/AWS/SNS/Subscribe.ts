@@ -16,9 +16,8 @@ export interface SubscribeRequest extends Omit<
  * user's email address from an API handler. The `TopicArn` is injected
  * automatically.
  * Provide the `SubscribeHttp` layer on the Function to implement the binding.
- * @binding
- * @section Subscribing Endpoints
- * @example Subscribe an Email Address
+ * ### Subscribing Endpoints
+ * **Example:** Subscribe an Email Address
  * ```typescript
  * const subscribe = yield* SNS.Subscribe(topic);
  * const response = yield* subscribe({
@@ -26,6 +25,8 @@ export interface SubscribeRequest extends Omit<
  *   Endpoint: "user@example.com",
  * });
  * ```
+ *
+ * @binding
  */
 export interface Subscribe extends Binding.Service<
   Subscribe,

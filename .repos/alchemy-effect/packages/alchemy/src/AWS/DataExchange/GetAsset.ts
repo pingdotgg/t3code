@@ -11,9 +11,8 @@ import type { Revision } from "./Revision.ts";
  * set and revision ids are injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.GetAssetHttp)`.
- * @binding
- * @section Reading Revisions & Assets
- * @example Read An Asset's Detail
+ * ### Reading Revisions & Assets
+ * **Example:** Read An Asset's Detail
  * ```typescript
  * const getAsset = yield* AWS.DataExchange.GetAsset(revision);
  *
@@ -21,6 +20,8 @@ import type { Revision } from "./Revision.ts";
  * const asset = yield* getAsset({ AssetId: assetId });
  * yield* Effect.log(`asset ${asset.Name}`);
  * ```
+ *
+ * @binding
  */
 export interface GetAsset extends Binding.Service<
   GetAsset,

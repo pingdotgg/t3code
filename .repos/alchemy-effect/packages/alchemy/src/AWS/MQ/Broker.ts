@@ -215,9 +215,8 @@ export interface Broker extends Resource<
  * the provider waits (bounded) for the broker to reach `RUNNING` before
  * returning, and waits for it to disappear on delete.
  *
- * @resource
- * @section Creating a Broker
- * @example Single-instance ActiveMQ (cheapest)
+ * ### Creating a Broker
+ * **Example:** Single-instance ActiveMQ (cheapest)
  * ```typescript
  * const broker = yield* MQ.Broker("Orders", {
  *   engineType: "ACTIVEMQ",
@@ -230,7 +229,7 @@ export interface Broker extends Resource<
  * // broker.endpoints -> ["ssl://b-xxxx-1.mq.us-west-2.amazonaws.com:61617", ...]
  * ```
  *
- * @example Single-instance RabbitMQ
+ * **Example:** Single-instance RabbitMQ
  * ```typescript
  * const broker = yield* MQ.Broker("Events", {
  *   engineType: "RABBITMQ",
@@ -241,8 +240,8 @@ export interface Broker extends Resource<
  * });
  * ```
  *
- * @section Networking and Encryption
- * @example Private broker in specific subnets with a customer KMS key
+ * ### Networking and Encryption
+ * **Example:** Private broker in specific subnets with a customer KMS key
  * ```typescript
  * const broker = yield* MQ.Broker("Orders", {
  *   engineType: "ACTIVEMQ",
@@ -257,8 +256,8 @@ export interface Broker extends Resource<
  * });
  * ```
  *
- * @section Logging and Maintenance
- * @example Enable CloudWatch logs and pin a maintenance window
+ * ### Logging and Maintenance
+ * **Example:** Enable CloudWatch logs and pin a maintenance window
  * ```typescript
  * const broker = yield* MQ.Broker("Orders", {
  *   engineType: "ACTIVEMQ",
@@ -274,13 +273,13 @@ export interface Broker extends Resource<
  * });
  * ```
  *
- * @section Consuming Messages
+ * ### Consuming Messages
  * Subscribe a Lambda function to broker queues from the init phase via
  * {@link consumeBrokerMessages}. The event-source mapping, IAM grants, and
  * runtime dispatch are created automatically (provide
  * `Lambda.BrokerEventSource` on the function).
  *
- * @example Process queue messages in a Lambda function
+ * **Example:** Process queue messages in a Lambda function
  * ```typescript
  * // init
  * yield* MQ.consumeBrokerMessages(
@@ -297,6 +296,8 @@ export interface Broker extends Resource<
  *     ),
  * );
  * ```
+ *
+ * @resource
  */
 export const Broker = Resource<Broker>("AWS.MQ.Broker");
 

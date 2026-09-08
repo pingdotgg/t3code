@@ -105,16 +105,15 @@ export interface Room extends Resource<
  * Clients connect with chat tokens minted at runtime via
  * `CreateChatToken`; message rate/length limits, a Lambda review handler,
  * and logging configurations are all managed on the room.
- * @resource
- * @section Creating Rooms
- * @example Basic Room
+ * ### Creating Rooms
+ * **Example:** Basic Room
  * ```typescript
  * import * as IVSChat from "alchemy/AWS/IVSChat";
  *
  * const room = yield* IVSChat.Room("LiveChat");
  * ```
  *
- * @example Room with Message Limits
+ * **Example:** Room with Message Limits
  * ```typescript
  * const room = yield* IVSChat.Room("LiveChat", {
  *   maximumMessageRatePerSecond: 5,
@@ -122,8 +121,8 @@ export interface Room extends Resource<
  * });
  * ```
  *
- * @section Logging
- * @example Room with Chat Logging
+ * ### Logging
+ * **Example:** Room with Chat Logging
  * ```typescript
  * const logging = yield* IVSChat.LoggingConfiguration("ChatLogs", {
  *   destinationConfiguration: {
@@ -135,8 +134,8 @@ export interface Room extends Resource<
  * });
  * ```
  *
- * @section Message Review
- * @example Review Messages with a Lambda Handler
+ * ### Message Review
+ * **Example:** Review Messages with a Lambda Handler
  * ```typescript
  * // inside a Lambda Function's effect — the handler reviews every message
  * // sent to the room before delivery (allow / modify / deny)
@@ -151,6 +150,8 @@ export interface Room extends Resource<
  * // on the Function effect:
  * // .pipe(Effect.provide(Lambda.RoomMessageReviewEventSource))
  * ```
+ *
+ * @resource
  */
 export const Room = Resource<Room>("AWS.IVSChat.Room");
 

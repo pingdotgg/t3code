@@ -15,9 +15,8 @@ export interface DescribeFirewallRequest extends Omit<
  *
  * Provide `NetworkFirewall.DescribeFirewallHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Firewall State
- * @example Read the Firewall Status
+ * ### Reading Firewall State
+ * **Example:** Read the Firewall Status
  * ```typescript
  * // init — grants network-firewall:DescribeFirewall on the firewall
  * const describeFirewall = yield* AWS.NetworkFirewall.DescribeFirewall(firewall);
@@ -25,6 +24,8 @@ export interface DescribeFirewallRequest extends Omit<
  * // runtime
  * const { FirewallStatus } = yield* describeFirewall();
  * ```
+ *
+ * @binding
  */
 export interface DescribeFirewall extends Binding.Service<
   DescribeFirewall,

@@ -17,15 +17,16 @@ export interface DescribeKeyRequest extends Omit<
  * `KeyId`. Useful at runtime to discover a key's state, spec, and supported
  * algorithms before choosing a cryptographic operation.
  *
- * @binding
- * @section Key Metadata
- * @example Inspect the Bound Key
+ * ### Key Metadata
+ * **Example:** Inspect the Bound Key
  * ```typescript
  * const describeKey = yield* AWS.KMS.DescribeKey(key);
  *
  * const { KeyMetadata } = yield* describeKey();
  * // KeyMetadata.KeyState, KeyMetadata.KeySpec, ...
  * ```
+ *
+ * @binding
  */
 export interface DescribeKey extends Binding.Service<
   DescribeKey,

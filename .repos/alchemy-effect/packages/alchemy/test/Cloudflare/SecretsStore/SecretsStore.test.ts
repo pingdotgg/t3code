@@ -137,7 +137,7 @@ it.live(
       }).pipe(Effect.provide(layer));
 
       // Assert on the tag, not `instanceof`: distilled errors are defined as
-      // `class X extends applyErrorMatchers(Schema.TaggedErrorClass(...))`, so
+      // `class X extends applyErrorMatchers(Schema.TaggedError(...))`, so
       // the decoder constructs instances of the inner schema class — they
       // carry the right `_tag` but are not `instanceof` the exported subclass.
       const err = result as secretsStore.MaximumStoresExceeded;

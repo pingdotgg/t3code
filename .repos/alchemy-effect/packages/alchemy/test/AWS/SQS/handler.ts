@@ -19,7 +19,7 @@ export class SQSTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SQSTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The /receive route long-polls SQS (WaitTimeSeconds up to 2s); AWS's 3s
     // default function timeout intermittently kills the invocation AFTER SQS
     // has consumed the message server-side, trapping it invisible for the

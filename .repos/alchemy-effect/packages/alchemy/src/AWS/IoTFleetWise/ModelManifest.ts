@@ -76,9 +76,8 @@ export interface ModelManifest extends Resource<
  * A manifest is created in `DRAFT` status; set `status: "ACTIVE"` to make
  * it usable by decoder manifests and vehicles. AWS IoT FleetWise is
  * allowlist-gated and offered in `us-east-1`/`eu-central-1` only.
- * @resource
- * @section Creating a Model Manifest
- * @example Active Vehicle Model
+ * ### Creating a Model Manifest
+ * **Example:** Active Vehicle Model
  * ```typescript
  * const model = yield* ModelManifest("SedanModel", {
  *   signalCatalogArn: catalog.signalCatalogArn,
@@ -87,7 +86,7 @@ export interface ModelManifest extends Resource<
  * });
  * ```
  *
- * @example Draft Model with Description
+ * **Example:** Draft Model with Description
  * ```typescript
  * const model = yield* ModelManifest("SedanModel", {
  *   signalCatalogArn: catalog.signalCatalogArn,
@@ -95,6 +94,8 @@ export interface ModelManifest extends Resource<
  *   description: "2026 sedan line",
  * });
  * ```
+ *
+ * @resource
  */
 export const ModelManifest = Resource<ModelManifest>(
   "AWS.IoTFleetWise.ModelManifest",

@@ -91,11 +91,10 @@ test.provider.skipIf(!!process.env.FAST)(
       // Wait for the function URL to serve — the readiness signal that the
       // Lambda (and everything deployed with it) is live.
       yield* HttpClient.get(`${baseUrl}/`).pipe(
-        Effect.flatMap(
-          (response): Effect.Effect<void, Error> =>
-            response.status === 200
-              ? Effect.void
-              : Effect.fail(new Error(`probe returned ${response.status}`)),
+        Effect.flatMap((response): Effect.Effect<void, Error> =>
+          response.status === 200
+            ? Effect.void
+            : Effect.fail(new Error(`probe returned ${response.status}`)),
         ),
         Effect.retry({ schedule: readinessSchedule }),
       );

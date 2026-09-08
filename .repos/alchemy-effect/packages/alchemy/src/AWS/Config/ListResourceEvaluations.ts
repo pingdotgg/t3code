@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.ListResourceEvaluationsHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Proactive Resource Evaluation
- * @example List Proactive Evaluations
+ * ### Proactive Resource Evaluation
+ * **Example:** List Proactive Evaluations
  * ```typescript
  * // init — grants config:ListResourceEvaluations
  * const listResourceEvaluations = yield* AWS.Config.ListResourceEvaluations();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(result.ResourceEvaluations);
  * ```
+ *
+ * @binding
  */
 export interface ListResourceEvaluations extends Binding.Service<
   ListResourceEvaluations,

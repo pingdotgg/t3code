@@ -15,9 +15,8 @@ export interface ListResourceInventoryRequest
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.ListResourceInventoryHttp)`.
- * @binding
- * @section Resource Inventory and Specifications
- * @example List Discovered Resources
+ * ### Resource Inventory and Specifications
+ * **Example:** List Discovered Resources
  * ```typescript
  * // init
  * const listInventory = yield* AWS.LicenseManager.ListResourceInventory();
@@ -25,6 +24,8 @@ export interface ListResourceInventoryRequest
  * // runtime
  * const { ResourceInventoryList } = yield* listInventory();
  * ```
+ *
+ * @binding
  */
 export interface ListResourceInventory extends Binding.Service<
   ListResourceInventory,

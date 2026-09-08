@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * implementation with
  * `Effect.provide(AWS.IAM.ListPoliciesGrantingServiceAccessHttp)`.
  *
- * @binding
- * @section Access Advisor
- * @example Explain a Role's S3 Access
+ * ### Access Advisor
+ * **Example:** Explain a Role's S3 Access
  * ```typescript
  * // init
  * const listPoliciesGrantingServiceAccess =
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  *     ServiceNamespaces: ["s3"],
  *   });
  * ```
+ *
+ * @binding
  */
 export interface ListPoliciesGrantingServiceAccess extends Binding.Service<
   ListPoliciesGrantingServiceAccess,

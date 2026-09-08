@@ -17,9 +17,8 @@ export type GetParametersParameters = [Parameter, ...Parameter[]];
  * to get a callable that fetches all of them in a single API call. The
  * binding grants `ssm:GetParameters` on the exact parameter ARNs and
  * `kms:Decrypt` on the encryption keys of any `SecureString` parameters.
- * @binding
- * @section Reading Multiple Parameters
- * @example Read Several Parameters at Once
+ * ### Reading Multiple Parameters
+ * **Example:** Read Several Parameters at Once
  * ```typescript
  * const getParameters = yield* SSM.GetParameters(dbUrl, apiKey);
  *
@@ -28,6 +27,8 @@ export type GetParametersParameters = [Parameter, ...Parameter[]];
  *   yield* Effect.log(`${parameter.Name} = ${parameter.Value}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetParameters extends Binding.Service<
   GetParameters,

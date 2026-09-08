@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `ACCEPTED`).
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.ListReceivedDataGrantsHttp)`.
- * @binding
- * @section Data Grants
- * @example Find Pending Grants
+ * ### Data Grants
+ * **Example:** Find Pending Grants
  * ```typescript
  * const listReceivedDataGrants =
  *   yield* AWS.DataExchange.ListReceivedDataGrants();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   AcceptanceState: ["PENDING_RECEIVER_ACCEPTANCE"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListReceivedDataGrants extends Binding.Service<
   ListReceivedDataGrants,

@@ -177,9 +177,8 @@ export interface Cluster extends Resource<
  * while they exist. They are reachable only from inside a VPC and require an
  * {@link ACL}; place them in a {@link SubnetGroup} spanning multiple AZs for
  * high availability. Destroy clusters you are not using.
- * @resource
- * @section Creating a Cluster
- * @example Single-Shard Cluster
+ * ### Creating a Cluster
+ * **Example:** Single-Shard Cluster
  * ```typescript
  * const user = yield* User("CacheUser", {
  *   authenticationMode: { type: "password", passwords: [cachePassword] },
@@ -197,6 +196,8 @@ export interface Cluster extends Resource<
  *   numReplicasPerShard: 1,
  * });
  * ```
+ *
+ * @resource
  */
 export const Cluster = Resource<Cluster>("AWS.MemoryDB.Cluster");
 

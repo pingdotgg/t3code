@@ -36,7 +36,7 @@ export class CloudTrailTestFunction extends Lambda.Function<Lambda.Function>()(
 export default CloudTrailTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // LookupEvents scans + distilled's bounded retries must complete within
     // the invocation; AWS's 3s default would intermittently time out.
     timeout: Duration.seconds(30),

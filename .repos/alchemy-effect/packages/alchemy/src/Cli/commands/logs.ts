@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import { Command, Flag } from "effect/unstable/cli";
 
 import { findProviderByType, type LogLine } from "../../Provider.ts";
+import { stampedMode } from "../../ProviderMode.ts";
 import { Stage } from "../../Stage.ts";
 import * as State from "../../State/index.ts";
 import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
@@ -121,7 +122,12 @@ export const logsCommand = Command.make(
             });
             if (!(resourceState as any)?.attr) continue;
 
-            const provider = yield* findProviderByType(resource.Type);
+            // Query with the provider variant of the mode that deployed the
+            // row (a local dev worker's logs come from the local provider).
+            const provider = yield* findProviderByType(
+              resource.Type,
+              stampedMode(resourceState as any),
+            );
             if (!provider.logs) continue;
 
             const lines = yield* provider.logs({

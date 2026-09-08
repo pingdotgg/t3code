@@ -121,12 +121,17 @@ const FONTS = [
     style: "normal",
   },
   { name: "Caveat", file: "Caveat-Regular.ttf", weight: 400, style: "normal" },
-] as const;
+];
 
 const workerFonts = FONTS.map(({ file, public: pub, ...font }) => ({
   ...font,
   path: path.join(pub ? publicFontsDir : buildFontsDir, file),
 }));
+
+const RENDER_CONCURRENCY = Math.max(
+  1,
+  Math.min(os.availableParallelism() - 1, 12),
+);
 
 // ────────────────────────────────────────────────────────────────────────────
 // Render pool.
@@ -135,10 +140,9 @@ const workerFonts = FONTS.map(({ file, public: pub, ...font }) => ({
 // build step: ~130ms × ~4k pages ≈ 9 minutes, serially, on the build's main
 // thread. All renders now run in a pool of worker threads
 // (scripts/og-worker.mjs) — the element tree is plain JSON, so the main
-// thread just ships `OgCard(props)` to a worker. The pool is pre-warmed
-// from `getStaticPaths`, so workers crunch OG images concurrently while
-// the main thread prerenders HTML pages; at that throughput the cards are
-// cheap enough to rebuild every time.
+// thread just ships `OgCard(props)` to a worker. The bounded lookahead below
+// keeps this pool busy without eagerly rendering paths that an incremental
+// build can restore from its cache.
 // ────────────────────────────────────────────────────────────────────────────
 
 class RenderPool {
@@ -194,9 +198,7 @@ class RenderPool {
 
 let pool: RenderPool | undefined;
 function getPool() {
-  return (pool ??= new RenderPool(
-    Math.max(1, Math.min(os.availableParallelism() - 1, 12)),
-  ));
+  return (pool ??= new RenderPool(RENDER_CONCURRENCY));
 }
 
 /** Render one card in the pool; returns the PNG. */
@@ -208,19 +210,38 @@ function renderCard(entry: Entry): Promise<Buffer> {
   return getPool().render(tree);
 }
 
-/** slug → in-flight render, primed for every entry from getStaticPaths. */
-const prewarmed = new Map<string, Promise<Buffer>>();
+/**
+ * Astro's incremental builder generates routes serially, so a cold build would
+ * otherwise leave all but one render worker idle. Keep a bounded window of
+ * upcoming cards in flight: cache hits do no rendering at all, while cold builds
+ * still saturate the pool. Entries outside the window are never speculatively
+ * rendered.
+ */
+let renderEntries: Entry[] = [];
+const renderEntryIndexes = new Map<string, number>();
+const pendingRenders = new Map<string, Promise<Buffer>>();
 
-function prewarm(entries: Entry[]) {
-  // `astro dev` also calls getStaticPaths — don't rasterize 4k cards on
-  // dev-server startup. Dev GETs render on demand.
-  if (import.meta.env.DEV) return;
-  for (const entry of entries) {
-    prewarmed.set(entry.slug, renderCard(entry));
+function setRenderEntries(entries: Entry[]) {
+  renderEntries = entries;
+  renderEntryIndexes.clear();
+  for (const [index, entry] of entries.entries()) {
+    renderEntryIndexes.set(entry.slug, index);
   }
-  // Surface failures per-route (each GET awaits its own slug), not as
-  // unhandled rejections here.
-  for (const p of prewarmed.values()) p.catch(() => {});
+}
+
+function renderWithLookahead(entry: Entry) {
+  const start = renderEntryIndexes.get(entry.slug);
+  if (start === undefined) return renderCard(entry);
+
+  const size = import.meta.env.DEV ? 1 : RENDER_CONCURRENCY;
+  for (const candidate of renderEntries.slice(start, start + size)) {
+    if (pendingRenders.has(candidate.slug)) continue;
+    const render = renderCard(candidate);
+    render.catch(() => {});
+    pendingRenders.set(candidate.slug, render);
+  }
+
+  return pendingRenders.get(entry.slug)!;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -293,6 +314,7 @@ export const getStaticPaths: GetStaticPaths = async () => {
     };
     return {
       params: { slug },
+      cacheKey: entry.digest,
       props: {
         slug,
         title: data.title ?? slug,
@@ -312,6 +334,7 @@ export const getStaticPaths: GetStaticPaths = async () => {
   const marketingPaths = Object.entries(MARKETING_PAGES).map(
     ([slug, meta]) => ({
       params: { slug },
+      cacheKey: slug,
       props: {
         slug,
         title: meta.title,
@@ -352,19 +375,21 @@ export const getStaticPaths: GetStaticPaths = async () => {
         eyebrow: "blog · alchemy.run",
       }),
     ),
-  ].map((props) => ({ params: { slug: props.slug }, props }));
+  ].map((props) => ({
+    params: { slug: props.slug },
+    cacheKey: props.slug,
+    props,
+  }));
 
   const paths = [...marketingPaths, ...docPaths, ...virtualPaths];
-  // Kick off every render now: workers rasterize OG cards in parallel
-  // while Astro's main thread prerenders HTML pages. Each GET below just
-  // awaits its slug's already-running (or already-cached) render.
-  prewarm(paths.map((p) => p.props));
+  setRenderEntries(paths.map(({ props }) => props));
   return paths;
 };
 
 export const GET: APIRoute = async ({ props }) => {
   const entry = props as Entry;
-  const png = await (prewarmed.get(entry.slug) ?? renderCard(entry));
+  const png = await renderWithLookahead(entry);
+  pendingRenders.delete(entry.slug);
   return new Response(png as any, {
     headers: {
       "Content-Type": "image/png",

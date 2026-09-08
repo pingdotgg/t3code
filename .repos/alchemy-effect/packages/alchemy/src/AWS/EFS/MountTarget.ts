@@ -69,9 +69,8 @@ export interface MountTarget extends Resource<
  * waits until the mount target is fully gone, because its ENI must be
  * released before the subnet, security groups, or file system can be
  * deleted.
- * @resource
- * @section Creating Mount Targets
- * @example Mount target in a subnet
+ * ### Creating Mount Targets
+ * **Example:** Mount target in a subnet
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -82,7 +81,7 @@ export interface MountTarget extends Resource<
  * });
  * ```
  *
- * @example Mount target with explicit security groups
+ * **Example:** Mount target with explicit security groups
  * ```typescript
  * const target = yield* AWS.EFS.MountTarget("FilesTarget", {
  *   fileSystemId: files.fileSystemId,
@@ -90,6 +89,8 @@ export interface MountTarget extends Resource<
  *   securityGroups: [nfsSecurityGroupId],
  * });
  * ```
+ *
+ * @resource
  */
 export const MountTarget = Resource<MountTarget>("AWS.EFS.MountTarget");
 

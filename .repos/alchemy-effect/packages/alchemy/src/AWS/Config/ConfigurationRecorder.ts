@@ -139,9 +139,8 @@ export interface ConfigurationRecorder extends Resource<
  * Starting the recorder (`recording: true`) requires a delivery channel
  * (see `AWS.Config.DeliveryChannel`) and incurs per-configuration-item
  * charges.
- * @resource
- * @section Creating the Recorder
- * @example Recorder with the Config service-linked role
+ * ### Creating the Recorder
+ * **Example:** Recorder with the Config service-linked role
  * ```typescript
  * import * as Config from "alchemy/AWS/Config";
  *
@@ -151,7 +150,7 @@ export interface ConfigurationRecorder extends Resource<
  * });
  * ```
  *
- * @example Record only specific resource types
+ * **Example:** Record only specific resource types
  * ```typescript
  * const recorder = yield* Config.ConfigurationRecorder("Recorder", {
  *   roleArn: serviceLinkedRoleArn,
@@ -161,8 +160,8 @@ export interface ConfigurationRecorder extends Resource<
  * });
  * ```
  *
- * @section Recording State
- * @example Start recording (requires a delivery channel)
+ * ### Recording State
+ * **Example:** Start recording (requires a delivery channel)
  * ```typescript
  * const channel = yield* Config.DeliveryChannel("Channel", {
  *   s3BucketName: bucket.bucketName,
@@ -172,6 +171,8 @@ export interface ConfigurationRecorder extends Resource<
  *   recording: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const ConfigurationRecorder = Resource<ConfigurationRecorder>(
   "AWS.Config.ConfigurationRecorder",

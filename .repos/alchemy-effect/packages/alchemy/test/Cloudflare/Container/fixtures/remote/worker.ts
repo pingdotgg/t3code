@@ -22,6 +22,12 @@ export default class RemoteContainerWorker extends Cloudflare.Worker<RemoteConta
           return HttpServerResponse.text(text);
         }
 
+        if (url.pathname.startsWith("/passthrough")) {
+          // Forward the raw incoming request through the DO's fetch handler
+          // to the container port (see the fixture object's `fetch`).
+          return yield* objects.getByName("default").fetch(request);
+        }
+
         return HttpServerResponse.text("ok");
       }).pipe(
         Effect.catchTag("HttpClientError", (err) =>

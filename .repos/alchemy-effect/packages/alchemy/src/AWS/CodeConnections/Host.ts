@@ -95,9 +95,8 @@ export interface Host extends Resource<
  * one-time setup performed **manually** in the AWS console — there is no
  * API to finish the setup. Once completed the host becomes `AVAILABLE` and
  * `Connection`s can reference it via `hostArn`.
- * @resource
- * @section Creating a Host
- * @example GitHub Enterprise Server Host (created PENDING)
+ * ### Creating a Host
+ * **Example:** GitHub Enterprise Server Host (created PENDING)
  * ```typescript
  * const host = yield* CodeConnections.Host("GHE", {
  *   providerType: "GitHubEnterpriseServer",
@@ -107,7 +106,7 @@ export interface Host extends Resource<
  * // Complete the setup in the console before creating connections on it.
  * ```
  *
- * @example Connection on a Host
+ * **Example:** Connection on a Host
  * ```typescript
  * const connection = yield* CodeConnections.Connection("GHEConn", {
  *   providerType: "GitHubEnterpriseServer",
@@ -115,8 +114,8 @@ export interface Host extends Resource<
  * });
  * ```
  *
- * @section Reaching a Private Endpoint
- * @example Host with VPC Configuration
+ * ### Reaching a Private Endpoint
+ * **Example:** Host with VPC Configuration
  * ```typescript
  * const host = yield* CodeConnections.Host("PrivateGHE", {
  *   providerType: "GitHubEnterpriseServer",
@@ -128,6 +127,8 @@ export interface Host extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Host = Resource<Host>("AWS.CodeConnections.Host");
 

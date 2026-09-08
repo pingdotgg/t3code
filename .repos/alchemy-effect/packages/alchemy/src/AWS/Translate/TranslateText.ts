@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * the source to let Translate detect the language (this additionally
  * calls Comprehend under the hood).
  *
- * @binding
- * @section Translating Text
- * @example Translate English to Spanish
+ * ### Translating Text
+ * **Example:** Translate English to Spanish
  * ```typescript
  * // init
  * const translateText = yield* AWS.Translate.TranslateText();
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.TranslatedText === "¡Hola, mundo!"
  * ```
+ *
+ * @binding
  */
 export interface TranslateText extends Binding.Service<
   TranslateText,

@@ -11,9 +11,8 @@ export interface ListApplicationsRequest
  *
  * An account-level operation — bind it with no resource argument. Provide the
  * `ListApplicationsHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Listing Applications
- * @example List All Applications
+ * ### Listing Applications
+ * **Example:** List All Applications
  * ```typescript
  * // init — no resource argument (provide AWS.AppIntegrations.ListApplicationsHttp on the Function)
  * const listApplications = yield* AWS.AppIntegrations.ListApplications();
@@ -21,6 +20,8 @@ export interface ListApplicationsRequest
  * // runtime — page through the applications in the account
  * const { Applications } = yield* listApplications({});
  * ```
+ *
+ * @binding
  */
 export interface ListApplications extends Binding.Service<
   ListApplications,

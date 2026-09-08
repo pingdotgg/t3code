@@ -22,6 +22,15 @@ const logLevel = Effect.provideService(
 const owner = process.env.GITHUB_TEST_OWNER ?? "alchemy-run-test";
 const owner2 = process.env.GITHUB_TEST_OWNER_2 ?? "alchemy-run-test-2";
 
+// Deleting a repository requires the `delete_repo` scope (fine-grained:
+// "Administration: write"). The default `gh` CLI token only carries
+// `gist, read:org, repo, workflow`, so every repo delete 403s with
+// "Must have admin rights to Repository." — the create/delete lifecycle
+// tests are gated behind an explicit opt-in. To run them:
+//   gh auth refresh -h github.com -s delete_repo
+//   GITHUB_TEST_DELETE_REPO=1 bun run test test/GitHub/Repository.test.ts --profile testing
+const canDeleteRepos = !!process.env.GITHUB_TEST_DELETE_REPO;
+
 const getRepo = (repo: string, repoOwner: string = owner) =>
   Effect.gen(function* () {
     const octokit = yield* Octokit;
@@ -42,7 +51,7 @@ const getRepo = (repo: string, repoOwner: string = owner) =>
     });
   });
 
-test.provider.skipIf(!owner)(
+test.provider.skipIf(!owner || !canDeleteRepos)(
   "create, update, rename, and delete a repository",
   (stack) =>
     Effect.gen(function* () {
@@ -135,7 +144,7 @@ test.provider.skipIf(!owner)(
   { timeout: 120_000 },
 );
 
-test.provider.skipIf(!owner)(
+test.provider.skipIf(!owner || !canDeleteRepos)(
   "list enumerates the deployed repository",
   (stack) =>
     Effect.gen(function* () {
@@ -176,7 +185,7 @@ test.provider.skipIf(!owner)(
 // Owner changes are replacements, not moves (we never call GitHub's transfer
 // API). With deletion opted in via `destroy()`, the replaced old-generation
 // repo is deleted from the old org after the new one is created.
-test.provider.skipIf(!owner || !owner2)(
+test.provider.skipIf(!owner || !owner2 || !canDeleteRepos)(
   "changing the owner replaces the repository (destroy-opted)",
   (stack) =>
     Effect.gen(function* () {
@@ -231,7 +240,7 @@ test.provider.skipIf(!owner || !owner2)(
 // The safety property: under the DEFAULT `retain` removal policy, an owner
 // change creates the new repo but RETAINS the old one on GitHub — history is
 // never destroyed by a replacement unless deletion was explicitly opted in.
-test.provider.skipIf(!owner || !owner2)(
+test.provider.skipIf(!owner || !owner2 || !canDeleteRepos)(
   "changing the owner retains the old repository by default",
   (stack) =>
     Effect.gen(function* () {

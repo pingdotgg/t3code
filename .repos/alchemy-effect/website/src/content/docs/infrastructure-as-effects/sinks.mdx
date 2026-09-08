@@ -29,7 +29,7 @@ import { OutboundQueue } from "./queue.ts";
 
 export default class Publisher extends AWS.Lambda.Function<Publisher>()(
   "Publisher",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, workersDev: true },
   Effect.gen(function* () {
     const sink = yield* AWS.SQS.QueueSink(OutboundQueue);
     // → Sink<void, string, readonly string[], never>
@@ -89,7 +89,7 @@ control of `PartitionKey`:
 ```typescript
 export default class Ingest extends AWS.Lambda.Function<Ingest>()(
   "Ingest",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, workersDev: true },
   Effect.gen(function* () {
     const sink = yield* AWS.Kinesis.StreamSink(ClickStream);
 

@@ -13,14 +13,15 @@ export interface SendTaskHeartbeatRequest extends sfn.SendTaskHeartbeatInput {}
  * `HeartbeatSeconds` timeout does not fire. Bind without arguments for
  * task tokens issued by service-integration Task states, or pass an
  * `Activity` to scope access.
- * @binding
- * @section Callback Pattern
- * @example Keep a waiting task alive
+ * ### Callback Pattern
+ * **Example:** Keep a waiting task alive
  * ```typescript
  * const sendTaskHeartbeat = yield* StepFunctions.SendTaskHeartbeat();
  *
  * yield* sendTaskHeartbeat({ taskToken: token });
  * ```
+ *
+ * @binding
  */
 export interface SendTaskHeartbeat extends Binding.Service<
   SendTaskHeartbeat,

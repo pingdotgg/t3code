@@ -136,11 +136,8 @@ export type CloudIntegration = Resource<
  * Magic Cloud Networking is an entitlement-gated add-on (Magic WAN family).
  * On accounts without the entitlement every API call fails with the typed
  * `FeatureNotEnabled` error (Cloudflare code 1012, "feature not enabled").
- * @resource
- * @product Magic Cloud Networking
- * @category Network
- * @section Creating an integration
- * @example Register an AWS account
+ * ### Creating an integration
+ * **Example:** Register an AWS account
  * ```typescript
  * const aws = yield* Cloudflare.MagicCloudNetworking.CloudIntegration("Discovery", {
  *   cloudType: "AWS",
@@ -149,7 +146,7 @@ export type CloudIntegration = Resource<
  * // aws.lifecycleState === "PENDING_SETUP" until credentials are wired
  * ```
  *
- * @example Wire credentials after creating the IAM role
+ * **Example:** Wire credentials after creating the IAM role
  * ```typescript
  * yield* Cloudflare.MagicCloudNetworking.CloudIntegration("Discovery", {
  *   cloudType: "AWS",
@@ -157,8 +154,8 @@ export type CloudIntegration = Resource<
  * });
  * ```
  *
- * @section GCP
- * @example Register a GCP project
+ * ### GCP
+ * **Example:** Register a GCP project
  * ```typescript
  * yield* Cloudflare.MagicCloudNetworking.CloudIntegration("GcpDiscovery", {
  *   cloudType: "GOOGLE",
@@ -168,6 +165,10 @@ export type CloudIntegration = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-cloud-networking/
+ *
+ * @resource
+ * @product Magic Cloud Networking
+ * @category Network
  */
 export const CloudIntegration = Resource<CloudIntegration>(TypeId);
 

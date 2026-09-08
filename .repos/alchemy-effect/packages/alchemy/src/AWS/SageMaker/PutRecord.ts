@@ -16,9 +16,8 @@ export interface PutRecordRequest extends Omit<
  * callable that automatically injects the feature group name. Every feature
  * value is passed as a string (`ValueAsString`) — the feature group's schema
  * declares the actual types.
- * @binding
- * @section Writing Records
- * @example Put a Record
+ * ### Writing Records
+ * **Example:** Put a Record
  * ```typescript
  * // init
  * const putRecord = yield* AWS.SageMaker.PutRecord(featureGroup);
@@ -32,6 +31,8 @@ export interface PutRecordRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutRecord extends Binding.Service<
   PutRecord,

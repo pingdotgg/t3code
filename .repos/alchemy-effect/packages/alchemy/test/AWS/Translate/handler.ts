@@ -93,7 +93,7 @@ export const TranslateFixturesLive = Layer.effect(
 export default TranslateTestFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     // The job lifecycle route retries StartTextTranslationJob through
     // fresh-role IAM propagation (bounded ~40s).
     timeout: Duration.seconds(120),

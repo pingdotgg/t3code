@@ -24,9 +24,8 @@ export interface InvokeAgentRequest extends Omit<
  * `completion` is an event `Stream` of chunks (and traces when
  * `enableTrace` is set); concatenate the chunk bytes to recover the answer.
  *
- * @binding
- * @section Invoking an Agent
- * @example Invoke and Aggregate the Completion
+ * ### Invoking an Agent
+ * **Example:** Invoke and Aggregate the Completion
  * ```typescript
  * // init
  * const invokeAgent = yield* Bedrock.InvokeAgent(alias);
@@ -51,7 +50,7 @@ export interface InvokeAgentRequest extends Omit<
  *   .join("");
  * ```
  *
- * @example Continue a Session
+ * **Example:** Continue a Session
  * ```typescript
  * // Reuse the same sessionId across calls to keep conversational context.
  * const followUp = yield* invokeAgent({
@@ -59,6 +58,8 @@ export interface InvokeAgentRequest extends Omit<
  *   inputText: "And its population?",
  * });
  * ```
+ *
+ * @binding
  */
 export interface InvokeAgent extends Binding.Service<
   InvokeAgent,

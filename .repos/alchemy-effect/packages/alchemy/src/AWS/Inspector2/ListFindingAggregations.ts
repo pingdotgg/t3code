@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.ListFindingAggregationsHttp)`.
- * @binding
- * @section Querying Findings
- * @example Aggregate Findings by Account
+ * ### Querying Findings
+ * **Example:** Aggregate Findings by Account
  * ```typescript
  * // init
  * const listFindingAggregations = yield* AWS.Inspector2.ListFindingAggregations();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { responses } = yield* listFindingAggregations({ aggregationType: "ACCOUNT" });
  * ```
+ *
+ * @binding
  */
 export interface ListFindingAggregations extends Binding.Service<
   ListFindingAggregations,

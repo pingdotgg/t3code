@@ -17,15 +17,16 @@ export interface DescribeImagesRequest extends Omit<
  *
  * Returns metadata (digest, tags, size, push time, scan status) about the images in the bound repository. Provide the implementation with
  * `Effect.provide(AWS.ECR.DescribeImagesHttp)`.
- * @binding
- * @section Reading Images
- * @example Describe Tagged Images
+ * ### Reading Images
+ * **Example:** Describe Tagged Images
  * ```typescript
  * const describeImages = yield* AWS.ECR.DescribeImages(repository);
  *
  * const res = yield* describeImages({ imageIds: [{ imageTag: "latest" }] });
  * console.log(res.imageDetails?.[0]?.imageDigest);
  * ```
+ *
+ * @binding
  */
 export interface DescribeImages extends Binding.Service<
   DescribeImages,

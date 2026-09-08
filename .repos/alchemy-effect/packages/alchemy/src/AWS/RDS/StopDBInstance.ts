@@ -11,9 +11,8 @@ import type { DBInstance } from "./DBInstance.ts";
  * development database overnight to save cost. The instance identifier is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.RDS.StopDBInstanceHttp)`.
- * @binding
- * @section Operating an Instance
- * @example Stop a Running Instance
+ * ### Operating an Instance
+ * **Example:** Stop a Running Instance
  * ```typescript
  * // init — bind the operation to the instance
  * const stopDBInstance = yield* AWS.RDS.StopDBInstance(instance);
@@ -21,6 +20,8 @@ import type { DBInstance } from "./DBInstance.ts";
  * // runtime
  * yield* stopDBInstance();
  * ```
+ *
+ * @binding
  */
 export interface StopDBInstance extends Binding.Service<
   StopDBInstance,

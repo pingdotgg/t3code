@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * resource to manage: the binding takes no arguments and grants the action
  * on `*` (it has no resource-level IAM).
  *
- * @binding
- * @section Real-Time Analysis
- * @example Detect the Language of a Document
+ * ### Real-Time Analysis
+ * **Example:** Detect the Language of a Document
  * ```typescript
  * // init
  * const detectDominantLanguage = yield* AWS.Comprehend.DetectDominantLanguage();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.Languages[0].LanguageCode === "en"
  * ```
+ *
+ * @binding
  */
 export interface DetectDominantLanguage extends Binding.Service<
   DetectDominantLanguage,

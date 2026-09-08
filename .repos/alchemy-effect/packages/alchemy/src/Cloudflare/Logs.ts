@@ -61,7 +61,7 @@ const parseEvents = (
   if (response.events?.events) {
     for (const event of response.events.events) {
       const ts = new Date(event.timestamp);
-      const meta = event.$metadata;
+      const meta = event.metadata;
       const msg =
         meta.message ??
         (meta.level === "error"
@@ -78,6 +78,30 @@ export const CloudflareLogs = Effect.gen(function* () {
   const createScriptTail = yield* workers.createScriptTail;
   const deleteScriptTail = yield* workers.deleteScriptTail;
 
+  /**
+   * The telemetry query needs the `workers_observability:read` OAuth scope.
+   * A token minted by an older `alchemy login` (before the scope joined the
+   * defaults) keeps its original grants forever, so the query fails with a
+   * bare `Unauthorized`/`Forbidden` even though a fresh login would work —
+   * explain the fix instead of surfacing the raw tag.
+   */
+  const explainMissingObservabilityScope = <A, R>(
+    effect: Effect.Effect<A, workers.QueryObservabilityTelemetryError, R>,
+  ): Effect.Effect<A, workers.QueryObservabilityTelemetryError, R> =>
+    effect.pipe(
+      Effect.catchTag("Unauthorized", () =>
+        Effect.die(
+          new Error(
+            "Cloudflare rejected the observability telemetry query (Unauthorized). " +
+              'Your stored credentials are likely missing the "workers_observability:read" scope — ' +
+              "OAuth tokens keep the scopes they were minted with, so tokens from an older " +
+              "`alchemy login` won't have it. Run `alchemy login` again to mint a token with " +
+              "the current default scopes, or use an API token that grants Workers Observability read access.",
+          ),
+        ),
+      ),
+    );
+
   const queryLogs = (opts: {
     accountId: string;
     filters: TelemetryFilter[];
@@ -88,30 +112,34 @@ export const CloudflareLogs = Effect.gen(function* () {
       const limit = opts.options.limit ?? 100;
 
       if (opts.options.since) {
-        const response = yield* queryTelemetry({
-          accountId: opts.accountId,
-          queryId: "events",
-          view: "events",
-          timeframe: { from: opts.options.since.getTime(), to: now },
-          limit,
-          parameters: {
-            filters: opts.filters,
-            // orderBy: { value: "timestamp", order: "desc" },
-          },
-        });
+        const response = yield* explainMissingObservabilityScope(
+          queryTelemetry({
+            accountId: opts.accountId,
+            queryId: "events",
+            view: "events",
+            timeframe: { from: opts.options.since.getTime(), to: now },
+            limit,
+            parameters: {
+              filters: opts.filters,
+              // orderBy: { value: "timestamp", order: "desc" },
+            },
+          }),
+        );
         return parseEvents(response);
       }
 
-      const response = yield* queryTelemetry({
-        accountId: opts.accountId,
-        queryId: "events",
-        view: "events",
-        timeframe: { from: now - DEFAULT_LOOKBACK_MS, to: now },
-        limit,
-        parameters: {
-          filters: opts.filters,
-        },
-      });
+      const response = yield* explainMissingObservabilityScope(
+        queryTelemetry({
+          accountId: opts.accountId,
+          queryId: "events",
+          view: "events",
+          timeframe: { from: now - DEFAULT_LOOKBACK_MS, to: now },
+          limit,
+          parameters: {
+            filters: opts.filters,
+          },
+        }),
+      );
 
       return parseEvents(response);
     });
@@ -127,7 +155,7 @@ export const CloudflareLogs = Effect.gen(function* () {
       const { id: tailId, url } = yield* createScriptTail({
         scriptName: opts.scriptName,
         accountId: opts.accountId,
-        body: { filters: [] },
+        filters: [],
       });
 
       const socket = yield* Socket.makeWebSocket(url, {
@@ -207,17 +235,19 @@ export const CloudflareLogs = Effect.gen(function* () {
           yield* Effect.sleep("2 seconds");
           const now = Date.now();
 
-          const response = yield* queryTelemetry({
-            accountId: opts.accountId,
-            queryId: "events",
-            view: "events",
-            timeframe: { from: since, to: now },
-            limit: 100,
-            parameters: {
-              filters: opts.filters,
-              orderBy: { value: "timestamp", order: "asc" },
-            },
-          });
+          const response = yield* explainMissingObservabilityScope(
+            queryTelemetry({
+              accountId: opts.accountId,
+              queryId: "events",
+              view: "events",
+              timeframe: { from: since, to: now },
+              limit: 100,
+              parameters: {
+                filters: opts.filters,
+                orderBy: { value: "timestamp", order: "asc" },
+              },
+            }),
+          );
 
           const lines = parseEvents(response);
           const nextSince =

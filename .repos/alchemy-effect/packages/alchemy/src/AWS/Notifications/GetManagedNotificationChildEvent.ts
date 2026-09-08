@@ -15,9 +15,8 @@ export interface GetManagedNotificationChildEventRequest
  * single account/region item inside an aggregate AWS Health event) by its
  * ARN. Provide the implementation with
  * `Effect.provide(AWS.Notifications.GetManagedNotificationChildEventHttp)`.
- * @binding
- * @section Reading AWS-Managed Notifications
- * @example Fetch a Managed Notification Child Event
+ * ### Reading AWS-Managed Notifications
+ * **Example:** Fetch a Managed Notification Child Event
  * ```typescript
  * // init — account-level binding takes no resource
  * const getManagedNotificationChildEvent =
@@ -26,6 +25,8 @@ export interface GetManagedNotificationChildEventRequest
  * // runtime
  * const child = yield* getManagedNotificationChildEvent({ arn: childArn });
  * ```
+ *
+ * @binding
  */
 export interface GetManagedNotificationChildEvent extends Binding.Service<
   GetManagedNotificationChildEvent,

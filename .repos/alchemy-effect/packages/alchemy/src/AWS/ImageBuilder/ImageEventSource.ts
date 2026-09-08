@@ -66,8 +66,8 @@ export interface ImageEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Image Events
- * @example React When a Build Completes
+ * ### Consuming Image Events
+ * **Example:** React When a Build Completes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

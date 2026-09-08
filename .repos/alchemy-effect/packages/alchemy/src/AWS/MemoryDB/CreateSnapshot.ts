@@ -11,15 +11,16 @@ import type { Cluster } from "./Cluster.ts";
  * Takes an on-demand snapshot of the bound cluster — e.g. a pre-migration
  * backup from an operational Lambda. Provide the implementation with
  * `Effect.provide(AWS.MemoryDB.CreateSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Take an On-Demand Snapshot
+ * ### Managing Snapshots
+ * **Example:** Take an On-Demand Snapshot
  * ```typescript
  * const createSnapshot = yield* MemoryDB.CreateSnapshot(cluster);
  *
  * const result = yield* createSnapshot({ SnapshotName: "pre-migration" });
  * // result.Snapshot.Status → "creating"
  * ```
+ *
+ * @binding
  */
 export interface CreateSnapshot extends Binding.Service<
   CreateSnapshot,

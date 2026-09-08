@@ -62,7 +62,7 @@ const USERS_SCHEMA = JSON.stringify({
 export default PersonalizeTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

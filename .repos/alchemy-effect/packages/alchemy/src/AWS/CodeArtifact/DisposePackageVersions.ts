@@ -17,9 +17,8 @@ export interface DisposePackageVersionsRequest extends Omit<
  *
  * Disposes package versions — deletes their assets and pins the version status to `Disposed` so the version number can never be reused with different content. Provide the implementation with
  * `Effect.provide(AWS.CodeArtifact.DisposePackageVersionsHttp)`.
- * @binding
- * @section Deleting Packages
- * @example Dispose Package Versions
+ * ### Deleting Packages
+ * **Example:** Dispose Package Versions
  * ```typescript
  * const dispose = yield* AWS.CodeArtifact.DisposePackageVersions(repo);
  *
@@ -31,6 +30,8 @@ export interface DisposePackageVersionsRequest extends Omit<
  * });
  * console.log(res.successfulVersions);
  * ```
+ *
+ * @binding
  */
 export interface DisposePackageVersions extends Binding.Service<
   DisposePackageVersions,

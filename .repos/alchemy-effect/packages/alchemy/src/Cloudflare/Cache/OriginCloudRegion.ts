@@ -85,11 +85,8 @@ export type OriginCloudRegion = Resource<
  * prior state, `read` reports an existing mapping for the same IP as
  * `Unowned`, so the engine refuses to take it over unless `--adopt`
  * (or `adopt(true)`) is set.
- * @resource
- * @product Cache
- * @category Performance & Reliability
- * @section Mapping origins to cloud regions
- * @example Map an origin IP to an AWS region
+ * ### Mapping origins to cloud regions
+ * **Example:** Map an origin IP to an AWS region
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -101,7 +98,7 @@ export type OriginCloudRegion = Resource<
  * });
  * ```
  *
- * @example Map several origins of the same zone
+ * **Example:** Map several origins of the same zone
  * ```typescript
  * // One resource per origin IP — the IP is the mapping's identity.
  * yield* Cloudflare.Cache.OriginCloudRegion("UsOrigin", {
@@ -119,6 +116,10 @@ export type OriginCloudRegion = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/cache/how-to/tiered-cache/
+ *
+ * @resource
+ * @product Cache
+ * @category Performance & Reliability
  */
 export const OriginCloudRegion = Resource<OriginCloudRegion>(TypeId);
 

@@ -1,5 +1,6 @@
 import * as mediapackagev2 from "@distilled.cloud/aws/mediapackagev2";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import { Unowned } from "../../AdoptPolicy.ts";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -91,9 +92,8 @@ export interface Channel extends Resource<
  * pushes an HLS or CMAF stream to the channel's ingest endpoints; origin
  * endpoints then package and serve that content downstream.
  *
- * @resource
- * @section Creating a Channel
- * @example Basic Channel in a Group
+ * ### Creating a Channel
+ * **Example:** Basic Channel in a Group
  * ```typescript
  * import * as MediaPackageV2 from "alchemy/AWS/MediaPackageV2";
  *
@@ -103,7 +103,7 @@ export interface Channel extends Resource<
  * });
  * ```
  *
- * @example CMAF Ingest Channel
+ * **Example:** CMAF Ingest Channel
  * ```typescript
  * const channel = yield* MediaPackageV2.Channel("Feed", {
  *   channelGroupName: group.channelGroupName,
@@ -112,8 +112,8 @@ export interface Channel extends Resource<
  * });
  * ```
  *
- * @section Resource Policy
- * @example Allow a Principal to Push Content
+ * ### Resource Policy
+ * **Example:** Allow a Principal to Push Content
  * ```typescript
  * const channel = yield* MediaPackageV2.Channel("Feed", {
  *   channelGroupName: group.channelGroupName,
@@ -129,8 +129,8 @@ export interface Channel extends Resource<
  * });
  * ```
  *
- * @section Ingest Endpoints
- * @example Point the encoder at the ingest URLs
+ * ### Ingest Endpoints
+ * **Example:** Point the encoder at the ingest URLs
  * ```typescript
  * const channel = yield* MediaPackageV2.Channel("Feed", {
  *   channelGroupName: group.channelGroupName,
@@ -138,6 +138,8 @@ export interface Channel extends Resource<
  * // Two redundant ingest endpoints for the encoder to push to.
  * const urls = channel.ingestEndpoints;
  * ```
+ *
+ * @resource
  */
 export const Channel = Resource<Channel>("AWS.MediaPackageV2.Channel");
 
@@ -348,10 +350,7 @@ export const ChannelProvider = () =>
                 ),
               { concurrency: 5 },
             );
-            return channels.filter(
-              (channel): channel is Channel["Attributes"] =>
-                channel !== undefined,
-            );
+            return channels.filter(Predicate.isNotUndefined);
           }),
       };
     }),

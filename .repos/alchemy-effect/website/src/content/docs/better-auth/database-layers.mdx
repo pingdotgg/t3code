@@ -1,0 +1,80 @@
+---
+title: Database layers
+description: One Layer per environment → database pair — HTTP and serverless drivers where they exist, TCP drivers as the fallback, all routed through alchemy's binding system.
+sidebar:
+  order: 1
+---
+
+`BetterAuth()` requires exactly one service: `BetterAuth.Database`.
+Platform layers provide it. Pick the optimal layer for your
+environment → database pair — HTTP/serverless transports where they
+exist, TCP drivers as the fallback:
+
+| Runtime | Database | Layer | Transport |
+| --- | --- | --- | --- |
+| Cloudflare Worker | D1 | [`CloudflareD1`](/providers/betterauth/cloudflared1) | native binding |
+| Worker / Lambda | Neon | [`Neon`](/providers/betterauth/neon) | serverless driver (WebSocket) |
+| AWS Lambda | Aurora | [`AuroraDataApi`](/providers/betterauth/auroradataapi) | RDS Data API (HTTPS, IAM) |
+| Cloudflare Worker | any TCP Postgres/MySQL | [`CloudflareHyperdrive`](/providers/betterauth/cloudflarehyperdrive) | pooled TCP via Hyperdrive |
+| anywhere with sockets | any Postgres | [`Postgres`](/providers/betterauth/postgres) | `pg` TCP |
+| anywhere with sockets | any MySQL | [`MySQL`](/providers/betterauth/mysql) | `mysql2` TCP |
+| bun (dev/tests) | local file | [`SQLite`](/providers/betterauth/sqlite) | `bun:sqlite` |
+| tests | in-memory | [`Memory`](/providers/betterauth/memory) | — |
+| bring-your-own | your Drizzle db | [`Drizzle`](/providers/betterauth/drizzle) | yours |
+
+## Layers are bindings
+
+Every layer routes runtime access through alchemy's binding system —
+never hand-wired environment variables:
+
+- **Native bindings** — `CloudflareD1` binds the D1 database to the
+  Worker; `CloudflareHyperdrive` binds the Hyperdrive connection;
+  `AuroraDataApi` grants the Lambda `rds-data:*` +
+  `secretsmanager:GetSecretValue` IAM through the `AWS.RDSData.*`
+  bindings.
+- **Environment Output bindings** — connection-string layers (`Neon`,
+  `Postgres`, `MySQL`) accept resource Outputs
+  (`project.connectionUri`, `role.connectionUrl`, ...); the value is
+  bound into the host environment at deploy and read back at runtime.
+
+Provide the layer on the impl effect that yields `BetterAuth`:
+
+```typescript
+Effect.gen(function* () {
+  const auth = yield* BetterAuth({ emailAndPassword: { enabled: true } });
+  return { fetch: /* ... */ };
+}).pipe(Effect.provide(CloudflareD1(AuthDb)));
+```
+
+When the layer needs a resource *attribute* (a connection string), build
+it with `Layer.unwrap` so it still composes at module scope:
+
+```typescript
+const AuthDatabase = Layer.unwrap(
+  Effect.map(AuthDb, (db) => NeonDatabase(db.connectionUri)),
+);
+```
+
+## Secondary storage
+
+Better Auth's optional `secondaryStorage` (sessions, rate limiting,
+OAuth state) is modeled as a second service, `BetterAuth.SecondaryStorage`,
+resolved only when a layer provides it. There is deliberately no
+Cloudflare KV implementation: Better Auth's guidance is a Redis-style
+store with strongly consistent reads and precise sub-minute TTLs, and
+KV's eventual consistency (plus its 60-second TTL floor) fights session
+reads and rate-limit counters. A Durable Object-backed layer is the
+right strongly-consistent Cloudflare option when one lands.
+
+## Choosing between Postgres options
+
+- **Neon** — use the [`Neon`](/providers/betterauth/neon) serverless
+  driver everywhere; no Hyperdrive or `pg` needed.
+- **Aurora from Lambda** — use
+  [`AuroraDataApi`](/providers/betterauth/auroradataapi); the Lambda
+  stays out of the VPC entirely.
+- **Any other Postgres from a Worker** — front it with
+  [`CloudflareHyperdrive`](/providers/betterauth/cloudflarehyperdrive).
+- **Everything else** — [`Postgres`](/providers/betterauth/postgres)
+  over `pg`. On Lambda, add `build: { install: ["pg"] }` so the
+  dynamically-imported driver ships with an npm layout.

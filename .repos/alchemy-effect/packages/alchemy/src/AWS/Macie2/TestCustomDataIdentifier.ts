@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.TestCustomDataIdentifierHttp)`.
- * @binding
- * @section Custom Data Identifiers & Lists
- * @example Test a Detection Regex
+ * ### Custom Data Identifiers & Lists
+ * **Example:** Test a Detection Regex
  * ```typescript
  * // init — account-level binding, no resource argument
  * const testCustomDataIdentifier = yield* AWS.Macie2.TestCustomDataIdentifier();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   sampleText: "id EMP-12345678",
  * });
  * ```
+ *
+ * @binding
  */
 export interface TestCustomDataIdentifier extends Binding.Service<
   TestCustomDataIdentifier,

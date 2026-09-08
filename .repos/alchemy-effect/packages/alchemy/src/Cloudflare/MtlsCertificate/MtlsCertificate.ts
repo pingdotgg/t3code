@@ -118,11 +118,8 @@ export type MtlsCertificate = Resource<
  *
  * Certificates are immutable: there is no update API, so changing any
  * property triggers a replacement.
- * @resource
- * @product mTLS Certificates
- * @category SSL/TLS & Certificates
- * @section Uploading Certificates
- * @example CA certificate
+ * ### Uploading Certificates
+ * **Example:** CA certificate
  * ```typescript
  * const ca = yield* Cloudflare.MtlsCertificate.MtlsCertificate("client-ca", {
  *   ca: true,
@@ -130,16 +127,16 @@ export type MtlsCertificate = Resource<
  * });
  * ```
  *
- * @example Leaf certificate with private key
+ * **Example:** Leaf certificate with private key
  * ```typescript
  * const cert = yield* Cloudflare.MtlsCertificate.MtlsCertificate("origin-client-cert", {
  *   ca: false,
  *   certificates: leafPem,
- *   privateKey: alchemy.secret.env.ORIGIN_CLIENT_KEY,
+ *   privateKey: yield* Config.redacted("ORIGIN_CLIENT_KEY"),
  * });
  * ```
  *
- * @example Named certificate
+ * **Example:** Named certificate
  * ```typescript
  * const ca = yield* Cloudflare.MtlsCertificate.MtlsCertificate("client-ca", {
  *   name: "my-client-ca",
@@ -148,8 +145,8 @@ export type MtlsCertificate = Resource<
  * });
  * ```
  *
- * @section Referencing from Hyperdrive
- * @example Verify the origin with an uploaded CA
+ * ### Referencing from Hyperdrive
+ * **Example:** Verify the origin with an uploaded CA
  * ```typescript
  * const ca = yield* Cloudflare.MtlsCertificate.MtlsCertificate("db-ca", {
  *   ca: true,
@@ -166,6 +163,10 @@ export type MtlsCertificate = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/client-certificates/
+ *
+ * @resource
+ * @product mTLS Certificates
+ * @category SSL/TLS & Certificates
  */
 export const MtlsCertificate = Resource<MtlsCertificate>(TypeId, {
   aliases: ["Cloudflare.MtlsCertificate"],

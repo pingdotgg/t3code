@@ -14,6 +14,17 @@ const { test } = Test.make({
   dev: true,
 });
 
+// Typed provider errors are an in-process contract: across the `alchemy dev`
+// RPC boundary (the default dev-test topology) a failed lifecycle op is
+// re-thrown as a flattened defect — `_tag`/`reason` do not survive
+// `Schema.Defect` serialization — so assertions on `CommandError`'s shape
+// must run against the in-process provider.
+const { test: inProcessTest } = Test.make({
+  providers: Command.providers(),
+  dev: true,
+  sidecar: false,
+});
+
 const fixtureDir = pathe.resolve(import.meta.dirname, "fixture");
 const fixtureScript = pathe.join(fixtureDir, "long-running.cjs");
 const urlServerScript = pathe.join(fixtureDir, "url-server.cjs");
@@ -433,20 +444,22 @@ test.provider(
   { timeout: 30_000 },
 );
 
-test.provider("errors when the command fails in first 5 seconds", (stack) =>
-  Effect.gen(function* () {
-    const error = yield* stack
-      .deploy(
-        Command.Dev("Dev", {
-          command: `node ${dieScript}`,
-        }),
-      )
-      .pipe(Effect.flip);
-    assert(Command.isCommandError(error));
-    assert(error.reason._tag === "UnexpectedExit");
-    expect(error.reason.exitCode).toBe(1);
-    expect(error.reason.stderr).toContain("I'm not feeling it...");
-  }),
+inProcessTest.provider(
+  "errors when the command fails in first 5 seconds",
+  (stack) =>
+    Effect.gen(function* () {
+      const error = yield* stack
+        .deploy(
+          Command.Dev("Dev", {
+            command: `node ${dieScript}`,
+          }),
+        )
+        .pipe(Effect.flip);
+      assert(Command.isCommandError(error));
+      assert(error.reason._tag === "UnexpectedExit");
+      expect(error.reason.exitCode).toBe(1);
+      expect(error.reason.stderr).toContain("I'm not feeling it...");
+    }),
 );
 
 describe("extractUrl", () => {
@@ -476,6 +489,17 @@ describe("extractUrl", () => {
     expect(
       Command.extractUrl("docs https://docs.astro.build/en/guides/x/"),
     ).toBe("https://docs.astro.build/en/guides/x/");
+  });
+
+  it("normalizes a bind-all address to localhost", () => {
+    // Nuxt prints its *bind* address (`0.0.0.0`), which is not a
+    // connectable host — consumers of `url` must be able to dial it.
+    expect(Command.extractUrl("Listening on http://0.0.0.0:3000/")).toBe(
+      "http://localhost:3000/",
+    );
+    expect(Command.extractUrl("Listening on http://[::]:3000/")).toBe(
+      "http://localhost:3000/",
+    );
   });
 
   it("strips ANSI escapes before matching", () => {

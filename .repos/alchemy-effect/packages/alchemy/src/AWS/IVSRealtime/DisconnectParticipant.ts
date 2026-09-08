@@ -14,9 +14,8 @@ export interface DisconnectParticipantRequest extends Omit<
  * call made from a deployed Lambda or Task. If the participant is publishing
  * via an ingest configuration, its `stageArn` attachment is also cleared.
  *
- * @binding
- * @section Moderating Participants
- * @example Kick a participant from a Lambda
+ * ### Moderating Participants
+ * **Example:** Kick a participant from a Lambda
  * ```typescript
  * // init
  * const disconnectParticipant = yield* IVSRealtime.DisconnectParticipant(stage);
@@ -27,6 +26,8 @@ export interface DisconnectParticipantRequest extends Omit<
  *   reason: "moderated",
  * });
  * ```
+ *
+ * @binding
  */
 export interface DisconnectParticipant extends Binding.Service<
   DisconnectParticipant,

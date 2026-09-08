@@ -5,9 +5,8 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:ListInstanceGroups` — lists the bound cluster's instance groups (instance-group clusters only) with requested/running counts — the ids feed {@link ModifyInstanceGroups} and {@link PutAutoScalingPolicy}.
- * @binding
- * @section Inspecting the Cluster
- * @example Find the Core Group
+ * ### Inspecting the Cluster
+ * **Example:** Find the Core Group
  * ```typescript
  * const listInstanceGroups = yield* AWS.EMR.ListInstanceGroups(cluster);
  *
@@ -16,6 +15,8 @@ import type { Cluster } from "./Cluster.ts";
  *   (group) => group.InstanceGroupType === "CORE",
  * );
  * ```
+ *
+ * @binding
  */
 export interface ListInstanceGroups extends Binding.Service<
   ListInstanceGroups,

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:DeleteLanguageModel` on `*`.
  *
- * @binding
- * @section Custom Language Models
- * @example Delete a Custom Language Model
+ * ### Custom Language Models
+ * **Example:** Delete a Custom Language Model
  * ```typescript
  * // init
  * const deleteLanguageModel = yield* AWS.Transcribe.DeleteLanguageModel();
@@ -18,6 +17,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteLanguageModel({ ModelName: "my-domain-model" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteLanguageModel extends Binding.Service<
   DeleteLanguageModel,

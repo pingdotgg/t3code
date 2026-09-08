@@ -143,9 +143,8 @@ export interface SecurityConfig extends Resource<
  * data {@link AccessPolicy} references as a `Principal` to grant the federated
  * identities index- and collection-level permissions.
  *
- * @resource
- * @section SAML Authentication
- * @example Federate Dashboards with a SAML Identity Provider
+ * ### SAML Authentication
+ * **Example:** Federate Dashboards with a SAML Identity Provider
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -161,8 +160,8 @@ export interface SecurityConfig extends Resource<
  * // Reference saml.configId as a Principal in a data access policy
  * ```
  *
- * @section IAM Federation
- * @example Map Session Attributes to Identities
+ * ### IAM Federation
+ * **Example:** Map Session Attributes to Identities
  * ```typescript
  * const federation = yield* AWS.OpenSearchServerless.SecurityConfig("Federation", {
  *   configName: "my-federation",
@@ -173,6 +172,8 @@ export interface SecurityConfig extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const SecurityConfig = Resource<SecurityConfig>(
   "AWS.OpenSearchServerless.SecurityConfig",

@@ -16,9 +16,8 @@ export interface ListSecretVersionIdsRequest extends Omit<
  * `AWSPENDING`, `AWSPREVIOUS`) — useful for rotation functions and audit
  * tooling. Provide the implementation with
  * `Effect.provide(AWS.SecretsManager.ListSecretVersionIdsHttp)`.
- * @binding
- * @section Inspecting Secrets
- * @example List a Secret's Versions
+ * ### Inspecting Secrets
+ * **Example:** List a Secret's Versions
  * ```typescript
  * // init — bind the operation to the secret
  * const listVersions = yield* AWS.SecretsManager.ListSecretVersionIds(secret);
@@ -29,6 +28,8 @@ export interface ListSecretVersionIdsRequest extends Omit<
  *   version.VersionStages?.includes("AWSCURRENT"),
  * );
  * ```
+ *
+ * @binding
  */
 export interface ListSecretVersionIds extends Binding.Service<
   ListSecretVersionIds,

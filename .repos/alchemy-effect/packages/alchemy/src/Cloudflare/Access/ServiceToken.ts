@@ -80,17 +80,14 @@ export type ServiceToken = Resource<
  *
  * The client secret is only revealed by Cloudflare on create and rotate; the
  * provider stores it redacted in state and carries it forward across reads.
- * @resource
- * @product Access
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Service Token
- * @example Basic token with a generated name
+ * ### Creating a Service Token
+ * **Example:** Basic token with a generated name
  * ```typescript
  * const token = yield* Cloudflare.Access.ServiceToken("Ci", {});
  * // token.clientId / token.clientSecret authenticate requests
  * ```
  *
- * @example Token with an explicit name and validity
+ * **Example:** Token with an explicit name and validity
  * ```typescript
  * const token = yield* Cloudflare.Access.ServiceToken("Deploys", {
  *   name: "deploy-bot",
@@ -98,16 +95,16 @@ export type ServiceToken = Resource<
  * });
  * ```
  *
- * @section Rotating the Secret
- * @example Increment clientSecretVersion to rotate
+ * ### Rotating the Secret
+ * **Example:** Increment clientSecretVersion to rotate
  * ```typescript
  * const token = yield* Cloudflare.Access.ServiceToken("Ci", {
  *   clientSecretVersion: 2, // was 1 — bumping rotates the secret
  * });
  * ```
  *
- * @section Authorizing a Token
- * @example Reference from an Access policy
+ * ### Authorizing a Token
+ * **Example:** Reference from an Access policy
  * ```typescript
  * const token = yield* Cloudflare.Access.ServiceToken("Ci", {});
  *
@@ -116,6 +113,10 @@ export type ServiceToken = Resource<
  *   include: [{ serviceToken: { tokenId: token.serviceTokenId } }],
  * });
  * ```
+ *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  */
 export const ServiceToken = Resource<ServiceToken>(
   "Cloudflare.Access.ServiceToken",
@@ -380,7 +381,7 @@ const differs = (
 ) => desired !== undefined && desired !== (observed ?? undefined);
 
 type ObservedToken = {
-  id?: string | null;
+  id?: string;
   clientId?: string | null;
   clientSecret?: string | null;
   name?: string | null;

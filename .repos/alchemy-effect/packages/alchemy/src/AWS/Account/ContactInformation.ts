@@ -68,9 +68,8 @@ export interface ContactInformation extends Resource<
  * contact, so destroying the resource stops managing it and leaves the last
  * value in place.
  *
- * @resource
- * @section Setting the Primary Contact
- * @example Primary Contact for the Calling Account
+ * ### Setting the Primary Contact
+ * **Example:** Primary Contact for the Calling Account
  * ```typescript
  * const contact = yield* ContactInformation("PrimaryContact", {
  *   fullName: "Jane Doe",
@@ -85,7 +84,7 @@ export interface ContactInformation extends Resource<
  * });
  * ```
  *
- * @example Primary Contact for an Organizations Member Account
+ * **Example:** Primary Contact for an Organizations Member Account
  * ```typescript
  * const contact = yield* ContactInformation("MemberContact", {
  *   fullName: "Acme Ops",
@@ -97,6 +96,8 @@ export interface ContactInformation extends Resource<
  *   accountId: "123456789012",
  * });
  * ```
+ *
+ * @resource
  */
 export const ContactInformation = Resource<ContactInformation>(
   "AWS.Account.ContactInformation",

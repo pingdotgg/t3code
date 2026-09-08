@@ -83,16 +83,15 @@ export interface Farm extends Resource<
  * An AWS Deadline Cloud farm — the top-level container for render-farm
  * queues, fleets, storage profiles, and budgets.
  *
- * @resource
- * @section Creating Farms
- * @example Basic Farm
+ * ### Creating Farms
+ * **Example:** Basic Farm
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
  * const farm = yield* AWS.Deadline.Farm("RenderFarm", {});
  * ```
  *
- * @example Farm with Description and Cost Scaling
+ * **Example:** Farm with Description and Cost Scaling
  * ```typescript
  * const farm = yield* AWS.Deadline.Farm("RenderFarm", {
  *   displayName: "studio-renders",
@@ -101,6 +100,8 @@ export interface Farm extends Resource<
  *   tags: { team: "vfx" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Farm = Resource<Farm>("AWS.Deadline.Farm");
 

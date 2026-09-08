@@ -7,9 +7,8 @@ import * as Binding from "../../Binding.ts";
  * identity-document fields (name, date of birth, document number, …) from
  * images of passports, driver licenses, and other government IDs.
  *
- * @binding
- * @section Synchronous Analysis
- * @example Analyze an Identity Document
+ * ### Synchronous Analysis
+ * **Example:** Analyze an Identity Document
  * ```typescript
  * // init
  * const analyzeID = yield* AWS.Textract.AnalyzeID();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const fields = result.IdentityDocuments?.[0]?.IdentityDocumentFields;
  * ```
+ *
+ * @binding
  */
 export interface AnalyzeID extends Binding.Service<
   AnalyzeID,

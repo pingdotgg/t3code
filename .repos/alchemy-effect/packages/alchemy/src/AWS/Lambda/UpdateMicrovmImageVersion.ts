@@ -13,8 +13,9 @@ export interface UpdateMicrovmImageVersionRequest extends Omit<
  *
  * Bind it to a {@link MicrovmImage} to update a version's status (e.g. mark it
  * `ACTIVE`/`INACTIVE`); the `imageIdentifier` is injected.
+ * ### Image Versions
+ *
  * @binding
- * @section Image Versions
  */
 export interface UpdateMicrovmImageVersion extends Binding.Service<
   UpdateMicrovmImageVersion,

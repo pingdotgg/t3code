@@ -13,7 +13,7 @@ export const decodeTask = Schema.decodeUnknownEffect(Task);
 
 export const encodeTask = Schema.encodeUnknownSync(Task);
 
-export class TaskNotFound extends Schema.TaggedErrorClass<TaskNotFound>()(
+export class TaskNotFound extends Schema.TaggedError<TaskNotFound>()(
   "TaskNotFound",
   { id: Schema.String },
   { httpApiStatus: 404 },

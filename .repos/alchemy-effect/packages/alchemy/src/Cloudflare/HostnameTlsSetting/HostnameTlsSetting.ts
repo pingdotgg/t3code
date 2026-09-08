@@ -111,11 +111,8 @@ export type HostnameTlsSetting = Resource<
  * state, `read` scans the setting's hostname list and reports an existing
  * override as `Unowned`, so the engine refuses to take it over unless
  * `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Hostname TLS Settings
- * @category SSL/TLS & Certificates
- * @section Minimum TLS version
- * @example Require TLS 1.2 for a single hostname
+ * ### Minimum TLS version
+ * **Example:** Require TLS 1.2 for a single hostname
  * ```typescript
  * yield* Cloudflare.HostnameTlsSetting.HostnameTlsSetting("ApiMinTls", {
  *   zoneId: zone.zoneId,
@@ -125,8 +122,8 @@ export type HostnameTlsSetting = Resource<
  * });
  * ```
  *
- * @section HTTP/2
- * @example Disable HTTP/2 for a legacy hostname
+ * ### HTTP/2
+ * **Example:** Disable HTTP/2 for a legacy hostname
  * ```typescript
  * yield* Cloudflare.HostnameTlsSetting.HostnameTlsSetting("LegacyHttp2", {
  *   zoneId: zone.zoneId,
@@ -136,8 +133,8 @@ export type HostnameTlsSetting = Resource<
  * });
  * ```
  *
- * @section Cipher suites
- * @example Restrict a hostname to modern ciphers
+ * ### Cipher suites
+ * **Example:** Restrict a hostname to modern ciphers
  * ```typescript
  * yield* Cloudflare.HostnameTlsSetting.HostnameTlsSetting("StrictCiphers", {
  *   zoneId: zone.zoneId,
@@ -149,6 +146,10 @@ export type HostnameTlsSetting = Resource<
  *
  * @see https://developers.cloudflare.com/ssl/edge-certificates/additional-options/custom-metadata/
  * @see https://developers.cloudflare.com/api/resources/hostnames/subresources/settings/subresources/tls/
+ *
+ * @resource
+ * @product Hostname TLS Settings
+ * @category SSL/TLS & Certificates
  */
 export const HostnameTlsSetting = Resource<HostnameTlsSetting>(TypeId, {
   aliases: ["Cloudflare.HostnameTlsSetting"],

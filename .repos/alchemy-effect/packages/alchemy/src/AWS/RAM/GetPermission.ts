@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * are chosen per request at runtime, so the binding takes no resource
  * argument. Provide the implementation with
  * `Effect.provide(AWS.RAM.GetPermissionHttp)`.
- * @binding
- * @section Managed Permissions
- * @example Read a Managed Permission
+ * ### Managed Permissions
+ * **Example:** Read a Managed Permission
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getPermission = yield* AWS.RAM.GetPermission();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   permissionArn: customerManagedPermission.permissionArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetPermission extends Binding.Service<
   GetPermission,

@@ -120,11 +120,8 @@ export type Rules = Resource<
  *
  * Note: Cloud Connector only takes effect on proxied (orange-cloud) DNS
  * records, and the number of rules per zone is plan-limited.
- * @resource
- * @product Cloud Connector
- * @category Rules & Configuration
- * @section Routing to object storage
- * @example Serve a path prefix from an S3 bucket
+ * ### Routing to object storage
+ * **Example:** Serve a path prefix from an S3 bucket
  * ```typescript
  * yield* Cloudflare.CloudConnector.Rules("Rules", {
  *   zoneId: zone.zoneId,
@@ -139,7 +136,7 @@ export type Rules = Resource<
  * });
  * ```
  *
- * @example Serve static assets from an R2 bucket
+ * **Example:** Serve static assets from an R2 bucket
  * ```typescript
  * const bucket = yield* Cloudflare.R2.Bucket("Assets", {});
  *
@@ -158,6 +155,10 @@ export type Rules = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/rules/cloud-connector/
+ *
+ * @resource
+ * @product Cloud Connector
+ * @category Rules & Configuration
  */
 export const Rules = Resource<Rules>(TypeId);
 

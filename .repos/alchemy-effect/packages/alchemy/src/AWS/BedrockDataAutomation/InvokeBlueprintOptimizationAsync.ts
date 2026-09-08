@@ -23,9 +23,8 @@ export interface InvokeBlueprintOptimizationAsyncRequest extends Omit<
  * permissions. Poll the returned invocation with the
  * `GetBlueprintOptimizationStatus` binding. Provide the implementation with
  * `Effect.provide(AWS.BedrockDataAutomation.InvokeBlueprintOptimizationAsyncHttp)`.
- * @binding
- * @section Blueprint Optimization
- * @example Optimize A Blueprint Against Labeled Samples
+ * ### Blueprint Optimization
+ * **Example:** Optimize A Blueprint Against Labeled Samples
  * ```typescript
  * // deploy time — bind the blueprint
  * const optimize =
@@ -45,6 +44,8 @@ export interface InvokeBlueprintOptimizationAsyncRequest extends Omit<
  *   dataAutomationProfileArn: profileArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface InvokeBlueprintOptimizationAsync extends Binding.Service<
   InvokeBlueprintOptimizationAsync,

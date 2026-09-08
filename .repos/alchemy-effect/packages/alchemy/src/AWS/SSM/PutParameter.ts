@@ -21,15 +21,16 @@ export interface PutParameterRequest extends Omit<
  * already exists — it is managed by the `Parameter` resource). Note that a
  * runtime write drifts the value from the deployed desired state; the next
  * deploy converges it back.
- * @binding
- * @section Writing a Parameter
- * @example Update a Feature Flag at Runtime
+ * ### Writing a Parameter
+ * **Example:** Update a Feature Flag at Runtime
  * ```typescript
  * const putFlag = yield* SSM.PutParameter(flag);
  *
  * const result = yield* putFlag({ Value: "on", Overwrite: true });
  * yield* Effect.log(`flag now at version ${result.Version}`);
  * ```
+ *
+ * @binding
  */
 export interface PutParameter extends Binding.Service<
   PutParameter,

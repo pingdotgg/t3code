@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.ListOrganizationAdminAccountsHttp)`.
- * @binding
- * @section Members & Organization
- * @example List Delegated Administrators
+ * ### Members & Organization
+ * **Example:** List Delegated Administrators
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listOrganizationAdminAccounts = yield* AWS.SecurityHub.ListOrganizationAdminAccounts();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { AdminAccounts } = yield* listOrganizationAdminAccounts();
  * ```
+ *
+ * @binding
  */
 export interface ListOrganizationAdminAccounts extends Binding.Service<
   ListOrganizationAdminAccounts,

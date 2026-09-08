@@ -63,9 +63,8 @@ export interface PolicyStore extends Resource<
  * An Amazon Verified Permissions policy store — the container for Cedar
  * policies, policy templates, and a schema. Authorization requests
  * (`IsAuthorized`) are evaluated against all policies in a store.
- * @resource
- * @section Creating a Policy Store
- * @example Basic Policy Store
+ * ### Creating a Policy Store
+ * **Example:** Basic Policy Store
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -74,7 +73,7 @@ export interface PolicyStore extends Resource<
  * });
  * ```
  *
- * @example Strict Validation with a Schema
+ * **Example:** Strict Validation with a Schema
  * ```typescript
  * const store = yield* AWS.VerifiedPermissions.PolicyStore("Store", {
  *   validationMode: "STRICT",
@@ -91,6 +90,8 @@ export interface PolicyStore extends Resource<
  *   }),
  * });
  * ```
+ *
+ * @resource
  */
 export const PolicyStore = Resource<PolicyStore>(
   "AWS.VerifiedPermissions.PolicyStore",

@@ -1,0 +1,33 @@
+---
+import { env } from "cloudflare:workers";
+
+// On-demand SSR (the default under `output: "server"` from the fixture's
+// real astro.config.mjs): renders inside workerd (dev) / the Worker (live),
+// reads a Text binding server-side, and shows the middleware-stamped
+// per-request id — different on every request.
+const value = (env as Record<string, unknown>).FIXTURE_VALUE ?? null;
+const requestId = Astro.locals.requestId ?? "missing";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Astro SSR Fixture</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 2rem;
+        color: #1a1a1a;
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Astro SSR Fixture</h1>
+    <p id="mode">on-demand</p>
+    <p id="binding">{value}</p>
+    <p id="request-id">{requestId}</p>
+    <p><a href="/greet/astro">greet</a> · <a href="/feedback">feedback</a> · <a href="/about/">about</a></p>
+  </body>
+</html>

@@ -104,11 +104,8 @@ export type Variant = Resource<
  * Note: every Images-enabled account has a built-in `public` variant. Do not
  * manage `public` with this resource — Cloudflare silently ignores deletes
  * of the built-in variant, so destroy would not actually remove it.
- * @resource
- * @product Images
- * @category Media
- * @section Creating a Variant
- * @example Thumbnail variant
+ * ### Creating a Variant
+ * **Example:** Thumbnail variant
  * ```typescript
  * // Variant names are alphanumeric only (no hyphens/underscores).
  * const thumbnail = yield* Cloudflare.Images.Variant("thumbnail", {
@@ -118,7 +115,7 @@ export type Variant = Resource<
  * });
  * ```
  *
- * @example Hero variant with explicit name and metadata
+ * **Example:** Hero variant with explicit name and metadata
  * ```typescript
  * const hero = yield* Cloudflare.Images.Variant("HeroImage", {
  *   name: "hero",
@@ -129,8 +126,8 @@ export type Variant = Resource<
  * });
  * ```
  *
- * @section Signed URLs
- * @example Public variant for protected images
+ * ### Signed URLs
+ * **Example:** Public variant for protected images
  * ```typescript
  * // Serve this variant without a signature even when the image itself
  * // requires signed URLs (e.g. for public thumbnails of private images).
@@ -143,6 +140,10 @@ export type Variant = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/images/manage-images/create-variants/
+ *
+ * @resource
+ * @product Images
+ * @category Media
  */
 export const Variant = Resource<Variant>(TypeId);
 

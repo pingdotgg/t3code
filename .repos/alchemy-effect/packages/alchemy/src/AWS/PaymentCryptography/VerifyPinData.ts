@@ -15,9 +15,8 @@ export interface VerifyPinDataRequest extends Omit<
  * (PEK) the block is encrypted under. A mismatch fails with the typed
  * `VerificationFailedException`. Provide `VerifyPinDataHttp` on the Function
  * to satisfy this service.
- * @binding
- * @section PIN Data
- * @example Verify a cardholder PIN with a Visa PVV
+ * ### PIN Data
+ * **Example:** Verify a cardholder PIN with a Visa PVV
  * ```typescript
  * // init
  * const verifyPin = yield* PaymentCryptography.VerifyPinData(pvk, pek);
@@ -37,6 +36,8 @@ export interface VerifyPinDataRequest extends Omit<
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface VerifyPinData extends Binding.Service<
   VerifyPinData,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:ListSNOMEDCTInferenceJobs` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.ListSNOMEDCTInferenceJobsHttp)`.
  *
- * @binding
- * @section Batch SNOMED CT Inference Jobs
- * @example List Submitted Jobs
+ * ### Batch SNOMED CT Inference Jobs
+ * **Example:** List Submitted Jobs
  * ```typescript
  * // init
  * const listSNOMEDCTInferenceJobs = yield* AWS.ComprehendMedical.ListSNOMEDCTInferenceJobs();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const jobs = yield* listSNOMEDCTInferenceJobs({});
  * console.log(jobs.ComprehendMedicalAsyncJobPropertiesList?.length ?? 0);
  * ```
+ *
+ * @binding
  */
 export interface ListSNOMEDCTInferenceJobs extends Binding.Service<
   ListSNOMEDCTInferenceJobs,

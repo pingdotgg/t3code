@@ -23,6 +23,13 @@ const logLevel = Effect.provideService(
 // gated behind an entitled account flagged via env.
 const entitled = !!process.env.CLOUDFLARE_EMAIL_SECURITY;
 
+// Entitlement and reachability are different axes. `entitled` says the
+// account has bought the add-on; `reachable` says the *credential* carries
+// the Email Security scope at all. Cloudflare OAuth carries neither, and an
+// unreachable credential is refused at the edge with a bare `Forbidden`
+// before any entitlement check happens.
+const reachable = !!process.env.CLOUDFLARE_TEST_EMAIL_SECURITY;
+
 // A freshly minted scoped token propagates eventually-consistently across
 // Cloudflare's edge — retry the typed `Forbidden` blips on out-of-band calls.
 const forbiddenRetrySchedule = Schedule.exponential("500 millis");
@@ -42,7 +49,18 @@ const findByPattern = (accountId: string) =>
 
 // Unentitlement probe — pins the typed EmailSecurityNotEntitled rejection and
 // skips on entitled accounts, where the list call would succeed.
-test.provider.skipIf(entitled)(
+//
+// Gated: the probe's premise is that the credential can *reach* Email
+// Security and be told the account is not entitled. A credential lacking
+// the Email Security scope outright (Cloudflare OAuth) never gets that far
+// and is refused at the edge instead:
+//
+//     Forbidden: Authentication error
+//       at matchTypedError (distilled/packages/core/src/protocol-http.ts)
+//
+// Set `CLOUDFLARE_TEST_EMAIL_SECURITY=1` with an API-token credential
+// carrying the Email Security read scope to run it.
+test.provider.skipIf(entitled || !reachable)(
   "surfaces the typed EmailSecurityNotEntitled error on unentitled accounts",
   (stack) =>
     Effect.gen(function* () {

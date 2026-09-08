@@ -9,15 +9,16 @@ import type { AddressList } from "./AddressList.ts";
  * Stops an in-flight import job. Addresses already imported remain on
  * the list. IAM access is granted on the bound list's ARN. Provide the implementation with
  * `Effect.provide(AWS.MailManager.StopAddressListImportJobHttp)`.
- * @binding
- * @section Bulk Importing Members
- * @example Stop an Import Job
+ * ### Bulk Importing Members
+ * **Example:** Stop an Import Job
  * ```typescript
  * const stopImportJob = yield* MailManager.StopAddressListImportJob(blockList);
  *
  * // runtime
  * yield* stopImportJob({ JobId });
  * ```
+ *
+ * @binding
  */
 export interface StopAddressListImportJob extends Binding.Service<
   StopAddressListImportJob,

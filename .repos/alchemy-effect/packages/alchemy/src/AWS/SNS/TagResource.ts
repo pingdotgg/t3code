@@ -16,9 +16,8 @@ export interface TagResourceRequest extends Omit<
  * The binding grants the host function `sns:TagResource` on the topic.
  * Provide the `TagResourceHttp` layer on the Function to implement the
  * binding.
- * @binding
- * @section Tagging Topics
- * @example Tag a Topic
+ * ### Tagging Topics
+ * **Example:** Tag a Topic
  * ```typescript
  * // init (provide SNS.TagResourceHttp on the Function)
  * const tagResource = yield* SNS.TagResource(topic);
@@ -28,6 +27,8 @@ export interface TagResourceRequest extends Omit<
  *   Tags: [{ Key: "team", Value: "orders" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface TagResource extends Binding.Service<
   TagResource,

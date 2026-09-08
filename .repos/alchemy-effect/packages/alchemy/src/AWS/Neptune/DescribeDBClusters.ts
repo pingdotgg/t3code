@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * status, endpoints, members, engine versions — for health checks and
  * cluster discovery. Provide the implementation with
  * `Effect.provide(AWS.Neptune.DescribeDBClustersHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example Check a Cluster's Status
+ * ### Monitoring Clusters
+ * **Example:** Check a Cluster's Status
  * ```typescript
  * const describeDBClusters = yield* AWS.Neptune.DescribeDBClusters();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const status = page.DBClusters?.[0]?.Status;
  * ```
+ *
+ * @binding
  */
 export interface DescribeDBClusters extends Binding.Service<
   DescribeDBClusters,

@@ -89,9 +89,8 @@ export interface Table extends Resource<
  * S3 Tables manages the table's storage, metadata, and maintenance
  * (compaction, snapshot expiration). Query it through engines like Amazon
  * Athena, Amazon EMR, or Apache Spark via the S3 Tables Iceberg catalog.
- * @resource
- * @section Creating Tables
- * @example Table with an Iceberg schema
+ * ### Creating Tables
+ * **Example:** Table with an Iceberg schema
  * ```typescript
  * import * as S3Tables from "alchemy/AWS/S3Tables";
  *
@@ -111,6 +110,8 @@ export interface Table extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Table = Resource<Table>("AWS.S3Tables.Table");
 

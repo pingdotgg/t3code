@@ -12,9 +12,8 @@ export interface ListManagedInsightRulesRequest
  *
  * Provide `CloudWatch.ListManagedInsightRulesHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Insight Rules
- * @example List Managed Rules for a Resource
+ * ### Reading Insight Rules
+ * **Example:** List Managed Rules for a Resource
  * ```typescript
  * // init — grants cloudwatch:ListManagedInsightRules
  * const listManagedInsightRules = yield* AWS.CloudWatch.ListManagedInsightRules();
@@ -26,6 +25,8 @@ export interface ListManagedInsightRulesRequest
  * });
  * const rules = result.ManagedRules ?? [];
  * ```
+ *
+ * @binding
  */
 export interface ListManagedInsightRules extends Binding.Service<
   ListManagedInsightRules,

@@ -1,0 +1,277 @@
+---
+title: TanStack Start
+description: Deploy TanStack Start (React or Solid) to Fly with Fly.Website.TanStackStart — SSR on a Machine, client assets baked into the image, and TanStack Start's own Vite dev server under alchemy dev.
+sidebar:
+  order: 8
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Fly.Website.TanStackStart` deploys a
+[TanStack Start](https://tanstack.com/start) app to Fly. TanStack Start
+is pure Vite, so Alchemy runs your project's own `vite build`: the SSR
+server runs as a Node [`Fly.Service`](/fly/compute/services) on a
+Machine, and client assets are baked into the image and served first.
+Omit `app` and Alchemy creates a
+[`Fly.App`](/fly/compute/apps) plus a shared IPv4 so
+`https://{app}.fly.dev` answers. No adapter, no `fly.toml`.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/tanstack-start` and `/tanstack-start/node` exports from your project
+at deploy time. It is only used at build time, so a dev dependency is
+enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.ts` stays what TanStack Start's scaffold gives
+you — no adapter, no deployment preset. Vite plugins like Tailwind
+go in `plugins` as usual:
+
+```typescript
+// vite.config.ts
+import tailwindcss from "@tailwindcss/vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [tailwindcss(), tanstackStart(), viteReact()],
+});
+```
+
+Alchemy drives that config's `builder.buildApp()` and forces the SSR
+bundle to be self-contained, then wraps its fetch handler as a Node
+HTTP server on port 3000.
+
+:::caution[Remove @cloudflare/vite-plugin if present]
+The TanStack CLI adds `@cloudflare/vite-plugin` when scaffolding a new
+app. It builds for workerd, not Node, so a Fly deploy needs it gone:
+
+```diff lang="typescript"
+// vite.config.ts
+-import { cloudflare } from "@cloudflare/vite-plugin";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+-  plugins: [
+-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+-    tanstackStart(),
+-    viteReact(),
+-  ],
++  plugins: [tanstackStart(), viteReact()],
+});
+```
+
+:::
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Fly from "alchemy/Fly";
+
+export const Website = Fly.Website.TanStackStart("Website");
+```
+
+Pass `app` to put the site on an existing `Fly.App`. `rootDir` is the
+project root — the directory holding `package.json` and `vite.config.*`.
+It defaults to `"."`, so set it only when the app does not sit next to
+`alchemy.run.ts`:
+
+```typescript
+export const Website = Fly.Website.TanStackStart("Website", {
+  rootDir: "./app",
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyTanStackSite",
+  {
+    providers: Fly.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Requests matching a built client asset are served first; everything
+else — SSR routes, server routes, server functions — falls through to
+the Node handler on the Machine.
+
+The live `url` is `https://{app}.fly.dev`. `site.app`,
+`site.service`, `site.ip`, and `site.certificate` are the Fly
+resources underneath — `undefined` during `alchemy dev`.
+
+See the
+[TanStack Start API reference](/providers/fly/website/tanstackstart)
+for every prop and attribute.
+
+## Add environment variables
+
+Process environment is a top-level `env` map — plain strings, or
+`Redacted` values:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Fly.Website.TanStackStart("Website", {
++  env: {
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before the build and the
+dev server, and onto the Machine at deploy time, so server code
+reads the same keys in both modes. Client inlining is whatever Vite
+does (`VITE_` prefixes).
+
+An output from another resource only exists once that resource is
+yielded, so declare the site inside the Stack generator instead:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const site = yield* Fly.Website.TanStackStart("Website", {
+    env: { API_BASE: api.url },
+  });
+
+  return { url: site.url };
+});
+```
+
+## Read the environment in a server function
+
+The TanStack Start server is a plain Node process, so server
+functions read the environment from `process.env`:
+
+```typescript
+// src/routes/index.tsx
+import { createServerFn } from "@tanstack/react-start";
+
+const getApiBase = createServerFn({ method: "GET" }).handler(() => ({
+  apiBase: process.env.API_BASE ?? "unset",
+}));
+```
+
+Values prefixed `VITE_` are inlined into the client bundle at build time
+instead, as `import.meta.env.VITE_*` — set those in the shell that runs
+`alchemy deploy`, not in `env`.
+
+## Read the environment in a server route
+
+Server routes run on the same Node process and read `process.env` the
+same way:
+
+```typescript
+// src/routes/api.hello.ts
+import { createFileRoute } from "@tanstack/react-router";
+
+export const Route = createFileRoute("/api/hello")({
+  server: {
+    handlers: {
+      GET: () => new Response(process.env.API_BASE ?? "unset"),
+    },
+  },
+});
+```
+
+## Build configuration
+
+The build runs through your project's own `vite.config.ts` — the
+`tanstackStart()` plugin and everything else in it apply as-is. Keep
+vite's default `build.outDir` (`dist`); the integration reads the
+server and client output from `dist/server` and `dist/client`.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs TanStack Start's own Vite dev server (native HMR)
+instead of deploying; `site.url` is the local address and no Fly
+resources are created. Wrap the site in `Alchemy.remote()` to deploy
+the live App and Service even during dev:
+
+```typescript
+export const Website = Fly.Website.TanStackStart("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+## Solid variant
+
+TanStack Start's Solid flavor works the same way — swap the plugins in
+`vite.config.ts` and keep the identical `alchemy.run.ts`:
+
+```typescript
+// vite.config.ts
+import { tanstackStart } from "@tanstack/solid-start/plugin/vite";
+import { defineConfig } from "vite";
+import viteSolid from "vite-plugin-solid";
+
+export default defineConfig({
+  plugins: [tanstackStart(), viteSolid({ ssr: true })],
+});
+```
+
+`@tanstack/solid-start` exposes the same `tanstackStart()` plugin entry
+point and the same `client`/`ssr` build environments, so the deploy is
+identical.
+
+## Custom domain
+
+```typescript
+const site = yield* Fly.Website.TanStackStart("Web", {
+  domain: "app.example.com",
+});
+```
+
+`domain` requests ACME (`Fly.Certificate`) on the App. `url`
+becomes `https://app.example.com`. Point DNS at the App first — v1
+does not create DNS records.
+
+## Where next
+
+- [TanStack Start API reference](/providers/fly/website/tanstackstart)
+- [Apps](/fly/compute/apps) and [Services](/fly/compute/services)
+- [IPs & certificates](/fly/networking)

@@ -11,13 +11,12 @@ import * as Binding from "../../Binding.ts";
  * `geo-maps:GetGlyphs`. Requests and responses are raw distilled types; the
  * glyph payload is returned as `Blob` (`Uint8Array`).
  *
- * @binding
- * @section Fetching Glyphs
+ * ### Fetching Glyphs
  * Provide the `GetGlyphsHttp` implementation layer on the Function effect
  * (`.pipe(Effect.provide(AWS.GeoMaps.GetGlyphsHttp))`), bind in the init
  * phase, then call the client at runtime.
  *
- * @example Fetch a glyph range for a font stack
+ * **Example:** Fetch a glyph range for a font stack
  * ```typescript
  * // init
  * const getGlyphs = yield* AWS.GeoMaps.GetGlyphs();
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const bytes = glyphs.Blob; // Uint8Array | undefined (PBF)
  * ```
+ *
+ * @binding
  */
 export interface GetGlyphs extends Binding.Service<
   GetGlyphs,

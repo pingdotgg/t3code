@@ -11,9 +11,8 @@ import type { SigningProfile } from "./SigningProfile.ts";
  * signing (use a `Notation-OCI-SHA384-ECDSA` profile). The profile name is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Signer.SignPayloadHttp)`.
- * @binding
- * @section Signing Code
- * @example Sign a Notation Payload
+ * ### Signing Code
+ * **Example:** Sign a Notation Payload
  * ```typescript
  * // init — bind the operation to the Notation profile
  * const signPayload = yield* AWS.Signer.SignPayload(profile);
@@ -24,6 +23,8 @@ import type { SigningProfile } from "./SigningProfile.ts";
  *   payloadFormat: "application/vnd.cncf.notary.payload.v1+json",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SignPayload extends Binding.Service<
   SignPayload,

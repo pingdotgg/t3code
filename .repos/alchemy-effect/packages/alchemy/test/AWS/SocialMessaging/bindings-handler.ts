@@ -25,7 +25,7 @@ export class SocialMessagingBindingsFunction extends Lambda.Function<Lambda.Func
 export default SocialMessagingBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Adopts the console-linked WABA (see LinkedWhatsAppBusinessAccount

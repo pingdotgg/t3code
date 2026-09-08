@@ -17,9 +17,8 @@ export interface PutDataProtectionPolicyRequest extends Omit<
  * `sns:PutDataProtectionPolicy` on the topic. Provide the
  * `PutDataProtectionPolicyHttp` layer on the Function to implement the
  * binding.
- * @binding
- * @section Data Protection Policies
- * @example Attach a Data Protection Policy
+ * ### Data Protection Policies
+ * **Example:** Attach a Data Protection Policy
  * ```typescript
  * // init (provide SNS.PutDataProtectionPolicyHttp on the Function)
  * const putDataProtectionPolicy = yield* SNS.PutDataProtectionPolicy(topic);
@@ -33,6 +32,8 @@ export interface PutDataProtectionPolicyRequest extends Omit<
  *   }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutDataProtectionPolicy extends Binding.Service<
   PutDataProtectionPolicy,

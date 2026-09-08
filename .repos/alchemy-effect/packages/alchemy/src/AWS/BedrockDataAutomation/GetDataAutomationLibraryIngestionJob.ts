@@ -20,9 +20,8 @@ export interface GetDataAutomationLibraryIngestionJobRequest extends Omit<
  *
  * Provide the implementation with
  * `Effect.provide(AWS.BedrockDataAutomation.GetDataAutomationLibraryIngestionJobHttp)`.
- * @binding
- * @section Library Ingestion
- * @example Poll An Ingestion Job
+ * ### Library Ingestion
+ * **Example:** Poll An Ingestion Job
  * ```typescript
  * // deploy time — bind the library
  * const getJob =
@@ -34,6 +33,8 @@ export interface GetDataAutomationLibraryIngestionJobRequest extends Omit<
  *   yield* Effect.log(`ingestion results at ${job.outputConfiguration.s3Uri}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetDataAutomationLibraryIngestionJob extends Binding.Service<
   GetDataAutomationLibraryIngestionJob,

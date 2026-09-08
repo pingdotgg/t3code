@@ -166,11 +166,8 @@ export type GreTunnel = Resource<
  * The tunnel `name` is its routing identity (unique, ≤15 chars) — changing
  * it triggers a replacement, as does changing `bgp` (the update API cannot
  * modify BGP settings). Everything else is updated in place via PUT.
- * @resource
- * @product Magic Transit
- * @category Network
- * @section Creating a GRE tunnel
- * @example Basic tunnel
+ * ### Creating a GRE tunnel
+ * **Example:** Basic tunnel
  * ```typescript
  * const tunnel = yield* Cloudflare.MagicTransit.GreTunnel("office", {
  *   name: "office-gre-1",
@@ -180,7 +177,7 @@ export type GreTunnel = Resource<
  * });
  * ```
  *
- * @example Tunnel with health checks and MTU
+ * **Example:** Tunnel with health checks and MTU
  * ```typescript
  * const tunnel = yield* Cloudflare.MagicTransit.GreTunnel("office", {
  *   name: "office-gre-1",
@@ -193,8 +190,8 @@ export type GreTunnel = Resource<
  * });
  * ```
  *
- * @section Routing traffic over the tunnel
- * @example Static route via the tunnel interface
+ * ### Routing traffic over the tunnel
+ * **Example:** Static route via the tunnel interface
  * ```typescript
  * yield* Cloudflare.MagicTransit.MagicStaticRoute("office-route", {
  *   prefix: "10.100.0.0/24",
@@ -204,6 +201,10 @@ export type GreTunnel = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-transit/
+ *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  */
 export const GreTunnel = Resource<GreTunnel>(TypeId);
 

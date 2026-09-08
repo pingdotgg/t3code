@@ -13,9 +13,8 @@ export interface CreateApiKeyRequest extends ag.CreateApiKeyRequest {}
  * `ApiGateway.CreateApiKeyHttp` on the Function effect to implement the
  * binding.
  *
- * @binding
- * @section Issuing API keys
- * @example Issue a key for a new customer
+ * ### Issuing API keys
+ * **Example:** Issue a key for a new customer
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -31,6 +30,8 @@ export interface CreateApiKeyRequest extends ag.CreateApiKeyRequest {}
  *   ? Redacted.value(key.value)
  *   : key.value;
  * ```
+ *
+ * @binding
  */
 export interface CreateApiKey extends Binding.Service<
   CreateApiKey,

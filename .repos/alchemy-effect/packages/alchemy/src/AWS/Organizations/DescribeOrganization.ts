@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.DescribeOrganizationHttp)`.
- * @binding
- * @section Reading the Organization Tree
- * @example Read the Organization
+ * ### Reading the Organization Tree
+ * **Example:** Read the Organization
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeOrganization = yield* AWS.Organizations.DescribeOrganization();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { Organization } = yield* describeOrganization();
  * console.log(Organization?.Id, Organization?.MasterAccountId);
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrganization extends Binding.Service<
   DescribeOrganization,

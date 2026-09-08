@@ -89,8 +89,8 @@ export interface InsightEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Insight Events
- * @example Page on High-Severity Insights
+ * ### Consuming Insight Events
+ * **Example:** Page on High-Severity Insights
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

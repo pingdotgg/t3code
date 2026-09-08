@@ -94,9 +94,8 @@ export interface KnowledgeBase extends Resource<
  * already exist — provision an OpenSearch Serverless collection (with a
  * vector index) or another supported store first.
  *
- * @resource
- * @section Creating Knowledge Bases
- * @example OpenSearch Serverless Backed Knowledge Base
+ * ### Creating Knowledge Bases
+ * **Example:** OpenSearch Serverless Backed Knowledge Base
  * ```typescript
  * import * as Bedrock from "alchemy/AWS/Bedrock";
  *
@@ -123,6 +122,8 @@ export interface KnowledgeBase extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const KnowledgeBase = Resource<KnowledgeBase>(
   "AWS.Bedrock.KnowledgeBase",

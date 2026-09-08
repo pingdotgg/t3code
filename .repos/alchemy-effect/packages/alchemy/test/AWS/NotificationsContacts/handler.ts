@@ -22,7 +22,7 @@ export class NotificationsContactsTestFunction extends Lambda.Function<Lambda.Fu
 export default NotificationsContactsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

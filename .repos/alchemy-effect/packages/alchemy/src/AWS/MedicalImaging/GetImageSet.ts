@@ -21,15 +21,16 @@ export interface GetImageSetRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.GetImageSetHttp)`.
  *
- * @binding
- * @section Reading Image Sets
- * @example Read Image Set Properties
+ * ### Reading Image Sets
+ * **Example:** Read Image Set Properties
  * ```typescript
  * const getImageSet = yield* MedicalImaging.GetImageSet(datastore);
  *
  * const imageSet = yield* getImageSet({ imageSetId });
  * // imageSet.imageSetState === "ACTIVE", imageSet.versionId, imageSet.imageSetArn
  * ```
+ *
+ * @binding
  */
 export interface GetImageSet extends Binding.Service<
   GetImageSet,

@@ -2,11 +2,13 @@ import { adopt } from "@/AdoptPolicy";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as R2 from "@/Cloudflare/R2";
+import * as Command from "@/Command/index.ts";
 import * as Provider from "@/Provider";
 import * as Output from "@/Output";
 import { Stack } from "@/Stack";
 import { State } from "@/State";
 import * as Test from "@/Test/Alchemy";
+import { initialCwd } from "@/Util/Node.ts";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
@@ -30,6 +32,10 @@ import type { Counter, Meter } from "./fixtures/do-counter-worker.ts";
 import InternalWorker from "./fixtures/internal-worker.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
+const { test: devTest } = Test.make({
+  providers: Cloudflare.providers(),
+  dev: true,
+});
 
 const logLevel = Effect.provideService(
   MinimumLogLevel,
@@ -53,12 +59,13 @@ describe.concurrent("Cloudflare.Worker", () => {
       const worker = yield* stack.deploy(
         Effect.gen(function* () {
           yield* R2.Bucket("Bucket", {
+            forceDestroy: true,
             storageClass: "Standard",
           });
 
           const worker = yield* Cloudflare.Worker("TestWorker", {
             main,
-            subdomain: { enabled: true, previewsEnabled: true },
+            workersDev: true,
             compatibility: {
               date: "2024-01-01",
             },
@@ -97,7 +104,7 @@ describe.concurrent("Cloudflare.Worker", () => {
         Effect.gen(function* () {
           return yield* Cloudflare.Worker("TestWorker", {
             main,
-            subdomain: { enabled: true, previewsEnabled: true },
+            workersDev: true,
             compatibility: {
               date: "2024-01-01",
             },
@@ -137,7 +144,7 @@ describe.concurrent("Cloudflare.Worker", () => {
           return yield* Cloudflare.Worker("TestWorkerWithAssets", {
             main,
             assets: pathe.resolve(import.meta.dirname, "assets"),
-            subdomain: { enabled: true, previewsEnabled: true },
+            workersDev: true,
             compatibility: {
               date: "2024-01-01",
             },
@@ -178,7 +185,7 @@ describe.concurrent("Cloudflare.Worker", () => {
           return yield* Cloudflare.Worker("TestWorkerWithAssets", {
             main,
             assets: pathe.resolve(import.meta.dirname, "assets"),
-            subdomain: { enabled: true, previewsEnabled: true },
+            workersDev: true,
             compatibility: {
               date: "2024-01-01",
             },
@@ -198,9 +205,8 @@ describe.concurrent("Cloudflare.Worker", () => {
         Effect.gen(function* () {
           return yield* Cloudflare.Worker("TestWorkerWithAssets", {
             main,
-            url: true,
+            workersDev: true,
             assets: pathe.resolve(import.meta.dirname, "assets"),
-            subdomain: { enabled: true, previewsEnabled: true },
             compatibility: {
               date: "2024-01-01",
             },
@@ -258,8 +264,7 @@ describe.concurrent("Cloudflare.Worker", () => {
               return yield* Cloudflare.Worker("RelocatedAssets", {
                 main,
                 assets: assetsDir,
-                url: true,
-                subdomain: { enabled: true, previewsEnabled: true },
+                workersDev: true,
                 compatibility: { date: "2024-01-01" },
               });
             }),
@@ -321,8 +326,7 @@ describe.concurrent("Cloudflare.Worker", () => {
               return yield* Cloudflare.Worker("EditedAssets", {
                 main,
                 assets: dir,
-                url: true,
-                subdomain: { enabled: true, previewsEnabled: true },
+                workersDev: true,
                 compatibility: { date: "2024-01-01" },
               });
             }),
@@ -390,8 +394,7 @@ describe.concurrent("Cloudflare.Worker", () => {
               return yield* Cloudflare.Worker("BundleOnlyChange", {
                 main: workerPath,
                 assets: dir,
-                url: true,
-                subdomain: { enabled: true, previewsEnabled: true },
+                workersDev: true,
                 compatibility: { date: "2024-01-01" },
               });
             }),
@@ -497,7 +500,7 @@ describe.concurrent("Cloudflare.Worker", () => {
           Effect.gen(function* () {
             return yield* Cloudflare.Worker("AdoptableWorker", {
               main,
-              subdomain: { enabled: true, previewsEnabled: true },
+              workersDev: true,
               compatibility: { date: "2024-01-01" },
             });
           }),
@@ -526,7 +529,7 @@ describe.concurrent("Cloudflare.Worker", () => {
             return yield* Cloudflare.Worker("AdoptableWorker", {
               main,
               name: physicalName,
-              subdomain: { enabled: true, previewsEnabled: true },
+              workersDev: true,
               compatibility: { date: "2024-01-01" },
             });
           }),
@@ -568,7 +571,7 @@ describe.concurrent("Cloudflare.Worker", () => {
         Effect.gen(function* () {
           return yield* Cloudflare.Worker("Original", {
             main,
-            subdomain: { enabled: true, previewsEnabled: true },
+            workersDev: true,
             compatibility: { date: "2024-01-01" },
           });
         }),
@@ -602,7 +605,7 @@ describe.concurrent("Cloudflare.Worker", () => {
             return yield* Cloudflare.Worker("Different", {
               main,
               name: physicalName,
-              subdomain: { enabled: true, previewsEnabled: true },
+              workersDev: true,
               compatibility: { date: "2024-01-01" },
             });
           }),
@@ -620,12 +623,12 @@ describe.concurrent("Cloudflare.Worker", () => {
     }).pipe(logLevel),
   );
 
-  // First-deploy behaviour: the default (omitting `url`) must enable
-  // the workers.dev subdomain, and `url: false` must disable it. Both
+  // First-deploy behaviour: the default (omitting `workersDev`) must enable
+  // the workers.dev subdomain, and `workersDev: false` must disable it. Both
   // are asserted against live Cloudflare state via `getScriptSubdomain`,
   // not just the resource's output attributes.
   test.provider(
-    "url defaults to enabling the workers.dev subdomain on first deploy",
+    "workersDev defaults to enabling the workers.dev subdomain on first deploy",
     (stack) =>
       Effect.gen(function* () {
         const { accountId } = yield* yield* CloudflareEnvironment;
@@ -641,7 +644,13 @@ describe.concurrent("Cloudflare.Worker", () => {
           }),
         );
 
-        expect(worker.url).toBeDefined();
+        // Default: url = the stable workers.dev URL = allUrls[0], and
+        // domains mirrors allUrls as bare hostnames.
+        expect(worker.url).toMatch(
+          new RegExp(`^https://${worker.workerName}\\..*\\.workers\\.dev$`),
+        );
+        expect(worker.urls).toEqual([worker.url]);
+        expect(worker.domain).toBeUndefined();
         yield* expectWorkersDevSubdomain(worker.workerName, accountId, true);
 
         yield* stack.destroy();
@@ -650,7 +659,7 @@ describe.concurrent("Cloudflare.Worker", () => {
   );
 
   test.provider(
-    "url: false disables the workers.dev subdomain on first deploy",
+    "workersDev: false disables the workers.dev subdomain on first deploy",
     (stack) =>
       Effect.gen(function* () {
         const { accountId } = yield* yield* CloudflareEnvironment;
@@ -661,13 +670,15 @@ describe.concurrent("Cloudflare.Worker", () => {
           Effect.gen(function* () {
             return yield* Cloudflare.Worker("SubdomainDisabledWorker", {
               main,
-              url: false,
+              workersDev: false,
               compatibility: { date: "2024-01-01" },
             });
           }),
         );
 
         expect(worker.url).toBeUndefined();
+        expect(worker.urls).toEqual([]);
+        expect(worker.domain).toBeUndefined();
         yield* expectWorkersDevSubdomain(worker.workerName, accountId, false);
 
         yield* stack.destroy();
@@ -675,26 +686,25 @@ describe.concurrent("Cloudflare.Worker", () => {
       }).pipe(logLevel),
   );
 
-  // Update regression: toggling `url` between deploys must propagate
+  // Update regression: toggling `workersDev` between deploys must propagate
   // to the live Cloudflare subdomain state. Before this regression
-  // was fixed, the reconciler diffed `news.url !== olds.url` and
-  // drove the API call symmetrically — but the new observed-vs-
-  // desired check inside reconcile must still flip the toggle when
-  // props really do change.
+  // was fixed, the reconciler diffed the props symmetrically — but the
+  // observed-vs-desired check inside reconcile must still flip the toggle
+  // when props really do change.
   test.provider(
-    "toggling url between deploys flips the workers.dev subdomain",
+    "toggling workersDev between deploys flips the workers.dev subdomain",
     (stack) =>
       Effect.gen(function* () {
         const { accountId } = yield* yield* CloudflareEnvironment;
 
         yield* stack.destroy();
 
-        const deploy = (url: boolean) =>
+        const deploy = (workersDev: boolean) =>
           stack.deploy(
             Effect.gen(function* () {
               return yield* Cloudflare.Worker("SubdomainToggleWorker", {
                 main,
-                url,
+                workersDev,
                 compatibility: { date: "2024-01-01" },
               });
             }),
@@ -717,6 +727,78 @@ describe.concurrent("Cloudflare.Worker", () => {
         yield* stack.destroy();
         yield* waitForWorkerToBeDeleted(v1.workerName, accountId);
       }).pipe(logLevel),
+  );
+
+  // `workersDev: { enabled: false, previewsEnabled: true }` — a "preview-only" worker.
+  // The stable workers.dev URL is off, so the current version's preview URL
+  // (`https://<version-prefix>-<name>.<account>.workers.dev`) becomes the
+  // primary `url` output.
+  test.provider(
+    "workersDev previews-only surfaces the version preview URL as url",
+    (stack) =>
+      Effect.gen(function* () {
+        const { accountId } = yield* yield* CloudflareEnvironment;
+
+        yield* stack.destroy();
+
+        const worker = yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* Cloudflare.Worker("PreviewOnlyWorker", {
+              main,
+              workersDev: { enabled: false, previewsEnabled: true },
+              compatibility: { date: "2024-01-01" },
+            });
+          }),
+        );
+
+        yield* expectWorkersDevPreviews(worker.workerName, accountId, {
+          enabled: false,
+          previewsEnabled: true,
+        });
+        // The preview URL is version-scoped: an 8-char version prefix in
+        // front of the worker name.
+        expect(worker.url).toMatch(
+          new RegExp(
+            `^https://[0-9a-f]{8}-${worker.workerName}\\..*\\.workers\\.dev$`,
+          ),
+        );
+        expect(worker.urls).toEqual([worker.url]);
+        expect(worker.domain).toBeUndefined();
+
+        yield* stack.destroy();
+        yield* waitForWorkerToBeDeleted(worker.workerName, accountId);
+      }).pipe(logLevel),
+  );
+
+  // Dev mode: no workers.dev or custom-domain URLs exist, so the local dev
+  // server's localhost URL leads `allUrls` and is the `url`.
+  devTest.provider("dev mode: url is the local dev server URL", (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const worker = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Worker("LocalUrlWorker", {
+            main,
+            dev: { port: 0 },
+            compatibility: { date: "2024-01-01" },
+          });
+        }),
+      );
+
+      expect(worker.url).toMatch(/^http:\/\/localhost:\d+$/);
+      expect(worker.urls[0]).toEqual(worker.url);
+      expect(new URL(worker.urls[0]).hostname).toEqual("localhost");
+      expect(worker.domain).toBeUndefined();
+
+      // The URL actually serves the local worker.
+      yield* expectUrlContains(`${worker.url}/`, "Hello from TestWorker", {
+        timeout: "30 seconds",
+        label: "local dev worker",
+      });
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
   );
 
   // Drift regression: if something external (a previous failed deploy,
@@ -954,6 +1036,98 @@ describe.concurrent("Cloudflare.Worker", () => {
     { timeout: 360_000 },
   );
 
+  // #1272 regression, remaining #874 case: an already-yielded Worker is
+  // plain resource attributes rather than an Effect-valued tag. In a binding
+  // chain, plan and apply may materialize different stable/full projections
+  // of those attributes, but both describe the same service binding and must
+  // converge.
+  // Switching the actual target must still update the caller and land in
+  // Cloudflare.
+  test.provider(
+    "nested yielded worker resources in env converge to noop plans",
+    (stack) =>
+      Effect.gen(function* () {
+        const { accountId } = yield* yield* CloudflareEnvironment;
+
+        yield* stack.destroy();
+
+        const program = (selected: "A" | "B") =>
+          Effect.gen(function* () {
+            const targetB = yield* Cloudflare.Worker("YieldedEnvTargetB", {
+              main,
+            });
+            const targetA = yield* Cloudflare.Worker("YieldedEnvTargetA", {
+              main,
+              env: { UPSTREAM: targetB },
+            });
+            const caller = yield* Cloudflare.Worker("YieldedEnvCaller", {
+              main,
+              env: { TARGET: selected === "A" ? targetA : targetB },
+            });
+            return { targetA, targetB, caller };
+          });
+
+        const actionOf = (plan: any, logicalId: string) =>
+          (Object.values(plan.resources) as any[]).find(
+            (node: any) => node.resource.LogicalId === logicalId,
+          )?.action;
+
+        const deployedA = yield* stack.deploy(program("A"));
+        const bindingTarget = Effect.fn(function* (callerName: string) {
+          const settings = yield* workers.getScriptScriptAndVersionSetting({
+            accountId,
+            scriptName: callerName,
+          });
+          return settings.bindings?.find(
+            (binding) =>
+              binding.type === "service" && binding.name === "TARGET",
+          );
+        });
+        expect(yield* bindingTarget(deployedA.caller.workerName)).toEqual(
+          expect.objectContaining({
+            type: "service",
+            name: "TARGET",
+            service: deployedA.targetA.workerName,
+          }),
+        );
+
+        const stableA = yield* stack.plan(program("A"));
+        expect(actionOf(stableA, "YieldedEnvTargetA")).toBe("noop");
+        expect(actionOf(stableA, "YieldedEnvTargetB")).toBe("noop");
+        expect(actionOf(stableA, "YieldedEnvCaller")).toBe("noop");
+
+        const switchPlan = yield* stack.plan(program("B"));
+        expect(actionOf(switchPlan, "YieldedEnvTargetA")).toBe("noop");
+        expect(actionOf(switchPlan, "YieldedEnvTargetB")).toBe("noop");
+        expect(actionOf(switchPlan, "YieldedEnvCaller")).toBe("update");
+
+        const deployedB = yield* stack.deploy(program("B"));
+        expect(yield* bindingTarget(deployedB.caller.workerName)).toEqual(
+          expect.objectContaining({
+            type: "service",
+            name: "TARGET",
+            service: deployedB.targetB.workerName,
+          }),
+        );
+
+        const stableB = yield* stack.plan(program("B"));
+        expect(actionOf(stableB, "YieldedEnvTargetA")).toBe("noop");
+        expect(actionOf(stableB, "YieldedEnvTargetB")).toBe("noop");
+        expect(actionOf(stableB, "YieldedEnvCaller")).toBe("noop");
+
+        yield* stack.destroy();
+        yield* Effect.all(
+          [
+            deployedB.caller.workerName,
+            deployedB.targetA.workerName,
+            deployedB.targetB.workerName,
+          ].map((name) => waitForWorkerToBeDeleted(name, accountId)),
+          { concurrency: "unbounded" },
+        );
+      }).pipe(logLevel),
+    { timeout: 360_000 },
+  );
+
   // The full circular case from the #874 report: A and B each bind the
   // OTHER's tag in env. The tags keep the dependency on the binding channel
   // (precreate stubs + converge pass) — a cycle the props channel cannot
@@ -1166,35 +1340,37 @@ describe.concurrent("Cloudflare.Worker", () => {
     { timeout: 360_000 },
   );
 
-  // `domains` should reflect the workers.dev URL when the subdomain is
-  // enabled and be empty when it isn't. `worker.url` is just `domains[0]`,
-  // so the two must stay in lockstep across deploys.
+  // `allUrls`/`domains` should reflect the workers.dev URL when the
+  // subdomain is enabled and be empty when it isn't. `worker.url` is always
+  // `allUrls[0]`, so the three must stay in lockstep across deploys.
   test.provider(
-    "domains reflects the workers.dev subdomain and tracks url",
+    "allUrls and domains reflect the workers.dev subdomain and track url",
     (stack) =>
       Effect.gen(function* () {
         const { accountId } = yield* yield* CloudflareEnvironment;
 
         yield* stack.destroy();
 
-        const deploy = (url: boolean) =>
+        const deploy = (workersDev: boolean) =>
           stack.deploy(
             Effect.gen(function* () {
               return yield* Cloudflare.Worker("DomainsWorker", {
                 main,
-                url,
+                workersDev,
                 compatibility: { date: "2024-01-01" },
               });
             }),
           );
 
         const enabled = yield* deploy(true);
-        expect(enabled.domains).toHaveLength(1);
-        expect(enabled.domains[0]).toMatch(/\.workers\.dev$/);
-        expect(enabled.url).toEqual(enabled.domains[0]);
+        expect(enabled.urls).toHaveLength(1);
+        expect(enabled.urls[0]).toMatch(/\.workers\.dev$/);
+        expect(enabled.url).toEqual(enabled.urls[0]);
+        expect(enabled.domain).toBeUndefined();
 
         const disabled = yield* deploy(false);
-        expect(disabled.domains).toEqual([]);
+        expect(disabled.urls).toEqual([]);
+        expect(disabled.domain).toBeUndefined();
         expect(disabled.url).toBeUndefined();
 
         yield* stack.destroy();
@@ -1202,13 +1378,12 @@ describe.concurrent("Cloudflare.Worker", () => {
       }).pipe(logLevel),
   );
 
-  // When custom domains are attached, they come first in `domains` (in
-  // the order the user provided them), followed by the workers.dev URL
-  // when the subdomain is enabled. `worker.url` is `domains[0]`, so the
-  // custom domain wins.
+  // Ordering contract: the canonical custom domain leads `urls` (it is the
+  // most significant URL), aliases follow in declared order, and the
+  // workers.dev URL comes last. Swapping name and alias moves `url`.
   const customDomainZone = process.env.CLOUDFLARE_TEST_WORKER_DOMAIN_ZONE_NAME;
   test.provider.skipIf(!customDomainZone)(
-    "domains puts custom domains before workers.dev and url is the first",
+    "custom domain outranks workers.dev in urls and selects url",
     (stack) =>
       Effect.gen(function* () {
         const { accountId } = yield* yield* CloudflareEnvironment;
@@ -1218,42 +1393,246 @@ describe.concurrent("Cloudflare.Worker", () => {
 
         yield* stack.destroy();
 
-        const worker = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Worker("CustomDomainWorker", {
-              main,
-              domain: [domainA, domainB],
-              compatibility: { date: "2024-01-01" },
-            });
-          }),
-        );
+        const deploy = (
+          workersDev: boolean,
+          domain: { name: string; aliases?: string[] },
+        ) =>
+          stack.deploy(
+            Effect.gen(function* () {
+              return yield* Cloudflare.Worker("CustomDomainWorker", {
+                main,
+                workersDev,
+                domain,
+                compatibility: { date: "2024-01-01" },
+              });
+            }),
+          );
 
-        expect(worker.domains.slice(0, 2)).toEqual([
+        // workers.dev enabled: the canonical domain still leads `urls`,
+        // the alias follows, and the workers.dev URL comes last.
+        const worker = yield* deploy(true, {
+          name: domainA,
+          aliases: [domainB],
+        });
+        expect(worker.urls).toHaveLength(3);
+        expect(worker.urls.slice(0, 2)).toEqual([
           `https://${domainA}`,
           `https://${domainB}`,
         ]);
-        expect(worker.domains[2]).toMatch(/\.workers\.dev$/);
-        expect(worker.url).toEqual(`https://${domainA}`);
-
-        // Reorder — `domains[0]` should follow.
-        const swapped = yield* stack.deploy(
-          Effect.gen(function* () {
-            return yield* Cloudflare.Worker("CustomDomainWorker", {
-              main,
-              domain: [domainB, domainA],
-              compatibility: { date: "2024-01-01" },
-            });
-          }),
+        expect(worker.urls[2]).toMatch(
+          new RegExp(`^https://${worker.workerName}\\..*\\.workers\\.dev$`),
         );
-        expect(swapped.domains.slice(0, 2)).toEqual([
+        expect(worker.url).toEqual(`https://${domainA}`);
+        expect(worker.domain).toEqual({
+          name: domainA,
+          aliases: [domainB],
+          redirects: [],
+        });
+
+        // Domain only (no workers.dev): urls is just the domain + alias.
+        const domainOnly = yield* deploy(false, {
+          name: domainA,
+          aliases: [domainB],
+        });
+        expect(domainOnly.urls).toEqual([
+          `https://${domainA}`,
+          `https://${domainB}`,
+        ]);
+        expect(domainOnly.url).toEqual(`https://${domainA}`);
+
+        // Swap name and alias — `url` follows the canonical name.
+        const swapped = yield* deploy(false, {
+          name: domainB,
+          aliases: [domainA],
+        });
+        expect(swapped.urls).toEqual([
           `https://${domainB}`,
           `https://${domainA}`,
         ]);
         expect(swapped.url).toEqual(`https://${domainB}`);
+        expect(swapped.domain).toEqual({
+          name: domainB,
+          aliases: [domainA],
+          redirects: [],
+        });
 
         yield* stack.destroy();
         yield* waitForWorkerToBeDeleted(worker.workerName, accountId);
       }).pipe(logLevel),
+  );
+
+  // State-migration: Worker state written by older Alchemy versions stored
+  // `domains` as `https://<hostname>` URL strings with the workers.dev URL
+  // mixed in (beta.45–57) or as `{ id, hostname, zoneId }` objects
+  // (<= beta.44), and had no `allUrls`. A deploy on top of either shape must
+  // not crash the diff/reconcile and must rewrite the attributes to the
+  // current shape (bare hostnames aligned with `allUrls`).
+  test.provider("redeploy coerces legacy domains state", (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+
+      const deploy = (date: string) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            return yield* Cloudflare.Worker("LegacyStateWorker", {
+              main,
+              compatibility: { date },
+            });
+          }),
+        );
+
+      const v1 = yield* deploy("2024-01-01");
+      const workersDevHost = new URL(v1.url!).hostname;
+
+      // Rewrite the persisted record to a legacy shape. The stale
+      // custom-domain entry ("app.example.com") was never attached on
+      // Cloudflare, so the redeploy must also converge state back to the
+      // observed cloud truth rather than trusting the record. `props`
+      // optionally gains the pre-redesign keys so `olds` reaching the diff
+      // looks exactly like a record an old deploy persisted.
+      const writeLegacyRecord = (legacy: {
+        url: string | undefined;
+        domains: unknown[];
+        legacyProps?: Record<string, unknown>;
+      }) =>
+        Effect.gen(function* () {
+          const state = yield* yield* State;
+          const key = {
+            stack: stack.name,
+            stage: "test",
+            fqn: "LegacyStateWorker",
+          };
+          const current = yield* state.get(key);
+          expect(current).toBeDefined();
+          const attr = {
+            ...(current as any).attr,
+            url: legacy.url,
+            domains: legacy.domains,
+          };
+          delete attr.urls;
+          delete attr.domain;
+          yield* state.set({
+            ...key,
+            value: {
+              ...(current as any),
+              attr,
+              props: { ...(current as any).props, ...legacy.legacyProps },
+            },
+          });
+        }).pipe(Effect.provide(stack.state));
+
+      // beta.45–57: URL strings, workers.dev mixed in, no allUrls.
+      yield* writeLegacyRecord({
+        url: "https://app.example.com",
+        domains: ["https://app.example.com", `https://${workersDevHost}`],
+      });
+
+      const v2 = yield* deploy("2024-01-02");
+      expect(v2.url).toEqual(`https://${workersDevHost}`);
+      expect(v2.urls).toEqual([`https://${workersDevHost}`]);
+      expect(v2.domain).toBeUndefined();
+
+      // <= beta.44: `{ id, hostname, zoneId }` objects — and the props the
+      // old code persisted alongside them (`url`/`subdomain` keys), so the
+      // diff's `olds` carries the pre-redesign prop shape too.
+      yield* writeLegacyRecord({
+        url: undefined,
+        domains: [{ id: "legacy", hostname: "app.example.com", zoneId: "z" }],
+        legacyProps: {
+          url: true,
+          subdomain: { enabled: true, previewsEnabled: true },
+        },
+      });
+
+      const v3 = yield* deploy("2024-01-03");
+      expect(v3.url).toEqual(`https://${workersDevHost}`);
+      expect(v3.urls).toEqual([`https://${workersDevHost}`]);
+      expect(v3.domain).toBeUndefined();
+
+      yield* stack.destroy();
+      yield* waitForWorkerToBeDeleted(v1.workerName, accountId);
+    }).pipe(logLevel),
+  );
+
+  // The real upgrade path for a bare Worker: the user's props are byte-for-
+  // byte identical before and after upgrading Alchemy, so the *only* thing
+  // that can trigger the state migration is the metadata hash (its surface
+  // changed: `url`/`subdomain` keys out, `workersDev` in). The migration
+  // must be a one-time update — and a downstream resource consuming
+  // `worker.urls` (absent from legacy state) must re-resolve through it
+  // and settle back to noop.
+  test.provider(
+    "props-identical redeploy migrates legacy state via the metadata hash",
+    (stack) =>
+      Effect.gen(function* () {
+        const { accountId } = yield* yield* CloudflareEnvironment;
+
+        yield* stack.destroy();
+
+        // Never changes across the test — like a user who upgrades Alchemy
+        // without touching their stack code.
+        const program = Effect.gen(function* () {
+          const worker = yield* Cloudflare.Worker("BareUpstream", {
+            main,
+            compatibility: { date: "2024-01-01" },
+          });
+          yield* Cloudflare.Alerting.NotificationWebhook("Hook", {
+            url: worker.urls.pipe(Output.map((urls) => urls[0]!)),
+          });
+          return worker;
+        });
+
+        const actionOf = (plan: any, logicalId: string) =>
+          (Object.values(plan.resources) as any[]).find(
+            (node: any) => node.resource.LogicalId === logicalId,
+          )?.action;
+
+        const v1 = yield* stack.deploy(program);
+        const workersDevHost = new URL(v1.url!).hostname;
+
+        // Rewrite the record to what an old deploy persisted: URL-string
+        // domains, no allUrls, and a metadata hash computed over the old
+        // surface (any value the new code can't reproduce).
+        yield* Effect.gen(function* () {
+          const state = yield* yield* State;
+          const key = { stack: stack.name, stage: "test", fqn: "BareUpstream" };
+          const current = yield* state.get(key);
+          expect(current).toBeDefined();
+          const attr = {
+            ...(current as any).attr,
+            url: `https://${workersDevHost}`,
+            domains: [`https://${workersDevHost}`],
+            hash: { ...(current as any).attr.hash, metadata: "legacy" },
+          };
+          delete attr.urls;
+          yield* state.set({ ...key, value: { ...(current as any), attr } });
+        }).pipe(Effect.provide(stack.state));
+
+        // Identical props still plan as an update — driven by the metadata
+        // hash alone. The downstream's `allUrls` reference is unresolvable
+        // from legacy state (never marked stable), so it takes a one-time
+        // update alongside the migration.
+        const migrationPlan = yield* stack.plan(program);
+        expect(actionOf(migrationPlan, "BareUpstream")).toBe("update");
+        expect(actionOf(migrationPlan, "Hook")).toBe("update");
+
+        const migrated = yield* stack.deploy(program);
+        expect(migrated.url).toEqual(`https://${workersDevHost}`);
+        expect(migrated.urls).toEqual([`https://${workersDevHost}`]);
+        expect(migrated.domain).toBeUndefined();
+
+        // Migration is one-time: the same props now settle as a full noop,
+        // including the downstream (allUrls is present and stable again).
+        const settledPlan = yield* stack.plan(program);
+        expect(actionOf(settledPlan, "BareUpstream")).toBe("noop");
+        expect(actionOf(settledPlan, "Hook")).toBe("noop");
+
+        yield* stack.destroy();
+        yield* waitForWorkerToBeDeleted(v1.workerName, accountId);
+      }).pipe(logLevel),
+    { timeout: 240_000 },
   );
 
   // Canonical `list()` test (account collection): deploy a real Worker and
@@ -1515,6 +1894,113 @@ describe.concurrent("Cloudflare.Worker", () => {
         expect(actionOf(removeLastDoPlan, "Hook")).toBe("update");
 
         yield* stack.destroy();
+      }).pipe(logLevel),
+    { timeout: 360_000 },
+  );
+
+  test.provider(
+    "plain worker importing node builtins deploys without explicit compatibility flags",
+    (stack) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { accountId } = yield* yield* CloudflareEnvironment;
+
+        yield* stack.destroy();
+
+        // Regression for #796: a plain (external) `export default { fetch }`
+        // Worker importing `node:crypto`, with NO `compatibility` prop. The
+        // default `nodejs_compat` must reach both the bundler (so `node:*`
+        // stays external instead of warning) and the upload metadata (so
+        // Cloudflare doesn't reject with `No such module "node:crypto"`).
+        const workerDir = yield* fs.makeTempDirectory({
+          prefix: "alchemy-worker-node-compat-",
+        });
+        const workerPath = path.join(workerDir, "worker.ts");
+        yield* fs.writeFileString(
+          workerPath,
+          `import { randomBytes } from "node:crypto";
+export default {
+  fetch: async () =>
+    new Response("node-compat:" + randomBytes(8).toString("hex")),
+};
+`,
+        );
+
+        const worker = yield* stack.deploy(
+          Effect.gen(function* () {
+            return yield* Cloudflare.Worker("NodeCompatDefault", {
+              main: workerPath,
+              workersDev: true,
+            });
+          }),
+        );
+
+        yield* expectUrlContains(worker.url!, "node-compat:", {
+          timeout: "60 seconds",
+          label: "node:crypto served under default nodejs_compat",
+        });
+
+        yield* stack.destroy();
+        yield* waitForWorkerToBeDeleted(worker.workerName, accountId);
+      }).pipe(logLevel),
+    { timeout: 360_000 },
+  );
+
+  test.provider(
+    "deploys a worker whose main is derived from a Command.Build output",
+    (stack) =>
+      Effect.gen(function* () {
+        const { accountId } = yield* yield* CloudflareEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        yield* stack.destroy();
+
+        // Regression for #1049: `main` computed from another resource's
+        // output is still an unresolved Output when `precreate` runs on raw
+        // props — `getCompatibility` (via `isPythonMain`) must tolerate it.
+        // The entry module only exists after the build command runs, so the
+        // Worker cannot know its `main` path until `build.outdir` resolves.
+        const marker = "alchemy-output-main-e2e-ok-7c31";
+        const tempDir = yield* fs.makeTempDirectory({
+          prefix: "alchemy-output-main-",
+        });
+        yield* fs.writeFileString(
+          path.join(tempDir, "worker.src.mjs"),
+          `export default { fetch: () => new Response(${JSON.stringify(marker)}) };\n`,
+        );
+        yield* fs.writeFileString(
+          path.join(tempDir, "build.sh"),
+          "mkdir -p dist\ncp worker.src.mjs dist/worker.mjs\n",
+        );
+
+        const worker = yield* stack.deploy(
+          Effect.gen(function* () {
+            const build = yield* Command.Build("OutputMainBuild", {
+              command: "bash build.sh",
+              cwd: tempDir,
+              outdir: "dist",
+            });
+            return yield* Cloudflare.Worker("OutputMainWorker", {
+              isExternal: true,
+              workersDev: true,
+              // `build.outdir` is persisted relative to the initial cwd —
+              // resolve it against `initialCwd` (per Build's contract), not
+              // live `process.cwd()`, which another suite's in-process build
+              // can transiently chdir away.
+              main: Output.map(build.outdir, (dir) =>
+                pathe.resolve(initialCwd, dir, "worker.mjs"),
+              ),
+            });
+          }),
+        );
+
+        expect(worker.url).toBeDefined();
+        yield* expectUrlContains(worker.url!, marker);
+
+        yield* stack.destroy();
+        yield* waitForWorkerToBeDeleted(worker.workerName, accountId);
       }).pipe(logLevel),
     { timeout: 360_000 },
   );

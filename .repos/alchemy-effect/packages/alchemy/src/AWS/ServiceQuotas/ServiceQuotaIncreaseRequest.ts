@@ -98,8 +98,8 @@ export interface ServiceQuotaIncreaseRequest extends Resource<
  * the applied value is below `desiredValue` and no open request already
  * asks for it. Raising `desiredValue` later submits a new request.
  *
- * @section Requesting a Quota Increase
- * @example Raise the VPCs-per-region quota
+ * ### Requesting a Quota Increase
+ * **Example:** Raise the VPCs-per-region quota
  * ```typescript
  * const increase = yield* ServiceQuotas.ServiceQuotaIncreaseRequest("MoreVpcs", {
  *   serviceCode: "vpc",
@@ -108,7 +108,7 @@ export interface ServiceQuotaIncreaseRequest extends Resource<
  * });
  * ```
  *
- * @example Request without allowing a support case
+ * **Example:** Request without allowing a support case
  * ```typescript
  * const increase = yield* ServiceQuotas.ServiceQuotaIncreaseRequest("MoreFunctions", {
  *   serviceCode: "lambda",

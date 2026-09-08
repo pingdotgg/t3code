@@ -107,8 +107,8 @@ export interface PackageVersionStateChangesProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Package Version Events
- * @example React to Published Versions
+ * ### Consuming Package Version Events
+ * **Example:** React to Published Versions
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

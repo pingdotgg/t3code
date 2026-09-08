@@ -9,6 +9,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as Url from "effect/unstable/http/Url";
 import * as Binding from "../../Binding.ts";
+import type { RuntimeContext } from "../../RuntimeContext.ts";
 import { isWorker, type Worker, WorkerEnvironment } from "./Worker.ts";
 
 /**
@@ -26,7 +27,8 @@ export interface Fetch extends Binding.Service<
       request: HttpClientRequest.HttpClientRequest,
     ) => Effect.Effect<
       HttpClientResponse.HttpClientResponse,
-      HttpClientError.RequestError
+      HttpClientError.RequestError,
+      RuntimeContext
     >
   >
 > {}
@@ -40,25 +42,29 @@ export const FetchBinding = Layer.effect(
 
     return Effect.fn(function* (worker: Worker) {
       if (!globalThis.__ALCHEMY_RUNTIME__) {
+        // Deploy-time only: register the service binding for the *target*
+        // worker on the host Worker.
         const host = yield* Binding.Host;
         if (isWorker(host)) {
-          yield* host.bind`${host}`({
+          yield* host.bind`${worker}`({
             bindings: [
               {
                 type: "service",
-                name: host.LogicalId,
-                service: host.workerName,
+                name: worker.LogicalId,
+                service: worker.workerName,
               },
             ],
           });
         }
       }
-      const fetcher = (env as Record<string, runtime.Fetcher>)[
-        worker.LogicalId
-      ];
+      // Lazy — the `WorkerEnvironment` bindings are only populated at exec
+      // phase, so the fetcher must be resolved per call, not at bind time.
+      const fetcher = Effect.sync(
+        () => (env as Record<string, runtime.Fetcher>)[worker.LogicalId]!,
+      ) as Effect.Effect<runtime.Fetcher, never, RuntimeContext>;
 
       return (request: HttpClientRequest.HttpClientRequest) =>
-        doFetch(fetcher, request);
+        Effect.flatMap(fetcher, (f) => doFetch(f, request));
     });
   }),
 );

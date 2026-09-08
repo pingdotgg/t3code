@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * operation — job ids are chosen per request at runtime, so the binding takes
  * no resource argument. Provide the implementation with
  * `Effect.provide(AWS.Signer.DescribeSigningJobHttp)`.
- * @binding
- * @section Observing Signing Jobs
- * @example Wait for a Job to Finish
+ * ### Observing Signing Jobs
+ * **Example:** Wait for a Job to Finish
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeSigningJob = yield* AWS.Signer.DescribeSigningJob();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const job = yield* describeSigningJob({ jobId });
  * const signedKey = job.signedObject?.s3?.key;
  * ```
+ *
+ * @binding
  */
 export interface DescribeSigningJob extends Binding.Service<
   DescribeSigningJob,

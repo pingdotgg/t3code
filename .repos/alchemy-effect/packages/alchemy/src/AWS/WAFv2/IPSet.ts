@@ -95,16 +95,15 @@ export interface IPSet extends Resource<
  * referenced from web ACL and rule group rules via
  * `IPSetReferenceStatement`.
  *
- * @resource
- * @section Creating IP Sets
- * @example Block List of IPv4 Addresses
+ * ### Creating IP Sets
+ * **Example:** Block List of IPv4 Addresses
  * ```typescript
  * const blockList = yield* AWS.WAFv2.IPSet("BlockList", {
  *   addresses: ["192.0.2.44/32", "203.0.113.0/24"],
  * });
  * ```
  *
- * @example Reference from a Web ACL Rule
+ * **Example:** Reference from a Web ACL Rule
  * ```typescript
  * const acl = yield* AWS.WAFv2.WebACL("Firewall", {
  *   rules: [
@@ -124,6 +123,8 @@ export interface IPSet extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const IPSet = Resource<IPSet>("AWS.WAFv2.IPSet");
 

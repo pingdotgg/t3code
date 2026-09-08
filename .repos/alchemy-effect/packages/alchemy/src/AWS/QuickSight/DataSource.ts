@@ -102,8 +102,8 @@ export interface DataSource extends Resource<
  * one, create operations fail with the typed `QuickSightSubscriptionRequired`
  * error.
  *
- * @section Creating a Data Source
- * @example Athena Data Source
+ * ### Creating a Data Source
+ * **Example:** Athena Data Source
  * ```typescript
  * const source = yield* DataSource("analytics", {
  *   name: "Athena Analytics",
@@ -112,7 +112,7 @@ export interface DataSource extends Resource<
  * });
  * ```
  *
- * @example S3 Manifest Data Source
+ * **Example:** S3 Manifest Data Source
  * ```typescript
  * const source = yield* DataSource("s3-source", {
  *   name: "S3 Sales Data",
@@ -160,11 +160,11 @@ export const DataSourceProvider = () =>
       });
 
       const toAttrs = (source: quicksight.DataSource) => ({
-        dataSourceId: source.DataSourceId!,
-        arn: source.Arn!,
-        name: source.Name ?? "",
-        type: source.Type ?? "",
-        status: source.Status ?? "",
+        dataSourceId: source.DataSourceId,
+        arn: source.Arn,
+        name: source.Name,
+        type: source.Type,
+        status: source.Status,
       });
 
       return DataSource.Provider.of({
@@ -261,7 +261,7 @@ export const DataSourceProvider = () =>
           }
 
           // 3b. Sync tags — diff against OBSERVED cloud tags.
-          yield* syncQuickSightTags(observed.Arn!, desiredTags);
+          yield* syncQuickSightTags(observed.Arn, desiredTags);
 
           yield* session.note(dataSourceId);
           return toAttrs(observed);
@@ -297,9 +297,9 @@ export const DataSourceProvider = () =>
                             {
                               dataSourceId: s.DataSourceId,
                               arn: s.Arn,
-                              name: s.Name ?? "",
-                              type: s.Type ?? "",
-                              status: s.Status ?? "",
+                              name: s.Name,
+                              type: s.Type,
+                              status: s.Status,
                             },
                           ]
                         : [],

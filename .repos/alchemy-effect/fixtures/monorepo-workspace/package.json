@@ -1,0 +1,21 @@
+{
+  "name": "@fixtures/monorepo-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts dev --port 3109",
+    "build": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "test:update-snapshots": "playwright test --update-snapshots",
+    "pretest": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@playwright/test": "catalog:testing",
+    "effect": "catalog:effect",
+    "vite": "catalog:build"
+  }
+}

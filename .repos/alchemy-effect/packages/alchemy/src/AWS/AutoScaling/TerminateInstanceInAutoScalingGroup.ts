@@ -22,9 +22,8 @@ export interface TerminateInstanceRequest
  * replacement) or retiring the instance it runs on. Provide the
  * implementation with
  * `Effect.provide(AWS.AutoScaling.TerminateInstanceInAutoScalingGroupHttp)`.
- * @binding
- * @section Manual Scaling
- * @example Recycle a wedged instance
+ * ### Manual Scaling
+ * **Example:** Recycle a wedged instance
  * ```typescript
  * // init — bind the operation to the group
  * const terminateInstance =
@@ -36,6 +35,8 @@ export interface TerminateInstanceRequest
  *   ShouldDecrementDesiredCapacity: false,
  * });
  * ```
+ *
+ * @binding
  */
 export interface TerminateInstanceInAutoScalingGroup extends Binding.Service<
   TerminateInstanceInAutoScalingGroup,

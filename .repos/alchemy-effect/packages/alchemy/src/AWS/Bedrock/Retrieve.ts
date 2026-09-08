@@ -23,9 +23,8 @@ export interface RetrieveRequest extends Omit<
  * retrieved chunks (to build your own prompt); use {@link RetrieveAndGenerate}
  * for a fully managed RAG answer.
  *
- * @binding
- * @section Retrieving Passages
- * @example Retrieve Relevant Chunks
+ * ### Retrieving Passages
+ * **Example:** Retrieve Relevant Chunks
  * ```typescript
  * // init
  * const retrieve = yield* Bedrock.Retrieve(knowledgeBase);
@@ -39,6 +38,8 @@ export interface RetrieveRequest extends Omit<
  * });
  * const passages = result.retrievalResults.map((r) => r.content?.text);
  * ```
+ *
+ * @binding
  */
 export interface Retrieve extends Binding.Service<
   Retrieve,

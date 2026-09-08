@@ -143,18 +143,15 @@ export type Organization = Resource<
  * state, `read` scans for an existing organization with the same name
  * (and parent) and reports it as `Unowned`, so the engine refuses to take
  * it over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Organizations
- * @category Account & Identity
- * @section Creating an Organization
- * @example Basic organization
+ * ### Creating an Organization
+ * **Example:** Basic organization
  * ```typescript
  * const org = yield* Cloudflare.Organization.Organization("Platform", {
  *   name: "acme-platform",
  * });
  * ```
  *
- * @example Organization with a business profile
+ * **Example:** Organization with a business profile
  * ```typescript
  * const org = yield* Cloudflare.Organization.Organization("Platform", {
  *   name: "acme-platform",
@@ -168,8 +165,8 @@ export type Organization = Resource<
  * });
  * ```
  *
- * @section Hierarchies
- * @example Sub-organization under a parent
+ * ### Hierarchies
+ * **Example:** Sub-organization under a parent
  * ```typescript
  * const parent = yield* Cloudflare.Organization.Organization("Root", {
  *   name: "acme-root",
@@ -182,6 +179,10 @@ export type Organization = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/setup/manage-organizations/
+ *
+ * @resource
+ * @product Organizations
+ * @category Account & Identity
  */
 export const Organization = Resource<Organization>(TypeId, {
   aliases: ["Cloudflare.Organization"],

@@ -13,5 +13,11 @@ if (!file) {
 
 fs.writeFileSync(file, JSON.stringify({ pid: process.pid, marker }));
 
+// Print a localhost URL so the Dev provider's URL-readiness scan resolves
+// immediately (like a real dev server) instead of waiting out its 5-second
+// budget. Tests that use this fixture assert on process lifecycle, not URL
+// extraction — url-server.cjs covers that.
+console.log("http://localhost:65535/");
+
 // Hold the event loop open without doing any actual work.
 setInterval(() => {}, 60_000);

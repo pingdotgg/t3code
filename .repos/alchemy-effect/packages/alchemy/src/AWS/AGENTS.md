@@ -183,7 +183,7 @@ Follow this loop until audit is clean or only intentionally deferred items remai
 Run:
 
 ```bash
-bun audit:service dynamodb
+pnpm audit:service dynamodb
 ```
 
 The audit should report:
@@ -442,7 +442,7 @@ Lambda-first slice:
 After every meaningful slice:
 
 1. run the service-specific E2E tests
-2. rerun `bun audit:service <service>`
+2. rerun `pnpm audit:service <service>`
 3. use the updated output to choose the next slice
 
 Repeat until:

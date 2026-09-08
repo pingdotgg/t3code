@@ -37,7 +37,7 @@ export class NeptuneBindingsTestFunction extends Lambda.Function<Lambda.Function
 export default NeptuneBindingsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Event source: subscribe the host to Neptune cluster events flowing

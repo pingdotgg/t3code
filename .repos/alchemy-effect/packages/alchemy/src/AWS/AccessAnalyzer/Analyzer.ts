@@ -90,9 +90,8 @@ class AnalyzerStillExists extends Data.TaggedError("AnalyzerStillExists")<{
  * The `ACCOUNT` external-access analyzer is free and is the common case:
  * create one per account per Region to have Access Analyzer surface public
  * and cross-account grants as findings.
- * @resource
- * @section Creating an Analyzer
- * @example Account External-Access Analyzer
+ * ### Creating an Analyzer
+ * **Example:** Account External-Access Analyzer
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -101,7 +100,7 @@ class AnalyzerStillExists extends Data.TaggedError("AnalyzerStillExists")<{
  * });
  * ```
  *
- * @example Analyzer with Tags
+ * **Example:** Analyzer with Tags
  * ```typescript
  * const analyzer = yield* AWS.AccessAnalyzer.Analyzer("AccountAnalyzer", {
  *   analyzerName: "prod-external-access",
@@ -110,7 +109,7 @@ class AnalyzerStillExists extends Data.TaggedError("AnalyzerStillExists")<{
  * });
  * ```
  *
- * @example Unused-Access Analyzer with a Custom Tracking Period
+ * **Example:** Unused-Access Analyzer with a Custom Tracking Period
  * ```typescript
  * const analyzer = yield* AWS.AccessAnalyzer.Analyzer("UnusedAccess", {
  *   type: "ACCOUNT_UNUSED_ACCESS",
@@ -118,8 +117,8 @@ class AnalyzerStillExists extends Data.TaggedError("AnalyzerStillExists")<{
  * });
  * ```
  *
- * @section Archiving Findings
- * @example Auto-archive Findings from a Trusted Account
+ * ### Archiving Findings
+ * **Example:** Auto-archive Findings from a Trusted Account
  * ```typescript
  * const analyzer = yield* AWS.AccessAnalyzer.Analyzer("AccountAnalyzer", {});
  *
@@ -131,6 +130,8 @@ class AnalyzerStillExists extends Data.TaggedError("AnalyzerStillExists")<{
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Analyzer = Resource<Analyzer>("AWS.AccessAnalyzer.Analyzer");
 

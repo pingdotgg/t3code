@@ -35,7 +35,7 @@ const QUERY_CARD_ID = "22222222-2222-4222-8222-222222222222";
  * QApp resource itself cannot exist without an entitled Q Business instance.
  */
 export default QAppsTestFunction.make(
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const instanceId = yield* Effect.sync(
       () => process.env.QAPPS_INSTANCE_ID ?? "",

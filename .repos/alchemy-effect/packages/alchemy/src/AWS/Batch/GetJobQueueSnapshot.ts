@@ -14,14 +14,15 @@ export interface GetJobQueueSnapshotRequest extends Omit<
  * jobs the scheduler will run, in dispatch order) — queue introspection for
  * dashboards and backpressure decisions from runtime code.
  *
- * @binding
- * @section Inspecting the Queue
- * @example Read the front of the queue
+ * ### Inspecting the Queue
+ * **Example:** Read the front of the queue
  * ```typescript
  * const getJobQueueSnapshot = yield* Batch.GetJobQueueSnapshot(queue);
  * const { frontOfQueue } = yield* getJobQueueSnapshot();
  * const next = frontOfQueue?.jobs?.[0]?.jobArn;
  * ```
+ *
+ * @binding
  */
 export interface GetJobQueueSnapshot extends Binding.Service<
   GetJobQueueSnapshot,

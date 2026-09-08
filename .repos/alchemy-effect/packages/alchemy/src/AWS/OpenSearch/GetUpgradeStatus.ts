@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Reads the status of a domain's most recent engine-version upgrade or upgrade-eligibility check. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.GetUpgradeStatusHttp)`.
- * @binding
- * @section Engine Upgrades
- * @example Check an In-Progress Upgrade
+ * ### Engine Upgrades
+ * **Example:** Check an In-Progress Upgrade
  * ```typescript
  * const getUpgradeStatus = yield* OpenSearch.GetUpgradeStatus();
  *
  * const result = yield* getUpgradeStatus({ DomainName: name });
  * // result.StepStatus → "SUCCEEDED"
  * ```
+ *
+ * @binding
  */
 export interface GetUpgradeStatus extends Binding.Service<
   GetUpgradeStatus,

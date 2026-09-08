@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * {@link CreateJob}. The account id is resolved once via
  * `sts:GetCallerIdentity`. Provide the implementation with
  * `Effect.provide(AWS.S3Control.DescribeJobHttp)`.
- * @binding
- * @section Running Batch Operations Jobs
- * @example Poll a Job's Status
+ * ### Running Batch Operations Jobs
+ * **Example:** Poll a Job's Status
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeJob = yield* AWS.S3Control.DescribeJob();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const { Job } = yield* describeJob({ JobId: jobId });
  * // Job?.Status === "Complete"
  * ```
+ *
+ * @binding
  */
 export interface DescribeJob extends Binding.Service<
   DescribeJob,

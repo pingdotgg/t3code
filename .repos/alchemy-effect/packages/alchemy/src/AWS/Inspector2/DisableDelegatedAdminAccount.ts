@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.DisableDelegatedAdminAccountHttp)`.
- * @binding
- * @section Organization & Members
- * @example Disable a Delegated Administrator
+ * ### Organization & Members
+ * **Example:** Disable a Delegated Administrator
  * ```typescript
  * // init
  * const disableDelegatedAdminAccount = yield* AWS.Inspector2.DisableDelegatedAdminAccount();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* disableDelegatedAdminAccount({ delegatedAdminAccountId });
  * ```
+ *
+ * @binding
  */
 export interface DisableDelegatedAdminAccount extends Binding.Service<
   DisableDelegatedAdminAccount,

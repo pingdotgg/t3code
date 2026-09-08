@@ -1,0 +1,174 @@
+---
+title: Machines
+description: A Firecracker VM running a container image.
+---
+
+A [`Fly.Machine`](/providers/fly/machine) is a Firecracker VM
+running a container image. Use it when you already have an image.
+
+## Launch a Machine
+
+The parent is an App. Pin a [region](/fly/compute/regions), an
+image, and a guest:
+
+```typescript
+const web = yield* Fly.Machine("Web", {
+  app: Site,
+  region: "iad",
+  image: "nginx:alpine",
+  guest: { cpuKind: "shared", cpus: 1, memoryMb: 256 },
+  services: [
+    {
+      protocol: "tcp",
+      internalPort: 80,
+      ports: [
+        { port: 80, handlers: ["http"], forceHttps: true },
+        { port: 443, handlers: ["tls", "http"] },
+      ],
+    },
+  ],
+});
+```
+
+`region` replaces on change. `image` updates in place. Guest
+defaults to shared-cpu 1× / 256 MB. Port 443 with `tls` is what
+makes `https://{app}.fly.dev` answer. Omit `services` (or pass
+`[]`) for a worker that should not be reachable from the internet.
+
+`{app}.fly.dev` over IPv4 still needs an
+[`IpAssignment`](/fly/networking) on the parent App.
+
+## Scale up
+
+Each Machine resource is one VM. Yield another Machine to add
+capacity. Fly's proxy load-balances published `services` across
+them.
+
+```typescript
+const web1 = yield* Fly.Machine("Web1", {
+  app: Site,
+  region: "iad",
+  image: "nginx:alpine",
+  services: [
+    {
+      protocol: "tcp",
+      internalPort: 80,
+      ports: [
+        { port: 80, handlers: ["http"], forceHttps: true },
+        { port: 443, handlers: ["tls", "http"] },
+      ],
+    },
+  ],
+});
+
+const web2 = yield* Fly.Machine("Web2", {
+  app: Site,
+  region: "iad",
+  image: "nginx:alpine",
+  services: [
+    {
+      protocol: "tcp",
+      internalPort: 80,
+      ports: [
+        { port: 80, handlers: ["http"], forceHttps: true },
+        { port: 443, handlers: ["tls", "http"] },
+      ],
+    },
+  ],
+});
+```
+
+A [`Service`](/fly/compute/services) still scales with `count`. That
+is one program, many Machines. `Fly.Machine` is one resource, one
+VM.
+
+## Scale down
+
+Remove a Machine from the stack. The next deploy deletes it.
+
+```diff lang="typescript"
+  const web1 = yield* Fly.Machine("Web1", {
+    app: Site,
+    region: "iad",
+    image: "nginx:alpine",
+  });
+-
+- const web2 = yield* Fly.Machine("Web2", {
+-   app: Site,
+-   region: "iad",
+-   image: "nginx:alpine",
+- });
+```
+
+## Env, restart, metadata
+
+```typescript
+const worker = yield* Fly.Machine("Worker", {
+  app: Site,
+  region: "iad",
+  image: "my-image:tag",
+  env: { LOG_LEVEL: "info" },
+  restart: { policy: "always" },
+});
+```
+
+Alchemy stamps `alchemy.stack` / `alchemy.stage` / `alchemy.id` /
+`alchemy.type` onto `config.metadata` so `list()` can find owned
+Machines. Fly injects App [secrets](/fly/data/secrets) as env vars
+on the Machine. `minSecretsVersion` waits until the Machine has
+seen at least that secrets version.
+
+## Mounts
+
+Pass disks as `mounts`. Alchemy creates a Volume in the Machine's
+app and region. A Volume attaches to one Machine.
+
+```typescript
+const box = yield* Fly.Machine("Box", {
+  app: Site,
+  region: "iad",
+  image: "nginx:alpine",
+  mounts: [{ path: "/data", sizeGb: 1 }],
+});
+```
+
+From a Service, prefer [`MountVolume`](/fly/data/volumes) so the
+path is part of the binding graph.
+
+## Lifecycle
+
+Reconcile waits until the Machine is `started` (`waitMachine`,
+bounded). `skipLaunch: true` creates or updates the config without
+starting it. Delete force-destroys and waits until gone. `Conflict`
+on create/update/delete is treated as a race and retried.
+`autoDestroy: true` tears the Machine down when its main process
+exits.
+
+## Service or Sprite
+
+Prefer a [`Service`](/fly/compute/services) when the program is
+Effect. A Service is effectful, supports bindings, and scales with
+`count`. Alchemy builds and pushes the image. Prefer a
+[`Sprite`](/fly/compute/sprites) when the sandbox can hibernate —
+no parent App, no Docker image.
+
+```typescript
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { app: Site, main: import.meta.url, region: "iad", count: 3, port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+## Where next
+
+- [Services](/fly/compute/services) — bundle an Effect program into
+  a Machine.
+- [Regions](/fly/compute/regions) — where a Machine lives.
+- [Volumes](/fly/data/volumes) — persistent disks.
+- [`Machine` reference](/providers/fly/machine) — every prop and
+  attribute.

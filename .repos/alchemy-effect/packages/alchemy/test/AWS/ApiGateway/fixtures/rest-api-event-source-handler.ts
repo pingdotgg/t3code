@@ -23,7 +23,7 @@ export class RestApiEventSourceFunction extends Lambda.Function<RestApiEventSour
 export default RestApiEventSourceFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const api = yield* ApiGateway.RestApi("AgEsApi", {

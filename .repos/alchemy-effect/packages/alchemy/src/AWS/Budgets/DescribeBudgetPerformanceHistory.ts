@@ -20,9 +20,8 @@ export interface DescribeBudgetPerformanceHistoryRequest extends Omit<
  * amounts for past periods — e.g. to render a spend trend or detect
  * consistently blown budgets. Provide the implementation with
  * `Effect.provide(AWS.Budgets.DescribeBudgetPerformanceHistoryHttp)`.
- * @binding
- * @section Reading Budget Spend
- * @example Read Budgeted vs Actual Amounts
+ * ### Reading Budget Spend
+ * **Example:** Read Budgeted vs Actual Amounts
  * ```typescript
  * // init — bind the operation to the budget
  * const history = yield* AWS.Budgets.DescribeBudgetPerformanceHistory(budget);
@@ -32,6 +31,8 @@ export interface DescribeBudgetPerformanceHistoryRequest extends Omit<
  * const periods =
  *   result.BudgetPerformanceHistory?.BudgetedAndActualAmountsList ?? [];
  * ```
+ *
+ * @binding
  */
 export interface DescribeBudgetPerformanceHistory extends Binding.Service<
   DescribeBudgetPerformanceHistory,

@@ -19,9 +19,8 @@ export interface GetSecretValueRequest extends Omit<
  *
  * Secret values are sensitive: `SecretString` / `SecretBinary` may be handed
  * back wrapped in `Redacted` — unwrap with `Redacted.value` before use.
- * @binding
- * @section Reading Secret Values
- * @example Read the Current Secret Value
+ * ### Reading Secret Values
+ * **Example:** Read the Current Secret Value
  * ```typescript
  * // init — bind the operation to the secret
  * const secret = yield* AWS.SecretsManager.Secret("DbPassword", {
@@ -36,6 +35,8 @@ export interface GetSecretValueRequest extends Omit<
  *     ? result.SecretString
  *     : Redacted.value(result.SecretString!);
  * ```
+ *
+ * @binding
  */
 export interface GetSecretValue extends Binding.Service<
   GetSecretValue,

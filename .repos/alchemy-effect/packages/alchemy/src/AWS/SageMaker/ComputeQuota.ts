@@ -55,6 +55,21 @@ export interface ComputeQuotaProps {
   tags?: Record<string, string>;
 }
 
+/**
+ * Kueue label selecting the task-governance queue. Set it on a
+ * `Kubernetes.Job` / `Kubernetes.Deployment`'s `labels` with the quota's
+ * `queueName` attribute to submit the workload through HyperPod task
+ * governance.
+ */
+export const KUEUE_QUEUE_NAME_LABEL = "kueue.x-k8s.io/queue-name";
+
+/**
+ * Kueue label selecting the task-governance priority class. Its value is
+ * `<PriorityClass name>-priority` for a class declared on the cluster's
+ * `AWS.SageMaker.ClusterSchedulerConfig`.
+ */
+export const KUEUE_PRIORITY_CLASS_LABEL = "kueue.x-k8s.io/priority-class";
+
 export interface ComputeQuota extends Resource<
   "AWS.SageMaker.ComputeQuota",
   ComputeQuotaProps,
@@ -84,6 +99,18 @@ export interface ComputeQuota extends Resource<
      * `hyperpod-ns-<teamName>` namespace and its Kueue LocalQueue from it.
      */
     teamName: string;
+    /**
+     * The Kubernetes namespace task governance materializes for the team
+     * (`hyperpod-ns-<teamName>`). Pass it as a governed
+     * `Kubernetes.Job` / `Kubernetes.Deployment`'s `namespace`.
+     */
+    namespace: string;
+    /**
+     * The team's Kueue LocalQueue name
+     * (`hyperpod-ns-<teamName>-localqueue`). Set it on a governed
+     * workload's `labels` under {@link KUEUE_QUEUE_NAME_LABEL}.
+     */
+    queueName: string;
   },
   never,
   Providers
@@ -93,9 +120,8 @@ export interface ComputeQuota extends Resource<
  * A SageMaker HyperPod compute allocation (task governance) — reserves
  * instance capacity on an EKS-orchestrated HyperPod cluster for a team,
  * with fair-share weights and borrow/lend rules for idle compute.
- * @resource
- * @section Creating Compute Allocations
- * @example Team Quota with Borrowing
+ * ### Creating Compute Allocations
+ * **Example:** Team Quota with Borrowing
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -108,6 +134,8 @@ export interface ComputeQuota extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ComputeQuota = Resource<ComputeQuota>(
   "AWS.SageMaker.ComputeQuota",
@@ -154,14 +182,21 @@ const fetchQuotaTags = Effect.fn(function* (arn: string) {
 
 const toAttrs = (
   described: sagemaker.DescribeComputeQuotaResponse,
-): ComputeQuota["Attributes"] => ({
-  computeQuotaId: described.ComputeQuotaId,
-  computeQuotaArn: described.ComputeQuotaArn,
-  name: described.Name,
-  clusterArn: described.ClusterArn ?? "",
-  computeQuotaVersion: described.ComputeQuotaVersion,
-  teamName: described.ComputeQuotaTarget?.TeamName ?? "",
-});
+): ComputeQuota["Attributes"] => {
+  const teamName = described.ComputeQuotaTarget?.TeamName ?? "";
+  return {
+    computeQuotaId: described.ComputeQuotaId,
+    computeQuotaArn: described.ComputeQuotaArn,
+    name: described.Name,
+    clusterArn: described.ClusterArn ?? "",
+    computeQuotaVersion: described.ComputeQuotaVersion,
+    teamName,
+    // Task-governance conventions: the quota materializes the team's
+    // namespace and Kueue LocalQueue under these derived names.
+    namespace: `hyperpod-ns-${teamName}`,
+    queueName: `hyperpod-ns-${teamName}-localqueue`,
+  };
+};
 
 /**
  * The compute allocation is still transitioning toward the awaited state —
@@ -258,20 +293,24 @@ export const ComputeQuotaProvider = () =>
                 ),
               ),
             );
-            return summaries.flatMap((s) =>
-              s.ComputeQuotaId !== undefined && s.Status !== "Deleted"
-                ? [
-                    {
-                      computeQuotaId: s.ComputeQuotaId,
-                      computeQuotaArn: s.ComputeQuotaArn ?? "",
-                      name: s.Name ?? "",
-                      clusterArn: s.ClusterArn ?? "",
-                      computeQuotaVersion: s.ComputeQuotaVersion ?? 1,
-                      teamName: s.ComputeQuotaTarget?.TeamName ?? "",
-                    },
-                  ]
-                : [],
-            );
+            return summaries.flatMap((s) => {
+              if (s.ComputeQuotaId === undefined || s.Status === "Deleted") {
+                return [];
+              }
+              const teamName = s.ComputeQuotaTarget?.TeamName ?? "";
+              return [
+                {
+                  computeQuotaId: s.ComputeQuotaId,
+                  computeQuotaArn: s.ComputeQuotaArn ?? "",
+                  name: s.Name ?? "",
+                  clusterArn: s.ClusterArn ?? "",
+                  computeQuotaVersion: s.ComputeQuotaVersion ?? 1,
+                  teamName,
+                  namespace: `hyperpod-ns-${teamName}`,
+                  queueName: `hyperpod-ns-${teamName}-localqueue`,
+                },
+              ];
+            });
           }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const quotaId =

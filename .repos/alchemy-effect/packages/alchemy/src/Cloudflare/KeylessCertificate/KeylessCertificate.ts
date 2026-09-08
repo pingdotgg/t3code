@@ -157,11 +157,8 @@ export type KeylessCertificate = Resource<
  *
  * `host`, `port`, `name`, `enabled`, and `tunnel` are mutable in place;
  * `certificate` and `bundleMethod` are create-only and trigger a replacement.
- * @resource
- * @product Keyless Certificates
- * @category SSL/TLS & Certificates
- * @section Creating a Keyless SSL configuration
- * @example Basic key server over the public internet
+ * ### Creating a Keyless SSL configuration
+ * **Example:** Basic key server over the public internet
  * ```typescript
  * const keyless = yield* Cloudflare.KeylessCertificate.KeylessCertificate("SiteKeyless", {
  *   zoneId: zone.zoneId,
@@ -171,7 +168,7 @@ export type KeylessCertificate = Resource<
  * });
  * ```
  *
- * @example Read the certificate from disk
+ * **Example:** Read the certificate from disk
  * ```typescript
  * const fs = yield* FileSystem.FileSystem;
  * const certificate = yield* fs.readFileString("certs/site.pem");
@@ -183,8 +180,8 @@ export type KeylessCertificate = Resource<
  * });
  * ```
  *
- * @section Reaching the key server through a Cloudflare Tunnel
- * @example Private key server on a tunnel virtual network
+ * ### Reaching the key server through a Cloudflare Tunnel
+ * **Example:** Private key server on a tunnel virtual network
  * ```typescript
  * const vnet = yield* Cloudflare.Tunnel.VirtualNetwork("KeylessVnet", {});
  *
@@ -200,8 +197,8 @@ export type KeylessCertificate = Resource<
  * });
  * ```
  *
- * @section Rotation
- * @example Rotate by changing the certificate
+ * ### Rotation
+ * **Example:** Rotate by changing the certificate
  * ```typescript
  * // `certificate` is create-only — changing it replaces the configuration:
  * // the new one is created and the old one is deleted.
@@ -213,6 +210,10 @@ export type KeylessCertificate = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/keyless-ssl/
+ *
+ * @resource
+ * @product Keyless Certificates
+ * @category SSL/TLS & Certificates
  */
 export const KeylessCertificate = Resource<KeylessCertificate>(TypeId, {
   aliases: ["Cloudflare.KeylessCertificate"],

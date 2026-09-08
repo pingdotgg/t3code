@@ -50,9 +50,8 @@ export interface TrustStore extends Resource<
  * An ELBv2 trust store. A trust store holds the CA certificate bundle used by
  * an HTTPS listener configured for mutual TLS (mTLS) `verify` mode to validate
  * client certificates.
- * @resource
- * @section Creating a Trust Store
- * @example Basic trust store from an S3 CA bundle
+ * ### Creating a Trust Store
+ * **Example:** Basic trust store from an S3 CA bundle
  * ```typescript
  * const trustStore = yield* TrustStore("mtls", {
  *   caCertificatesBundleS3Bucket: "my-ca-bundles",
@@ -60,7 +59,7 @@ export interface TrustStore extends Resource<
  * });
  * ```
  *
- * @example Using a trust store on an mTLS listener
+ * **Example:** Using a trust store on an mTLS listener
  * ```typescript
  * const listener = yield* Listener("https", {
  *   loadBalancerArn: lb.loadBalancerArn,
@@ -76,6 +75,8 @@ export interface TrustStore extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const TrustStore = Resource<TrustStore>("AWS.ELBv2.TrustStore");
 

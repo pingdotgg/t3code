@@ -19,9 +19,8 @@ export interface ExportTableToPointInTimeRequest extends Omit<
  * half grants the export action on the table plus the S3 write permissions
  * the export requires on the bucket. Provide the `ExportTableToPointInTimeHttp`
  * layer on the Function to satisfy the binding.
- * @binding
- * @section Exporting to S3
- * @example Start a Full Export
+ * ### Exporting to S3
+ * **Example:** Start a Full Export
  * ```typescript
  * const exportTable = yield* AWS.DynamoDB.ExportTableToPointInTime(
  *   table,
@@ -31,6 +30,8 @@ export interface ExportTableToPointInTimeRequest extends Omit<
  * const response = yield* exportTable({ ExportFormat: "DYNAMODB_JSON" });
  * const exportArn = response.ExportDescription?.ExportArn;
  * ```
+ *
+ * @binding
  */
 export interface ExportTableToPointInTime extends Binding.Service<
   ExportTableToPointInTime,

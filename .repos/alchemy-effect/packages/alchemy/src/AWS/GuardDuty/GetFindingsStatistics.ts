@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.GetFindingsStatisticsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Count Findings by Severity
+ * ### Working with Findings
+ * **Example:** Count Findings by Severity
  * ```typescript
  * // init
  * const getFindingsStatistics = yield* AWS.GuardDuty.GetFindingsStatistics(detector);
@@ -22,6 +21,8 @@ import type { Detector } from "./Detector.ts";
  *   GroupBy: "SEVERITY",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetFindingsStatistics extends Binding.Service<
   GetFindingsStatistics,

@@ -119,11 +119,8 @@ export type SynProtectionRule = Resource<
  * `read` scans for an existing rule with the same scope + name and reports
  * it as `Unowned`, so the engine refuses to take it over unless `--adopt`
  * (or `adopt(true)`) is set.
- * @resource
- * @product DDoS Protection
- * @category Network
- * @section Creating a rule
- * @example Global SYN protection in monitoring mode
+ * ### Creating a rule
+ * **Example:** Global SYN protection in monitoring mode
  * ```typescript
  * const rule = yield* Cloudflare.DdosProtection.SynProtectionRule("GlobalSyn", {
  *   scope: "global",
@@ -133,7 +130,7 @@ export type SynProtectionRule = Resource<
  * });
  * ```
  *
- * @example Data-center scoped rule with retransmit mitigation
+ * **Example:** Data-center scoped rule with retransmit mitigation
  * ```typescript
  * yield* Cloudflare.DdosProtection.SynProtectionRule("SjcSyn", {
  *   scope: "datacenter",
@@ -146,6 +143,10 @@ export type SynProtectionRule = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ddos-protection/advanced-ddos-systems/overview/advanced-tcp-protection/
+ *
+ * @resource
+ * @product DDoS Protection
+ * @category Network
  */
 export const SynProtectionRule = Resource<SynProtectionRule>(TypeId);
 

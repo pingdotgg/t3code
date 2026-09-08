@@ -31,7 +31,7 @@ export class QueueSinkFunction extends AWS.Lambda.Function<AWS.Lambda.Function>(
 export const QueueSinkFunctionLive = QueueSinkFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The sink's bounded partial-failure retry can sleep up to ~6s, which
     // exceeds Lambda's 3s default timeout (see PATTERNS §7).
     timeout: Duration.seconds(30),

@@ -83,8 +83,8 @@ export interface CisScanConfiguration extends Resource<
  * level, schedule, and targets are all updatable in place; identity is the
  * configuration's ARN.
  *
- * @section Scheduling CIS Scans
- * @example Daily Level 1 scan of production instances
+ * ### Scheduling CIS Scans
+ * **Example:** Daily Level 1 scan of production instances
  * ```typescript
  * const scan = yield* AWS.Inspector2.CisScanConfiguration("NightlyCis", {
  *   securityLevel: "LEVEL_1",
@@ -98,7 +98,7 @@ export interface CisScanConfiguration extends Resource<
  * });
  * ```
  *
- * @example One-time Level 2 audit
+ * **Example:** One-time Level 2 audit
  * ```typescript
  * const audit = yield* AWS.Inspector2.CisScanConfiguration("Level2Audit", {
  *   scanName: "level2-audit",

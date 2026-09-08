@@ -20,14 +20,15 @@ export interface BatchDeleteDocumentRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.BatchDeleteDocumentHttp)`.
  *
- * @binding
- * @section Indexing Documents
- * @example Delete Documents
+ * ### Indexing Documents
+ * **Example:** Delete Documents
  * ```typescript
  * const deleteDocuments = yield* AWS.Kendra.BatchDeleteDocument(index);
  *
  * yield* deleteDocuments({ DocumentIdList: ["welcome"] });
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteDocument extends Binding.Service<
   BatchDeleteDocument,

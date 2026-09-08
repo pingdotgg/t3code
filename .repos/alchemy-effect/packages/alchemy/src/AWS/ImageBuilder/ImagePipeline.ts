@@ -141,9 +141,8 @@ export interface ImagePipeline extends Resource<
  *
  * Creating the pipeline does not start a build; builds start on the
  * configured schedule or when explicitly invoked.
- * @resource
- * @section Creating an Image Pipeline
- * @example Manual-Only Pipeline
+ * ### Creating an Image Pipeline
+ * **Example:** Manual-Only Pipeline
  * ```typescript
  * const pipeline = yield* ImageBuilder.ImagePipeline("Pipeline", {
  *   imageRecipeArn: recipe.imageRecipeArn,
@@ -152,7 +151,7 @@ export interface ImagePipeline extends Resource<
  * });
  * ```
  *
- * @example Scheduled Pipeline with Distribution
+ * **Example:** Scheduled Pipeline with Distribution
  * ```typescript
  * const pipeline = yield* ImageBuilder.ImagePipeline("Nightly", {
  *   imageRecipeArn: recipe.imageRecipeArn,
@@ -165,6 +164,8 @@ export interface ImagePipeline extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ImagePipeline = Resource<ImagePipeline>(
   "AWS.ImageBuilder.ImagePipeline",

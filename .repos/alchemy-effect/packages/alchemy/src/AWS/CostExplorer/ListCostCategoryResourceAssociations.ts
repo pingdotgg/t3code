@@ -19,9 +19,8 @@ export interface ListCostCategoryResourceAssociationsRequest extends Omit<
  * values. The category's ARN is injected into the request; the IAM grant
  * is on `*` (the action supports no resource types). Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.ListCostCategoryResourceAssociationsHttp)`.
- * @binding
- * @section Cost Category Associations
- * @example List a Category's Resource Associations
+ * ### Cost Category Associations
+ * **Example:** List a Category's Resource Associations
  * ```typescript
  * // init — bind the operation to the cost category
  * const listCostCategoryResourceAssociations = yield* AWS.CostExplorer.ListCostCategoryResourceAssociations(category);
@@ -30,6 +29,8 @@ export interface ListCostCategoryResourceAssociationsRequest extends Omit<
  * const result = yield* listCostCategoryResourceAssociations();
  * const associations = result.CostCategoryResourceAssociations;
  * ```
+ *
+ * @binding
  */
 export interface ListCostCategoryResourceAssociations extends Binding.Service<
   ListCostCategoryResourceAssociations,

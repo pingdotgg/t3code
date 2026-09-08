@@ -30,9 +30,8 @@ export interface GetAuthorizationTokenRequest {
  * The returned `authorizationToken` is wrapped in `Redacted` so it never
  * leaks into logs — unwrap with `Redacted.value(...)` at the point of use.
  *
- * @binding
- * @section Authenticating Package Managers
- * @example Mint a Token for npm
+ * ### Authenticating Package Managers
+ * **Example:** Mint a Token for npm
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -43,6 +42,8 @@ export interface GetAuthorizationTokenRequest {
  *   ? Redacted.value(res.authorizationToken)
  *   : res.authorizationToken; // pass to `npm config set //…:_authToken=`
  * ```
+ *
+ * @binding
  */
 export interface GetAuthorizationToken extends Binding.Service<
   GetAuthorizationToken,

@@ -19,14 +19,15 @@ export interface ListAttachmentsRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.ListAttachmentsHttp)`.
  *
- * @binding
- * @section Conversations
- * @example List Attachments
+ * ### Conversations
+ * **Example:** List Attachments
  * ```typescript
  * const listAttachments = yield* AWS.QBusiness.ListAttachments(app);
  *
  * const { attachments } = yield* listAttachments({ conversationId });
  * ```
+ *
+ * @binding
  */
 export interface ListAttachments extends Binding.Service<
   ListAttachments,

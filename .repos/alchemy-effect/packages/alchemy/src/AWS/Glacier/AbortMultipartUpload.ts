@@ -21,14 +21,15 @@ export interface AbortMultipartUploadRequest extends Omit<
  * upload fails with the typed `ResourceNotFoundException`.
  * Provide the implementation with
  * `Effect.provide(AWS.Glacier.AbortMultipartUploadHttp)`.
- * @binding
- * @section Uploading Archives
- * @example Abort an in-progress upload
+ * ### Uploading Archives
+ * **Example:** Abort an in-progress upload
  * ```typescript
  * const abortMultipartUpload = yield* AWS.Glacier.AbortMultipartUpload(vault);
  *
  * yield* abortMultipartUpload({ uploadId });
  * ```
+ *
+ * @binding
  */
 export interface AbortMultipartUpload extends Binding.Service<
   AbortMultipartUpload,

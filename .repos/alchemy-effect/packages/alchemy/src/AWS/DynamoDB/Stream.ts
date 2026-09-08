@@ -17,6 +17,7 @@ export type StreamEvent<Data> = TableEvent<Data>;
  * Prefer the {@link consumeTableChanges} helper for ergonomic use; provide
  * the runtime-specific implementation layer (e.g. `Lambda.TableEventSource`)
  * on the Function.
+ *
  * @binding
  */
 export interface TableEventSource extends Binding.Service<

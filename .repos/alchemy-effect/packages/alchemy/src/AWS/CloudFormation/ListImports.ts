@@ -9,14 +9,15 @@ import * as Binding from "../../Binding.ts";
  * Lists the stacks importing a given exported output value — e.g. impact
  * analysis before rotating a shared value. Provide the implementation with
  * `Effect.provide(AWS.CloudFormation.ListImportsHttp)`.
- * @binding
- * @section Cross-Stack Exports
- * @example Find Stacks Importing an Export
+ * ### Cross-Stack Exports
+ * **Example:** Find Stacks Importing an Export
  * ```typescript
  * const listImports = yield* AWS.CloudFormation.ListImports();
  *
  * const { Imports } = yield* listImports({ ExportName: "ApiUrl" });
  * ```
+ *
+ * @binding
  */
 export interface ListImports extends Binding.Service<
   ListImports,

@@ -13,9 +13,8 @@ type InsightRules = [InsightRuleResource, ...InsightRuleResource[]];
  *
  * Provide `CloudWatch.EnableInsightRulesHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Managing Insight Rules
- * @example Resume a Contributor Insights Rule
+ * ### Managing Insight Rules
+ * **Example:** Resume a Contributor Insights Rule
  * ```typescript
  * // init — grants cloudwatch:EnableInsightRules on the rule
  * const enableInsightRules = yield* AWS.CloudWatch.EnableInsightRules(rule);
@@ -24,6 +23,8 @@ type InsightRules = [InsightRuleResource, ...InsightRuleResource[]];
  * const result = yield* enableInsightRules();
  * const failures = result.Failures ?? []; // empty on success
  * ```
+ *
+ * @binding
  */
 export interface EnableInsightRules extends Binding.Service<
   EnableInsightRules,

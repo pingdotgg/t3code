@@ -72,16 +72,15 @@ export interface DBSubnetGroup extends Resource<
  * RDS requires a subnet group spanning at least two Availability Zones
  * before a cluster or instance can be placed in a VPC. Changing the name
  * replaces the group; the subnet list updates in place.
- * @resource
- * @section Creating a Subnet Group
- * @example Subnet Group Across Two AZs
+ * ### Creating a Subnet Group
+ * **Example:** Subnet Group Across Two AZs
  * ```typescript
  * const subnetGroup = yield* DBSubnetGroup("SubnetGroup", {
  *   subnetIds: [privateSubnetA.subnetId, privateSubnetB.subnetId],
  * });
  * ```
  *
- * @example Place an Aurora Cluster in the Group
+ * **Example:** Place an Aurora Cluster in the Group
  * ```typescript
  * const cluster = yield* DBCluster("Cluster", {
  *   engine: "aurora-postgresql",
@@ -89,6 +88,8 @@ export interface DBSubnetGroup extends Resource<
  *   vpcSecurityGroupIds: [dbSecurityGroup.groupId],
  * });
  * ```
+ *
+ * @resource
  */
 export const DBSubnetGroup = Resource<DBSubnetGroup>("AWS.RDS.DBSubnetGroup");
 

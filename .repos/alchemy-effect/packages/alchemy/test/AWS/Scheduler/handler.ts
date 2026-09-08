@@ -25,7 +25,7 @@ export class SchedulerTestFunction extends Lambda.Function<Lambda.Function>()(
 export default SchedulerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // AWS's 3s default intermittently kills invocations that fan out SDK
     // calls (create + describe schedules) — always set an explicit timeout.
     timeout: Duration.seconds(30),

@@ -55,7 +55,7 @@ export interface UserSchemaAttributes {
   /** Name of the schema. */
   name: string;
   /** Kind of schema. Always `openapi_v3`. */
-  kind: "openapi_v3";
+  kind: "openapi_v3" | (string & {});
   /** The schema source as stored by Cloudflare. */
   source: string;
   /** Whether the schema is enabled for validation. */
@@ -83,11 +83,8 @@ export type UserSchema = Resource<
  *
  * For current zone-level schema validation (v2), prefer the
  * `Cloudflare.SchemaValidation` resources.
- * @resource
- * @product API Shield
- * @category Application Security
- * @section Uploading a Schema
- * @example Upload an OpenAPI v3 schema
+ * ### Uploading a Schema
+ * **Example:** Upload an OpenAPI v3 schema
  * ```typescript
  * const fs = yield* FileSystem.FileSystem;
  * const source = yield* fs.readFileString("./openapi.json");
@@ -100,7 +97,7 @@ export type UserSchema = Resource<
  * // schema.schemaId is the Cloudflare-assigned UUID
  * ```
  *
- * @example Upload and enable validation
+ * **Example:** Upload and enable validation
  * ```typescript
  * yield* Cloudflare.ApiShield.UserSchema("PetstoreSchema", {
  *   zoneId: zone.zoneId,
@@ -110,6 +107,10 @@ export type UserSchema = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/api-shield/security/schema-validation/
+ *
+ * @resource
+ * @product API Shield
+ * @category Application Security
  */
 export const UserSchema = Resource<UserSchema>(TypeId);
 

@@ -187,18 +187,15 @@ export type Pool = Resource<
  *
  * Requires the Load Balancing subscription on the account; without it, pool
  * creation fails with the typed `PoolAccessFailed` error.
- * @resource
- * @product Load Balancers
- * @category Performance & Reliability
- * @section Creating a Pool
- * @example Pool with one origin
+ * ### Creating a Pool
+ * **Example:** Pool with one origin
  * ```typescript
  * const pool = yield* Cloudflare.LoadBalancer.Pool("ApiPool", {
  *   origins: [{ name: "origin-1", address: "203.0.113.10" }],
  * });
  * ```
  *
- * @example Health-checked pool
+ * **Example:** Health-checked pool
  * ```typescript
  * const monitor = yield* Cloudflare.LoadBalancer.Monitor("ApiMonitor", {
  *   type: "https",
@@ -216,8 +213,8 @@ export type Pool = Resource<
  * });
  * ```
  *
- * @section Using with a Load Balancer
- * @example Pool as default and fallback
+ * ### Using with a Load Balancer
+ * **Example:** Pool as default and fallback
  * ```typescript
  * yield* Cloudflare.LoadBalancer.LoadBalancer("ApiLb", {
  *   zoneId: zone.zoneId,
@@ -228,6 +225,10 @@ export type Pool = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/load-balancing/pools/
+ *
+ * @resource
+ * @product Load Balancers
+ * @category Performance & Reliability
  */
 export const Pool = Resource<Pool>(TypeId);
 
@@ -275,17 +276,15 @@ export const PoolProvider = () =>
         Stream.runCollect,
         Effect.map((chunk) =>
           Array.from(chunk).flatMap((page) =>
-            (page.result ?? []).map(
-              (pool): PoolAttributes => ({
-                poolId: pool.id ?? "",
-                accountId,
-                name: pool.name ?? "",
-                enabled: pool.enabled ?? true,
-                monitor: pool.monitor ?? undefined,
-                createdOn: pool.createdOn ?? undefined,
-                modifiedOn: pool.modifiedOn ?? undefined,
-              }),
-            ),
+            (page.result ?? []).map((pool): PoolAttributes => ({
+              poolId: pool.id ?? "",
+              accountId,
+              name: pool.name ?? "",
+              enabled: pool.enabled ?? true,
+              monitor: pool.monitor ?? undefined,
+              createdOn: pool.createdOn ?? undefined,
+              modifiedOn: pool.modifiedOn ?? undefined,
+            })),
           ),
         ),
       );

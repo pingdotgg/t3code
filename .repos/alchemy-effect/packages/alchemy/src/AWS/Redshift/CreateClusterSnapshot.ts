@@ -13,9 +13,8 @@ import type { Cluster } from "./Cluster.ts";
  * cluster identifier is injected from the binding. Provide the
  * implementation with
  * `Effect.provide(AWS.Redshift.CreateClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Take a Manual Snapshot
+ * ### Managing Snapshots
+ * **Example:** Take a Manual Snapshot
  * ```typescript
  * // init — bind the operation to the cluster
  * const createClusterSnapshot =
@@ -26,6 +25,8 @@ import type { Cluster } from "./Cluster.ts";
  *   SnapshotIdentifier: `pre-migration-${runId}`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateClusterSnapshot extends Binding.Service<
   CreateClusterSnapshot,

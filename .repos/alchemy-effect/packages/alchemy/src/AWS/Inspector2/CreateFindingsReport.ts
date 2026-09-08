@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.CreateFindingsReportHttp)`.
- * @binding
- * @section Findings Reports & SBOM Exports
- * @example Export Findings to S3
+ * ### Findings Reports & SBOM Exports
+ * **Example:** Export Findings to S3
  * ```typescript
  * // init
  * const createFindingsReport = yield* AWS.Inspector2.CreateFindingsReport();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   s3Destination: { bucketName, keyPrefix: "findings/", kmsKeyArn },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateFindingsReport extends Binding.Service<
   CreateFindingsReport,

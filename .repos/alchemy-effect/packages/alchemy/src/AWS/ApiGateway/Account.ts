@@ -33,8 +33,8 @@ export interface Account extends Resource<
  * Account-level settings for Amazon API Gateway in the current region
  * (CloudWatch logging role, etc.).
  *
- * @section Account settings
- * @example Set logging role
+ * ### Account settings
+ * **Example:** Set logging role
  * ```typescript
  * yield* ApiGateway.Account("Account", {
  *   cloudwatchRoleArn: role.roleArn,

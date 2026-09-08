@@ -1,42 +1,123 @@
-name: pr-package
+name: PR Package
 
 on:
   push:
     branches: [main]
+    paths:
+      - "distilled"
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - "tsconfig.json"
+      - ".github/workflows/pr-package.yml"
   pull_request:
     # `labeled` so adding the `force-ci` label re-triggers the run. We
     # intentionally do NOT listen to `closed` — pr-package tags persist
     # past PR close so existing install URLs keep resolving.
     types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "distilled"
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - "tsconfig.json"
+      - ".github/workflows/pr-package.yml"
 
-# Reusable workflows can't widen permissions — the caller must grant
-# `pull-requests: write` for the sticky install-instructions comment.
+# The action can't widen permissions, so the job must grant write access for
+# the sticky install-instructions comment.
 permissions:
   contents: read
   pull-requests: write
 
+concurrency:
+  group: pr-package-${{ github.ref }}
+  # A newer PR commit supersedes its preview packages. Never interrupt a main
+  # publish, where cancellation could leave only part of the package set live.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   pr-package:
-    uses: alchemy-run/actions/.github/workflows/pr-package.yml@a18b368e044cb380a8c4904d5cfbccbc2798e768 # main
-    with:
-      # The bun workspace includes `distilled/packages/*` from the
-      # distilled submodule, so the publish jobs must check it out.
-      submodules: "true"
-      # A submodule-pointer bump doesn't fall under any package dir, but
-      # it changes what gets bundled — republish everything.
-      rebuild-all-paths: |
-        distilled
-        cloudflare-tools
-      # `|| true` keeps the cp harmless in packages whose pkg dir is
-      # nested differently or that don't need the root README.
-      build-command: "cp ../../README.md . 2>/dev/null || true; bun run build"
-      # Every package's tsc build pulls in the alchemy -> distilled
-      # project-reference chain (distilled/aws is huge), so all three
-      # need the larger runner — same as distilled's own CI.
-      packages: |
-        [
-          { "dir": "packages/alchemy",     "name": "alchemy",                   "runner": "ubuntu-22-large" },
-          { "dir": "packages/better-auth", "name": "@alchemy.run/better-auth",  "runner": "ubuntu-22-large" },
-          { "dir": "packages/pr-package",  "name": "@alchemy.run/pr-package",   "runner": "ubuntu-22-large" }
-        ]
-    secrets: inherit
+    name: Publish PR preview packages
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
+
+      - name: Restore Turbo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
+            turbo-${{ runner.os }}-${{ github.repository_id }}-
+
+      # The root install runs Turbo-backed prepare builds, so restore its
+      # cache before the setup action installs dependencies.
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      - name: Build packages
+        run: pnpm build:pr-packages
+
+      - name: Publish packages
+        id: publish
+        uses: alchemy-run/actions/actions/pr-package@098beeda4d3c2ce8850638c4466783893b8f0c23 # actions#11
+        with:
+          rebuild-all-paths: distilled
+          packages: >-
+            [
+              { "dir": "packages/alchemy",               "name": "alchemy",                            "group": "Alchemy" },
+              { "dir": "packages/better-auth",           "name": "@alchemy.run/better-auth",           "group": "Alchemy" },
+              { "dir": "packages/cloudflare-runtime",    "name": "@alchemy.run/cloudflare-runtime",    "group": "Alchemy" },
+              { "dir": "packages/frontend-frameworks",   "name": "@alchemy.run/frontend-frameworks",   "group": "Alchemy" },
+              { "dir": "packages/node-utils",            "name": "@alchemy.run/node-utils",            "group": "Alchemy" },
+              { "dir": "packages/pr-package",            "name": "@alchemy.run/pr-package",            "group": "Alchemy" },
+              { "dir": "packages/floci",                 "name": "@alchemy.run/floci",                 "group": "Alchemy" },
+              { "dir": "distilled/packages/core",        "name": "@distilled.cloud/core",              "group": "Distilled", "submodule": true },
+              { "dir": "distilled/packages/aws",         "name": "@distilled.cloud/aws",               "group": "Distilled", "submodule": true },
+              { "dir": "distilled/packages/axiom",       "name": "@distilled.cloud/axiom",             "group": "Distilled", "submodule": true },
+              { "dir": "distilled/packages/cloudflare",  "name": "@distilled.cloud/cloudflare",        "group": "Distilled", "submodule": true },
+              { "dir": "distilled/packages/hetzner",     "name": "@distilled.cloud/hetzner",           "group": "Distilled", "submodule": true },
+              { "dir": "distilled/packages/neon",        "name": "@distilled.cloud/neon",              "group": "Distilled", "submodule": true },
+              { "dir": "distilled/packages/planetscale", "name": "@distilled.cloud/planetscale",       "group": "Distilled", "submodule": true }
+            ]
+          pr-package-token: ${{ secrets.PR_PACKAGE_TOKEN }}
+
+      - name: Generate bot token
+        if: >-
+          github.event_name == 'pull_request' &&
+          fromJson(steps.publish.outputs.plan).packages[0] != null
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Comment on PR
+        if: >-
+          github.event_name == 'pull_request' &&
+          fromJson(steps.publish.outputs.plan).packages[0] != null
+        uses: alchemy-run/actions/actions/pr-package-comment@098beeda4d3c2ce8850638c4466783893b8f0c23 # actions#11
+        with:
+          plan: ${{ steps.publish.outputs.plan }}
+          token: ${{ steps.bot-token.outputs.token }}

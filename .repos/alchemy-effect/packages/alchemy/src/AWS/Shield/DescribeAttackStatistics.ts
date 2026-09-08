@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * Advanced customers alike, so it works without a subscription.
  * Provide the implementation with
  * `Effect.provide(AWS.Shield.DescribeAttackStatisticsHttp)`.
- * @binding
- * @section Attack Visibility
- * @example Read the Yearly Attack Statistics
+ * ### Attack Visibility
+ * **Example:** Read the Yearly Attack Statistics
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeAttackStatistics = yield* AWS.Shield.DescribeAttackStatistics();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { TimeRange, DataItems } = yield* describeAttackStatistics();
  * ```
+ *
+ * @binding
  */
 export interface DescribeAttackStatistics extends Binding.Service<
   DescribeAttackStatistics,

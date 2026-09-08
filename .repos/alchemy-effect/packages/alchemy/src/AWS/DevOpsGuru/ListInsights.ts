@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the account's insights filtered by status (ongoing, closed, or any within a time range) and type (reactive/proactive).
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.ListInsightsHttp)`.
- * @binding
- * @section Inspecting Insights
- * @example List Ongoing Insights
+ * ### Inspecting Insights
+ * **Example:** List Ongoing Insights
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listInsights = yield* AWS.DevOpsGuru.ListInsights();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`ongoing: ${ReactiveInsights?.length}`);
  * ```
+ *
+ * @binding
  */
 export interface ListInsights extends Binding.Service<
   ListInsights,

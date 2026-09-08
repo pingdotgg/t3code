@@ -15,7 +15,7 @@ export class AossBindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default AossBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Account-level bindings only — free and instant (no collection needed).

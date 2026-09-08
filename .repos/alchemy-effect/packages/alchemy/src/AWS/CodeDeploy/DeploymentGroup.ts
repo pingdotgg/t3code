@@ -178,9 +178,8 @@ export interface DeploymentGroup extends Resource<
  * `Lambda` compute platform a group ties a service role and a deployment
  * config (e.g. `CodeDeployDefault.LambdaAllAtOnce`) to an application.
  *
- * @resource
- * @section Creating a Deployment Group
- * @example Lambda Deployment Group
+ * ### Creating a Deployment Group
+ * **Example:** Lambda Deployment Group
  * ```typescript
  * const app = yield* CodeDeploy.Application("api", { computePlatform: "Lambda" });
  * const group = yield* CodeDeploy.DeploymentGroup("prod", {
@@ -197,6 +196,8 @@ export interface DeploymentGroup extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DeploymentGroup = Resource<DeploymentGroup>(
   "AWS.CodeDeploy.DeploymentGroup",

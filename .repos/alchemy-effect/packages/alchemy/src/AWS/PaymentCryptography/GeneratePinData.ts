@@ -14,9 +14,8 @@ export interface GeneratePinDataRequest extends Omit<
  * (e.g. a Visa PVK) and returns the PIN block encrypted under a PIN
  * encryption {@link Key} (PEK). Provide `GeneratePinDataHttp` on the
  * Function to satisfy this service.
- * @binding
- * @section PIN Data
- * @example Generate a Visa PIN + PVV
+ * ### PIN Data
+ * **Example:** Generate a Visa PIN + PVV
  * ```typescript
  * // init
  * const generatePin = yield* PaymentCryptography.GeneratePinData(pvk, pek);
@@ -29,6 +28,8 @@ export interface GeneratePinDataRequest extends Omit<
  * });
  * // generated.EncryptedPinBlock + generated.PinData.VerificationValue
  * ```
+ *
+ * @binding
  */
 export interface GeneratePinData extends Binding.Service<
   GeneratePinData,

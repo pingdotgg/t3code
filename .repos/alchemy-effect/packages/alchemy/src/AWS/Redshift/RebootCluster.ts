@@ -11,9 +11,8 @@ import type { Cluster } from "./Cluster.ts";
  * e.g. an ops function that applies pending static parameter-group changes.
  * The cluster identifier is injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.Redshift.RebootClusterHttp)`.
- * @binding
- * @section Operating a Cluster
- * @example Reboot to Apply Static Parameters
+ * ### Operating a Cluster
+ * **Example:** Reboot to Apply Static Parameters
  * ```typescript
  * // init — bind the operation to the cluster
  * const rebootCluster = yield* AWS.Redshift.RebootCluster(cluster);
@@ -21,6 +20,8 @@ import type { Cluster } from "./Cluster.ts";
  * // runtime
  * yield* rebootCluster();
  * ```
+ *
+ * @binding
  */
 export interface RebootCluster extends Binding.Service<
   RebootCluster,

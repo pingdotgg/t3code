@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.UpdateOrganizationConfigurationHttp)`.
- * @binding
- * @section Organization & Members
- * @example Auto-Enable Macie for New Accounts
+ * ### Organization & Members
+ * **Example:** Auto-Enable Macie for New Accounts
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateOrganizationConfiguration = yield* AWS.Macie2.UpdateOrganizationConfiguration();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* updateOrganizationConfiguration({ autoEnable: true });
  * ```
+ *
+ * @binding
  */
 export interface UpdateOrganizationConfiguration extends Binding.Service<
   UpdateOrganizationConfiguration,

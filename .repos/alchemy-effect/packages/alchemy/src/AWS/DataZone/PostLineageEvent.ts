@@ -14,9 +14,8 @@ export interface PostLineageEventRequest extends Omit<
  * Posts an OpenLineage run event to the bound domain, recording the lineage of a data transformation the function performed. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.PostLineageEventHttp)`.
- * @binding
- * @section Data Lineage
- * @example Emit a Lineage Event
+ * ### Data Lineage
+ * **Example:** Emit a Lineage Event
  * ```typescript
  * // init — bind the operation to the domain
  * const postLineageEvent = yield* AWS.DataZone.PostLineageEvent(domain);
@@ -24,6 +23,8 @@ export interface PostLineageEventRequest extends Omit<
  * // runtime
  * yield* postLineageEvent({ event: JSON.stringify(openLineageRunEvent) });
  * ```
+ *
+ * @binding
  */
 export interface PostLineageEvent extends Binding.Service<
   PostLineageEvent,

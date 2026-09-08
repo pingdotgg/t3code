@@ -69,9 +69,8 @@ export interface EventType extends Resource<
  * labels, and entity types) that detectors evaluate. Event types are cheap
  * metadata objects.
  *
- * @resource
- * @section Creating an Event Type
- * @example Basic Event Type
+ * ### Creating an Event Type
+ * **Example:** Basic Event Type
  * ```typescript
  * const purchase = yield* FraudDetector.EventType("purchase", {
  *   eventVariables: ["email", "ip"],
@@ -79,6 +78,8 @@ export interface EventType extends Resource<
  *   labels: ["fraud", "legit"],
  * });
  * ```
+ *
+ * @resource
  */
 export const EventType = Resource<EventType>("AWS.FraudDetector.EventType");
 

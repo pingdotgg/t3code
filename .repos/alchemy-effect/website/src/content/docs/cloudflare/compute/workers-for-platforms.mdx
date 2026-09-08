@@ -91,7 +91,7 @@ import { Customers } from "./namespace.ts";
 
 export default class PlatformWorker extends Cloudflare.Worker<PlatformWorker>()(
   "PlatformWorker",
-  { main: import.meta.filename, url: true },
+  { main: import.meta.filename, workersDev: true },
   Effect.gen(function* () {
     const dispatch = yield* Cloudflare.WorkersForPlatforms.Get(Customers);
 
@@ -132,7 +132,7 @@ instead — `InferEnv` types it as the native runtime binding:
 ```typescript
 const platform = Cloudflare.Worker("Platform", {
   main: "./src/handler.ts",
-  url: true,
+  workersDev: true,
   env: { DISPATCH: Customers },
 });
 type Env = Cloudflare.InferEnv<typeof platform>;

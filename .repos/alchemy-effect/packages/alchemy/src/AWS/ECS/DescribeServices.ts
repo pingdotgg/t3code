@@ -15,15 +15,16 @@ export interface DescribeServicesRequest extends Omit<
  * callable that describes services in the bound cluster. The cluster ARN is
  * injected automatically and the host is granted `ecs:DescribeServices` on
  * the cluster's services.
- * @binding
- * @section Describing Services
- * @example Check a Service's Deployment Status
+ * ### Describing Services
+ * **Example:** Check a Service's Deployment Status
  * ```typescript
  * const describeServices = yield* AWS.ECS.DescribeServices(cluster);
  *
  * const response = yield* describeServices({ services: [serviceName] });
  * const runningCount = response.services?.[0]?.runningCount;
  * ```
+ *
+ * @binding
  */
 export interface DescribeServices extends Binding.Service<
   DescribeServices,

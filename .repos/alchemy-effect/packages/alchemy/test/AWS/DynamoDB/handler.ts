@@ -16,13 +16,30 @@ export class DynamoDBTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DynamoDBTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const sourceTable = yield* DynamoDB.Table("TestTable", {
       partitionKey: "pk",
       sortKey: "sk",
-      attributes: { pk: "S", sk: "S" },
+      attributes: {
+        pk: "S",
+        sk: "S",
+        category: "S",
+        subcategory: "S",
+        rank: "S",
+      },
+      globalSecondaryIndexes: [
+        {
+          // Multi-attribute keys: composite partition key (category +
+          // subcategory) and composite sort key (rank + sk). Sparse — only
+          // items written with all four attributes appear in the index.
+          indexName: "MultiAttrIndex",
+          partitionKey: ["category", "subcategory"],
+          sortKey: ["rank", "sk"],
+          projection: { ProjectionType: "ALL" },
+        },
+      ],
     });
     const restoreTargetTable = yield* DynamoDB.Table("RestoreTargetTable", {
       partitionKey: "pk",
@@ -89,12 +106,22 @@ export default DynamoDBTestFunction.make(
             pk: string;
             sk: string;
             data?: string;
+            category?: string;
+            subcategory?: string;
+            rank?: string;
           };
           const result = yield* putItem({
             Item: {
               pk: { S: body.pk },
               sk: { S: body.sk },
               ...(body.data ? { data: { S: body.data } } : {}),
+              // Natural attributes indexed by the multi-attribute-key GSI —
+              // no synthetic concatenated keys.
+              ...(body.category ? { category: { S: body.category } } : {}),
+              ...(body.subcategory
+                ? { subcategory: { S: body.subcategory } }
+                : {}),
+              ...(body.rank ? { rank: { S: body.rank } } : {}),
             },
           });
           return yield* HttpServerResponse.json({ success: true, result });
@@ -308,6 +335,39 @@ export default DynamoDBTestFunction.make(
           const result = yield* query({
             KeyConditionExpression: "pk = :pk",
             ExpressionAttributeValues: { ":pk": { S: pk } },
+          });
+          return yield* HttpServerResponse.json({
+            items: result.Items,
+            count: result.Count,
+          });
+        }
+
+        if (request.method === "GET" && pathname === "/query-multi") {
+          const category = url.searchParams.get("category");
+          const subcategory = url.searchParams.get("subcategory");
+          const rank = url.searchParams.get("rank");
+          if (!category || !subcategory) {
+            return HttpServerResponse.text("Missing category or subcategory", {
+              status: 400,
+            });
+          }
+          // Multi-attribute-key GSI query: every partition attribute must be
+          // an equality condition; sort attributes narrow left-to-right.
+          const result = yield* query({
+            IndexName: "MultiAttrIndex",
+            KeyConditionExpression: rank
+              ? "#c = :c AND #s = :s AND #r = :r"
+              : "#c = :c AND #s = :s",
+            ExpressionAttributeNames: {
+              "#c": "category",
+              "#s": "subcategory",
+              ...(rank ? { "#r": "rank" } : {}),
+            },
+            ExpressionAttributeValues: {
+              ":c": { S: category },
+              ":s": { S: subcategory },
+              ...(rank ? { ":r": { S: rank } } : {}),
+            },
           });
           return yield* HttpServerResponse.json({
             items: result.Items,

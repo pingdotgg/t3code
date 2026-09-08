@@ -1,11 +1,9 @@
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
-
-export const DEFAULT_MIGRATIONS_TABLE = "__alchemy_migrations";
 
 /**
  * Tagged error raised when polling for a state predicate that has not yet
@@ -90,7 +88,7 @@ export const waitForBranchReady = Effect.fn(function* (
           `Waiting for branch to be ready... (${seconds} seconds elapsed; this can take a few minutes)`,
         );
       }
-      return yield* ops.getBranch({ organization, database, branch });
+      return yield* ps.getBranch({ organization, database, branch });
     }).pipe(
       Effect.catchTag("NotFound", () =>
         Effect.fail(
@@ -127,7 +125,7 @@ export const waitForDatabaseReady = Effect.fn(function* (
           `Waiting for database to be ready... (${seconds} seconds elapsed; this can take a few minutes)`,
         );
       }
-      return yield* ops.getDatabase({ organization, database });
+      return yield* ps.getDatabase({ organization, database });
     }).pipe(
       Effect.catchTag("NotFound", () =>
         Effect.fail(

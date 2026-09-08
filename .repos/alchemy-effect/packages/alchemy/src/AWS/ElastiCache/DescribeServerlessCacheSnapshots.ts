@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * particular cache. Available for valkey, redis, and serverless memcached.
  * Provide the implementation with
  * `Effect.provide(AWS.ElastiCache.DescribeServerlessCacheSnapshotsHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example List a Cache's Snapshots
+ * ### Managing Snapshots
+ * **Example:** List a Cache's Snapshots
  * ```typescript
  * const describeSnapshots = yield* ElastiCache.DescribeServerlessCacheSnapshots();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logInfo(`${snapshot.ServerlessCacheSnapshotName}: ${snapshot.Status}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeServerlessCacheSnapshots extends Binding.Service<
   DescribeServerlessCacheSnapshots,

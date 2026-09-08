@@ -23,9 +23,8 @@ export interface GetWhatsAppFlowPreviewRequest extends Omit<
  * into every request.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.GetWhatsAppFlowPreviewHttp)`.
- * @binding
- * @section Managing WhatsApp Flows
- * @example Get a Flow Preview URL
+ * ### Managing WhatsApp Flows
+ * **Example:** Get a Flow Preview URL
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const getFlowPreview = yield* AWS.SocialMessaging.GetWhatsAppFlowPreview(account);
@@ -36,6 +35,8 @@ export interface GetWhatsAppFlowPreviewRequest extends Omit<
  *   invalidate: true,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetWhatsAppFlowPreview extends Binding.Service<
   GetWhatsAppFlowPreview,

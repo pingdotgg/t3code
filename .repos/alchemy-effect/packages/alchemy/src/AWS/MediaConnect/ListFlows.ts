@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * `NextToken` from the previous response to continue). Account-level: the
  * deploy-time grant is `mediaconnect:ListFlows` on `*`. Provide the
  * implementation with `Effect.provide(AWS.MediaConnect.ListFlowsHttp)`.
- * @binding
- * @section Observing Flows
- * @example Enumerate the Account's Flows
+ * ### Observing Flows
+ * **Example:** Enumerate the Account's Flows
  * ```typescript
  * // init — bind the account-level operation
  * const listFlows = yield* AWS.MediaConnect.ListFlows();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { Flows } = yield* listFlows({ MaxResults: 20 });
  * const active = (Flows ?? []).filter((f) => f.Status === "ACTIVE");
  * ```
+ *
+ * @binding
  */
 export interface ListFlows extends Binding.Service<
   ListFlows,

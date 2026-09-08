@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.cloudflare.json",
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/test/**", "src/astro/runtime"],
+  "compilerOptions": {
+    "tsBuildInfoFile": ".cache/tsconfig.node.tsbuildinfo",
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "references": [{ "path": "./tsconfig.runtime.json" }]
+}

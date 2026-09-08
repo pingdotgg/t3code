@@ -12,9 +12,8 @@ import type { Flow } from "./Flow.ts";
  * (e.g. a scheduler Lambda that runs the flow only during broadcast
  * windows). The flow ARN is injected from the binding. Provide the
  * implementation with `Effect.provide(AWS.MediaConnect.StartFlowHttp)`.
- * @binding
- * @section Controlling Flows
- * @example Start the Flow for a Broadcast Window
+ * ### Controlling Flows
+ * **Example:** Start the Flow for a Broadcast Window
  * ```typescript
  * // init — bind the operation to the flow
  * const startFlow = yield* AWS.MediaConnect.StartFlow(flow);
@@ -22,6 +21,8 @@ import type { Flow } from "./Flow.ts";
  * // runtime
  * const { Status } = yield* startFlow();
  * ```
+ *
+ * @binding
  */
 export interface StartFlow extends Binding.Service<
   StartFlow,

@@ -108,9 +108,8 @@ export interface WorkGroup extends Resource<
  * S3 result-output location, result encryption, a bytes-scanned cutoff, and
  * whether that configuration is enforced over per-query client settings.
  *
- * @resource
- * @section Creating Workgroups
- * @example Workgroup with an enforced result location
+ * ### Creating Workgroups
+ * **Example:** Workgroup with an enforced result location
  * ```typescript
  * const results = yield* AWS.S3.Bucket("AthenaResults", {});
  * const wg = yield* AWS.Athena.WorkGroup("Analytics", {
@@ -121,7 +120,7 @@ export interface WorkGroup extends Resource<
  * });
  * ```
  *
- * @example Workgroup with a bytes-scanned cost guardrail
+ * **Example:** Workgroup with a bytes-scanned cost guardrail
  * ```typescript
  * const wg = yield* AWS.Athena.WorkGroup("Guarded", {
  *   outputLocation: "s3://my-results-bucket/prefix/",
@@ -129,6 +128,8 @@ export interface WorkGroup extends Resource<
  *   publishCloudWatchMetricsEnabled: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const WorkGroup = Resource<WorkGroup>("AWS.Athena.WorkGroup");
 

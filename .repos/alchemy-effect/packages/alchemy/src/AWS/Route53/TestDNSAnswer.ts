@@ -23,9 +23,8 @@ export interface TestDNSAnswerRequest extends Omit<
  * {@link ChangeResourceRecordSets} without waiting for public DNS. Public
  * zones only. Provide the implementation with
  * `Effect.provide(AWS.Route53.TestDNSAnswerHttp)`.
- * @binding
- * @section Inspecting Zones
- * @example Verify a record answers
+ * ### Inspecting Zones
+ * **Example:** Verify a record answers
  * ```typescript
  * const testDnsAnswer = yield* AWS.Route53.TestDNSAnswer(zone);
  *
@@ -35,6 +34,8 @@ export interface TestDNSAnswerRequest extends Omit<
  * });
  * // answer.ResponseCode -> "NOERROR", answer.RecordData -> the values
  * ```
+ *
+ * @binding
  */
 export interface TestDNSAnswer extends Binding.Service<
   TestDNSAnswer,

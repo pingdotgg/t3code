@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * restored table/volume, …) and posts `SUCCESSFUL` or `FAILED` back to the
  * restore job. Provide the implementation with
  * `Effect.provide(AWS.Backup.PutRestoreValidationResultHttp)`.
- * @binding
- * @section Restore Testing Validation
- * @example Report A Restore Test Verdict
+ * ### Restore Testing Validation
+ * **Example:** Report A Restore Test Verdict
  * ```typescript
  * const putRestoreValidationResult =
  *   yield* AWS.Backup.PutRestoreValidationResult();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   ValidationStatusMessage: "restored table row count matches source",
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutRestoreValidationResult extends Binding.Service<
   PutRestoreValidationResult,

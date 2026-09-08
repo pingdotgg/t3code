@@ -11,9 +11,8 @@ import type { Certificate } from "./Certificate.ts";
  * certificate whose renewal is not fully automatic. Useful in rotation
  * functions that renew and then re-export a certificate. Provide the
  * implementation with `Effect.provide(AWS.ACM.RenewCertificateHttp)`.
- * @binding
- * @section Renewing Certificates
- * @example Force a Managed Renewal
+ * ### Renewing Certificates
+ * **Example:** Force a Managed Renewal
  * ```typescript
  * // init — bind the operation to the certificate
  * const renewCertificate = yield* AWS.ACM.RenewCertificate(certificate);
@@ -21,6 +20,8 @@ import type { Certificate } from "./Certificate.ts";
  * // runtime
  * yield* renewCertificate();
  * ```
+ *
+ * @binding
  */
 export interface RenewCertificate extends Binding.Service<
   RenewCertificate,

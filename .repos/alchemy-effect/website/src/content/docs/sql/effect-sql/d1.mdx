@@ -3,6 +3,10 @@ title: D1
 description: SQL.D1 wraps a bound D1 database in an @effect/sql-d1 client — tagged-template queries with typed errors over the native binding.
 ---
 
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `@effect/sql-d1`;
+
 `SQL.D1` opens an `@effect/sql-d1` client over a Cloudflare D1
 binding. Queries are Effects: they carry `SqlError` in the error
 channel, participate in interruption, and trace like everything else
@@ -10,9 +14,20 @@ in your program.
 
 Install the driver — an optional peer of alchemy:
 
-```sh
-bun add @effect/sql-d1
-```
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}`} lang="sh" />
+  </TabItem>
+</Tabs>
 
 ## Connect
 
@@ -123,7 +138,8 @@ generic `SqlClient.SqlClient`, and `@effect/sql-d1`'s `D1Client` for
 code that needs it — including drizzle's `effect-d1` driver.
 Swapping `SQL.D1Layer` for
 [`SQL.PostgresLayer`](/sql/effect-sql/postgres#provide-as-a-service)
-moves the same service graph to Postgres unchanged.
+or [`SQL.MySQLLayer`](/sql/effect-sql/mysql#provide-as-a-service)
+moves the same service graph to another database unchanged.
 
 ## Local dev
 

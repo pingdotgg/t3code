@@ -1,11 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx",
-    "src/**/*.json",
-    "src/Cloudflare/DnsFirewall/Firewall"
-  ],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "compilerOptions": {
     "composite": true,
     "noEmit": false,
@@ -26,6 +21,9 @@
         "name": "@effect/language-service",
         // enable this to get effect diangostics in tsc
         "diagnostics": false,
+        // Unbounded type printing on hover renders megabyte strings for
+        // Effect-scale types (base also sets noErrorTruncation); cap it.
+        "quickinfoMaximumLength": 2000,
         "ignoreEffectErrorsInTscExitCode": true,
         "ignoreEffectWarningsInTscExitCode": true,
         "ignoreEffectSuggestionsInTscExitCode": true,
@@ -46,25 +44,28 @@
       "path": "../../distilled/packages/cloudflare/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/planetscale/tsconfig.json"
-    },
-    {
       "path": "../../distilled/packages/core/tsconfig.json"
     },
     {
-      "path": "../../distilled/packages/neon/tsconfig.json"
+      "path": "../../distilled/packages/planetscale/tsconfig.json"
     },
     {
       "path": "../../distilled/packages/axiom/tsconfig.json"
     },
     {
-      "path": "../../cloudflare-tools/packages/cloudflare-rolldown-plugin/tsconfig.json"
+      "path": "../../distilled/packages/neon/tsconfig.json"
     },
     {
-      "path": "../../cloudflare-tools/packages/cloudflare-runtime/tsconfig.node.json"
+      "path": "../../distilled/packages/hetzner/tsconfig.json"
     },
     {
-      "path": "../../cloudflare-tools/packages/cloudflare-vite-plugin/tsconfig.node.json"
+      "path": "../../distilled/packages/fly-io/tsconfig.json"
+    },
+    {
+      "path": "../../distilled/packages/railway/tsconfig.json"
+    },
+    {
+      "path": "../cloudflare-runtime/tsconfig.json"
     }
   ]
 }

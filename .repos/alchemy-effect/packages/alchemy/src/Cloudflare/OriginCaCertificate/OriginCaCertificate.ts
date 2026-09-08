@@ -112,11 +112,8 @@ export type OriginCaCertificate = Resource<
  * Certificates are fully immutable: there is no update API, so changing any
  * property triggers a replacement (a new certificate is issued, then the
  * old one is revoked). Destroying the resource revokes the certificate.
- * @resource
- * @product Origin CA Certificates
- * @category SSL/TLS & Certificates
- * @section Issuing a certificate
- * @example RSA certificate for a single hostname
+ * ### Issuing a certificate
+ * **Example:** RSA certificate for a single hostname
  * ```typescript
  * const cert = yield* Cloudflare.OriginCaCertificate.OriginCaCertificate("origin-cert", {
  *   csr: originCsrPem,
@@ -126,7 +123,7 @@ export type OriginCaCertificate = Resource<
  * });
  * ```
  *
- * @example Wildcard ECDSA certificate with the default 15-year validity
+ * **Example:** Wildcard ECDSA certificate with the default 15-year validity
  * ```typescript
  * const cert = yield* Cloudflare.OriginCaCertificate.OriginCaCertificate("wildcard-cert", {
  *   csr: wildcardCsrPem,
@@ -135,8 +132,8 @@ export type OriginCaCertificate = Resource<
  * });
  * ```
  *
- * @section Using the certificate
- * @example Install the signed PEM on your origin
+ * ### Using the certificate
+ * **Example:** Install the signed PEM on your origin
  * ```typescript
  * // The signed certificate is returned synchronously on create:
  * const pem = cert.certificate; // "-----BEGIN CERTIFICATE-----\n..."
@@ -144,6 +141,10 @@ export type OriginCaCertificate = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/
+ *
+ * @resource
+ * @product Origin CA Certificates
+ * @category SSL/TLS & Certificates
  */
 export const OriginCaCertificate = Resource<OriginCaCertificate>(TypeId, {
   aliases: ["Cloudflare.OriginCaCertificate"],

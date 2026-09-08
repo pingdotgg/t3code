@@ -14,9 +14,8 @@ export interface PostTimeSeriesDataPointsRequest extends Omit<
  * Posts time series data points (e.g. data-quality metrics) onto an asset or listing in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.PostTimeSeriesDataPointsHttp)`.
- * @binding
- * @section Time Series Metadata
- * @example Record Data Quality Metrics
+ * ### Time Series Metadata
+ * **Example:** Record Data Quality Metrics
  * ```typescript
  * // init — bind the operation to the domain
  * const postTimeSeriesDataPoints = yield* AWS.DataZone.PostTimeSeriesDataPoints(domain);
@@ -28,6 +27,8 @@ export interface PostTimeSeriesDataPointsRequest extends Omit<
  *   forms: [{ formName: "quality", typeIdentifier: "amazon.datazone.DataQualityResultFormType", content: "{}", timestamp: new Date() }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface PostTimeSeriesDataPoints extends Binding.Service<
   PostTimeSeriesDataPoints,

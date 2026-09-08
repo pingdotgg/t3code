@@ -67,9 +67,25 @@ const postJson = (baseUrl: string, path: string, body: unknown) =>
     Effect.retry({ schedule: readinessSchedule }),
   );
 
-class ExecutionNotFinished extends Data.TaggedError("ExecutionNotFinished") {}
+class ExecutionNotFinished extends Data.TaggedError("ExecutionNotFinished")<{
+  lastStatus: string | undefined;
+}> {
+  override get message() {
+    return this.lastStatus === undefined
+      ? "execution record never appeared"
+      : `execution still '${this.lastStatus}' when the poll budget exhausted`;
+  }
+}
 
-/** Poll the fixture's /executions route until the given run finishes. */
+/**
+ * Poll the fixture's /executions route until the given run finishes.
+ *
+ * Budget: every observed pass completes the execution well inside 50s of
+ * polling (whole test 104–117s); ~90s is the speed-doctrine ceiling for
+ * async platform waits. If this exhausts again, the error's `lastStatus`
+ * says whether AppFlow was still queueing (`InProgress`) — the signal to
+ * skipIf-gate the execution wait rather than widen the poll further.
+ */
 const waitForExecution = (baseUrl: string, executionId: string) =>
   getJson(baseUrl, "/executions").pipe(
     Effect.flatMap((response) => {
@@ -83,13 +99,15 @@ const waitForExecution = (baseUrl: string, executionId: string) =>
       ).flowExecutions.find((r) => r.executionId === executionId);
       return record?.executionStatus && record.executionStatus !== "InProgress"
         ? Effect.succeed(record)
-        : Effect.fail(new ExecutionNotFinished());
+        : Effect.fail(
+            new ExecutionNotFinished({ lastStatus: record?.executionStatus }),
+          );
     }),
     Effect.retry({
       while: (e): boolean => e instanceof ExecutionNotFinished,
       schedule: Schedule.max([
         Schedule.fixed("5 seconds"),
-        Schedule.recurs(10),
+        Schedule.recurs(18),
       ]),
     }),
   );
@@ -245,8 +263,8 @@ test.provider(
       yield* stack.destroy();
       yield* assertFlowGone(FLOW_NAME);
     }),
-  // A narrow run is typically ~80s, but the two-phase S3/AppFlow/Lambda
-  // fixture can exceed 120s under the full c128 control-plane load. Every
-  // constituent readiness poll remains independently bounded.
-  { timeout: 210_000, retry: 0 },
+  // Observed pass baseline is 104–117s under full-suite load with the old
+  // ~50s execution poll; the poll is now ~90s, so 210s + the 40s poll delta.
+  // Every constituent readiness poll remains independently bounded.
+  { timeout: 250_000, retry: 0 },
 );

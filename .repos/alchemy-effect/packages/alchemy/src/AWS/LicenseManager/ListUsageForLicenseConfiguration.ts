@@ -19,9 +19,8 @@ export interface ListUsageForLicenseConfigurationRequest extends Omit<
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.ListUsageForLicenseConfigurationHttp)`.
- * @binding
- * @section Reading License Configurations
- * @example List Per-Resource License Usage
+ * ### Reading License Configurations
+ * **Example:** List Per-Resource License Usage
  * ```typescript
  * // init
  * const listUsage =
@@ -30,6 +29,8 @@ export interface ListUsageForLicenseConfigurationRequest extends Omit<
  * // runtime
  * const { LicenseConfigurationUsageList } = yield* listUsage();
  * ```
+ *
+ * @binding
  */
 export interface ListUsageForLicenseConfiguration extends Binding.Service<
   ListUsageForLicenseConfiguration,

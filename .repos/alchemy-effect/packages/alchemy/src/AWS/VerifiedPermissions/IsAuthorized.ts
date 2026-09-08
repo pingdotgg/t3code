@@ -71,9 +71,8 @@ export interface IsAuthorizedClient {
  * This is the effectful-function DX for authorization: a Lambda calls
  * `isAuthorized(...)` and Verified Permissions returns `Allow` or `Deny`
  * along with the determining policies.
- * @binding
- * @section Authorizing Requests
- * @example Decide a Request in a Lambda
+ * ### Authorizing Requests
+ * **Example:** Decide a Request in a Lambda
  * ```typescript
  * // init
  * const authz = yield* AWS.VerifiedPermissions.IsAuthorized(store);
@@ -87,7 +86,7 @@ export interface IsAuthorizedClient {
  * // decision === "ALLOW" | "DENY"
  * ```
  *
- * @example Decide from a JWT
+ * **Example:** Decide from a JWT
  * ```typescript
  * const { decision } = yield* authz.isAuthorizedWithToken({
  *   identityToken,
@@ -95,6 +94,8 @@ export interface IsAuthorizedClient {
  *   resource: { entityType: "PhotoApp::Photo", entityId: "vacation.jpg" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface IsAuthorized extends Binding.Service<
   IsAuthorized,

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Custom policy check: verifies a resource policy cannot grant public access
  * for the given resource type. Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.CheckNoPublicAccessHttp)`.
- * @binding
- * @section Custom Policy Checks
- * @example Assert a Bucket Policy Is Not Public
+ * ### Custom Policy Checks
+ * **Example:** Assert a Bucket Policy Is Not Public
  * ```typescript
  * const checkNoPublicAccess =
  *   yield* AWS.AccessAnalyzer.CheckNoPublicAccess();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  *   resourceType: "AWS::S3::Bucket",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CheckNoPublicAccess extends Binding.Service<
   CheckNoPublicAccess,

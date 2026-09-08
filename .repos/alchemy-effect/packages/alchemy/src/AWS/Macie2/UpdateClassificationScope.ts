@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.UpdateClassificationScopeHttp)`.
- * @binding
- * @section Automated Discovery
- * @example Exclude Buckets from Automated Discovery
+ * ### Automated Discovery
+ * **Example:** Exclude Buckets from Automated Discovery
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateClassificationScope = yield* AWS.Macie2.UpdateClassificationScope();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   s3: { excludes: { bucketNames: ["logs-bucket"], operation: "ADD" } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateClassificationScope extends Binding.Service<
   UpdateClassificationScope,

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>worker-first template</title>
+  </head>
+  <body>
+    <!-- The raw client template. The worker must intercept `/` and render,
+         so this marker must NEVER appear in a served page. -->
+    <div id="app">worker-first-raw-template</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -18,9 +18,8 @@ export interface PutLogEventsRequest extends Omit<
  * trails), automatically injecting the log group name. The target log stream
  * must already exist (declare an `AWS.Logs.LogStream`). Sequence tokens are no
  * longer required by CloudWatch Logs.
- * @binding
- * @section Writing Logs
- * @example Write an Audit Event
+ * ### Writing Logs
+ * **Example:** Write an Audit Event
  * ```typescript
  * const putLogEvents = yield* AWS.Logs.PutLogEvents(logGroup);
  *
@@ -30,12 +29,12 @@ export interface PutLogEventsRequest extends Omit<
  * });
  * ```
  *
- * @example Wire into a Lambda Function
+ * **Example:** Wire into a Lambda Function
  * ```typescript
  * // Bind in the init phase, call in the handler, and provide the
  * // PutLogEventsHttp layer on the Function's init Effect.
  * export default AuditFunction.make(
- *   { main: import.meta.url, url: true },
+ *   { main: import.meta.url, functionUrl: true },
  *   Effect.gen(function* () {
  *     const logGroup = yield* AWS.Logs.LogGroup("AuditLogs", {
  *       retention: "30 days",
@@ -59,6 +58,8 @@ export interface PutLogEventsRequest extends Omit<
  *   }).pipe(Effect.provide(AWS.Logs.PutLogEventsHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface PutLogEvents extends Binding.Service<
   PutLogEvents,

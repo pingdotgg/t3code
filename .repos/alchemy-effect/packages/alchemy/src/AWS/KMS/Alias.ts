@@ -41,8 +41,8 @@ export interface Alias extends Resource<
 /**
  * An AWS KMS alias that points to a customer managed key.
  *
- * @section Creating Aliases
- * @example Alias for a Key
+ * ### Creating Aliases
+ * **Example:** Alias for a Key
  * ```typescript
  * import * as KMS from "alchemy/AWS/KMS";
  *

@@ -15,9 +15,8 @@ export interface GetInvalidationRequest extends Omit<
  * pairs with {@link CreateInvalidation} to poll a purge to `Completed`.
  * Provide the implementation with
  * `Effect.provide(AWS.CloudFront.GetInvalidationHttp)`.
- * @binding
- * @section Inspecting Invalidations
- * @example Poll an Invalidation's Status
+ * ### Inspecting Invalidations
+ * **Example:** Poll an Invalidation's Status
  * ```typescript
  * // init — bind the operation to the distribution
  * const getInvalidation = yield* CloudFront.GetInvalidation(distribution);
@@ -26,6 +25,8 @@ export interface GetInvalidationRequest extends Omit<
  * const res = yield* getInvalidation({ Id: invalidationId });
  * console.log(res.Invalidation?.Status); // "InProgress" | "Completed"
  * ```
+ *
+ * @binding
  */
 export interface GetInvalidation extends Binding.Service<
   GetInvalidation,

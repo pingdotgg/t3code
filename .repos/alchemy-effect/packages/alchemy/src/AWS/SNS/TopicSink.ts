@@ -29,9 +29,8 @@ export type TopicSinkError =
  * The binding grants the host function `sns:Publish` on the topic. Provide
  * the `TopicSinkHttp` layer (which itself needs `PublishBatchHttp`) on the
  * Function to implement the binding.
- * @binding
- * @section Streaming Messages into a Topic
- * @example Run a Stream into a Topic
+ * ### Streaming Messages into a Topic
+ * **Example:** Run a Stream into a Topic
  * ```typescript
  * // init (provide SNS.TopicSinkHttp + SNS.PublishBatchHttp on the Function)
  * const sink = yield* SNS.TopicSink(topic);
@@ -43,6 +42,8 @@ export type TopicSinkError =
  *   Stream.run(sink),
  * );
  * ```
+ *
+ * @binding
  */
 export interface TopicSink extends Binding.Service<
   TopicSink,

@@ -5,9 +5,8 @@ import type { Cluster } from "./Cluster.ts";
 
 /**
  * Runtime binding for `elasticmapreduce:DescribePersistentAppUI` — reads a persistent application UI created for the bound cluster by {@link CreatePersistentAppUI}.
- * @binding
- * @section Application UIs
- * @example Wait for the UI to Attach
+ * ### Application UIs
+ * **Example:** Wait for the UI to Attach
  * ```typescript
  * const describeAppUI = yield* AWS.EMR.DescribePersistentAppUI(cluster);
  *
@@ -15,6 +14,8 @@ import type { Cluster } from "./Cluster.ts";
  *   PersistentAppUIId: appUIId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribePersistentAppUI extends Binding.Service<
   DescribePersistentAppUI,

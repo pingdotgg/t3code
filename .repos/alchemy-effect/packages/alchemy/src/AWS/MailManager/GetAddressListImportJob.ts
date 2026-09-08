@@ -10,9 +10,8 @@ import type { AddressList } from "./AddressList.ts";
  * bound address list (by `JobId`). IAM access is granted on the bound
  * list's ARN. Provide the implementation with
  * `Effect.provide(AWS.MailManager.GetAddressListImportJobHttp)`.
- * @binding
- * @section Bulk Importing Members
- * @example Poll an Import Job
+ * ### Bulk Importing Members
+ * **Example:** Poll an Import Job
  * ```typescript
  * const getImportJob = yield* MailManager.GetAddressListImportJob(blockList);
  *
@@ -22,6 +21,8 @@ import type { AddressList } from "./AddressList.ts";
  *   yield* Effect.log(`imported ${job.ImportedItemsCount} addresses`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetAddressListImportJob extends Binding.Service<
   GetAddressListImportJob,

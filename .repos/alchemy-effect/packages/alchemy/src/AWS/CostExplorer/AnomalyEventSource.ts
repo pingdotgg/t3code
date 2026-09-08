@@ -88,8 +88,8 @@ export interface AnomalyEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on
  * the Function effect.
  *
- * @section Consuming Anomaly Events
- * @example React To Detected Cost Anomalies
+ * ### Consuming Anomaly Events
+ * **Example:** React To Detected Cost Anomalies
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  * import * as Stream from "effect/Stream";
@@ -109,7 +109,7 @@ export interface AnomalyEventSourceProps extends EventRouteProps {
  * );
  * ```
  *
- * @example Only Anomalies From One Monitor
+ * **Example:** Only Anomalies From One Monitor
  * ```typescript
  * yield* AWS.CostExplorer.consumeAnomalyEvents(
  *   { monitorArns: ["arn:aws:ce::123456789012:anomalymonitor/abcd..."] },

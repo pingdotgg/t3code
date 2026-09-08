@@ -10,15 +10,16 @@ import type { ServerlessCluster } from "./ServerlessCluster.ts";
  * Lists the topics on the bound cluster through the MSK control plane,
  * optionally filtered by name prefix. Provide the implementation with
  * `Effect.provide(AWS.Kafka.ListTopicsHttp)`.
- * @binding
- * @section Managing Topics
- * @example List the Cluster's Topics
+ * ### Managing Topics
+ * **Example:** List the Cluster's Topics
  * ```typescript
  * const listTopics = yield* Kafka.ListTopics(cluster);
  *
  * const page = yield* listTopics({ TopicNameFilter: "orders" });
  * // page.Topics → [{ TopicName: "orders", PartitionCount: 3, … }]
  * ```
+ *
+ * @binding
  */
 export interface ListTopics extends Binding.Service<
   ListTopics,

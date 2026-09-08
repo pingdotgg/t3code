@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * deploy-time grant is `sms-voice:CarrierLookup` on `*`. Each lookup
  * incurs a small per-request fee. Provide the implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.CarrierLookupHttp)`.
- * @binding
- * @section Validating Destinations
- * @example Check a Number Before Sending
+ * ### Validating Destinations
+ * **Example:** Check a Number Before Sending
  * ```typescript
  * // init — bind the account-level operation
  * const carrierLookup = yield* AWS.PinpointSMSVoiceV2.CarrierLookup();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * const info = yield* carrierLookup({ PhoneNumber: "+12065550100" });
  * const isMobile = info.PhoneNumberType === "MOBILE";
  * ```
+ *
+ * @binding
  */
 export interface CarrierLookup extends Binding.Service<
   CarrierLookup,

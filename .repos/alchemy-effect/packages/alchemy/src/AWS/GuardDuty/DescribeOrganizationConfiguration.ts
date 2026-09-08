@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.DescribeOrganizationConfigurationHttp)`.
- * @binding
- * @section Organization Administration
- * @example Read Org Configuration
+ * ### Organization Administration
+ * **Example:** Read Org Configuration
  * ```typescript
  * // init
  * const describeOrganizationConfiguration = yield* AWS.GuardDuty.DescribeOrganizationConfiguration(detector);
@@ -21,6 +20,8 @@ import type { Detector } from "./Detector.ts";
  * const { AutoEnableOrganizationMembers } =
  *   yield* describeOrganizationConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrganizationConfiguration extends Binding.Service<
   DescribeOrganizationConfiguration,

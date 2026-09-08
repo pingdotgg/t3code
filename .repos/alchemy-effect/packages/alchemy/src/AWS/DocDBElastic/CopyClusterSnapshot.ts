@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * KMS key or fanning a nightly backup out under a retention-tagged name.
  * Provide the implementation with
  * `Effect.provide(AWS.DocDBElastic.CopyClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Copy a Snapshot Under a New Name
+ * ### Managing Snapshots
+ * **Example:** Copy a Snapshot Under a New Name
  * ```typescript
  * const copySnapshot = yield* DocDBElastic.CopyClusterSnapshot();
  *
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.snapshot.snapshotName → "weekly-archive"
  * ```
+ *
+ * @binding
  */
 export interface CopyClusterSnapshot extends Binding.Service<
   CopyClusterSnapshot,

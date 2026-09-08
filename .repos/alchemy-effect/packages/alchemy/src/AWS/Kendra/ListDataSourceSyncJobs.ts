@@ -20,15 +20,16 @@ export interface ListDataSourceSyncJobsRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.ListDataSourceSyncJobsHttp)`.
  *
- * @binding
- * @section Syncing Data Sources
- * @example Sync Job History
+ * ### Syncing Data Sources
+ * **Example:** Sync Job History
  * ```typescript
  * const listSyncJobs = yield* AWS.Kendra.ListDataSourceSyncJobs(source);
  *
  * const jobs = yield* listSyncJobs({ StatusFilter: "SUCCEEDED" });
  * console.log(jobs.History?.[0]?.Metrics);
  * ```
+ *
+ * @binding
  */
 export interface ListDataSourceSyncJobs extends Binding.Service<
   ListDataSourceSyncJobs,

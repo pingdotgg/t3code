@@ -13,9 +13,8 @@ export interface GetThirdPartyFirewallAssociationStatusRequest
  *
  * Returns the onboarding status of the Firewall Manager admin account with a third-party firewall vendor tenant, including the AWS Marketplace
  * subscription status. Provide the implementation with `Effect.provide(AWS.FMS.GetThirdPartyFirewallAssociationStatusHttp)`.
- * @binding
- * @section Third-Party Firewalls
- * @example Check Third-Party Firewall Onboarding Status
+ * ### Third-Party Firewalls
+ * **Example:** Check Third-Party Firewall Onboarding Status
  * ```typescript
  * // init — account-level binding takes no resource
  * const getThirdPartyFirewallAssociationStatus =
@@ -30,6 +29,8 @@ export interface GetThirdPartyFirewallAssociationStatusRequest
  *   result.MarketplaceOnboardingStatus,
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetThirdPartyFirewallAssociationStatus extends Binding.Service<
   GetThirdPartyFirewallAssociationStatus,

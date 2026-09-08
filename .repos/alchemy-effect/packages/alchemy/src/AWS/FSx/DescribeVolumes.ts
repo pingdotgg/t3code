@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * runtime. Useful for discovering the volume ids that the snapshot bindings
  * operate on. Provide the implementation with
  * `Effect.provide(AWS.FSx.DescribeVolumesHttp)`.
- * @binding
- * @section Inspecting File Systems
- * @example List a file system's volumes
+ * ### Inspecting File Systems
+ * **Example:** List a file system's volumes
  * ```typescript
  * const describeVolumes = yield* AWS.FSx.DescribeVolumes();
  *
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`${response.Volumes?.length ?? 0} volumes`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeVolumes extends Binding.Service<
   DescribeVolumes,

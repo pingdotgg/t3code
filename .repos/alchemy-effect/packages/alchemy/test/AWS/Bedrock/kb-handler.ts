@@ -33,7 +33,7 @@ export class BedrockKbTestFunction extends Lambda.Function<Lambda.Function>()(
 export default BedrockKbTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Retrieval + generation regularly exceed Lambda's 3s default timeout.
     timeout: Duration.seconds(60),
   },

@@ -17,9 +17,8 @@ export interface CompleteLayerUploadRequest extends Omit<
  *
  * Seals an open layer upload in the bound repository; ECR verifies the uploaded bytes against the supplied sha256 digest. Provide the implementation with
  * `Effect.provide(AWS.ECR.CompleteLayerUploadHttp)`.
- * @binding
- * @section Pushing Images
- * @example Finish a Layer Upload
+ * ### Pushing Images
+ * **Example:** Finish a Layer Upload
  * ```typescript
  * const completeUpload = yield* AWS.ECR.CompleteLayerUpload(repository);
  *
@@ -28,6 +27,8 @@ export interface CompleteLayerUploadRequest extends Omit<
  *   layerDigests: [`sha256:${sha256HexOfBlob}`],
  * });
  * ```
+ *
+ * @binding
  */
 export interface CompleteLayerUpload extends Binding.Service<
   CompleteLayerUpload,

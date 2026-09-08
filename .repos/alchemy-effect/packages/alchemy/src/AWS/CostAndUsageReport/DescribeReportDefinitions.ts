@@ -18,9 +18,8 @@ export interface DescribeReportDefinitionsRequest
  * enumerates every definition), so the binding takes no resource argument.
  * Provide the implementation with
  * `Effect.provide(AWS.CostAndUsageReport.DescribeReportDefinitionsHttp)`.
- * @binding
- * @section Reading Report Definitions
- * @example Find a report's delivery location
+ * ### Reading Report Definitions
+ * **Example:** Find a report's delivery location
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeReportDefinitions =
@@ -31,6 +30,8 @@ export interface DescribeReportDefinitionsRequest
  * const report = ReportDefinitions?.find((r) => r.ReportName === "costs");
  * yield* Effect.log(`delivered to s3://${report?.S3Bucket}/${report?.S3Prefix}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeReportDefinitions extends Binding.Service<
   DescribeReportDefinitions,

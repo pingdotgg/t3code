@@ -39,9 +39,8 @@ export interface ListenerCertificate extends Resource<
  * listener (e.g. one certificate per tenant domain). When the full certificate
  * list is known up front, prefer the listener's `certificates` prop, which
  * declaratively syncs the whole set.
- * @resource
- * @section Attaching Certificates
- * @example Additional SNI certificate
+ * ### Attaching Certificates
+ * **Example:** Additional SNI certificate
  * ```typescript
  * const listener = yield* Listener("https", {
  *   loadBalancerArn: lb.loadBalancerArn,
@@ -55,6 +54,8 @@ export interface ListenerCertificate extends Resource<
  *   certificateArn: tenantCertArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const ListenerCertificate = Resource<ListenerCertificate>(
   "AWS.ELBv2.ListenerCertificate",

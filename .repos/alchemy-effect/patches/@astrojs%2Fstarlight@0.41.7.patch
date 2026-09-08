@@ -1,0 +1,18 @@
+diff --git a/utils/routing/index.ts b/utils/routing/index.ts
+--- a/utils/routing/index.ts
++++ b/utils/routing/index.ts
+@@ -96,9 +96,14 @@ export function getRouteBySlugParam(slugParam: string | undefined): Route | undef
+ }
+ 
+ function getPaths(): Path[] {
++	const blogCacheKey = routes
++		.filter((route) => route.id.startsWith('blog/'))
++		.map((route) => route.entry.digest)
++		.join(':');
+ 	return routes.map((route) => ({
+ 		params: { slug: slugToParam(route.id) },
+ 		props: route,
++		cacheKey: route.id.startsWith('blog/') ? `${route.entry.digest}:${blogCacheKey}` : route.entry.digest,
+ 	}));
+ }
+ export const paths = getPaths();

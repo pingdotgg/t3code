@@ -63,16 +63,15 @@ export interface ConfigurationSet extends Resource<
  * Attach `EventDestination`s to a configuration set to route message
  * events (sends, deliveries, failures) to CloudWatch Logs, Kinesis Data
  * Firehose, or SNS.
- * @resource
- * @section Creating Configuration Sets
- * @example Basic Configuration Set
+ * ### Creating Configuration Sets
+ * **Example:** Basic Configuration Set
  * ```typescript
  * import * as PinpointSMSVoiceV2 from "alchemy/AWS/PinpointSMSVoiceV2";
  *
  * const configSet = yield* PinpointSMSVoiceV2.ConfigurationSet("Messaging");
  * ```
  *
- * @example Configuration Set with a Default Message Type
+ * **Example:** Configuration Set with a Default Message Type
  * ```typescript
  * const configSet = yield* PinpointSMSVoiceV2.ConfigurationSet("Otp", {
  *   defaultMessageType: "TRANSACTIONAL",
@@ -80,8 +79,8 @@ export interface ConfigurationSet extends Resource<
  * });
  * ```
  *
- * @section Event Destinations
- * @example Stream message events to SNS
+ * ### Event Destinations
+ * **Example:** Stream message events to SNS
  * ```typescript
  * const events = yield* SNS.Topic("SmsEvents");
  * const destination = yield* PinpointSMSVoiceV2.EventDestination("Events", {
@@ -90,6 +89,8 @@ export interface ConfigurationSet extends Resource<
  *   snsDestination: { topicArn: events.topicArn },
  * });
  * ```
+ *
+ * @resource
  */
 export const ConfigurationSet = Resource<ConfigurationSet>(
   "AWS.PinpointSMSVoiceV2.ConfigurationSet",

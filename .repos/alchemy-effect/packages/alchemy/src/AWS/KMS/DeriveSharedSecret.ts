@@ -21,9 +21,8 @@ export interface DeriveSharedSecretRequest extends Omit<
  * The `SharedSecret` in the response is wrapped in `Redacted` so it never
  * leaks into logs — unwrap with `Redacted.value(...)` at the point of use.
  *
- * @binding
- * @section Key Agreement
- * @example Derive a Shared Secret
+ * ### Key Agreement
+ * **Example:** Derive a Shared Secret
  * ```typescript
  * const deriveSharedSecret = yield* AWS.KMS.DeriveSharedSecret(agreementKey);
  *
@@ -32,6 +31,8 @@ export interface DeriveSharedSecretRequest extends Omit<
  *   PublicKey: peerPublicKeyDer, // DER-encoded SubjectPublicKeyInfo
  * });
  * ```
+ *
+ * @binding
  */
 export interface DeriveSharedSecret extends Binding.Service<
   DeriveSharedSecret,

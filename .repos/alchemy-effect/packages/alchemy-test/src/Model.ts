@@ -31,6 +31,12 @@ export type HookBody = () => Effect.Effect<unknown, unknown, never>;
 export interface Hook {
   readonly body: HookBody;
   readonly timeout?: number | undefined;
+  /**
+   * Take the whole-process write lock for this hook. Use for beforeAll
+   * deploys / afterAll destroys that consume a scarce cloud quota so they
+   * never overlap exclusive tests.
+   */
+  readonly exclusive?: boolean;
 }
 
 export interface TestCase {

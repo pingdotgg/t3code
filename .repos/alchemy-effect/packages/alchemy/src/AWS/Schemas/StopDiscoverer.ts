@@ -11,9 +11,8 @@ import type { Discoverer } from "./Discoverer.ts";
  * published to the `discovered-schemas` registry. The discoverer id is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Schemas.StopDiscovererHttp)`.
- * @binding
- * @section Controlling a Discoverer
- * @example Pause Discovery
+ * ### Controlling a Discoverer
+ * **Example:** Pause Discovery
  * ```typescript
  * // init — bind the operation to the discoverer
  * const stopDiscoverer = yield* AWS.Schemas.StopDiscoverer(discoverer);
@@ -22,6 +21,8 @@ import type { Discoverer } from "./Discoverer.ts";
  * const { State } = yield* stopDiscoverer();
  * // State === "STOPPED"
  * ```
+ *
+ * @binding
  */
 export interface StopDiscoverer extends Binding.Service<
   StopDiscoverer,

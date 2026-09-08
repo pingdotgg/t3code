@@ -15,9 +15,8 @@ export interface StartCompositionRequest extends Omit<
  * delivers it to the given `destinations` (an IVS low-latency channel
  * and/or an S3 storage configuration).
  *
- * @binding
- * @section Compositing a Stage
- * @example Composite a stage into an IVS channel
+ * ### Compositing a Stage
+ * **Example:** Composite a stage into an IVS channel
  * ```typescript
  * // init
  * const startComposition = yield* IVSRealtime.StartComposition(stage);
@@ -28,6 +27,8 @@ export interface StartCompositionRequest extends Omit<
  *   layout: { grid: { videoAspectRatio: "VIDEO" } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartComposition extends Binding.Service<
   StartComposition,

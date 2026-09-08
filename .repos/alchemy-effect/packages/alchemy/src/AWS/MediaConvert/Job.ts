@@ -71,9 +71,8 @@ export interface Job extends Resource<
  * IAM role MediaConvert can assume. Drive it behind an environment gate in
  * tests rather than on every run.
  *
- * @resource
- * @section Submitting a Job
- * @example File Transcode from a Template
+ * ### Submitting a Job
+ * **Example:** File Transcode from a Template
  * ```typescript
  * const job = yield* MediaConvert.Job("Transcode", {
  *   role: mediaConvertRole.roleArn,
@@ -92,6 +91,8 @@ export interface Job extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Job = Resource<Job>("AWS.MediaConvert.Job");
 

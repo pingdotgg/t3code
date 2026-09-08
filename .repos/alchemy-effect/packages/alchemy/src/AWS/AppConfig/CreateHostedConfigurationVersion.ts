@@ -18,9 +18,8 @@ export interface CreateHostedConfigurationVersionRequest extends Omit<
  * Provide `AppConfig.CreateHostedConfigurationVersionHttp` on the hosting
  * function's Effect to implement the binding.
  *
- * @binding
- * @section Writing Configuration at Runtime
- * @example Store a new configuration version
+ * ### Writing Configuration at Runtime
+ * **Example:** Store a new configuration version
  * ```typescript
  * const createVersion = yield* AppConfig.CreateHostedConfigurationVersion(
  *   app,
@@ -32,6 +31,8 @@ export interface CreateHostedConfigurationVersionRequest extends Omit<
  * });
  * // version.VersionNumber -> 2
  * ```
+ *
+ * @binding
  */
 export interface CreateHostedConfigurationVersion extends Binding.Service<
   CreateHostedConfigurationVersion,

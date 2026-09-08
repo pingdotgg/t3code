@@ -12,9 +12,8 @@ export interface GetJobRequest extends Omit<amplify.GetJobRequest, "appId"> {}
  * reads a build job — its summary and per-step logs/status — for one of the
  * app's branches. Provide the implementation with
  * `Effect.provide(AWS.Amplify.GetJobHttp)`.
- * @binding
- * @section Observing Jobs
- * @example Poll a Job Until It Settles
+ * ### Observing Jobs
+ * **Example:** Poll a Job Until It Settles
  * ```typescript
  * // init — bind the operation to the app
  * const getJob = yield* AWS.Amplify.GetJob(app);
@@ -25,6 +24,8 @@ export interface GetJobRequest extends Omit<amplify.GetJobRequest, "appId"> {}
  *   yield* Effect.log(`build failed: ${job.summary.jobId}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetJob extends Binding.Service<
   GetJob,

@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * is governed by portfolio principal associations, so the binding takes no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.ServiceCatalog.TerminateProvisionedProductHttp)`.
- * @binding
- * @section Provisioning Products
- * @example Terminate a Provisioned Product
+ * ### Provisioning Products
+ * **Example:** Terminate a Provisioned Product
  * ```typescript
  * // init — account-level binding, no resource argument
  * const terminateProvisionedProduct = yield* AWS.ServiceCatalog.TerminateProvisionedProduct();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   TerminateToken: crypto.randomUUID(),
  * });
  * ```
+ *
+ * @binding
  */
 export interface TerminateProvisionedProduct extends Binding.Service<
   TerminateProvisionedProduct,

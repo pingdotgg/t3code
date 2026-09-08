@@ -52,16 +52,15 @@ export interface Detector extends Resource<
  * detector is cheap; the rules, models, and detector versions that produce
  * predictions are provisioned separately.
  *
- * @resource
- * @section Creating a Detector
- * @example Basic Detector
+ * ### Creating a Detector
+ * **Example:** Basic Detector
  * ```typescript
  * const detector = yield* FraudDetector.Detector("checkout", {
  *   eventTypeName: purchase.name,
  * });
  * ```
  *
- * @example Detector with an Active Version
+ * **Example:** Detector with an Active Version
  * ```typescript
  * const detector = yield* FraudDetector.Detector("checkout", {
  *   eventTypeName: purchase.name,
@@ -80,12 +79,12 @@ export interface Detector extends Resource<
  * });
  * ```
  *
- * @section Runtime Predictions
+ * ### Runtime Predictions
  * Bind `GetEventPrediction` in the init phase (providing the
  * `GetEventPredictionHttp` layer on the Function effect) and score events at
  * runtime against the detector's `ACTIVE` version.
  *
- * @example Score an event from a Lambda
+ * **Example:** Score an event from a Lambda
  * ```typescript
  * // init
  * const getEventPrediction = yield* FraudDetector.GetEventPrediction(detector);
@@ -99,6 +98,8 @@ export interface Detector extends Resource<
  *   eventVariables: { email: "buyer@example.com", ip: "1.2.3.4" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Detector = Resource<Detector>("AWS.FraudDetector.Detector");
 

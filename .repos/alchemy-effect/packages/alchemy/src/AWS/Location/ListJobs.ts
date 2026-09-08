@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * grant is on `*`. Provide the implementation with
  * `Effect.provide(AWS.Location.ListJobsHttp)`.
  *
- * @binding
- * @section Managing Batch Jobs
- * @example List Batch Jobs
+ * ### Managing Batch Jobs
+ * **Example:** List Batch Jobs
  * ```typescript
  * const listJobs = yield* Location.ListJobs();
  *
  * const page = yield* listJobs();
  * // page.Entries → [{ JobId, Status, Action }, …]
  * ```
+ *
+ * @binding
  */
 export interface ListJobs extends Binding.Service<
   ListJobs,

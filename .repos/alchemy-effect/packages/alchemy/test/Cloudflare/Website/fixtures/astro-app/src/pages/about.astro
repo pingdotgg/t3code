@@ -1,0 +1,21 @@
+---
+// Prerendered at build time; served from the static assets directory.
+// The stylesheet import (with `build.inlineStylesheets: "never"`) emits a
+// hashed `/_astro/*.css` asset linked from this page's HTML — the live test
+// extracts that href and pins its `_headers`-driven immutable Cache-Control.
+import "../styles/site.css";
+
+export const prerender = true;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>About — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>About</h1>
+    <p id="mode">prerendered-page</p>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

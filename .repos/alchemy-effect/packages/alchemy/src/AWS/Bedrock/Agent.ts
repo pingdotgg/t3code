@@ -160,9 +160,8 @@ export interface Agent extends Resource<
  * prepared (unless `prepare: false`) so it is immediately invocable and can
  * back an {@link AgentAlias}.
  *
- * @resource
- * @section Creating Agents
- * @example Minimal Agent
+ * ### Creating Agents
+ * **Example:** Minimal Agent
  * ```typescript
  * import * as Bedrock from "alchemy/AWS/Bedrock";
  *
@@ -173,7 +172,7 @@ export interface Agent extends Resource<
  * });
  * ```
  *
- * @example Agent with a Guardrail and Custom Session TTL
+ * **Example:** Agent with a Guardrail and Custom Session TTL
  * ```typescript
  * const agent = yield* Bedrock.Agent("assistant", {
  *   foundationModel: "us.anthropic.claude-3-5-sonnet-20240620-v1:0",
@@ -186,7 +185,7 @@ export interface Agent extends Resource<
  * });
  * ```
  *
- * @example Agent with Long-Term Memory
+ * **Example:** Agent with Long-Term Memory
  * ```typescript
  * // Session summaries are retained for 30 days and readable at runtime
  * // through the GetAgentMemory binding.
@@ -199,6 +198,8 @@ export interface Agent extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Agent = Resource<Agent>("AWS.Bedrock.Agent");
 

@@ -89,11 +89,8 @@ export type Config = Resource<
  * falling through to an update. When the engine has no prior state but a
  * configuration already exists on the account, `read` reports it as
  * `Unowned` and takeover is gated behind `--adopt`.
- * @resource
- * @product Magic Network Monitoring
- * @category Network
- * @section Creating the configuration
- * @example Minimal configuration
+ * ### Creating the configuration
+ * **Example:** Minimal configuration
  * ```typescript
  * const config = yield* Cloudflare.MagicNetworkMonitoring.Config("Mnm", {
  *   name: "my-network",
@@ -101,7 +98,7 @@ export type Config = Resource<
  * });
  * ```
  *
- * @example Configuration with router IPs
+ * **Example:** Configuration with router IPs
  * ```typescript
  * const config = yield* Cloudflare.MagicNetworkMonitoring.Config("Mnm", {
  *   name: "my-network",
@@ -110,8 +107,8 @@ export type Config = Resource<
  * });
  * ```
  *
- * @section Rules depend on the configuration
- * @example Create the config before any rules
+ * ### Rules depend on the configuration
+ * **Example:** Create the config before any rules
  * ```typescript
  * const config = yield* Cloudflare.MagicNetworkMonitoring.Config("Mnm", {
  *   name: "my-network",
@@ -127,6 +124,10 @@ export type Config = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-network-monitoring/
+ *
+ * @resource
+ * @product Magic Network Monitoring
+ * @category Network
  */
 export const Config = Resource<Config>(TypeId);
 

@@ -1,0 +1,207 @@
+---
+title: "Part 3: Persist Data with a Volume"
+description: Attach a Hetzner Volume, mount it into your Service with the MountVolume binding, and store files that survive deploys.
+sidebar:
+  order: 3
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Your Service from [Part 2](/hetzner/tutorial/part-2) is stateless —
+anything it writes to the Server's root disk dies with the Server.
+In this part you'll attach a **Volume** — Hetzner's network block
+storage — and mount it into the Service so files survive deploys and
+even Server replacement.
+
+## Declare a Volume
+
+Add a Volume next to the Server in `src/server.ts`:
+
+```diff lang="typescript"
+// src/server.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Key = Hetzner.SshKey("laptop", { /* ... */ });
+
+export const Box = Hetzner.Server("box", {
+  serverType: "cx22",
+  image: "ubuntu-24.04",
+  location: "nbg1",
+  sshKeys: [Key],
+});
+
++export const Data = Hetzner.Volume("data", {
++  size: 10,
++  format: "ext4",
++  location: "nbg1",
++});
+```
+
+`size` is in GB (10 is the minimum), and the `location` must match
+the Server's — volumes attach over the local network. Note what's
+*not* here: no `server` prop. The Service will claim it instead.
+
+## Mount it into the Service
+
+Inside the Service's init, bind the Volume with
+`Hetzner.MountVolume` — pass the declaration directly, no yielding
+required:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+-import { Box } from "./server.ts";
++import { Box, Data } from "./server.ts";
+
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+  { server: Box, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
++    const mount = yield* Hetzner.MountVolume(Data, { path: "/data" });
+
+    return {
+      fetch: /* ... */,
+    };
+  }),
+) {}
+```
+
+`MountVolume` is a **binding**: at deploy time it tells the Service
+"attach this Volume to my Server and mount it at `/data`", and at
+runtime it hands you the resolved `mount.path` and `mount.device`.
+
+## Provide the binding layer
+
+Bindings declare a capability; layers implement it. Provide
+`MountVolumeLive` on the Service's init Effect:
+
+```diff lang="typescript"
+  Effect.gen(function* () {
+    const mount = yield* Hetzner.MountVolume(Data, { path: "/data" });
+
+    return {
+      fetch: /* ... */,
+    };
+-  }),
++  }).pipe(Effect.provide(Hetzner.MountVolumeLive)),
+) {}
+```
+
+## Write files with `PUT /:name`
+
+Now use the mount from the handler. The runtime provides Effect's
+`FileSystem` service, so the Volume is just a directory:
+
+```diff lang="typescript"
+// src/api.ts
++import * as FileSystem from "effect/FileSystem";
+// ...
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.url, "http://service");
+        if (url.pathname === "/health") {
+          return HttpServerResponse.json({ ok: true });
+        }
++        const fs = yield* FileSystem.FileSystem;
++        const file = `${mount.path}${url.pathname}`;
++
++        if (request.method === "PUT") {
++          const body = yield* request.text;
++          yield* fs.writeFileString(file, body).pipe(Effect.orDie);
++          return HttpServerResponse.empty({ status: 204 });
++        }
++
+        return HttpServerResponse.text("Hello from Hetzner!");
+      }),
+```
+
+## Read files with `GET /:name`
+
+Add the read branch, turning a missing file into a 404:
+
+```diff lang="typescript"
+if (request.method === "PUT") {
+  const body = yield* request.text;
+  yield* fs.writeFileString(file, body).pipe(Effect.orDie);
+  return HttpServerResponse.empty({ status: 204 });
+}
+
++if (request.method === "GET") {
++  const text = yield* fs.readFileString(file).pipe(
++    Effect.catchAll(() => Effect.succeed(undefined)),
++  );
++  if (text === undefined) {
++    return HttpServerResponse.text("Not found", { status: 404 });
++  }
++  return HttpServerResponse.text(text);
++}
+
+return HttpServerResponse.text("Hello from Hetzner!");
+```
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
+
+[g]+[/g] [b]data[/b] [d](Hetzner.Volume)[/d]
+[y]~[/y] [b]Api[/b] [d](Hetzner.Service)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]data[/b] [d](Hetzner.Volume)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](Hetzner.Service)[/d] [y]updated[/y]`} />
+
+During the Service's deploy, Alchemy attaches the Volume to the
+Server, then (over the same SSH session) creates `/data`, mounts the
+device, and adds an `/etc/fstab` entry so the mount survives
+reboots. Every step is idempotent — two Services mounting the same
+`(volume, path)` share one attach and one mount.
+
+## Try it out
+
+```sh
+# Store a file on the Volume
+curl -X PUT http://203.0.113.10:3000/hello.txt -d 'Hello, Volume!'
+
+# Read it back
+curl http://203.0.113.10:3000/hello.txt
+# → Hello, Volume!
+```
+
+Ship another code change and deploy — the file is still there. The
+Volume is a separate resource with its own lifecycle: even if the
+Server is replaced, the Volume re-attaches to the new machine on the
+next deploy.
+
+## Recap
+
+You now have:
+
+- A 10 GB Volume attached to your Server and mounted at `/data`,
+  with an fstab entry for reboots
+- A Service reading and writing it through Effect's `FileSystem` —
+  no SDK, just files
+- Data that outlives deploys and Server replacement
+
+In [Part 4](/hetzner/tutorial/part-4), you'll put a firewall in
+front of the Server and a managed Load Balancer in front of the
+Service.

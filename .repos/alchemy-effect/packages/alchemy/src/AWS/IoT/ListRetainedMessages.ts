@@ -14,14 +14,15 @@ export interface ListRetainedMessagesRequest
  * messages in the account; read a payload with
  * {@link GetRetainedMessage}. Provide the implementation with
  * `Effect.provide(AWS.IoT.ListRetainedMessagesHttp)`.
- * @binding
- * @section Retained Messages
- * @example List Retained Topics
+ * ### Retained Messages
+ * **Example:** List Retained Topics
  * ```typescript
  * const listRetained = yield* AWS.IoT.ListRetainedMessages();
  *
  * const { retainedTopics } = yield* listRetained();
  * ```
+ *
+ * @binding
  */
 export interface ListRetainedMessages extends Binding.Service<
   ListRetainedMessages,

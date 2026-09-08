@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:DescribeInsight` is granted on the cluster's ARN.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeInsightHttp)`.
- * @binding
- * @section Cluster Insights
- * @example Read an Insight's Recommendation
+ * ### Cluster Insights
+ * **Example:** Read an Insight's Recommendation
  * ```typescript
  * // init
  * const describeInsight = yield* AWS.EKS.DescribeInsight(cluster);
@@ -20,6 +19,8 @@ import type { Cluster } from "./Cluster.ts";
  * // runtime
  * const { insight } = yield* describeInsight({ id: insightId });
  * ```
+ *
+ * @binding
  */
 export interface DescribeInsight extends Binding.Service<
   DescribeInsight,

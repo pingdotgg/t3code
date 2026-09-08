@@ -16,9 +16,8 @@ export interface BatchCreateCategoryRequest extends Omit<
  *
  * Creates library categories that web-experience users use to tag and filter library items. Provide the implementation with
  * `Effect.provide(AWS.QApps.BatchCreateCategoryHttp)`.
- * @binding
- * @section Categories
- * @example Create Categories
+ * ### Categories
+ * **Example:** Create Categories
  * ```typescript
  * // init — bind the operation to the Q App
  * const batchCreateCategory = yield* AWS.QApps.BatchCreateCategory(app);
@@ -28,6 +27,8 @@ export interface BatchCreateCategoryRequest extends Omit<
  *   categories: [{ title: "HR" }, { title: "Marketing" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchCreateCategory extends Binding.Service<
   BatchCreateCategory,

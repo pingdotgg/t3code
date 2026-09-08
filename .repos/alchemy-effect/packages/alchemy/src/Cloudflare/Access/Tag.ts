@@ -41,24 +41,21 @@ export type Tag = Resource<
  *
  * The tag's name is its identity — there is nothing to update in place, so
  * renaming replaces the tag.
- * @resource
- * @product Access
- * @category Cloudflare One (Zero Trust)
- * @section Creating a Tag
- * @example Tag with a generated name
+ * ### Creating a Tag
+ * **Example:** Tag with a generated name
  * ```typescript
  * const tag = yield* Cloudflare.Access.Tag("Team", {});
  * ```
  *
- * @example Tag with an explicit name
+ * **Example:** Tag with an explicit name
  * ```typescript
  * const tag = yield* Cloudflare.Access.Tag("Team", {
  *   name: "platform-team",
  * });
  * ```
  *
- * @section Tagging an Application
- * @example Reference from an Access application
+ * ### Tagging an Application
+ * **Example:** Reference from an Access application
  * ```typescript
  * const tag = yield* Cloudflare.Access.Tag("Team", { name: "platform-team" });
  *
@@ -68,6 +65,10 @@ export type Tag = Resource<
  *   tags: [tag.name],
  * });
  * ```
+ *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  */
 export const Tag = Resource<Tag>("Cloudflare.Access.Tag");
 

@@ -106,11 +106,8 @@ export type Hostname = Resource<
  * state, `read` scans the zone for an existing hostname with the same name
  * and reports it as `Unowned`, so the engine refuses to take it over unless
  * `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Web3
- * @category Domains & DNS
- * @section IPFS gateway
- * @example IPFS hostname pinned to a DNSLink
+ * ### IPFS gateway
+ * **Example:** IPFS hostname pinned to a DNSLink
  * ```typescript
  * const gateway = yield* Cloudflare.Web3.Hostname("IpfsGateway", {
  *   zoneId: zone.zoneId,
@@ -121,7 +118,7 @@ export type Hostname = Resource<
  * });
  * ```
  *
- * @example IPFS universal-path gateway
+ * **Example:** IPFS universal-path gateway
  * ```typescript
  * // Serves any CID under /ipfs/... and /ipns/... paths.
  * const universal = yield* Cloudflare.Web3.Hostname("UniversalGateway", {
@@ -131,8 +128,8 @@ export type Hostname = Resource<
  * });
  * ```
  *
- * @section Ethereum gateway
- * @example Ethereum RPC hostname
+ * ### Ethereum gateway
+ * **Example:** Ethereum RPC hostname
  * ```typescript
  * yield* Cloudflare.Web3.Hostname("EthGateway", {
  *   zoneId: zone.zoneId,
@@ -142,6 +139,10 @@ export type Hostname = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/web3/
+ *
+ * @resource
+ * @product Web3
+ * @category Domains & DNS
  */
 export const Hostname = Resource<Hostname>(TypeId, {
   aliases: ["Cloudflare.Web3Hostname"],

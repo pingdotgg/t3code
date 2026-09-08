@@ -14,9 +14,8 @@ export interface GetCommitmentPurchaseAnalysisRequest
  * Retrieve a commitment purchase analysis result by its
  * `AnalysisId`. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetCommitmentPurchaseAnalysisHttp)`.
- * @binding
- * @section Commitment Purchase Analysis
- * @example Read an Analysis Result
+ * ### Commitment Purchase Analysis
+ * **Example:** Read an Analysis Result
  * ```typescript
  * // init — account-level binding takes no resource
  * const getCommitmentPurchaseAnalysis = yield* AWS.CostExplorer.GetCommitmentPurchaseAnalysis();
@@ -27,6 +26,8 @@ export interface GetCommitmentPurchaseAnalysisRequest
  * });
  * const status = result.AnalysisStatus;
  * ```
+ *
+ * @binding
  */
 export interface GetCommitmentPurchaseAnalysis extends Binding.Service<
   GetCommitmentPurchaseAnalysis,

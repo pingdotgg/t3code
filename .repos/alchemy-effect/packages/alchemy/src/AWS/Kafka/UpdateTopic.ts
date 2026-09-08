@@ -10,14 +10,15 @@ import type { ServerlessCluster } from "./ServerlessCluster.ts";
  * Updates a topic's configuration or increases its partition count through
  * the MSK control plane. Provide the implementation with
  * `Effect.provide(AWS.Kafka.UpdateTopicHttp)`.
- * @binding
- * @section Managing Topics
- * @example Grow a Topic's Partitions
+ * ### Managing Topics
+ * **Example:** Grow a Topic's Partitions
  * ```typescript
  * const updateTopic = yield* Kafka.UpdateTopic(cluster);
  *
  * yield* updateTopic({ TopicName: "orders", PartitionCount: 6 });
  * ```
+ *
+ * @binding
  */
 export interface UpdateTopic extends Binding.Service<
   UpdateTopic,

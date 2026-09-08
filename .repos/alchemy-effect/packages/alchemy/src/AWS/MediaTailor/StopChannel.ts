@@ -10,14 +10,15 @@ import * as Binding from "../../Binding.ts";
  * grants `mediatailor:StopChannel` on `*`. Provide the implementation with
  * `Effect.provide(AWS.MediaTailor.StopChannelHttp)`.
  *
- * @binding
- * @section Channel Assembly
- * @example Stop a channel
+ * ### Channel Assembly
+ * **Example:** Stop a channel
  * ```typescript
  * const stopChannel = yield* AWS.MediaTailor.StopChannel();
  *
  * yield* stopChannel({ ChannelName: "my-channel" });
  * ```
+ *
+ * @binding
  */
 export interface StopChannel extends Binding.Service<
   StopChannel,

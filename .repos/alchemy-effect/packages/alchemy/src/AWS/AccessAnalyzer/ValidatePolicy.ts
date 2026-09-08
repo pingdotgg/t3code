@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Validates a policy document against IAM policy grammar and best practices,
  * returning findings with fix suggestions. Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.ValidatePolicyHttp)`.
- * @binding
- * @section Validating Policies
- * @example Validate an Identity Policy
+ * ### Validating Policies
+ * **Example:** Validate an Identity Policy
  * ```typescript
  * // init — account-level, no resource argument
  * const validatePolicy = yield* AWS.AccessAnalyzer.ValidatePolicy();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   policyType: "IDENTITY_POLICY",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ValidatePolicy extends Binding.Service<
   ValidatePolicy,

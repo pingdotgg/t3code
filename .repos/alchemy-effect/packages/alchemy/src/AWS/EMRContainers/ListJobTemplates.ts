@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * creation time. Account-level — no resource argument. Provide the
  * implementation with
  * `Effect.provide(AWS.EMRContainers.ListJobTemplatesHttp)`.
- * @binding
- * @section Job Templates
- * @example List All Templates
+ * ### Job Templates
+ * **Example:** List All Templates
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listJobTemplates = yield* AWS.EMRContainers.ListJobTemplates();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * const { templates } = yield* listJobTemplates();
  * yield* Effect.log(`${templates?.length ?? 0} job templates`);
  * ```
+ *
+ * @binding
  */
 export interface ListJobTemplates extends Binding.Service<
   ListJobTemplates,

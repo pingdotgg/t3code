@@ -11,9 +11,8 @@ import type { ChannelGroup } from "./ChannelGroup.ts";
  * listing in-progress clip exports. The group's name is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.MediaPackageV2.ListHarvestJobsHttp)`.
- * @binding
- * @section Harvesting Live-to-VOD Clips
- * @example List the Group's Queued Harvest Jobs
+ * ### Harvesting Live-to-VOD Clips
+ * **Example:** List the Group's Queued Harvest Jobs
  * ```typescript
  * // init — bind the operation to the channel group
  * const listHarvestJobs = yield* AWS.MediaPackageV2.ListHarvestJobs(group);
@@ -21,6 +20,8 @@ import type { ChannelGroup } from "./ChannelGroup.ts";
  * // runtime
  * const { Items } = yield* listHarvestJobs({ Status: "QUEUED" });
  * ```
+ *
+ * @binding
  */
 export interface ListHarvestJobs extends Binding.Service<
   ListHarvestJobs,

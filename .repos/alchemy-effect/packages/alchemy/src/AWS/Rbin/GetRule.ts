@@ -11,9 +11,8 @@ import type { Rule } from "./Rule.ts";
  * function can audit its Recycle Bin coverage or alert on an unexpected
  * unlock at runtime. The rule's identifier is injected from the binding.
  * Provide the implementation with `Effect.provide(AWS.Rbin.GetRuleHttp)`.
- * @binding
- * @section Reading Retention Rules
- * @example Check the bound rule's retention period
+ * ### Reading Retention Rules
+ * **Example:** Check the bound rule's retention period
  * ```typescript
  * // init — grants rbin:GetRule on the rule's ARN
  * const getRule = yield* AWS.Rbin.GetRule(rule);
@@ -25,6 +24,8 @@ import type { Rule } from "./Rule.ts";
  *     `${detail.RetentionPeriod?.RetentionPeriodValue} days (${detail.LockState ?? "unlocked"})`,
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetRule extends Binding.Service<
   GetRule,

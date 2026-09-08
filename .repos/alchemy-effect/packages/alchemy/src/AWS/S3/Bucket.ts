@@ -260,31 +260,30 @@ export interface Bucket extends Resource<
  * A bucket name is auto-generated from the app, stage, and logical ID unless
  * you provide one explicitly via `bucketName`. Enable `forceDestroy` to allow
  * Alchemy to empty the bucket before deleting it.
- * @resource
- * @section Creating a Bucket
- * @example Basic Bucket
+ * ### Creating a Bucket
+ * **Example:** Basic Bucket
  * ```typescript
  * import * as S3 from "alchemy/AWS/S3";
  *
  * const bucket = yield* S3.Bucket("my-bucket", {});
  * ```
  *
- * @example Bucket with a custom name
+ * **Example:** Bucket with a custom name
  * ```typescript
  * const bucket = yield* S3.Bucket("my-bucket", {
  *   bucketName: "my-company-assets",
  * });
  * ```
  *
- * @example Bucket with force destroy
+ * **Example:** Bucket with force destroy
  * ```typescript
  * const bucket = yield* S3.Bucket("my-bucket", {
  *   forceDestroy: true,
  * });
  * ```
  *
- * @section Configuring a Bucket
- * @example Versioning and encryption
+ * ### Configuring a Bucket
+ * **Example:** Versioning and encryption
  * ```typescript
  * const bucket = yield* S3.Bucket("my-bucket", {
  *   versioning: "Enabled",
@@ -292,7 +291,7 @@ export interface Bucket extends Resource<
  * });
  * ```
  *
- * @example Block all public access
+ * **Example:** Block all public access
  * ```typescript
  * const bucket = yield* S3.Bucket("my-bucket", {
  *   publicAccessBlock: {
@@ -304,7 +303,7 @@ export interface Bucket extends Resource<
  * });
  * ```
  *
- * @example CORS and lifecycle rules
+ * **Example:** CORS and lifecycle rules
  * ```typescript
  * const bucket = yield* S3.Bucket("my-bucket", {
  *   cors: [
@@ -326,7 +325,7 @@ export interface Bucket extends Resource<
  * });
  * ```
  *
- * @example Static website hosting
+ * **Example:** Static website hosting
  * ```typescript
  * const bucket = yield* S3.Bucket("my-bucket", {
  *   objectOwnership: "BucketOwnerPreferred",
@@ -337,12 +336,12 @@ export interface Bucket extends Resource<
  * });
  * ```
  *
- * @section Runtime Operations
+ * ### Runtime Operations
  * Bind S3 operations in the init phase and use them in runtime
  * handlers. Bindings inject the bucket name and grant scoped IAM
  * permissions automatically.
  *
- * @example Read and write objects
+ * **Example:** Read and write objects
  * ```typescript
  * // init
  * const getObject = yield* S3.GetObject(bucket);
@@ -362,17 +361,17 @@ export interface Bucket extends Resource<
  * };
  * ```
  *
- * @example Delete an object
+ * **Example:** Delete an object
  * ```typescript
  * // init
  * const deleteObject = yield* S3.DeleteObject(bucket);
  * ```
  *
- * @section Event Notifications
+ * ### Event Notifications
  * Subscribe to bucket events from the init phase. The subscription
  * and Lambda invoke permissions are created automatically.
  *
- * @example Process object creation events
+ * **Example:** Process object creation events
  * ```typescript
  * // init
  * yield* S3.consumeBucketEvents(bucket, {
@@ -385,6 +384,8 @@ export interface Bucket extends Resource<
  *   ),
  * );
  * ```
+ *
+ * @resource
  */
 export const Bucket = Resource<Bucket>("AWS.S3.Bucket");
 

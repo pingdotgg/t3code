@@ -12,9 +12,8 @@ import type { GraphqlApi } from "./GraphqlApi.ts";
  * provisioned. Provide `AppSync.FlushApiCacheHttp` on the hosting
  * function's Effect to implement the binding.
  *
- * @binding
- * @section Flushing the API Cache
- * @example Invalidate cached resolver results after an out-of-band write
+ * ### Flushing the API Cache
+ * **Example:** Invalidate cached resolver results after an out-of-band write
  * ```typescript
  * const flushCache = yield* AppSync.FlushApiCache(api);
  *
@@ -23,6 +22,8 @@ import type { GraphqlApi } from "./GraphqlApi.ts";
  *   Effect.catchTag("NotFoundException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface FlushApiCache extends Binding.Service<
   FlushApiCache,

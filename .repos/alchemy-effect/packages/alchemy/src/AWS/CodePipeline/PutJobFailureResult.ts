@@ -13,9 +13,8 @@ export interface PutJobFailureResultRequest
  * CodePipeline job operations do not support resource-level permissions, so
  * the grant is on `*`. The binding takes no resource — the job id arrives
  * with the invocation event.
- * @binding
- * @section Job Workers
- * @example Fail an Invoke-Action Job
+ * ### Job Workers
+ * **Example:** Fail an Invoke-Action Job
  * ```typescript
  * const putJobFailure = yield* AWS.CodePipeline.PutJobFailureResult();
  *
@@ -24,6 +23,8 @@ export interface PutJobFailureResultRequest
  *   failureDetails: { type: "JobFailed", message: "smoke test failed" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutJobFailureResult extends Binding.Service<
   PutJobFailureResult,

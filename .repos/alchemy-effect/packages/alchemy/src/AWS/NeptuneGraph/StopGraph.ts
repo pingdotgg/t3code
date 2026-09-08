@@ -9,15 +9,16 @@ import type { Graph } from "./Graph.ts";
  *
  * Stops the bound graph to pause compute (m-NCU) billing while retaining data — e.g. a scheduler Lambda parking dev graphs overnight. Restart with {@link StartGraph}. Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.StopGraphHttp)`.
- * @binding
- * @section Starting and Stopping a Graph
- * @example Stop a graph to pause billing
+ * ### Starting and Stopping a Graph
+ * **Example:** Stop a graph to pause billing
  * ```typescript
  * const stopGraph = yield* NeptuneGraph.StopGraph(graph);
  *
  * const result = yield* stopGraph();
  * // result.status → "STOPPING"
  * ```
+ *
+ * @binding
  */
 export interface StopGraph extends Binding.Service<
   StopGraph,

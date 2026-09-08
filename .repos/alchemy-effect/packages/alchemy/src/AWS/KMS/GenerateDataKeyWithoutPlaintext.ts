@@ -18,9 +18,8 @@ export interface GenerateDataKeyWithoutPlaintextRequest extends Omit<
  * the component that provisions envelope keys but must never see key
  * material; the consumer decrypts the blob later with the `Decrypt` binding.
  *
- * @binding
- * @section Envelope Encryption
- * @example Provision a Data Key Without Seeing It
+ * ### Envelope Encryption
+ * **Example:** Provision a Data Key Without Seeing It
  * ```typescript
  * const generateDataKeyWithoutPlaintext =
  *   yield* AWS.KMS.GenerateDataKeyWithoutPlaintext(key);
@@ -31,11 +30,13 @@ export interface GenerateDataKeyWithoutPlaintextRequest extends Omit<
  * // store CiphertextBlob next to the data; no plaintext ever existed here
  * ```
  *
- * @section Pre-Existing Keys
- * @example Bind by Alias Name
+ * ### Pre-Existing Keys
+ * **Example:** Bind by Alias Name
  * ```typescript
  * const generate = yield* AWS.KMS.GenerateDataKeyWithoutPlaintext("alias/app-key");
  * ```
+ *
+ * @binding
  */
 export interface GenerateDataKeyWithoutPlaintext extends Binding.Service<
   GenerateDataKeyWithoutPlaintext,

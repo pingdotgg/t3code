@@ -222,11 +222,8 @@ export type Sink = Resource<
  * sink gets a fresh name before the old one is deleted); with an
  * explicit `name` the create-before-delete replacement collides, so
  * prefer generated names.
- * @resource
- * @product Pipelines
- * @category Storage & Databases
- * @section Creating a Sink
- * @example R2 sink with JSON output
+ * ### Creating a Sink
+ * **Example:** R2 sink with JSON output
  * The S3-compatible credentials are derived from a Cloudflare API token:
  * the access key id is the token id and the secret is the SHA-256 hex
  * digest of the token value.
@@ -238,8 +235,8 @@ export type Sink = Resource<
  *   config: {
  *     bucket: bucket.bucketName,
  *     credentials: {
- *       accessKeyId: alchemy.secret.env.R2_ACCESS_KEY_ID,
- *       secretAccessKey: alchemy.secret.env.R2_SECRET_ACCESS_KEY,
+ *       accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
+ *       secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
  *     },
  *     path: "ingest",
  *     rollingPolicy: { intervalSeconds: 30 },
@@ -247,7 +244,7 @@ export type Sink = Resource<
  * });
  * ```
  *
- * @example Parquet output
+ * **Example:** Parquet output
  * ```typescript
  * const sink = yield* Cloudflare.Pipelines.Sink("parquet-sink", {
  *   type: "r2",
@@ -256,8 +253,8 @@ export type Sink = Resource<
  * });
  * ```
  *
- * @section R2 Data Catalog
- * @example Iceberg table sink
+ * ### R2 Data Catalog
+ * **Example:** Iceberg table sink
  * ```typescript
  * const sink = yield* Cloudflare.Pipelines.Sink("iceberg-sink", {
  *   type: "r2_data_catalog",
@@ -265,12 +262,16 @@ export type Sink = Resource<
  *     bucket: bucket.bucketName,
  *     tableName: "events",
  *     namespace: "default",
- *     token: alchemy.secret.env.CATALOG_TOKEN,
+ *     token: yield* Config.redacted("CATALOG_TOKEN"),
  *   },
  * });
  * ```
  *
  * @see https://developers.cloudflare.com/pipelines/
+ *
+ * @resource
+ * @product Pipelines
+ * @category Storage & Databases
  */
 export const Sink = Resource<Sink>(TypeId);
 

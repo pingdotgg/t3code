@@ -66,9 +66,8 @@ export interface Listener extends Resource<
  * Port ranges, protocol, and client affinity are all updatable in place;
  * only moving the listener to a different accelerator replaces it. Attach
  * `EndpointGroup`s to route the accepted traffic to regional endpoints.
- * @resource
- * @section Creating Listeners
- * @example TCP Listener
+ * ### Creating Listeners
+ * **Example:** TCP Listener
  * ```typescript
  * const listener = yield* GlobalAccelerator.Listener("Web", {
  *   acceleratorArn: accelerator.acceleratorArn,
@@ -77,7 +76,7 @@ export interface Listener extends Resource<
  * });
  * ```
  *
- * @example Sticky UDP Listener with Multiple Port Ranges
+ * **Example:** Sticky UDP Listener with Multiple Port Ranges
  * ```typescript
  * const listener = yield* GlobalAccelerator.Listener("Game", {
  *   acceleratorArn: accelerator.acceleratorArn,
@@ -89,6 +88,8 @@ export interface Listener extends Resource<
  *   clientAffinity: "SOURCE_IP",
  * });
  * ```
+ *
+ * @resource
  */
 export const Listener = Resource<Listener>("AWS.GlobalAccelerator.Listener");
 

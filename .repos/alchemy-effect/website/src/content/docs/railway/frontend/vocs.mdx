@@ -1,0 +1,188 @@
+---
+title: Vocs
+description: Deploy a Vocs docs site to Railway with Railway.Website.Vocs — prerendered HTML on a Railway Service, extensionless routes, and Vocs' own dev server under alchemy dev.
+sidebar:
+  order: 10
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Railway.Website.Vocs` deploys a [Vocs](https://vocs.dev)
+documentation project as one
+[Railway.Service](/railway/compute/services) from a container
+image. Vocs prerenders static HTML; a Node static-file server
+serves extensionless pages (`/about` not `/about/`). Your `vocs.config.*` loads natively — there is
+no adapter to install.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads
+`/vocs/node` from your project at deploy time. It is only used at
+build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+The project also needs `vocs` and Vocs' Waku peer dependencies.
+
+## Configure Vocs
+
+Your `vocs.config.*` file loads natively — title, sidebar, and any
+other Vocs options work exactly as they do outside Alchemy:
+
+```typescript
+// vocs.config.ts
+import { defineConfig } from "vocs/config";
+
+export default defineConfig({
+  title: "Docs",
+  sidebar: [
+    { text: "Home", link: "/" },
+    { text: "Guide", link: "/guide" },
+  ],
+});
+```
+
+If `vocs.config.*` sets `outDir`, pass the same value on the
+resource (default `"dist"`) so generated output stays outside the
+rebuild hash:
+
+```typescript
+export const Website = Railway.Website.Vocs("Website", {
+  rootDir: "./docs",
+  outDir: "build",
+});
+```
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Railway from "alchemy/Railway";
+
+export const Website = Railway.Website.Vocs("Website", {
+  rootDir: "./docs",
+});
+```
+
+Omit `project` to create a `Railway.Project` under this site's
+namespace. Pass an existing `Railway.Project` when the site should
+live next to other Services:
+
+```typescript
+export const Site = Railway.Project("Site");
+
+export const Website = Railway.Website.Vocs("Website", {
+  rootDir: "./docs",
+  project: Site,
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyVocsSite",
+  {
+    providers: Railway.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+The live URL is the generated `https://{name}.up.railway.app`
+(`site.service.url`). The Service listens on port 3000 with
+`healthcheck: "/health"`. `site.service` and `site.project` are set
+on deploy.
+
+## Add environment variables
+
+Top-level `env` is copied onto `process.env` before build and
+`alchemy dev`, and onto the Service at deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Railway.Website.Vocs("Website", {
+  rootDir: "./docs",
++  env: {
++    DOCS_TITLE: "Hello from Alchemy!",
++  },
+});
+```
+
+These are process environment variables, not Worker bindings.
+
+## Read the environment
+
+Vocs prerenders at build time, so page content that reads
+`process.env` is baked into the HTML. The same values are set on
+the hosted Node process; there is no request-time Vocs server.
+
+```typescript
+const title = process.env.DOCS_TITLE ?? "Docs";
+```
+
+## Local development
+
+`alchemy dev` runs Vocs' own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Railway resources
+are created (`service` and `project` are `undefined`). Wrap the
+site in `Alchemy.remote()` to deploy the live
+Service even during dev:
+
+```typescript
+export const Website = Railway.Website.Vocs("Website", {
+  rootDir: "./docs",
+}).pipe(Alchemy.remote());
+```
+
+## Custom domain
+
+`domain` is a hostname string. Alchemy attaches a
+[`CustomDomain`](/railway/networking) (`targetPort: 3000`); `url`
+becomes `https://{domain}` instead of `*.up.railway.app`:
+
+```typescript
+export const Website = Railway.Website.Vocs("Website", {
+  rootDir: "./docs",
+  domain: "docs.example.com",
+});
+```
+
+## Where next
+
+- [`Vocs` reference](/providers/railway/website/vocs) — every prop
+  and attribute
+- [Projects](/railway/compute/projects) and
+  [Services](/railway/compute/services) — the container the site
+  runs in
+- [Custom domains](/railway/networking) — hostnames on a Service
+- [Railway](/railway) — the Railway provider hub

@@ -63,9 +63,8 @@ export interface EventIntegration extends Resource<
  * The event source and EventBridge bus are immutable; changing either
  * replaces the event integration. Only the description can be updated in
  * place.
- * @resource
- * @section Creating an Event Integration
- * @example Basic Event Integration
+ * ### Creating an Event Integration
+ * **Example:** Basic Event Integration
  * ```typescript
  * import * as AppIntegrations from "alchemy/AWS/AppIntegrations";
  *
@@ -75,7 +74,7 @@ export interface EventIntegration extends Resource<
  * });
  * ```
  *
- * @example Event Integration with Description and Tags
+ * **Example:** Event Integration with Description and Tags
  * ```typescript
  * const events = yield* AppIntegrations.EventIntegration("PartnerEvents", {
  *   source: "aws.partner/examplepartner.com",
@@ -84,6 +83,8 @@ export interface EventIntegration extends Resource<
  *   tags: { team: "integrations" },
  * });
  * ```
+ *
+ * @resource
  */
 export const EventIntegration = Resource<EventIntegration>(
   "AWS.AppIntegrations.EventIntegration",

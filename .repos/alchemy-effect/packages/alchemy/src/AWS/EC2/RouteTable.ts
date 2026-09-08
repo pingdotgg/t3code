@@ -183,13 +183,12 @@ export interface RouteTable extends Resource<
  * while the actual routing behaviour is supplied by separate {@link Route}
  * resources and applied to subnets by {@link RouteTableAssociation} resources.
  *
- * @resource
- * @section Creating a Route Table
+ * ### Creating a Route Table
  * The only required input is the `vpcId` the table belongs to. Changing
  * `vpcId` later replaces the route table, since a table cannot move between
  * VPCs.
  *
- * @example Basic Route Table
+ * **Example:** Basic Route Table
  * ```typescript
  * const routeTable = yield* AWS.EC2.RouteTable("PublicRouteTable", {
  *   vpcId: myVpc.vpcId,
@@ -199,7 +198,7 @@ export interface RouteTable extends Resource<
  * implicit `local` route (managed by AWS) until you add your own
  * {@link Route} resources.
  *
- * @example Route Table with Tags
+ * **Example:** Route Table with Tags
  * ```typescript
  * const routeTable = yield* AWS.EC2.RouteTable("PrivateRouteTable", {
  *   vpcId: myVpc.vpcId,
@@ -211,13 +210,13 @@ export interface RouteTable extends Resource<
  * replacing the table. Use the `Name` tag to label the table in the AWS
  * console.
  *
- * @section Building a Public Routing Domain
+ * ### Building a Public Routing Domain
  * A route table only directs traffic once you attach routes to it and
  * associate it with subnets. The pattern below wires a public subnet to the
  * internet: an {@link InternetGateway}, a default {@link Route} pointing at it,
  * and a {@link RouteTableAssociation} binding the subnet to the table.
  *
- * @example Route Table, Internet Route, and Subnet Association
+ * **Example:** Route Table, Internet Route, and Subnet Association
  * ```typescript
  * const internetGateway = yield* AWS.EC2.InternetGateway("InternetGateway", {
  *   vpcId: myVpc.vpcId,
@@ -242,6 +241,8 @@ export interface RouteTable extends Resource<
  * the `0.0.0.0/0` route. Multiple subnets can share the same route table by
  * declaring additional associations — a common way to give every public
  * subnet in a VPC identical routing.
+ *
+ * @resource
  */
 export const RouteTable = Resource<RouteTable>("AWS.EC2.RouteTable");
 

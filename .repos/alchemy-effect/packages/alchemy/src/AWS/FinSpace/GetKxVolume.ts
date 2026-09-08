@@ -7,9 +7,8 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:GetKxVolume` — reads a volume's status, NAS configuration, and the clusters attached to it in the bound environment.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.GetKxVolumeHttp)`.
- * @binding
- * @section Managing Volumes
- * @example Poll a Volume to Active
+ * ### Managing Volumes
+ * **Example:** Poll a Volume to Active
  * ```typescript
  * const getVolume = yield* AWS.FinSpace.GetKxVolume(kdb);
  *
@@ -18,6 +17,8 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  *   yield* Effect.log(`attached: ${volume.attachedClusters?.length ?? 0}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetKxVolume extends Binding.Service<
   GetKxVolume,

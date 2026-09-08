@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Applies (or schedules) a pending maintenance action on an RDS resource
  * — e.g. an ops function that rolls maintenance during a controlled window. Provide the implementation with
  * `Effect.provide(AWS.RDS.ApplyPendingMaintenanceActionHttp)`.
- * @binding
- * @section Maintenance
- * @example Apply Maintenance Immediately
+ * ### Maintenance
+ * **Example:** Apply Maintenance Immediately
  * ```typescript
  * const applyPendingMaintenanceAction =
  *   yield* AWS.RDS.ApplyPendingMaintenanceAction();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   OptInType: "immediate",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ApplyPendingMaintenanceAction extends Binding.Service<
   ApplyPendingMaintenanceAction,

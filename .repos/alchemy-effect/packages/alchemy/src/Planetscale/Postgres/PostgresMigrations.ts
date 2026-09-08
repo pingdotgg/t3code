@@ -1,10 +1,26 @@
-import * as ops from "@distilled.cloud/planetscale/Operations";
+import * as ps from "@distilled.cloud/planetscale";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import { Client } from "pg";
-import { listSqlFiles, readSqlFile, type SqlFile } from "../../SQL/SqlFile.ts";
+import type { Client } from "pg";
+import {
+  makePgMigrationExecutor,
+  runMigrations,
+  type NormalizedMigrationsInput,
+  type StampedMigrationsState,
+} from "../../SQL/Migrations/index.ts";
+import { readSqlFile } from "../../SQL/SqlFile.ts";
+
+// `pg` is an optional peer dependency — loaded lazily so importing the
+// Planetscale provider never requires the driver unless migrations run.
+const importPg = () =>
+  import("pg").catch((cause) => {
+    throw new Error(
+      "Failed to load the 'pg' driver. Install the optional peer dependency 'pg' to run Planetscale Postgres migrations.",
+      { cause },
+    );
+  });
 
 const MIGRATION_ROLE_TTL_SECONDS = 600;
 
@@ -21,23 +37,22 @@ export interface PostgresMigrationTarget {
   branch: string;
 }
 
+/**
+ * PlanetScale Postgres's migration adaptation is exactly this: the shared
+ * pipeline with a temp-role-scoped pg client as its executor.
+ */
 export const runPostgresMigrations = (
   target: PostgresMigrationTarget,
-  migrationsDir: string,
-  migrationsTable: string,
+  input: NormalizedMigrationsInput,
+  stamped: StampedMigrationsState,
 ) =>
-  Effect.gen(function* () {
-    const files = yield* listSqlFiles(migrationsDir);
-    if (files.length > 0) {
-      yield* applyPostgresMigrations({
-        target,
-        migrationsTable,
-        migrationsFiles: files,
-      });
-    }
-    const hashes: Record<string, string> = {};
-    for (const file of files) hashes[file.id] = file.hash;
-    return hashes;
+  runMigrations({
+    input,
+    stamped,
+    withExecutor: (apply) =>
+      withPostgresClient(target, (client) =>
+        apply(makePgMigrationExecutor(client)),
+      ),
   });
 
 export const runPostgresImports = (
@@ -64,71 +79,8 @@ export const runPostgresImports = (
     return hashes;
   });
 
-interface ApplyMigrationsOptions {
-  target: PostgresMigrationTarget;
-  migrationsTable: string;
-  migrationsFiles: ReadonlyArray<SqlFile>;
-}
-
-const applyPostgresMigrations = (options: ApplyMigrationsOptions) =>
-  withPostgresClient(options.target, (client) =>
-    Effect.gen(function* () {
-      const table = quotePgIdentifier(options.migrationsTable);
-      yield* pgExec(
-        client,
-        `CREATE TABLE IF NOT EXISTS ${table} (
-           id TEXT PRIMARY KEY,
-           name TEXT NOT NULL,
-           applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-         );`,
-      );
-
-      const applied = yield* pgRows<{ name: string }>(
-        client,
-        `SELECT name FROM ${table};`,
-      ).pipe(Effect.map((rows) => new Set(rows.map((row) => row.name))));
-      let nextSeq = yield* getNextPgSeq(client, table);
-
-      for (const file of options.migrationsFiles) {
-        if (applied.has(file.id)) continue;
-        const migrationId = nextSeq.toString().padStart(5, "0");
-        nextSeq += 1;
-        yield* Effect.gen(function* () {
-          yield* pgExec(client, "BEGIN");
-          yield* pgExec(client, file.sql);
-          yield* pgExec(
-            client,
-            `INSERT INTO ${table} (id, name) VALUES ($1, $2);`,
-            [migrationId, file.id],
-          );
-          yield* pgExec(client, "COMMIT");
-        }).pipe(
-          Effect.catch((error) =>
-            pgExec(client, "ROLLBACK").pipe(
-              Effect.catch(() => Effect.void),
-              Effect.andThen(Effect.fail(error)),
-            ),
-          ),
-        );
-      }
-    }),
-  );
-
 const runPostgresSql = (target: PostgresMigrationTarget, sql: string) =>
   withPostgresClient(target, (client) => pgExec(client, sql));
-
-const getNextPgSeq = (client: Client, table: string) =>
-  pgRows<{ id: string }>(client, `SELECT id FROM ${table};`).pipe(
-    Effect.map((rows) => {
-      let max = 0;
-      for (const { id } of rows) {
-        if (/^\d+$/.test(id)) {
-          max = Math.max(max, Number.parseInt(id, 10));
-        }
-      }
-      return max + 1;
-    }),
-  );
 
 const withPostgresClient = <A, E, R>(
   target: PostgresMigrationTarget,
@@ -137,6 +89,10 @@ const withPostgresClient = <A, E, R>(
   withTemporaryPostgresRole(target, (role) =>
     Effect.acquireUseRelease(
       Effect.gen(function* () {
+        const { Client } = yield* Effect.tryPromise({
+          try: importPg,
+          catch: toMigrationError,
+        });
         const client = yield* Effect.sync(
           () =>
             new Client({
@@ -170,7 +126,7 @@ const withTemporaryPostgresRole = <A, E, R>(
 ) =>
   Effect.acquireUseRelease(
     Effect.gen(function* () {
-      const created = yield* ops.createRole({
+      const created = yield* ps.createRole({
         organization: target.organization,
         database: target.database,
         branch: target.branch,
@@ -191,7 +147,7 @@ const withTemporaryPostgresRole = <A, E, R>(
     }),
     use,
     (role) =>
-      ops
+      ps
         .deleteRole({
           organization: target.organization,
           database: target.database,
@@ -230,20 +186,11 @@ const pgExec = (client: Client, sql: string, values?: ReadonlyArray<unknown>) =>
     catch: toMigrationError,
   });
 
-const pgRows = <A>(client: Client, sql: string) =>
-  Effect.tryPromise({
-    try: () => client.query(sql).then((result) => result.rows as A[]),
-    catch: toMigrationError,
-  });
-
 const toMigrationError = (cause: unknown) =>
   new PostgresMigrationError({
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   });
-
-const quotePgIdentifier = (identifier: string) =>
-  `"${identifier.replaceAll('"', '""')}"`;
 
 const stripPgSslQueryParams = (uri: string): string => {
   try {

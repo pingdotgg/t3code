@@ -12,9 +12,8 @@ import type { Flow } from "./Flow.ts";
  * `UnsupportedOperationException`. The flow name is injected automatically
  * and `appflow:StopFlow` is granted on the flow. Provide the implementation
  * with `Effect.provide(AWS.AppFlow.StopFlowHttp)`.
- * @binding
- * @section Running Flows
- * @example Deactivate a Scheduled Flow from a Handler
+ * ### Running Flows
+ * **Example:** Deactivate a Scheduled Flow from a Handler
  * ```typescript
  * // init — bind the operation to the flow
  * const stopFlow = yield* AWS.AppFlow.StopFlow(flow);
@@ -23,6 +22,8 @@ import type { Flow } from "./Flow.ts";
  * const result = yield* stopFlow();
  * // result.flowStatus === "Suspended"
  * ```
+ *
+ * @binding
  */
 export interface StopFlow extends Binding.Service<
   StopFlow,

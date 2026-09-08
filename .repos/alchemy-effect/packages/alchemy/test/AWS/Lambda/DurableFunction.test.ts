@@ -49,6 +49,7 @@ describe("Lambda DurableFunction", () => {
   // a suspend/resume.
   describe("lifecycle", () => {
     let functionName: string;
+    let qualifier: string;
 
     beforeAll(
       Effect.gen(function* () {
@@ -60,13 +61,28 @@ describe("Lambda DurableFunction", () => {
         const outputs = yield* sharedStack.deploy(
           Effect.gen(function* () {
             const flow = yield* DurableFlow;
-            return { functionName: flow.functionName };
+            const version = yield* AWS.Lambda.Version("DurableFlowVersion", {
+              function: flow.function,
+            });
+            const live = yield* AWS.Lambda.Alias("DurableFlowLive", {
+              version,
+              aliasName: "live",
+            });
+            return {
+              functionName: flow.functionName,
+              qualifier: live.aliasName,
+            };
           }).pipe(Effect.provide(DurableFlowLive)),
         );
         functionName = outputs.functionName;
+        qualifier = outputs.qualifier;
         expect(functionName).toBeTruthy();
+        expect(qualifier).toBe("live");
       }),
-      { timeout: 420_000 },
+      // ~35s in isolation, but the deploy bundles + npm-vendors the Durable
+      // Execution SDK in-process; under full-suite CPU saturation the
+      // reconcile alone has been observed to exceed 420s.
+      { timeout: 600_000 },
     );
 
     afterAll(sharedStack.destroy(), { timeout: 120_000 });
@@ -75,23 +91,6 @@ describe("Lambda DurableFunction", () => {
       "runs a 2-step + sleep orchestration to completion",
       (_stack) =>
         Effect.gen(function* () {
-          // Durable executions must target a QUALIFIED ARN (a published
-          // version or alias) — invoking the unqualified function is rejected
-          // with `InvalidParameterValueException`. Publish a version and pin
-          // the execution to it. The freshly-deployed code may still be
-          // updating, so retry while the function reports a pending update.
-          const published = yield* Lambda.publishVersion({
-            FunctionName: functionName,
-          }).pipe(
-            Effect.retry({
-              while: (e) => e._tag === "ResourceConflictException",
-              schedule: Schedule.spaced("3 seconds"),
-              times: 20,
-            }),
-          );
-          const qualifier = published.Version!;
-          expect(qualifier).toBeTruthy();
-
           // Start: async Invoke with the alchemy envelope and an idempotent
           // execution name (safe to re-run — same name + same payload
           // reattaches to the existing execution).

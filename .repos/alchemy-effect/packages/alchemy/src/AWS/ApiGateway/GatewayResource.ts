@@ -55,9 +55,8 @@ export interface ApiGatewayResource extends ResourceType<
  * points either at `api.rootResourceId` (for top-level paths) or at
  * another `Resource`'s `resourceId` (for nested paths). Attach methods
  * to a resource by passing its `resourceId` to `ApiGateway.Method`.
- * @resource
- * @section Path resources
- * @example Top-level path
+ * ### Path resources
+ * **Example:** Top-level path
  * ```typescript
  * const items = yield* ApiGateway.Resource("Items", {
  *   restApi: api,
@@ -66,7 +65,7 @@ export interface ApiGatewayResource extends ResourceType<
  * });
  * ```
  *
- * @example Nested path with a greedy proxy
+ * **Example:** Nested path with a greedy proxy
  * ```typescript
  * const items = yield* ApiGateway.Resource("Items", {
  *   restApi: api,
@@ -80,6 +79,8 @@ export interface ApiGatewayResource extends ResourceType<
  *   pathPart: "{proxy+}",
  * });
  * ```
+ *
+ * @resource
  */
 export const GatewayResource = ResourceFactory<ApiGatewayResource>(
   "AWS.ApiGateway.Resource",

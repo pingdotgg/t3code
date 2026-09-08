@@ -35,7 +35,7 @@ export class TableSinkFunction extends AWS.Lambda.Function<AWS.Lambda.Function>(
 export const TableSinkFunctionLive = TableSinkFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The sink's bounded partial-failure retry can sleep up to ~6s, which
     // exceeds Lambda's 3s default timeout (see PATTERNS §7).
     timeout: Duration.seconds(30),
@@ -65,27 +65,23 @@ export const TableSinkFunctionLive = TableSinkFunction.make(
           };
 
           const entries: AWS.DynamoDB.TableSinkEntry[] = [
-            ...(body.puts ?? []).map(
-              (sk): AWS.DynamoDB.TableSinkEntry => ({
-                PutRequest: {
-                  Item: {
-                    pk: { S: body.pk },
-                    sk: { S: sk },
-                    data: { S: `payload-${sk}` },
-                  },
+            ...(body.puts ?? []).map((sk): AWS.DynamoDB.TableSinkEntry => ({
+              PutRequest: {
+                Item: {
+                  pk: { S: body.pk },
+                  sk: { S: sk },
+                  data: { S: `payload-${sk}` },
                 },
-              }),
-            ),
-            ...(body.deletes ?? []).map(
-              (sk): AWS.DynamoDB.TableSinkEntry => ({
-                DeleteRequest: {
-                  Key: {
-                    pk: { S: body.pk },
-                    sk: { S: sk },
-                  },
+              },
+            })),
+            ...(body.deletes ?? []).map((sk): AWS.DynamoDB.TableSinkEntry => ({
+              DeleteRequest: {
+                Key: {
+                  pk: { S: body.pk },
+                  sk: { S: sk },
                 },
-              }),
-            ),
+              },
+            })),
           ];
 
           // The sink is request-scoped: drain fully before responding.

@@ -13,9 +13,8 @@ export interface DeleteProtocolsListRequest
  *
  * Permanently deletes the specified Firewall Manager protocols list. Provide the
  * implementation with `Effect.provide(AWS.FMS.DeleteProtocolsListHttp)`.
- * @binding
- * @section Protocols Lists
- * @example Delete a Protocols List
+ * ### Protocols Lists
+ * **Example:** Delete a Protocols List
  * ```typescript
  * // init — account-level binding takes no resource
  * const deleteProtocolsList = yield* AWS.FMS.DeleteProtocolsList();
@@ -23,6 +22,8 @@ export interface DeleteProtocolsListRequest
  * // runtime
  * yield* deleteProtocolsList({ ListId: listId });
  * ```
+ *
+ * @binding
  */
 export interface DeleteProtocolsList extends Binding.Service<
   DeleteProtocolsList,

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists DevOps Guru's remediation recommendations for an insight — the ready-made content of an incident notification or runbook comment.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.ListRecommendationsHttp)`.
- * @binding
- * @section Events and Recommendations
- * @example List an Insight's Recommendations
+ * ### Events and Recommendations
+ * **Example:** List an Insight's Recommendations
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listRecommendations = yield* AWS.DevOpsGuru.ListRecommendations();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.log(`${rec.Name}: ${rec.Description}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListRecommendations extends Binding.Service<
   ListRecommendations,

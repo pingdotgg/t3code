@@ -16,9 +16,8 @@ export interface ImportDocumentRequest extends Omit<
  *
  * Uploads a base64-encoded file into a card of the bound Q App, at app or session scope. Provide the implementation with
  * `Effect.provide(AWS.QApps.ImportDocumentHttp)`.
- * @binding
- * @section Files
- * @example Import a Document
+ * ### Files
+ * **Example:** Import a Document
  * ```typescript
  * // init — bind the operation to the Q App
  * const importDocument = yield* AWS.QApps.ImportDocument(app);
@@ -33,6 +32,8 @@ export interface ImportDocumentRequest extends Omit<
  * });
  * console.log(imported.fileId);
  * ```
+ *
+ * @binding
  */
 export interface ImportDocument extends Binding.Service<
   ImportDocument,

@@ -13,9 +13,8 @@ export interface GetSamplingStatisticSummariesRequest
  * provide the implementation with `Effect.provide(XRay.GetSamplingStatisticSummariesHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetSamplingStatisticSummaries`, so the binding grants it on `*`.
- * @binding
- * @section Sampling
- * @example Inspect recent sampling activity
+ * ### Sampling
+ * **Example:** Inspect recent sampling activity
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -27,6 +26,8 @@ export interface GetSamplingStatisticSummariesRequest
  * const summaries = yield* getSamplingStatisticSummaries();
  * const perRule = summaries.SamplingStatisticSummaries ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetSamplingStatisticSummaries extends Binding.Service<
   GetSamplingStatisticSummaries,

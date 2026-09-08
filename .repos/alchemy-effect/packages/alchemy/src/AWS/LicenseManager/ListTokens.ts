@@ -14,9 +14,8 @@ export interface ListTokensRequest extends licensemanager.ListTokensRequest {}
  *
  * Provide the implementation with
  * `Effect.provide(AWS.LicenseManager.ListTokensHttp)`.
- * @binding
- * @section License Checkout Data Plane
- * @example List Activation Tokens
+ * ### License Checkout Data Plane
+ * **Example:** List Activation Tokens
  * ```typescript
  * // init
  * const listTokens = yield* AWS.LicenseManager.ListTokens();
@@ -24,6 +23,8 @@ export interface ListTokensRequest extends licensemanager.ListTokensRequest {}
  * // runtime
  * const { Tokens } = yield* listTokens();
  * ```
+ *
+ * @binding
  */
 export interface ListTokens extends Binding.Service<
   ListTokens,

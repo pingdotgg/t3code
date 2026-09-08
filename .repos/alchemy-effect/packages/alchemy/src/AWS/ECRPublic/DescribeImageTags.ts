@@ -16,9 +16,8 @@ export interface DescribeImageTagsRequest extends Omit<
  * bound {@link PublicRepository}. Provide the implementation with
  * `Effect.provide(AWS.ECRPublic.DescribeImageTagsHttp)`.
  *
- * @binding
- * @section Reading Images
- * @example List Image Tags
+ * ### Reading Images
+ * **Example:** List Image Tags
  * ```typescript
  * // init
  * const describeImageTags = yield* AWS.ECRPublic.DescribeImageTags(repository);
@@ -27,6 +26,8 @@ export interface DescribeImageTagsRequest extends Omit<
  * const result = yield* describeImageTags();
  * const tags = (result.imageTagDetails ?? []).map((t) => t.imageTag);
  * ```
+ *
+ * @binding
  */
 export interface DescribeImageTags extends Binding.Service<
   DescribeImageTags,

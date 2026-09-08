@@ -27,9 +27,8 @@ export type StartSessionInput = Omit<
  * the given execution role; grants `iam:PassRole` (conditioned to
  * `emr-serverless.amazonaws.com`) accordingly. Provide the implementation
  * with `Effect.provide(AWS.EMRServerless.StartSessionHttp)`.
- * @binding
- * @section Interactive Sessions
- * @example Start A Session
+ * ### Interactive Sessions
+ * **Example:** Start A Session
  * ```typescript
  * // init
  * const startSession = yield* AWS.EMRServerless.StartSession(app);
@@ -38,6 +37,8 @@ export type StartSessionInput = Omit<
  * const session = yield* startSession({ executionRoleArn: sessionRoleArn });
  * yield* Effect.log(`started ${session.sessionId}`);
  * ```
+ *
+ * @binding
  */
 export interface StartSession extends Binding.Service<
   StartSession,

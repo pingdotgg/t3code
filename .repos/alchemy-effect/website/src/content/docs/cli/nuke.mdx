@@ -28,6 +28,19 @@ The state store is never read or written: enumeration is live cloud state only. 
 - Resources whose `delete` keeps failing — reported at the end of the run.
 - Anything owned by providers not registered in the stack file.
 
+## Local mode
+
+`--local` flips the command over to the **local** implementations of your providers — the floci-emulated AWS account and the Cloudflare local runtime that [`alchemy dev`](/cli/dev) provisions into — instead of the real cloud.
+
+```sh
+# clear everything floci is holding
+bun alchemy unsafe nuke --local --include 'AWS.*'
+```
+
+Only providers registered with both a live and a local implementation participate; mode-agnostic providers (a single implementation, which always talks to the real cloud) are dropped at discovery. That's what makes `--local` safe: there is no code path by which it reaches live infrastructure, and it needs no cloud credentials.
+
+Each selected provider's local variant is built lazily, as it is scanned, so `--include` also scopes which local runtimes get constructed. A local variant that fails to build is reported as a scan failure and contributes 0 resources, exactly like a failing `list`.
+
 ## Scoping the blast radius
 
 `--include` and `--exclude` take provider-ID globs (picomatch, e.g. `'Cloudflare.*'`), are repeatable, and `--exclude` is applied after `--include`.
@@ -72,6 +85,7 @@ Deletion runs in passes: each pass attempts every remaining resource, failures a
 | `--include <glob>`    | Glob of provider IDs to include (e.g. `'Cloudflare.*'` or `'Cloudflare.Worker'`). Repeatable; when omitted, every provider is included.                                |
 | `--exclude <glob>`    | Glob of provider IDs to exclude (applied after `--include`). Repeatable.                                                                                               |
 | `--filter <expr>`     | JavaScript expression evaluated with `resource` in scope. Any resource for which an expression is truthy is **spared**. Repeatable.                                    |
+| `--local`             | Enumerate and delete LOCAL (emulated) resources instead of real cloud ones. Only providers with a local implementation participate.                                    |
 
 ## Debugging
 
@@ -79,6 +93,7 @@ Deletion runs in passes: each pass attempts every remaining resource, failures a
 
 ## Where next
 
+- [AWS local development](/aws/local-development) — the floci emulator `--local` clears
 - [destroy](/cli/destroy) — the stack-scoped, state-driven teardown you usually want
 - [Inspecting State](/cli/inspecting-state) — clear the stale state entries nuke leaves behind
 - [State Store](/state-store) — why nuke bypasses it entirely

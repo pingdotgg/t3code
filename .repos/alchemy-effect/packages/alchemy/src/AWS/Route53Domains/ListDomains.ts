@@ -18,9 +18,8 @@ export interface ListDomainsRequest extends route53domains.ListDomainsRequest {}
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.ListDomainsHttp)`.
  *
- * @binding
- * @section Listing Registered Domains
- * @example List the Account's Domains
+ * ### Listing Registered Domains
+ * **Example:** List the Account's Domains
  * ```typescript
  * // init
  * const listDomains = yield* AWS.Route53Domains.ListDomains();
@@ -29,6 +28,8 @@ export interface ListDomainsRequest extends route53domains.ListDomainsRequest {}
  * const result = yield* listDomains({ MaxItems: 100 });
  * const names = (result.Domains ?? []).map((domain) => domain.DomainName);
  * ```
+ *
+ * @binding
  */
 export interface ListDomains extends Binding.Service<
   ListDomains,

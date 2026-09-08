@@ -116,16 +116,13 @@ export type Account = Resource<
  * The account's physical identity is the Cloudflare-assigned `accountId`.
  * Account names are not unique, so there is no find-by-name fallback: if
  * state is lost, the account is treated as missing rather than guessed at.
- * @resource
- * @product Accounts
- * @category Account & Identity
- * @section Creating an account
- * @example Standard subaccount with a generated name
+ * ### Creating an account
+ * **Example:** Standard subaccount with a generated name
  * ```typescript
  * const account = yield* Cloudflare.Account.Account("CustomerAccount", {});
  * ```
  *
- * @example Subaccount on a specific tenant unit
+ * **Example:** Subaccount on a specific tenant unit
  * ```typescript
  * const account = yield* Cloudflare.Account.Account("CustomerAccount", {
  *   name: "Customer: ACME Inc",
@@ -133,8 +130,8 @@ export type Account = Resource<
  * });
  * ```
  *
- * @section Account settings
- * @example Enforce two-factor authentication for all members
+ * ### Account settings
+ * **Example:** Enforce two-factor authentication for all members
  * ```typescript
  * const account = yield* Cloudflare.Account.Account("CustomerAccount", {
  *   name: "Customer: ACME Inc",
@@ -144,6 +141,10 @@ export type Account = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/tenant/how-to/manage-accounts/
+ *
+ * @resource
+ * @product Accounts
+ * @category Account & Identity
  */
 export const Account = Resource<Account>(TypeId, {
   aliases: ["Cloudflare.Account"],

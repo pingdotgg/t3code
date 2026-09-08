@@ -48,9 +48,8 @@ export type WebSocketEventSourceService = <Req = never>(
  * handler. Subscribe routes with {@link onWebSocketRoute} and provide
  * `Lambda.WebSocketEventSource` on the hosting function.
  *
- * @binding
- * @section Handling WebSocket Routes
- * @example Echo server on a WEBSOCKET Api
+ * ### Handling WebSocket Routes
+ * **Example:** Echo server on a WEBSOCKET Api
  * ```typescript
  * export default MyFunction.make(
  *   { main: import.meta.url },
@@ -94,6 +93,8 @@ export type WebSocketEventSourceService = <Req = never>(
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export class WebSocketEventSource extends Context.Service<
   WebSocketEventSource,

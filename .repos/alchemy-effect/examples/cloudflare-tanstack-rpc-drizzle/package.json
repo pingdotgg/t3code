@@ -18,27 +18,27 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@effect/atom-react": "catalog:",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@effect/sql-pg": "catalog:",
-    "@tanstack/react-router": "^1.167.4",
-    "@tanstack/react-start": "^1.166.15",
+    "@effect/atom-react": "catalog:effect",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/sql-pg": "catalog:effect",
+    "@tanstack/react-router": "catalog:frontend",
+    "@tanstack/react-start": "catalog:frontend",
     "alchemy": "workspace:*",
-    "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "pg": "^8.13.0",
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "pg": "catalog:database",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
-    "@types/pg": "^8.11.0",
+    "@cloudflare/workers-types": "catalog:cloudflare",
+    "@types/pg": "catalog:database",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "drizzle-kit": "catalog:",
-    "typescript": "^5.9.3",
-    "vite": "catalog:"
+    "drizzle-kit": "catalog:database",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
   }
 }

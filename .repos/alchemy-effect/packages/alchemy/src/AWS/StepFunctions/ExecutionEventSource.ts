@@ -83,8 +83,8 @@ export interface ExecutionEventSourceProps extends EventRouteProps {
  *
  * `EXPRESS` workflows do not emit execution status change events.
  *
- * @section Consuming Execution Events
- * @example Alert On Failed Executions
+ * ### Consuming Execution Events
+ * **Example:** Alert On Failed Executions
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

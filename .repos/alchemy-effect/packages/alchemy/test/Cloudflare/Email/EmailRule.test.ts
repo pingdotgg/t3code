@@ -8,6 +8,7 @@ import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
+import { emailRoutingScoped } from "./scope.ts";
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
 const logLevel = Effect.provideService(
@@ -39,7 +40,7 @@ const forbiddenRetrySchedule = Schedule.exponential("500 millis");
 // Email Routing must be enabled on the zone for rules to be created and
 // visible to `list()`.
 const enableRouting = (zoneId: string) =>
-  emailRouting.enableEmailRouting({ zoneId, body: {} }).pipe(
+  emailRouting.enableEmailRouting({ zoneId }).pipe(
     Effect.retry({
       while: (e) => e._tag === "Forbidden",
       schedule: forbiddenRetrySchedule,
@@ -47,7 +48,7 @@ const enableRouting = (zoneId: string) =>
     }),
   );
 
-describe.sequential("EmailRule", () => {
+describe.sequential.skipIf(!emailRoutingScoped)("EmailRule", () => {
   // Canonical `list()` test (zone-scoped collection): email routing rules live
   // under `/zones/{id}/email/routing/rules` with no account-wide enumeration
   // API, so `list()` enumerates every zone via `listAllZones` and exhaustively

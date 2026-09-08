@@ -15,9 +15,8 @@ export interface GetCostAndUsageWithResourcesRequest
  * instance ids etc.). Requires resource-level data to be enabled in Cost
  * Explorer settings and only covers the trailing 14 days. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetCostAndUsageWithResourcesHttp)`.
- * @binding
- * @section Querying Cost and Usage
- * @example Query Resource-Level Cost
+ * ### Querying Cost and Usage
+ * **Example:** Query Resource-Level Cost
  * ```typescript
  * // init — account-level binding takes no resource
  * const getCostAndUsageWithResources = yield* AWS.CostExplorer.GetCostAndUsageWithResources();
@@ -30,6 +29,8 @@ export interface GetCostAndUsageWithResourcesRequest
  *   Metrics: ["UnblendedCost"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetCostAndUsageWithResources extends Binding.Service<
   GetCostAndUsageWithResources,

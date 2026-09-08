@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * and grants `forecast:DescribeAutoPredictor` on `*`. Provide the
  * implementation with `Effect.provide(AWS.Forecast.DescribeAutoPredictorHttp)`.
  *
- * @binding
- * @section Training Predictors
- * @example Poll a Training Run
+ * ### Training Predictors
+ * **Example:** Poll a Training Run
  * ```typescript
  * // init
  * const describeAutoPredictor = yield* AWS.Forecast.DescribeAutoPredictor();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`training ${detail.Status}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeAutoPredictor extends Binding.Service<
   DescribeAutoPredictor,

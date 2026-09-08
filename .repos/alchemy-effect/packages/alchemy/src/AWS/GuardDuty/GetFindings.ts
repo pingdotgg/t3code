@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.GetFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example Hydrate Finding Details
+ * ### Working with Findings
+ * **Example:** Hydrate Finding Details
  * ```typescript
  * // init
  * const getFindings = yield* AWS.GuardDuty.GetFindings(detector);
@@ -20,6 +19,8 @@ import type { Detector } from "./Detector.ts";
  * // runtime
  * const { Findings } = yield* getFindings({ FindingIds: findingIds });
  * ```
+ *
+ * @binding
  */
 export interface GetFindings extends Binding.Service<
   GetFindings,

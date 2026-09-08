@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.BatchGetMemberEc2DeepInspectionStatusHttp)`.
- * @binding
- * @section Organization & Members
- * @example Read Members' Deep Inspection Status
+ * ### Organization & Members
+ * **Example:** Read Members' Deep Inspection Status
  * ```typescript
  * // init
  * const batchGetMemberEc2DeepInspectionStatus = yield* AWS.Inspector2.BatchGetMemberEc2DeepInspectionStatus();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { accountIds } = yield* batchGetMemberEc2DeepInspectionStatus();
  * ```
+ *
+ * @binding
  */
 export interface BatchGetMemberEc2DeepInspectionStatus extends Binding.Service<
   BatchGetMemberEc2DeepInspectionStatus,

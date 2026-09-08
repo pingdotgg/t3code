@@ -14,9 +14,8 @@ export interface ListManagedNotificationChildEventsRequest
  * List the child events of one aggregated AWS-managed notification event.
  * Provide the implementation with
  * `Effect.provide(AWS.Notifications.ListManagedNotificationChildEventsHttp)`.
- * @binding
- * @section Reading AWS-Managed Notifications
- * @example List an Aggregate Event's Children
+ * ### Reading AWS-Managed Notifications
+ * **Example:** List an Aggregate Event's Children
  * ```typescript
  * // init — account-level binding takes no resource
  * const listManagedNotificationChildEvents =
@@ -28,6 +27,8 @@ export interface ListManagedNotificationChildEventsRequest
  * });
  * const children = result.managedNotificationChildEvents;
  * ```
+ *
+ * @binding
  */
 export interface ListManagedNotificationChildEvents extends Binding.Service<
   ListManagedNotificationChildEvents,

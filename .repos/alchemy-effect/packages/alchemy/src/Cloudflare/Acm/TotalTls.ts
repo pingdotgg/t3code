@@ -98,11 +98,8 @@ export type TotalTls = Resource<
  *
  * Only one `TotalTls` resource per zone makes sense — two instances
  * managing the same zone would fight over the singleton.
- * @resource
- * @product ACM
- * @category SSL/TLS & Certificates
- * @section Managing Total TLS
- * @example Enable Total TLS on a zone
+ * ### Managing Total TLS
+ * **Example:** Enable Total TLS on a zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -112,7 +109,7 @@ export type TotalTls = Resource<
  * });
  * ```
  *
- * @example Pin the issuing Certificate Authority
+ * **Example:** Pin the issuing Certificate Authority
  * ```typescript
  * yield* Cloudflare.Acm.TotalTls("TotalTls", {
  *   zoneId: zone.zoneId,
@@ -122,6 +119,10 @@ export type TotalTls = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/edge-certificates/additional-options/total-tls/
+ *
+ * @resource
+ * @product ACM
+ * @category SSL/TLS & Certificates
  */
 export const TotalTls = Resource<TotalTls>(TypeId);
 

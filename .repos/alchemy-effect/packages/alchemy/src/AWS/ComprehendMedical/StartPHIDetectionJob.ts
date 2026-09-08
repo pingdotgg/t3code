@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:StartPHIDetectionJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.StartPHIDetectionJobHttp)`.
  *
- * @binding
- * @section Batch PHI Detection Jobs
- * @example Start a Batch Job
+ * ### Batch PHI Detection Jobs
+ * **Example:** Start a Batch Job
  * ```typescript
  * // init
  * const startPHIDetectionJob = yield* AWS.ComprehendMedical.StartPHIDetectionJob();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   LanguageCode: "en",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartPHIDetectionJob extends Binding.Service<
   StartPHIDetectionJob,

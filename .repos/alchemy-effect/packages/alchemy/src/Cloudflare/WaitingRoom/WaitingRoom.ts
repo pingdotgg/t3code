@@ -23,7 +23,7 @@ export type QueueingMethod = "fifo" | "random" | "passthrough" | "reject";
 /**
  * HTTP status code returned to a user while in the queue.
  */
-export type QueueingStatusCode = "200" | "202" | "429";
+export type QueueingStatusCode = 200 | 202 | 429;
 
 /**
  * Which Turnstile widget type the waiting room uses for detecting bot
@@ -246,11 +246,8 @@ export type WaitingRoom = Resource<TypeId, Props, Attributes, never, Providers>;
  * Waiting rooms carry no ownership markers, so when state is lost `read`
  * matches by name and reports the room as `Unowned` — the engine refuses
  * to take it over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Waiting Rooms
- * @category Performance & Reliability
- * @section Creating a Waiting Room
- * @example Basic waiting room on a host
+ * ### Creating a Waiting Room
+ * **Example:** Basic waiting room on a host
  * ```typescript
  * const room = yield* Cloudflare.WaitingRoom.WaitingRoom("checkout", {
  *   zoneId: zone.zoneId,
@@ -261,7 +258,7 @@ export type WaitingRoom = Resource<TypeId, Props, Attributes, never, Providers>;
  * });
  * ```
  *
- * @example Queue all traffic during an incident
+ * **Example:** Queue all traffic during an incident
  * ```typescript
  * yield* Cloudflare.WaitingRoom.WaitingRoom("incident-gate", {
  *   zoneId: zone.zoneId,
@@ -269,12 +266,12 @@ export type WaitingRoom = Resource<TypeId, Props, Attributes, never, Providers>;
  *   totalActiveUsers: 500,
  *   newUsersPerMinute: 200,
  *   queueAll: true,
- *   queueingStatusCode: "429",
+ *   queueingStatusCode: 429,
  * });
  * ```
  *
- * @section Customizing behavior
- * @example Short sessions with a custom cookie suffix
+ * ### Customizing behavior
+ * **Example:** Short sessions with a custom cookie suffix
  * ```typescript
  * yield* Cloudflare.WaitingRoom.WaitingRoom("flash-sale", {
  *   zoneId: zone.zoneId,
@@ -289,6 +286,10 @@ export type WaitingRoom = Resource<TypeId, Props, Attributes, never, Providers>;
  * ```
  *
  * @see https://developers.cloudflare.com/waiting-room/
+ *
+ * @resource
+ * @product Waiting Rooms
+ * @category Performance & Reliability
  */
 export const WaitingRoom = Resource<WaitingRoom>(TypeId, {
   aliases: ["Cloudflare.WaitingRoom"],
@@ -502,7 +503,7 @@ const DEFAULTS = {
   disableSessionRenewal: false,
   queueAll: false,
   queueingMethod: "fifo",
-  queueingStatusCode: "200",
+  queueingStatusCode: 200,
   suspended: false,
   jsonResponseEnabled: false,
   defaultTemplateLanguage: "en-US",
@@ -621,7 +622,7 @@ const toAttributes = (
   sessionDuration: room.sessionDuration ?? 5,
   queueAll: room.queueAll ?? false,
   queueingMethod: (room.queueingMethod ?? "fifo") as QueueingMethod,
-  queueingStatusCode: (room.queueingStatusCode ?? "200") as QueueingStatusCode,
+  queueingStatusCode: room.queueingStatusCode ?? 200,
   suspended: room.suspended ?? false,
   createdOn: room.createdOn ?? undefined,
   modifiedOn: room.modifiedOn ?? undefined,

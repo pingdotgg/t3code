@@ -1,7 +1,16 @@
 {
   "name": "@alchemy.run/pr-package",
-  "version": "2.0.0-beta.65",
+  "version": "2.0.0-beta.76",
+  "description": "Self-hostable PR package registry for Cloudflare built with Alchemy.",
+  "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "cloudflare",
+    "effect",
+    "infrastructure-as-code"
+  ],
   "type": "module",
   "sideEffects": false,
   "repository": {
@@ -9,12 +18,16 @@
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/pr-package"
   },
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
   "files": [
     "lib",
-    "src"
+    "src",
+    "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b && bun ../../scripts/copy-package-files.ts pr-package"
   },
   "exports": {
     ".": {
@@ -26,7 +39,7 @@
   },
   "dependencies": {
     "alchemy": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:effect"
   },
   "publishConfig": {
     "access": "public"

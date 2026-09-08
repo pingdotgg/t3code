@@ -61,8 +61,8 @@ export interface Enabler extends Resource<
  * set of scan types this resource enabled; destroy only disables those types
  * and leaves any the account had enabled out-of-band untouched.
  *
- * @section Enabling Inspector
- * @example Enable EC2, ECR, and Lambda scanning
+ * ### Enabling Inspector
+ * **Example:** Enable EC2, ECR, and Lambda scanning
  * ```typescript
  * const inspector = yield* Inspector2.Enabler("Inspector", {
  *   resourceTypes: ["EC2", "ECR", "LAMBDA"],

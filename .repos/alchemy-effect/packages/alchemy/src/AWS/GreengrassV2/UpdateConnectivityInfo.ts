@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * DHCP change). The caller supplies the core device's thing name and the new
  * endpoint list at runtime. Provide the implementation with
  * `Effect.provide(AWS.GreengrassV2.UpdateConnectivityInfoHttp)`.
- * @binding
- * @section Managing Client Devices
- * @example Publish A Core's Broker Endpoint
+ * ### Managing Client Devices
+ * **Example:** Publish A Core's Broker Endpoint
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateConnectivityInfo = yield* AWS.GreengrassV2.UpdateConnectivityInfo();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateConnectivityInfo extends Binding.Service<
   UpdateConnectivityInfo,

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * Pairs with {@link CreateBackup} to poll a runtime-initiated backup until
  * it reaches `AVAILABLE`. Provide the implementation with
  * `Effect.provide(AWS.FSx.DescribeBackupsHttp)`.
- * @binding
- * @section Managing Backups at Runtime
- * @example List a file system's backups
+ * ### Managing Backups at Runtime
+ * **Example:** List a file system's backups
  * ```typescript
  * const describeBackups = yield* AWS.FSx.DescribeBackups();
  *
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`${response.Backups?.length ?? 0} backups`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeBackups extends Binding.Service<
   DescribeBackups,

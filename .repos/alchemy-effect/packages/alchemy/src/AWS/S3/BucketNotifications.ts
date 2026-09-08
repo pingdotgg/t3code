@@ -41,9 +41,8 @@ export interface NotificationsProps<Events extends S3EventType[]> {
  *
  * The handler receives a `Stream<BucketNotification>` for processing events
  * and is passed as the final positional argument.
- * @binding
- * @section Subscribing to Events
- * @example Process all object creation events
+ * ### Subscribing to Events
+ * **Example:** Process all object creation events
  * ```typescript
  * import * as S3 from "alchemy/AWS/S3";
  *
@@ -59,7 +58,7 @@ export interface NotificationsProps<Events extends S3EventType[]> {
  * );
  * ```
  *
- * @example Process all events (no filter)
+ * **Example:** Process all events (no filter)
  * ```typescript
  * yield* S3.consumeBucketEvents(bucket, (stream) =>
  *   stream.pipe(
@@ -69,6 +68,8 @@ export interface NotificationsProps<Events extends S3EventType[]> {
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export function consumeBucketEvents<
   B extends Bucket,

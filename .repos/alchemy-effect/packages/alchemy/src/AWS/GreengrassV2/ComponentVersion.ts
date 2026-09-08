@@ -50,9 +50,8 @@ export interface ComponentVersion extends Resource<
  * replaces the component version (a new name/version pair is registered and
  * the previous one is deleted). Only tags are mutable in place.
  *
- * @resource
- * @section Creating Component Versions
- * @example Component from an inline JSON recipe
+ * ### Creating Component Versions
+ * **Example:** Component from an inline JSON recipe
  * ```typescript
  * import * as GreengrassV2 from "alchemy/AWS/GreengrassV2";
  *
@@ -73,13 +72,15 @@ export interface ComponentVersion extends Resource<
  * });
  * ```
  *
- * @example Tagged component version
+ * **Example:** Tagged component version
  * ```typescript
  * const component = yield* GreengrassV2.ComponentVersion("Hello", {
  *   recipe,
  *   tags: { team: "edge" },
  * });
  * ```
+ *
+ * @resource
  */
 export const ComponentVersion = Resource<ComponentVersion>(
   "AWS.GreengrassV2.ComponentVersion",

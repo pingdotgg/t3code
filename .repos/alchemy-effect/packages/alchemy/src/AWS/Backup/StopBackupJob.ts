@@ -9,14 +9,15 @@ import * as Binding from "../../Binding.ts";
  * Cancels a running backup job. Only jobs for resource types that support
  * cancellation can be stopped. Provide the implementation with
  * `Effect.provide(AWS.Backup.StopBackupJobHttp)`.
- * @binding
- * @section Monitoring Backup Jobs
- * @example Cancel A Backup Job
+ * ### Monitoring Backup Jobs
+ * **Example:** Cancel A Backup Job
  * ```typescript
  * const stopBackupJob = yield* AWS.Backup.StopBackupJob();
  *
  * yield* stopBackupJob({ BackupJobId: jobId });
  * ```
+ *
+ * @binding
  */
 export interface StopBackupJob extends Binding.Service<
   StopBackupJob,

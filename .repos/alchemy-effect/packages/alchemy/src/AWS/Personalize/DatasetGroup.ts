@@ -71,14 +71,13 @@ export interface DatasetGroup extends Resource<
  * group is cheap and fast; the expensive training work lives in solutions and
  * campaigns provisioned separately.
  *
- * @resource
- * @section Creating a Dataset Group
- * @example Custom Dataset Group
+ * ### Creating a Dataset Group
+ * **Example:** Custom Dataset Group
  * ```typescript
  * const group = yield* Personalize.DatasetGroup("Recommendations", {});
  * ```
  *
- * @example Domain Dataset Group with Encryption
+ * **Example:** Domain Dataset Group with Encryption
  * ```typescript
  * const group = yield* Personalize.DatasetGroup("Storefront", {
  *   domain: "ECOMMERCE",
@@ -87,6 +86,8 @@ export interface DatasetGroup extends Resource<
  *   tags: { team: "growth" },
  * });
  * ```
+ *
+ * @resource
  */
 export const DatasetGroup = Resource<DatasetGroup>(
   "AWS.Personalize.DatasetGroup",

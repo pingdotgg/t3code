@@ -17,9 +17,8 @@ export interface InsertAdBreakRequest extends Omit<
  * tag when the channel is not live. The channel ARN is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.IVS.InsertAdBreakHttp)`.
- * @binding
- * @section Inserting Ad Breaks
- * @example Trigger a 30-Second Ad Break
+ * ### Inserting Ad Breaks
+ * **Example:** Trigger a 30-Second Ad Break
  * ```typescript
  * // init — bind the operation to the channel
  * const insertAdBreak = yield* AWS.IVS.InsertAdBreak(channel);
@@ -27,6 +26,8 @@ export interface InsertAdBreakRequest extends Omit<
  * // runtime
  * const { adBreakId } = yield* insertAdBreak({ durationSeconds: 30 });
  * ```
+ *
+ * @binding
  */
 export interface InsertAdBreak extends Binding.Service<
   InsertAdBreak,

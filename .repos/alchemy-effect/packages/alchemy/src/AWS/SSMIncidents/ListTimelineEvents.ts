@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * grant is account-level (`Resource: "*"`).
  * Provide the implementation with
  * `Effect.provide(AWS.SSMIncidents.ListTimelineEventsHttp)`.
- * @binding
- * @section Timeline Events
- * @example List An Incident's Timeline
+ * ### Timeline Events
+ * **Example:** List An Incident's Timeline
  * ```typescript
  * // init
  * const listTimelineEvents = yield* AWS.SSMIncidents.ListTimelineEvents();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   sortOrder: "DESCENDING",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListTimelineEvents extends Binding.Service<
   ListTimelineEvents,

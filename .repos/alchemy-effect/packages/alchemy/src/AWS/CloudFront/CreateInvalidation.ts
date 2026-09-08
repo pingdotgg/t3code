@@ -11,9 +11,8 @@ export interface CreateInvalidationRequest extends Omit<
 /**
  * Grants a Function permission to create CloudFront cache invalidations for a
  * distribution at runtime — the classic post-publish/CMS purge pattern.
- * @binding
- * @section Invalidating from a Function
- * @example Purge Paths After a Content Update
+ * ### Invalidating from a Function
+ * **Example:** Purge Paths After a Content Update
  * ```typescript
  * const invalidate = yield* CloudFront.CreateInvalidation(distribution);
  *
@@ -25,6 +24,8 @@ export interface CreateInvalidationRequest extends Omit<
  * });
  * // response.Invalidation?.Id
  * ```
+ *
+ * @binding
  */
 export interface CreateInvalidation extends Binding.Service<
   CreateInvalidation,

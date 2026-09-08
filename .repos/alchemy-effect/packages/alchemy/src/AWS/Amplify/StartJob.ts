@@ -18,9 +18,8 @@ export interface StartJobRequest extends Omit<
  *
  * The canonical use is a webhook Lambda that rebuilds the site when upstream
  * content changes (a CMS publish, a data refresh, etc.).
- * @binding
- * @section Starting Jobs
- * @example Rebuild a Branch on Content Change
+ * ### Starting Jobs
+ * **Example:** Rebuild a Branch on Content Change
  * ```typescript
  * // init — bind the operation to the app
  * const startJob = yield* AWS.Amplify.StartJob(app);
@@ -32,6 +31,8 @@ export interface StartJobRequest extends Omit<
  *   jobReason: "CMS content published",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartJob extends Binding.Service<
   StartJob,

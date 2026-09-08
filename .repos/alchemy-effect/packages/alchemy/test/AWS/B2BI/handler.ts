@@ -103,7 +103,7 @@ export const B2biFixturesLive = Layer.effect(
 export default B2biTestFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.minutes(2),
   },
   Effect.gen(function* () {

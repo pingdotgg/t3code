@@ -13,9 +13,8 @@ export interface GetSamplingTargetsRequest
  * provide the implementation with `Effect.provide(XRay.GetSamplingTargetsHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetSamplingTargets`, so the binding grants it on `*`.
- * @binding
- * @section Sampling
- * @example Refresh sampling quotas
+ * ### Sampling
+ * **Example:** Refresh sampling quotas
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -36,6 +35,8 @@ export interface GetSamplingTargetsRequest
  * });
  * const documents = targets.SamplingTargetDocuments ?? [];
  * ```
+ *
+ * @binding
  */
 export interface GetSamplingTargets extends Binding.Service<
   GetSamplingTargets,

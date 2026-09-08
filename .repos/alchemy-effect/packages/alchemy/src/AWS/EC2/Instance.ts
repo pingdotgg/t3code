@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import type * as rolldown from "rolldown";
 import * as Bundle from "../../Bundle/Bundle.ts";
 import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
 import { deepEqual, isResolved } from "../../Diff.ts";
@@ -28,6 +27,7 @@ import type { PolicyStatement } from "../IAM/Policy.ts";
 import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import {
+  type Ec2HostedProps,
   createEc2HostRuntimeContext,
   createEc2HostedSupport,
   type Ec2HostRuntimeContext,
@@ -123,12 +123,14 @@ export interface InstanceProps extends PlatformProps {
    */
   env?: Record<string, any>;
   /**
-   * Bundler configuration for the hosted process entrypoint.
+   * Bundler configuration for the hosted process entrypoint: rolldown
+   * `input`/`output` overrides plus pure-annotation options (`pure`).
+   * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+   * `@distilled.cloud/*` are annotated as pure by default so unused code
+   * from those packages is tree-shaken; list additional packages via
+   * `pure.packages`, or disable with `pure: false`.
    */
-  build?: {
-    input?: Partial<rolldown.InputOptions>;
-    output?: Partial<rolldown.OutputOptions>;
-  };
+  build?: Bundle.BundleConfig;
   /**
    * Additional managed policy ARNs for the managed instance role.
    * This can only be used when Alchemy manages the instance profile.
@@ -273,19 +275,18 @@ export type InstanceRuntimeContext = Ec2HostRuntimeContext;
 /**
  * An EC2 instance that can either act as a low-level compute primitive or run
  * a bundled long-lived Effect program directly on the machine.
- * @resource
- * @section Launching Instances
- * @example Basic Instance
+ * ### Launching Instances
+ * **Example:** Basic Instance
  * ```typescript
  * const instance = yield* AWS.EC2.Instance("AppInstance", {
- *   imageId,
+ *   imageId: AWS.EC2.amazonLinux2023(),
  *   instanceType: "t3.micro",
  *   subnetId: subnet.subnetId,
  * });
  * ```
  *
- * @section Hosting Processes
- * @example HTTP Server on an Instance
+ * ### Hosting Processes
+ * **Example:** HTTP Server on an Instance
  * ```typescript
  * const api = yield* Effect.gen(function* () {
  *   yield* Http.serve(
@@ -294,7 +295,7 @@ export type InstanceRuntimeContext = Ec2HostRuntimeContext;
  *
  *   return {
  *     main: import.meta.url,
- *     imageId,
+ *     imageId: AWS.EC2.amazonLinux2023(),
  *     instanceType: "t3.small",
  *     subnetId: subnet.subnetId,
  *     securityGroupIds: [securityGroup.groupId],
@@ -306,6 +307,47 @@ export type InstanceRuntimeContext = Ec2HostRuntimeContext;
  *   AWS.EC2.Instance("ApiInstance"),
  * );
  * ```
+ *
+ * ### Bundling & Tree-shaking
+ * `main` is bundled with rolldown at deploy time. Top-level calls in the
+ * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+ * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
+ * default, so anything the hosted program doesn't use from those packages is
+ * tree-shaken out of the bundle. Any other package — including your own
+ * app — is left untouched unless you list it explicitly.
+ *
+ * **Example:** Treat additional packages as pure
+ * Pass package names (or picomatch globs) via `build.pure.packages` to
+ * annotate them in addition to the defaults.
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: {
+ *     pure: { packages: ["my-lib", "@my-scope/*"] },
+ *   },
+ * }
+ * ```
+ *
+ * Listing a package annotates calls whose result is bound (variable
+ * initializers, exports) — safe anywhere. If a listed package also
+ * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
+ * combination opts it into full annotation: top-level calls whose result
+ * is discarded (e.g. `router.on("/path", handler)` registrations) are
+ * also marked pure and deleted under minification when unused. Only list
+ * a `sideEffects: false` package if its modules really are free of
+ * meaningful top-level side effects. The `effect`, `alchemy`, and
+ * `@distilled.cloud` defaults declare exactly that, on purpose — their
+ * modules are designed to be fully tree-shakeable.
+ *
+ * **Example:** Disable pure annotations
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: { pure: false },
+ * }
+ * ```
+ *
+ * @resource
  */
 export const Instance: Platform<
   Instance,
@@ -438,8 +480,21 @@ export const InstanceProvider = () =>
             ),
           );
 
-      const findInstanceByTags = Effect.fn(function* (id: string) {
-        const filters = yield* createAlchemyTagFilters(id);
+      // Generation-scoped recovery lookup: instances are branded with the
+      // engine's per-generation instance id (`alchemy::instance`) on top of
+      // the stack/stage/id ownership tags. An interrupted create resumes with
+      // the same generation id, so it still recovers its own orphan — while a
+      // replacement's create phase runs under a freshly minted generation id
+      // and can never re-adopt the old generation's live instance that the
+      // cleanup phase is about to terminate.
+      const findInstanceByTags = Effect.fn(function* (
+        id: string,
+        generation: string,
+      ) {
+        const filters = [
+          ...(yield* createAlchemyTagFilters(id)),
+          { Name: "tag:alchemy::instance", Values: [generation] },
+        ];
         return yield* ec2.describeInstances
           .items({
             Filters: filters,
@@ -599,7 +654,42 @@ export const InstanceProvider = () =>
               (instance) => toAttributes(instance),
             );
           }),
-        diff: Effect.fn(function* ({ news, olds }) {
+        diff: Effect.fn(function* ({ id, news, olds, output }) {
+          // The hosted bundle hash must participate in planning even while
+          // OTHER props are unresolved Outputs (an `imageId` AMI lookup, a
+          // subnet reference): a content-only edit changes no prop at all,
+          // so bailing on full resolution silently no-ops the update. The
+          // content inputs are plain — gate on THEM, not on the whole bag
+          // (the same isResolved-defeats-content-diff bug the MicroVM image
+          // diff had).
+          const raw = news as unknown as Record<string, unknown>;
+          const contentInputs = {
+            main: raw.main,
+            handler: raw.handler,
+            build: raw.build,
+            port: raw.port,
+            // `isExternal` chooses the bundler entry (raw file vs virtual
+            // `export default` wrapper). Omitting it here re-bundles an
+            // external program as an Effect entrypoint and fails the plan
+            // with MISSING_EXPORT when the source has no default export.
+            isExternal: raw.isExternal,
+          };
+          if (
+            isResolved(contentInputs) &&
+            contentInputs.main !== undefined &&
+            output?.code?.hash
+          ) {
+            const { hash } = yield* hosted.bundleProgram(
+              id,
+              contentInputs as unknown as Ec2HostedProps,
+            );
+            if (hash !== output.code.hash) {
+              return {
+                action: "update",
+                stables: ["instanceId", "instanceArn", "vpcId", "subnetId"],
+              } as const;
+            }
+          }
           if (!isResolved(news)) return;
           const hostModeChanged = Boolean(olds.main) !== Boolean(news.main);
           if (
@@ -639,8 +729,11 @@ export const InstanceProvider = () =>
               stables: ["instanceId", "instanceArn", "vpcId", "subnetId"],
             } as const;
           }
+
+          // Content-only changes were already handled by the resolved-subset
+          // bundle-hash check above.
         }),
-        read: Effect.fn(function* ({ id, output }) {
+        read: Effect.fn(function* ({ id, instanceId, output }) {
           const instance = output?.instanceId
             ? yield* describeInstance(output.instanceId).pipe(
                 Effect.catchTag("InvalidInstanceID.NotFound", () =>
@@ -650,7 +743,7 @@ export const InstanceProvider = () =>
                   Effect.succeed(undefined),
                 ),
               )
-            : yield* findInstanceByTags(id);
+            : yield* findInstanceByTags(id, instanceId);
           return instance
             ? {
                 ...(yield* toAttributes(instance)),
@@ -667,6 +760,7 @@ export const InstanceProvider = () =>
         }),
         reconcile: Effect.fn(function* ({
           id,
+          instanceId: generation,
           news,
           output,
           bindings,
@@ -674,6 +768,8 @@ export const InstanceProvider = () =>
         }) {
           const desiredTags = {
             ...(yield* createInternalTags(id)),
+            // Generation brand consumed by the recovery lookup above.
+            "alchemy::instance": generation,
             ...news.tags,
           };
           const runtime = yield* hosted.resolveHostedRuntime({
@@ -696,7 +792,7 @@ export const InstanceProvider = () =>
                   Effect.succeed(undefined),
                 ),
               )
-            : yield* findInstanceByTags(id);
+            : yield* findInstanceByTags(id, generation);
 
           // A terminated instance is a tombstone; treat as missing so we
           // launch a fresh one.

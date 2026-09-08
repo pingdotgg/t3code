@@ -15,9 +15,8 @@ export interface GetReservationCoverageRequest
  * Redshift, OpenSearch, …) was covered by reservations over a time
  * period. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetReservationCoverageHttp)`.
- * @binding
- * @section Reservations
- * @example Check Reservation Coverage
+ * ### Reservations
+ * **Example:** Check Reservation Coverage
  * ```typescript
  * // init — account-level binding takes no resource
  * const getReservationCoverage = yield* AWS.CostExplorer.GetReservationCoverage();
@@ -28,6 +27,8 @@ export interface GetReservationCoverageRequest
  * });
  * const coverage = result.Total?.CoverageHours?.CoverageHoursPercentage;
  * ```
+ *
+ * @binding
  */
 export interface GetReservationCoverage extends Binding.Service<
   GetReservationCoverage,

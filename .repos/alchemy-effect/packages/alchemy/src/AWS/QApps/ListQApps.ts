@@ -16,9 +16,8 @@ export interface ListQAppsRequest extends Omit<
  *
  * Lists the calling identity's Q Apps in the bound app's Q Business application environment instance. Provide the implementation with
  * `Effect.provide(AWS.QApps.ListQAppsHttp)`.
- * @binding
- * @section User Inventory
- * @example List the User's Q Apps
+ * ### User Inventory
+ * **Example:** List the User's Q Apps
  * ```typescript
  * // init — bind the operation to the Q App
  * const listQApps = yield* AWS.QApps.ListQApps(app);
@@ -27,6 +26,8 @@ export interface ListQAppsRequest extends Omit<
  * const page = yield* listQApps({ limit: 25 });
  * console.log(page.apps.map((a) => a.title));
  * ```
+ *
+ * @binding
  */
 export interface ListQApps extends Binding.Service<
   ListQApps,

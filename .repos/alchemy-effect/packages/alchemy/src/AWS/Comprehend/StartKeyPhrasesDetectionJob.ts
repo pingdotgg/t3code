@@ -32,9 +32,8 @@ export interface StartKeyPhrasesDetectionJobRequest extends Omit<
  * {@link DescribeKeyPhrasesDetectionJob} and stop it with
  * {@link StopKeyPhrasesDetectionJob}.
  *
- * @binding
- * @section Starting Analysis Jobs
- * @example Start an Asynchronous KeyPhrases Detection Job
+ * ### Starting Analysis Jobs
+ * **Example:** Start an Asynchronous KeyPhrases Detection Job
  * ```typescript
  * // deploy time — bind the Comprehend data-access role
  * const startKeyPhrasesDetectionJob = yield* AWS.Comprehend.StartKeyPhrasesDetectionJob(dataAccessRole);
@@ -47,6 +46,8 @@ export interface StartKeyPhrasesDetectionJobRequest extends Omit<
  * });
  * // job.JobId, job.JobStatus === "SUBMITTED"
  * ```
+ *
+ * @binding
  */
 export interface StartKeyPhrasesDetectionJob extends Binding.Service<
   StartKeyPhrasesDetectionJob,

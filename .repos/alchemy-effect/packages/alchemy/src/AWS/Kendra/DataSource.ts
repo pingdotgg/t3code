@@ -116,9 +116,8 @@ export interface DataSource extends Resource<
  * An Amazon Kendra data source — a connector that syncs documents from a
  * repository (S3 bucket, SharePoint, website, ...) into a Kendra index.
  *
- * @resource
- * @section Creating Data Sources
- * @example S3 Data Source
+ * ### Creating Data Sources
+ * **Example:** S3 Data Source
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -134,7 +133,7 @@ export interface DataSource extends Resource<
  * });
  * ```
  *
- * @example Scheduled Sync
+ * **Example:** Scheduled Sync
  * ```typescript
  * const source = yield* AWS.Kendra.DataSource("Docs", {
  *   indexId: index.id,
@@ -146,6 +145,8 @@ export interface DataSource extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataSource = Resource<DataSource>("AWS.Kendra.DataSource");
 

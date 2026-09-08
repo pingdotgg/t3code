@@ -1,0 +1,8 @@
+{
+  "name": "wrangler",
+  "version": "4.112.0",
+  "private": true,
+  "description": "Inert stand-in for wrangler. @opennextjs/cloudflare declares wrangler as a non-optional peer dependency, but the only thing on the wrangler-free build path that touches it is `ensureNextjsVersionSupported`, which imports `wrangler/package.json` to read the version for a compatibility warning. Providing this stub satisfies both the peer resolution and that JSON import without ever installing (or executing) wrangler.",
+  "license": "MIT",
+  "main": "./index.js"
+}

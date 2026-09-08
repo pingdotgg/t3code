@@ -13,9 +13,8 @@ import type { AutoScalingGroup } from "./AutoScalingGroup.ts";
  * lifecycle states, suspended processes — or `undefined` if the group no
  * longer exists. Provide the implementation with
  * `Effect.provide(AWS.AutoScaling.DescribeAutoScalingGroupHttp)`.
- * @binding
- * @section Observing the Fleet
- * @example Inspect live capacity and instances
+ * ### Observing the Fleet
+ * **Example:** Inspect live capacity and instances
  * ```typescript
  * // init — bind the operation to the group
  * const describeGroup = yield* AWS.AutoScaling.DescribeAutoScalingGroup(group);
@@ -26,6 +25,8 @@ import type { AutoScalingGroup } from "./AutoScalingGroup.ts";
  *   (i) => i.LifecycleState === "InService",
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeAutoScalingGroup extends Binding.Service<
   DescribeAutoScalingGroup,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.ListOrganizationAdminAccountsHttp)`.
- * @binding
- * @section Organization & Members
- * @example List Delegated Administrators
+ * ### Organization & Members
+ * **Example:** List Delegated Administrators
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listOrganizationAdminAccounts = yield* AWS.Macie2.ListOrganizationAdminAccounts();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { adminAccounts } = yield* listOrganizationAdminAccounts();
  * ```
+ *
+ * @binding
  */
 export interface ListOrganizationAdminAccounts extends Binding.Service<
   ListOrganizationAdminAccounts,

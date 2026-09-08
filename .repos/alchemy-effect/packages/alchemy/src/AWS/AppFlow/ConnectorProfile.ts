@@ -62,9 +62,8 @@ export interface ConnectorProfile extends Resource<
  * human-in-the-loop OAuth or API-key step, so a connector profile's live
  * lifecycle generally cannot be created purely programmatically. S3 and
  * EventBridge flows do not need a connector profile at all.
- * @resource
- * @section Creating a Connector Profile
- * @example Redshift Connector Profile
+ * ### Creating a Connector Profile
+ * **Example:** Redshift Connector Profile
  * ```typescript
  * const profile = yield* AppFlow.ConnectorProfile("Warehouse", {
  *   connectorProfileName: "warehouse",
@@ -84,6 +83,8 @@ export interface ConnectorProfile extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ConnectorProfile = Resource<ConnectorProfile>(
   "AWS.AppFlow.ConnectorProfile",

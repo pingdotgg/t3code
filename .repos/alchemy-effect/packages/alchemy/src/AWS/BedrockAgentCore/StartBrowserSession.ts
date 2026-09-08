@@ -24,9 +24,8 @@ export interface StartBrowserSessionRequest extends Omit<
  * `AgentCore.StartBrowserSessionHttp` on the Function effect to implement
  * the binding.
  *
- * @binding
- * @section Browser Sessions
- * @example Start and Stop a Browser Session
+ * ### Browser Sessions
+ * **Example:** Start and Stop a Browser Session
  * ```typescript
  * // init
  * const startBrowserSession = yield* AgentCore.StartBrowserSession(browser);
@@ -43,6 +42,8 @@ export interface StartBrowserSessionRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface StartBrowserSession extends Binding.Service<
   StartBrowserSession,

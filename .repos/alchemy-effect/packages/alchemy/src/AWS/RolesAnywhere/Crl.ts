@@ -77,9 +77,8 @@ export interface Crl extends Resource<
  * PEM-encoded list of certificates revoked by the trust anchor's certificate
  * authority; IAM Roles Anywhere refuses to vend credentials for revoked
  * certificates while the CRL is enabled.
- * @resource
- * @section Importing a CRL
- * @example CRL for a Trust Anchor
+ * ### Importing a CRL
+ * **Example:** CRL for a Trust Anchor
  * ```typescript
  * const anchor = yield* RolesAnywhere.TrustAnchor("Anchor", {
  *   certificateBundle: CA_CERTIFICATE_PEM,
@@ -90,14 +89,16 @@ export interface Crl extends Resource<
  * });
  * ```
  *
- * @section Rotating the CRL
- * @example Updated Revocation Data
+ * ### Rotating the CRL
+ * **Example:** Updated Revocation Data
  * ```typescript
  * const crl = yield* RolesAnywhere.Crl("Crl", {
  *   crlData: NEXT_CRL_PEM, // re-deploy with the CA's latest CRL
  *   trustAnchorArn: anchor.trustAnchorArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Crl = Resource<Crl>("AWS.RolesAnywhere.Crl");
 

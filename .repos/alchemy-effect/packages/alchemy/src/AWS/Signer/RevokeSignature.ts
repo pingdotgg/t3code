@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * artifact is compromised. Account-level operation — job ids are chosen per
  * request at runtime, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Signer.RevokeSignatureHttp)`.
- * @binding
- * @section Revoking Signatures
- * @example Revoke One Job's Signature
+ * ### Revoking Signatures
+ * **Example:** Revoke One Job's Signature
  * ```typescript
  * // init — account-level binding, no resource argument
  * const revokeSignature = yield* AWS.Signer.RevokeSignature();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* revokeSignature({ jobId, reason: "artifact compromised" });
  * ```
+ *
+ * @binding
  */
 export interface RevokeSignature extends Binding.Service<
   RevokeSignature,

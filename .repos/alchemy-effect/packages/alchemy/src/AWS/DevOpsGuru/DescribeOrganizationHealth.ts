@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Returns the number of open insights and analyzed resources across the organization (management or delegated-administrator account).
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.DescribeOrganizationHealthHttp)`.
- * @binding
- * @section Organization Visibility
- * @example Read Organization-Wide Insight Counts
+ * ### Organization Visibility
+ * **Example:** Read Organization-Wide Insight Counts
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeOrganizationHealth = yield* AWS.DevOpsGuru.DescribeOrganizationHealth();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const health = yield* describeOrganizationHealth();
  * yield* Effect.log(`org open reactive: ${health.OpenReactiveInsights}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrganizationHealth extends Binding.Service<
   DescribeOrganizationHealth,

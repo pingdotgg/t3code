@@ -24,9 +24,8 @@ export interface CreateAccessPointRequest extends Omit<
  * `AccessPointAlreadyExists`. For statically-known access points, prefer the
  * {@link AccessPoint} resource. Provide the implementation with
  * `Effect.provide(AWS.EFS.CreateAccessPointHttp)`.
- * @binding
- * @section Managing Access Points at Runtime
- * @example Create a per-tenant access point
+ * ### Managing Access Points at Runtime
+ * **Example:** Create a per-tenant access point
  * ```typescript
  * const createAccessPoint = yield* AWS.EFS.CreateAccessPoint(files);
  *
@@ -39,6 +38,8 @@ export interface CreateAccessPointRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateAccessPoint extends Binding.Service<
   CreateAccessPoint,

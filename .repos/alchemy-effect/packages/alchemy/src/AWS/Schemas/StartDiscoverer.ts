@@ -10,9 +10,8 @@ import type { Discoverer } from "./Discoverer.ts";
  * function re-enabling discovery after a paused window. The discoverer id is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.Schemas.StartDiscovererHttp)`.
- * @binding
- * @section Controlling a Discoverer
- * @example Resume Discovery
+ * ### Controlling a Discoverer
+ * **Example:** Resume Discovery
  * ```typescript
  * // init — bind the operation to the discoverer
  * const startDiscoverer = yield* AWS.Schemas.StartDiscoverer(discoverer);
@@ -21,6 +20,8 @@ import type { Discoverer } from "./Discoverer.ts";
  * const { State } = yield* startDiscoverer();
  * // State === "STARTED"
  * ```
+ *
+ * @binding
  */
 export interface StartDiscoverer extends Binding.Service<
   StartDiscoverer,

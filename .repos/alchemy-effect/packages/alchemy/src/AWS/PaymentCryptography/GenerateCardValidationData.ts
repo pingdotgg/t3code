@@ -13,9 +13,8 @@ export interface GenerateCardValidationDataRequest extends Omit<
  * generates card validation values (CVV/CVV2, dCVV, CSC) under a Card
  * Verification Key (CVK) {@link Key}. Provide
  * `GenerateCardValidationDataHttp` on the Function to satisfy this service.
- * @binding
- * @section Card Validation Data
- * @example Generate a CVV2 for a card
+ * ### Card Validation Data
+ * **Example:** Generate a CVV2 for a card
  * ```typescript
  * // init
  * const generateCvv2 = yield* PaymentCryptography.GenerateCardValidationData(cvk);
@@ -28,6 +27,8 @@ export interface GenerateCardValidationDataRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GenerateCardValidationData extends Binding.Service<
   GenerateCardValidationData,

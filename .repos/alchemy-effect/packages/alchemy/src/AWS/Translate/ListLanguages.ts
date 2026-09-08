@@ -6,9 +6,8 @@ import * as Binding from "../../Binding.ts";
  * Runtime binding for `translate:ListLanguages` — list the languages
  * (RFC-5646 codes and display names) Amazon Translate supports.
  *
- * @binding
- * @section Discovering Languages
- * @example List supported languages
+ * ### Discovering Languages
+ * **Example:** List supported languages
  * ```typescript
  * // init
  * const listLanguages = yield* AWS.Translate.ListLanguages();
@@ -17,6 +16,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* listLanguages({ MaxResults: 100 });
  * // result.Languages -> [{ LanguageCode: "es", LanguageName: "Spanish" }, …]
  * ```
+ *
+ * @binding
  */
 export interface ListLanguages extends Binding.Service<
   ListLanguages,

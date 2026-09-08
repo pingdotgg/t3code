@@ -14,9 +14,8 @@ export interface GetLineageNodeRequest extends Omit<
  * Reads a data lineage node in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.GetLineageNodeHttp)`.
- * @binding
- * @section Data Lineage
- * @example Read a Lineage Node
+ * ### Data Lineage
+ * **Example:** Read a Lineage Node
  * ```typescript
  * // init — bind the operation to the domain
  * const getLineageNode = yield* AWS.DataZone.GetLineageNode(domain);
@@ -24,6 +23,8 @@ export interface GetLineageNodeRequest extends Omit<
  * // runtime
  * const node = yield* getLineageNode({ identifier: nodeId });
  * ```
+ *
+ * @binding
  */
 export interface GetLineageNode extends Binding.Service<
   GetLineageNode,

@@ -18,13 +18,12 @@ export interface DescribeAssetRequest extends Omit<
  * ids and names) from a deployed Lambda or Task. Use it to resolve a
  * property's id by name before reading or ingesting values.
  *
- * @binding
- * @section Describing the Bound Asset
+ * ### Describing the Bound Asset
  * Provide the `DescribeAssetHttp` implementation layer on the Function
  * effect, bind the asset in the init phase, then call the returned client
  * at runtime.
  *
- * @example Resolve a Property Id by Name
+ * **Example:** Resolve a Property Id by Name
  * ```typescript
  * // init
  * const describeAsset = yield* AWS.IoTSiteWise.DescribeAsset(asset);
@@ -37,6 +36,8 @@ export interface DescribeAssetRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTSiteWise.DescribeAssetHttp))
  * ```
+ *
+ * @binding
  */
 export interface DescribeAsset extends Binding.Service<
   DescribeAsset,

@@ -1,0 +1,138 @@
+---
+title: Setup
+description: Install Alchemy and connect it to Hetzner Cloud — create a project, generate an API token, and store it in a profile.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import { effectVersion } from "../../../versions";
+
+export const pkgs = `"alchemy@latest" "effect@${effectVersion}" "@effect/platform-bun@${effectVersion}" "@effect/platform-node@${effectVersion}"`;
+
+Everything you need before deploying to Hetzner Cloud: the alchemy
+package, a Hetzner project, and an API token stored in a profile.
+
+## Prerequisites
+
+- [Bun](https://bun.sh) (recommended) or Node.js 22+
+- A [Hetzner Cloud](https://console.hetzner.com) account
+
+## Create a Hetzner project
+
+Everything in Hetzner Cloud — servers, volumes, networks, tokens —
+lives inside a **project**. In the
+[Hetzner Cloud Console](https://console.hetzner.com):
+
+1. Click **+ New project**.
+2. Give it a name (e.g. `my-app`) and open it.
+
+One project per app (or per environment) is a good default: API
+tokens are scoped to a single project, so separate projects give you
+hard isolation between apps.
+
+## Generate an API token
+
+Inside the project:
+
+1. Go to **Security** → **API tokens**.
+2. Click **Generate API token**.
+3. Give it a description (e.g. `alchemy`) and select
+   **Read & Write** — Alchemy needs write access to create resources.
+4. Copy the token — Hetzner shows it **only once**.
+
+## Create a project directory
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="mkdir my-app && cd my-app && bun init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="mkdir my-app && cd my-app && npm init -y" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="mkdir my-app && cd my-app && pnpm init" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="mkdir my-app && cd my-app && yarn init -y" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Install
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${pkgs}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${pkgs}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Connect alchemy to Hetzner
+
+There is no separate credentials step. The first time you run
+`alchemy deploy` (or `plan`, `dev`, `destroy`) on a stack that uses
+`Hetzner.providers()`, alchemy walks you through an interactive
+login with two options:
+
+- **API Token** — paste the token you generated above. It's
+  verified against the Hetzner API and saved under
+  `~/.alchemy/credentials/<profile>/`.
+- **Environment Variables** — reads `HCLOUD_TOKEN` from the
+  environment on every run (plus an optional `HCLOUD_ENDPOINT` to
+  override the API base URL). This is the method for CI — when
+  alchemy detects `CI=true` it skips the prompt and uses the
+  environment automatically.
+
+Either choice is saved to your **`default`**
+[profile](/environments/profiles) and reused on every subsequent
+command.
+
+To re-run the setup later (e.g. to rotate the token, or configure a
+separate `prod` profile):
+
+```sh
+alchemy login --configure
+alchemy login --profile prod --configure
+```
+
+Inspect what's stored (secrets are redacted):
+
+```sh
+alchemy profile show
+```
+
+:::note[No SSH key setup required]
+`Hetzner.Service` deploys your code to a Server over SSH, but you
+don't need to create or upload an SSH key for that — alchemy
+generates a dedicated deploy key for each Server it creates and
+injects it at boot. Adding your own `Hetzner.SshKey` is only for
+*your* interactive `ssh` access.
+:::
+
+## State storage
+
+Hetzner has no object-storage state backend of its own, so pick one
+of:
+
+- **`Alchemy.localState()`** — state on disk under `.alchemy/` next
+  to your code. Zero setup; right for solo projects and trying
+  things out.
+- **A cloud state store** — if you also use Cloudflare or AWS, pass
+  `Cloudflare.state()` or `AWS.state()` so state is shared with
+  your team and CI. See [State Store](/state-store).
+
+State for a Hetzner stack includes each Server's deploy SSH key
+(stored redacted), so for shared or production stacks prefer a
+remote state store over files on one laptop.
+
+## Next steps
+
+- [Tutorial part 1](/hetzner/tutorial/part-1) — deploy your first
+  Server.
+- [Hetzner overview](/hetzner) — the map of resources and guides.

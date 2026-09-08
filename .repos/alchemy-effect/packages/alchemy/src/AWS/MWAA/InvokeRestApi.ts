@@ -19,9 +19,8 @@ export interface InvokeRestApiRequest extends Omit<
  * the call is mapped to (`Admin` by default — pass `{ airflowRole }` to
  * scope it down). Provide the implementation with
  * `Effect.provide(AWS.MWAA.InvokeRestApiHttp)`.
- * @binding
- * @section Invoking the Airflow REST API
- * @example List DAGs
+ * ### Invoking the Airflow REST API
+ * **Example:** List DAGs
  * ```typescript
  * // init — bind the operation to the environment
  * const invokeRestApi = yield* AWS.MWAA.InvokeRestApi(environment);
@@ -35,7 +34,7 @@ export interface InvokeRestApiRequest extends Omit<
  * const dags = result.RestApiResponse as { dags: { dag_id: string }[] };
  * ```
  *
- * @example Trigger a DAG Run
+ * **Example:** Trigger a DAG Run
  * ```typescript
  * const run = yield* invokeRestApi({
  *   Method: "POST",
@@ -43,6 +42,8 @@ export interface InvokeRestApiRequest extends Omit<
  *   Body: { conf: { source: "lambda" } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface InvokeRestApi extends Binding.Service<
   InvokeRestApi,

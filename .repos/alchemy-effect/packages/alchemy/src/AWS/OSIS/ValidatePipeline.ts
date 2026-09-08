@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * user-submitted configs in a self-service portal). Account-level: no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.OSIS.ValidatePipelineHttp)`.
- * @binding
- * @section Authoring Pipeline Configurations
- * @example Validate a Configuration Body
+ * ### Authoring Pipeline Configurations
+ * **Example:** Validate a Configuration Body
  * ```typescript
  * // init — account-level binding, no resource argument
  * const validatePipeline = yield* AWS.OSIS.ValidatePipeline();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logError(Errors?.map((e) => e.Message).join("\n") ?? "");
  * }
  * ```
+ *
+ * @binding
  */
 export interface ValidatePipeline extends Binding.Service<
   ValidatePipeline,

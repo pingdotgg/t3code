@@ -49,9 +49,8 @@ export type RestApiEventSourceService = <Req = never>(
  * events to the handler. Subscribe routes with {@link onRestApiRoute} and
  * provide `Lambda.RestApiEventSource` on the hosting function.
  *
- * @binding
- * @section Handling REST API routes
- * @example Serve GET /items from a Lambda
+ * ### Handling REST API routes
+ * **Example:** Serve GET /items from a Lambda
  * ```typescript
  * export default MyFunction.make(
  *   { main: import.meta.url },
@@ -83,6 +82,8 @@ export type RestApiEventSourceService = <Req = never>(
  *   }).pipe(Effect.provide(Lambda.RestApiEventSource)),
  * );
  * ```
+ *
+ * @binding
  */
 export class RestApiEventSource extends Context.Service<
   RestApiEventSource,

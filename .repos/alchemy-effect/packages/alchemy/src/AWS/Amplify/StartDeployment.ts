@@ -17,9 +17,8 @@ export interface StartDeploymentRequest extends Omit<
  * (`jobId`) or content fetched from a public `sourceUrl` (zip URL or S3
  * prefix). Provide the implementation with
  * `Effect.provide(AWS.Amplify.StartDeploymentHttp)`.
- * @binding
- * @section Manual Deployments
- * @example Release a Staged Deployment
+ * ### Manual Deployments
+ * **Example:** Release a Staged Deployment
  * ```typescript
  * // init — bind the operation to the app
  * const startDeployment = yield* AWS.Amplify.StartDeployment(app);
@@ -31,7 +30,7 @@ export interface StartDeploymentRequest extends Omit<
  * });
  * ```
  *
- * @example Deploy Directly from an S3 Prefix
+ * **Example:** Deploy Directly from an S3 Prefix
  * ```typescript
  * const { jobSummary } = yield* startDeployment({
  *   branchName: "main",
@@ -39,6 +38,8 @@ export interface StartDeploymentRequest extends Omit<
  *   sourceUrlType: "BUCKET_PREFIX",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartDeployment extends Binding.Service<
   StartDeployment,

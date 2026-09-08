@@ -1,0 +1,201 @@
+---
+title: Services
+description: Deploy Effect programs to Hetzner Servers as supervised systemd units — HTTP handlers, background workers, env & config, updates, and logs.
+---
+
+A [`Service`](/providers/hetzner/service) is your code on a
+[Server](/hetzner/compute/servers): an Effect program that Alchemy
+bundles with Rolldown, copies over SSH, and runs under systemd with
+`Restart=always`. You never write a unit file, a Dockerfile, or a
+deploy script — and several Services can share one Server.
+
+## Declare a Service
+
+A Service is a class with an infrastructure definition and a runtime
+implementation:
+
+```typescript
+// src/api.ts
+import * as Hetzner from "alchemy/Hetzner";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Box } from "./server.ts";
+
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+  { server: Box, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+- `server` — the machine to run on (a `Hetzner.Server`, yielded or
+  module-scope). Changing it **replaces** the Service.
+- `main: import.meta.url` — this file is the bundle entrypoint.
+- `port` — written to the `PORT` env var and used to build the
+  `url` attribute (`http://<server-ipv4>:<port>`). Default `3000`.
+- `fetch` — returning it from the init Effect boots an HTTP server
+  on that port; omit it for a [background service](#background-services).
+
+The resolved resource exposes `url`, `port`, `unitName`, `serverId`,
+and the bundle's `code.hash`.
+
+## What a deploy does
+
+One SSH session, using the Server's Alchemy-managed deploy key:
+
+1. Bundle `main` with Rolldown into a single ESM file (a generated
+   bootstrap wires up the Bun HTTP server, logging, and config from
+   the environment).
+2. Attach and mount any [bound Volumes](/hetzner/data/volumes).
+3. Unpack the bundle to `/opt/<unitName>/`, write the env file, and
+   install the systemd unit:
+
+   ```ini
+   [Service]
+   WorkingDirectory=/opt/<unitName>
+   EnvironmentFile=-/opt/<unitName>/env
+   ExecStart=/root/.bun/bin/bun --no-install /opt/<unitName>/index.mjs
+   Restart=always
+   RestartSec=5
+   ```
+
+4. `systemctl enable --now`, restart, and wait for the unit to be
+   active — and, when a `port` is declared, for
+   `http://127.0.0.1:<port>/health` to answer.
+
+On later deploys Alchemy compares the bundle's content hash against
+what's deployed: unchanged code is a no-op; changed code is copied
+up and the unit restarted, a few seconds end to end.
+
+:::caution[The `/health` route is load-bearing]
+A Service that declares a `port` **must serve `/health`** — the
+deploy polls it and fails (dumping the unit's journal into the
+output) if it never answers. Keep it trivial:
+
+```typescript
+if (url.pathname === "/health") {
+  return HttpServerResponse.json({ ok: true });
+}
+```
+:::
+
+## Reachability
+
+The `url` is the Server's public IP and the Service's port —
+there's no proxy in between. A fresh Hetzner server has no firewall
+(every port open); once you apply a
+[`Firewall`](/hetzner/networking#firewalls), inbound is default-deny
+and you choose who reaches the port. For a stable front door with
+health checks and TLS, put a
+[Load Balancer](/hetzner/networking#load-balancer) in front and
+allow the port only from the private network.
+
+## Environment & config
+
+Pass static values with `env`; read them at runtime through Effect's
+`Config` (the runtime's `ConfigProvider` is backed by the process
+environment):
+
+```typescript
+import * as Config from "effect/Config";
+
+export default class Api extends Hetzner.Service<Api>()(
+  "Api",
+  {
+    server: Box,
+    main: import.meta.url,
+    port: 3000,
+    env: { GREETING: "hello" },
+  },
+  Effect.gen(function* () {
+    const greeting = yield* Config.string("GREETING");
+    // ...
+  }),
+) {}
+```
+
+Alchemy also injects `PORT` (when `port` is set) and the stack
+metadata (`ALCHEMY_STACK_NAME`, `ALCHEMY_STAGE`). Values from
+bindings are merged first, so your `env` wins on conflict. See
+[Secrets & Config](/environments/secrets) for handling secret
+values.
+
+## Background services
+
+Omit `port`/`fetch` and use `ServerHost.run` to register a
+long-running loop — a worker, a queue consumer, a cron-ish daemon:
+
+```typescript
+// src/worker.ts
+import * as Hetzner from "alchemy/Hetzner";
+import { ServerHost } from "alchemy/Server";
+import * as Effect from "effect/Effect";
+
+export default class Worker extends Hetzner.Service<Worker>()(
+  "Worker",
+  { server: Box, main: import.meta.url },
+  Effect.gen(function* () {
+    const host = yield* ServerHost;
+
+    yield* host.run(
+      Effect.gen(function* () {
+        // do work forever
+        return yield* Effect.never;
+      }).pipe(Effect.orDie),
+    );
+  }),
+) {}
+```
+
+systemd still supervises the process — if your loop exits or
+crashes, the unit restarts after 5 seconds.
+
+## Multiple Services, one Server
+
+Each Service is its own unit with its own bundle, env file, and
+lifecycle. Point several at the same `server` and share resources
+between them — two Services mounting the same Volume at the same
+path is one attach and one mount:
+
+```typescript
+// Api serves what Worker writes — same Box, same Volume
+class Api extends Hetzner.Service<Api>()(
+  "Api",
+  { server: Box, main: import.meta.url, port: 3000 },
+  /* mounts Data at /data, serves files */
+) {}
+
+class Worker extends Hetzner.Service<Worker>()(
+  "Worker",
+  { server: Box, main: import.meta.url },
+  /* mounts Data at /data, writes files */
+) {}
+```
+
+## Logs
+
+Service logs go to the systemd journal. `alchemy logs`/`alchemy
+tail` don't support Hetzner Services yet — read them over SSH:
+
+```sh
+ssh root@<server-ip> journalctl -u <unitName> -f
+```
+
+The unit name is the Service's `unitName` output (surface it as a
+stack output to keep it handy). Failed deploys already print the
+last 80 journal lines.
+
+## Where next
+
+- [Tutorial part 2](/hetzner/tutorial/part-2) — build up a Service
+  step by step.
+- [Volumes](/hetzner/data/volumes) — persistent storage via the
+  `MountVolume` binding.
+- [Networking](/hetzner/networking) — firewalls and load balancers
+  in front of your Service.
+- [`Service` reference](/providers/hetzner/service) — every prop
+  and attribute.

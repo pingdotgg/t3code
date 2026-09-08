@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `WAFv2.CheckCapacityHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Account Operations
- * @example Check the WCU Cost of a Rule
+ * ### Account Operations
+ * **Example:** Check the WCU Cost of a Rule
  * ```typescript
  * // init — grants wafv2:CheckCapacity
  * const checkCapacity = yield* AWS.WAFv2.CheckCapacity();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Rules: [rule],
  * });
  * ```
+ *
+ * @binding
  */
 export interface CheckCapacity extends Binding.Service<
   CheckCapacity,

@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * deploy-time grant is account-level (`Resource: "*"`).
  * Provide the implementation with
  * `Effect.provide(AWS.SSMIncidents.ListIncidentFindingsHttp)`.
- * @binding
- * @section Findings
- * @example List An Incident's Findings
+ * ### Findings
+ * **Example:** List An Incident's Findings
  * ```typescript
  * // init
  * const listIncidentFindings = yield* AWS.SSMIncidents.ListIncidentFindings();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { findings } = yield* listIncidentFindings({ incidentRecordArn });
  * ```
+ *
+ * @binding
  */
 export interface ListIncidentFindings extends Binding.Service<
   ListIncidentFindings,

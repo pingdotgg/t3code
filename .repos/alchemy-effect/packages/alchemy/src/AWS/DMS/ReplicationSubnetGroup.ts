@@ -59,15 +59,16 @@ export interface ReplicationSubnetGroup extends Resource<
  * A DMS replication subnet group — the set of VPC subnets a replication
  * instance can be launched into. Must cover at least two Availability Zones.
  * Free and fast to create.
- * @resource
- * @section Creating a Subnet Group
- * @example Two-AZ Subnet Group
+ * ### Creating a Subnet Group
+ * **Example:** Two-AZ Subnet Group
  * ```typescript
  * const subnetGroup = yield* ReplicationSubnetGroup("Migration", {
  *   description: "DMS replication subnets",
  *   subnetIds: [subnetA.subnetId, subnetB.subnetId],
  * });
  * ```
+ *
+ * @resource
  */
 export const ReplicationSubnetGroup = Resource<ReplicationSubnetGroup>(
   "AWS.DMS.ReplicationSubnetGroup",

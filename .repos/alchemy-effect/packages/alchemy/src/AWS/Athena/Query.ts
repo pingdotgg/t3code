@@ -44,16 +44,15 @@ export class AthenaQueryFailed extends Data.TaggedError("AthenaQueryFailed")<{
  * terminal state (bounded), then read and decode the result set. Results are
  * written to the workgroup's enforced S3 output location in `resultsBucket`.
  *
- * @binding
- * @section Running Queries
- * @example Query and read the result rows
+ * ### Running Queries
+ * **Example:** Query and read the result rows
  * ```typescript
  * const runQuery = yield* AWS.Athena.Query(workGroup, resultsBucket);
  * const result = yield* runQuery({ QueryString: "SELECT 1" });
  * // result.rows[0] === ["_col0"] (header), result.rows[1] === ["1"]
  * ```
  *
- * @example Bind a WorkGroup to a Lambda Function
+ * **Example:** Bind a WorkGroup to a Lambda Function
  * ```typescript
  * import * as Athena from "alchemy/AWS/Athena";
  * import * as Lambda from "alchemy/AWS/Lambda";
@@ -65,7 +64,7 @@ export class AthenaQueryFailed extends Data.TaggedError("AthenaQueryFailed")<{
  * ) {}
  *
  * export default QueryFunction.make(
- *   { main: import.meta.url, url: true, timeout: Duration.seconds(60) },
+ *   { main: import.meta.url, functionUrl: true, timeout: Duration.seconds(60) },
  *   Effect.gen(function* () {
  *     const bucket = yield* S3.Bucket("Results", { forceDestroy: true });
  *     const workGroup = yield* Athena.WorkGroup("Analytics", {
@@ -89,6 +88,8 @@ export class AthenaQueryFailed extends Data.TaggedError("AthenaQueryFailed")<{
  *   }).pipe(Effect.provide(Athena.QueryHttp)),
  * );
  * ```
+ *
+ * @binding
  */
 export interface Query extends Binding.Service<
   Query,

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.ListDiscoveredResourcesHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Discovering Resources
- * @example List Discovered Buckets
+ * ### Discovering Resources
+ * **Example:** List Discovered Buckets
  * ```typescript
  * // init — grants config:ListDiscoveredResources
  * const listDiscoveredResources = yield* AWS.Config.ListDiscoveredResources();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(result.resourceIdentifiers);
  * ```
+ *
+ * @binding
  */
 export interface ListDiscoveredResources extends Binding.Service<
   ListDiscoveredResources,

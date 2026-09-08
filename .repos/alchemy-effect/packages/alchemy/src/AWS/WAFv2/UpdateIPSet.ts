@@ -25,9 +25,8 @@ export interface UpdateIPSetRequest {
  *
  * Provide `WAFv2.UpdateIPSetHttp` on the hosting Lambda Function to satisfy
  * the requirement.
- * @binding
- * @section Managing IP Sets at Runtime
- * @example Add an Offending IP to the Block List
+ * ### Managing IP Sets at Runtime
+ * **Example:** Add an Offending IP to the Block List
  * ```typescript
  * // init — grants wafv2:GetIPSet + wafv2:UpdateIPSet on the IP set
  * const getIPSet = yield* AWS.WAFv2.GetIPSet(blockList);
@@ -37,6 +36,8 @@ export interface UpdateIPSetRequest {
  * const current = (yield* getIPSet()).IPSet?.Addresses ?? [];
  * yield* updateIPSet({ addresses: [...current, "192.0.2.7/32"] });
  * ```
+ *
+ * @binding
  */
 export interface UpdateIPSet extends Binding.Service<
   UpdateIPSet,

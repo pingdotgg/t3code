@@ -1,0 +1,178 @@
+---
+title: Websites
+description: Deploy Vite, Astro, Next.js, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to Hetzner with first-class Website resources.
+sidebar:
+  label: Overview
+  order: 1
+---
+
+Alchemy deploys frontends to Hetzner with a family of
+`Hetzner.Website` resources. Each one builds your project
+programmatically and deploys it as a systemd
+[Service](/hetzner/compute/services) on a
+[Server](/hetzner/compute/servers) — Node on port 3000, no
+Dockerfile, no unit file, no adapter in the framework config.
+Your framework's own config file (`vite.config.ts`,
+`astro.config.*`, `nuxt.config.ts`, ...) loads natively; Alchemy
+layers its Node server on top.
+
+Omit `server` and Alchemy creates a `cpx12` / `ubuntu-24.04`
+Server in `fsn1`. Pass `server` to put several sites (or a site
+plus an API) on one VM.
+
+The live URL is **`http://{ipv4}:3000`**. There is no TLS on the
+Service. `domain` requires an existing Hetzner DNS
+[`Zone`](/hetzner/networking/dns) and creates an A record;
+`url` becomes `http://{domain}:3000`.
+
+- [`Vite`](/hetzner/frontend/vite) — client-only Vite apps
+  (React, Vue, Solid SPAs, `index.html` multi-page sites); a
+  static-file unit serves the `vite build` output.
+- [`Astro`](/hetzner/frontend/astro) — Astro sites, server-rendered
+  on Node or fully static; your `astro.config.*` loads natively.
+- [`Nextjs`](/hetzner/frontend/nextjs) — Next.js as a long-running
+  Node process (`next build`, then `next({ dev: false })`). Not
+  OpenNext.
+- [`Nuxt`](/hetzner/frontend/nuxt) — Nuxt apps through nitro's
+  Node server; your `nuxt.config.ts` loads natively. Do not set
+  `nitro.preset`.
+- [`ReactRouter`](/hetzner/frontend/react-router) — React Router
+  v7 in framework mode, built through your own `vite build`.
+- [`SolidStart`](/hetzner/frontend/solidstart) — SolidStart 2.x
+  SSR; Alchemy appends nitro's `node` preset to your `vite build`.
+- [`SvelteKit`](/hetzner/frontend/sveltekit) — SvelteKit SSR plus
+  prerendered assets; the Node adapter is injected. Do not set
+  `kit.adapter`.
+- [`TanStackStart`](/hetzner/frontend/tanstack-start) — TanStack
+  Start (React or Solid), built through your own `vite build`.
+- [`Waku`](/hetzner/frontend/waku) — Waku (React Server
+  Components) on Node, with SSG pages served extensionless.
+- [`Octane`](/hetzner/frontend/octane) — OctaneJS SSR. Select
+  `node()` from `@alchemy.run/frontend-frameworks/octane/node-adapter`
+  in `octane.config.ts`.
+- [`Foldkit`](/hetzner/frontend/foldkit) — client-only Foldkit
+  SPA; deep links fall back to `index.html`.
+- [`Vocs`](/hetzner/frontend/vocs) — prerendered Vocs docs;
+  extensionless pages (`/about` → `about/index.html`).
+- [`StaticSite`](/hetzner/frontend/static-site) — any build
+  command's output directory (Hugo, Zola, Eleventy).
+
+The return is `{ url, server, service }` — `server` and
+`service` are `undefined` under `alchemy dev`.
+
+Shared props: `rootDir`, `memo`, `env` (process environment on
+the unit — not Worker bindings), `dev`, `domain`, `zone`,
+`server`. Builds are memoized by content-hashing the input
+files — an unchanged project skips the build.
+
+## What's supported
+
+| Framework | Resource | Guide |
+| --- | --- | --- |
+| React / Vue / Solid SPA | `Vite` | [Vite](/hetzner/frontend/vite) |
+| TanStack Start (React & Solid) | `TanStackStart` | [TanStack Start](/hetzner/frontend/tanstack-start) |
+| React Router | `ReactRouter` | [React Router](/hetzner/frontend/react-router) |
+| SolidStart | `SolidStart` | [SolidStart](/hetzner/frontend/solidstart) |
+| Astro | `Astro` | [Astro](/hetzner/frontend/astro) |
+| Next.js | `Nextjs` | [Next.js](/hetzner/frontend/nextjs) |
+| Nuxt | `Nuxt` | [Nuxt](/hetzner/frontend/nuxt) |
+| SvelteKit | `SvelteKit` | [SvelteKit](/hetzner/frontend/sveltekit) |
+| Waku | `Waku` | [Waku](/hetzner/frontend/waku) |
+| OctaneJS | `Octane` | [Octane](/hetzner/frontend/octane) |
+| Foldkit | `Foldkit` | [Foldkit](/hetzner/frontend/foldkit) |
+| Vocs | `Vocs` | [Vocs](/hetzner/frontend/vocs) |
+| Zola, Hugo, or any static generator | `StaticSite` | [Static sites](/hetzner/frontend/static-site) |
+
+See
+[examples/hetzner-website-vite](https://github.com/alchemy-run/alchemy/tree/main/examples/hetzner-website-vite)
+for a Vite SPA sharing a Server with an API unit.
+
+## How to choose
+
+Use the resource named after your framework. `Astro`, `Nextjs`,
+`Nuxt`, `ReactRouter`, `SolidStart`, `SvelteKit`,
+`TanStackStart`, `Waku`, `Octane`, `Foldkit`, and `Vocs` each
+drive that framework's programmatic build and know its output
+layout, config surface, and dev server.
+
+Use `Vite` when the whole deployable output is static assets — a
+React, Vue, or Solid SPA, or an `index.html`-per-route multi-page
+app. SSR frameworks that wrap Vite (`Astro`, `SvelteKit`,
+`Octane`, …) have their own resources; `Vite` never starts a
+framework server module.
+
+Use `StaticSite` when the build is an arbitrary shell command
+that emits a directory of files.
+
+Pass one `Hetzner.Server` into several Website (and API)
+resources when they should share a VM.
+
+## Environment variables
+
+Top-level `env` is copied onto `process.env` before build and
+dev, and onto the systemd unit at deploy. Client inlining is
+whatever the framework already does (`VITE_*` for Vite). It is
+not Worker bindings and not AWS `server.environment`.
+
+```typescript
+const site = yield* Hetzner.Website.Vite("Web", {
+  server,
+  env: {
+    VITE_API_URL: api.url,
+  },
+});
+```
+
+Server code reads `process.env`.
+
+## Local development
+
+`alchemy dev` runs the framework's own dev server (native HMR)
+instead of deploying. `site.url` is the local address and no
+Server or Service is created. Wrap the site in
+`Alchemy.remote()` to deploy the live path even during dev.
+
+## Custom domain
+
+`domain` requires `zone` — an existing Hetzner DNS Zone. v1
+does not create a Zone. Alchemy adds an A
+[`RecordSet`](/hetzner/networking/dns) pointing at the Server's
+public IPv4. Passing `domain` without `zone` fails.
+
+```typescript
+const site = yield* Hetzner.Website.Astro("Web", {
+  server,
+  domain: "app.example.com",
+  zone,
+});
+```
+
+`url` is `http://app.example.com:3000`. The Service itself does
+not terminate TLS.
+
+## Where next
+
+- [The Vite resource](/hetzner/frontend/vite) — assets-only SPA,
+  `assets.notFoundHandling`, sharing a Server.
+- [The StaticSite resource](/hetzner/frontend/static-site) — build
+  commands, SPA/404 handling.
+- Framework guides:
+  [Astro](/hetzner/frontend/astro),
+  [Next.js](/hetzner/frontend/nextjs),
+  [Nuxt](/hetzner/frontend/nuxt),
+  [React Router](/hetzner/frontend/react-router),
+  [SolidStart](/hetzner/frontend/solidstart),
+  [SvelteKit](/hetzner/frontend/sveltekit),
+  [TanStack Start](/hetzner/frontend/tanstack-start),
+  [Waku](/hetzner/frontend/waku),
+  [Octane](/hetzner/frontend/octane),
+  [Foldkit](/hetzner/frontend/foldkit),
+  [Vocs](/hetzner/frontend/vocs).
+- [Servers](/hetzner/compute/servers) and
+  [Services](/hetzner/compute/services) — the VM and systemd
+  unit these resources deploy.
+- [Zones & records](/hetzner/networking/dns) — the Zone
+  `domain` attaches to.
+- [`Vite` reference](/providers/hetzner/website/vite),
+  [`Astro` reference](/providers/hetzner/website/astro),
+  [`StaticSite` reference](/providers/hetzner/website/staticsite).

@@ -12,9 +12,8 @@ import type { Graph } from "./Graph.ts";
  * {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.ListInvestigationsHttp)`.
- * @binding
- * @section Running Investigations
- * @example List Active Investigations
+ * ### Running Investigations
+ * **Example:** List Active Investigations
  * ```typescript
  * // init
  * const listInvestigations = yield* AWS.Detective.ListInvestigations(graph);
@@ -22,6 +21,8 @@ import type { Graph } from "./Graph.ts";
  * // runtime
  * const { InvestigationDetails } = yield* listInvestigations();
  * ```
+ *
+ * @binding
  */
 export interface ListInvestigations extends Binding.Service<
   ListInvestigations,
