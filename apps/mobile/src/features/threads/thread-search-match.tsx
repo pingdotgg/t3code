@@ -2,6 +2,7 @@ import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
@@ -50,12 +51,17 @@ export function ThreadSearchMatchExcerpt(props: {
   readonly compact?: boolean;
 }) {
   const isUser = props.match.source === "user";
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const parts = splitHighlightParts(props.match.snippet, props.query);
   return (
     <Text
       className={cn(
         props.compact ? "text-sm" : "text-xs",
-        props.selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+        props.selected
+          ? materialYouStyleLayoutActive
+            ? "text-thread-selected-foreground-muted"
+            : "text-user-bubble-foreground-muted"
+          : "text-foreground-muted",
       )}
       numberOfLines={1}
     >
@@ -63,7 +69,9 @@ export function ThreadSearchMatchExcerpt(props: {
         className={cn(
           props.compact ? "text-sm font-t3-medium" : "text-xs font-t3-medium",
           props.selected
-            ? "text-user-bubble-foreground"
+            ? materialYouStyleLayoutActive
+              ? "text-thread-selected-foreground"
+              : "text-user-bubble-foreground"
             : isUser
               ? "text-foreground-secondary"
               : "text-adaptive-emerald-600-400",
@@ -77,7 +85,9 @@ export function ThreadSearchMatchExcerpt(props: {
             props.compact ? "text-sm" : "text-xs",
             part.highlighted && "font-t3-bold",
             props.selected
-              ? "text-user-bubble-foreground"
+              ? materialYouStyleLayoutActive
+                ? "text-thread-selected-foreground"
+                : "text-user-bubble-foreground"
               : part.highlighted
                 ? "text-foreground"
                 : "text-foreground-muted",
