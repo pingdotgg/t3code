@@ -3007,6 +3007,12 @@ struct FeatureMessageView: View {
             HStack {
                 Spacer(minLength: 44)
                 VStack(alignment: .leading, spacing: 10) {
+                    if message.state == .queued {
+                        Text("Queued")
+                            .font(T3Typography.supportingStrong)
+                            .foregroundStyle(T3Colors.textSecondary)
+                            .accessibilityHidden(true)
+                    }
                     FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
                     if !message.text.isEmpty {
                         MarkdownMessageView(
@@ -3108,7 +3114,7 @@ struct FeatureMessageView: View {
             ? ""
             : "\(message.attachments.count) image attachment"
                 + (message.attachments.count == 1 ? "" : "s")
-        return [message.text, attachmentSummary]
+        return [message.state == .queued ? "Queued" : "", message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
     }
