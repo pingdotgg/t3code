@@ -6,8 +6,9 @@ export function resolveThreadSyncPhase(input: {
   readonly detailExists: boolean;
   readonly shellExists: boolean;
   readonly status: EnvironmentThreadStatus;
+  readonly error?: string | null;
 }): ThreadSyncPhase | null {
-  if (!input.shellExists) {
+  if (!input.shellExists || input.error != null) {
     return null;
   }
 

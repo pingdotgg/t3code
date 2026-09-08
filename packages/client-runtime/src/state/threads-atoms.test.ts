@@ -394,6 +394,35 @@ describe("createEnvironmentThreadStateAtoms", () => {
       }),
   );
 
+  it.effect.each([true, false])(
+    "refreshes a failed load while still mounted (empty: %s)",
+    (httpNone) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ connected: true, httpNone });
+        const unmount = h.registry.mount(h.stateAtom);
+        const first = yield* Queue.take(h.subscriptions);
+        yield* Queue.failCause(first.events, Cause.die(new Error("snapshot failed")));
+        yield* Deferred.await(first.closed);
+        yield* observeState(h.registry, h.stateAtom, (state) => Option.isSome(state.error));
+
+        h.registry.refresh(h.rawAtoms.stateAtom(h.ref.environmentId, h.ref.threadId));
+        const next = yield* Queue.take(h.subscriptions);
+        expect(h.registry.get(h.stateAtom).error).toEqual(Option.none());
+        yield* Queue.offer(next.events, { kind: "snapshot", snapshot: SNAPSHOT });
+        yield* Queue.offer(next.events, { kind: "synchronized" });
+        const recovered = yield* observeState(
+          h.registry,
+          h.stateAtom,
+          (state) => state.status === "live",
+        );
+        expect(recovered.data).toEqual(Option.some(THREAD));
+        expect(recovered.error).toEqual(Option.none());
+        expect(h.counts().active).toBe(1);
+        unmount();
+        yield* Deferred.await(next.closed);
+      }),
+  );
+
   it.effect("retries a protocol failure on foreground without replacing the session", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({ connected: true, httpNone: true });
