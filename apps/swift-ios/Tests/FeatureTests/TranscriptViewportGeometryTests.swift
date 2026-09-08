@@ -6,6 +6,17 @@ import UIKit
 @Suite("Transcript viewport anchoring")
 struct TranscriptViewportGeometryTests {
     @Test
+    func transcriptPrefetchUsesTheVisibleSnapshotWhenLoadEarlierIsPresent() {
+        let ids = TranscriptPrefetchIdentity.messageIDs(
+            at: [IndexPath(item: 1, section: 0), IndexPath(item: 2, section: 0)],
+            snapshotItemIDs: ["__t3-load-earlier__", "message-1", "message-2"],
+            reservedItemIDs: ["__t3-load-earlier__", "__t3-working-indicator__"]
+        )
+
+        #expect(ids == ["message-1", "message-2"])
+    }
+
+    @Test
     func firstLoadedTranscriptAnchorsToLatestMessage() {
         let empty = TranscriptViewportGeometry(
             contentHeight: 0,
