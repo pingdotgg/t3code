@@ -24,7 +24,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 ),
                 host: "two.example"
             )
-            let snapshot = try await fixture.hydratedSnapshot()
+            let snapshot = try await fixture.client.initialSnapshot()
             let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
             let monitor = Task {
                 for await _ in client.sourceControlStatusEvents(threadID: thread.id) {}
@@ -33,8 +33,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             let request = await server.nextSourceControlDirectory()
             XCTAssertEqual(request.host, "two.example")
             XCTAssertEqual(request.cwd, path)
-            await client.disconnect()
+            monitor.cancel()
             await monitor.value
+            await client.disconnect()
         }
     }
 
