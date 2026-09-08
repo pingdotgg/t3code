@@ -31,7 +31,7 @@ export interface ThreadQueueWorkflowState {
   readonly canPromoteToSteer: boolean;
 }
 
-export function resolveActiveThreadRun(projection: Projection): Run | null {
+function resolveActiveThreadRun(projection: Projection): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
 }
 
