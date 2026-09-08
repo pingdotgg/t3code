@@ -83,7 +83,7 @@ export function getMobileTerminalTheme(
   scheme: TerminalAppearanceScheme,
 ): TerminalTheme {
   const base = getPierreTerminalTheme(scheme);
-  if (themeId === "t3-code") return base;
+  if (themeId === "t3-code" || themeId === "material-you") return base;
 
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? BUILT_IN_THEMES[0];
   const palette = getThemeColorsForAppearance(theme, scheme) ?? theme.colors;

@@ -51,6 +51,7 @@
     "@expo/metro-runtime": "~57.0.14",
     "@expo/ui": "~57.0.14",
     "@legendapp/list": "catalog:",
+    "@material/material-color-utilities": "0.3.0",
     "@noble/curves": "catalog:",
     "@pierre/diffs": "catalog:",
     "@react-native-ai/apple": "0.12.0",

@@ -1,8 +1,5 @@
-import { useMemo } from "react";
-
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import type { MobileThemeVariables } from "./mobileTheme";
-import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 /**
  * Complete JS palette for native and third-party APIs that cannot consume a
@@ -13,9 +10,5 @@ import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
  * ScopedTheme instead of subscribing every consumer to CSS-variable updates.
  */
 export function useUniwindTheme(): MobileThemeVariables {
-  const { themeAppearance, themeId } = useAppearancePreferences();
-  return useMemo(
-    () => getMobileThemeRuntimeVariables(themeId, themeAppearance),
-    [themeAppearance, themeId],
-  );
+  return useAppearancePreferences().themeVariables;
 }
