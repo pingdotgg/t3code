@@ -29,15 +29,17 @@ describe("rightPanelStore", () => {
   });
 
   it.each(["diff-first", "pull-request-first"])(
-    "keeps the linked pull request above the completed diff with %s delivery",
+    "prioritizes the linked pull request over browser and diff with %s delivery",
     (order) => {
       const store = useRightPanelStore.getState();
+      store.openBrowser(refA, "existing-browser");
       const revision = store.getUserActionRevision(refA);
       const requests =
         order === "diff-first"
           ? [completedDiff, linkedPullRequest]
           : [linkedPullRequest, completedDiff];
       for (const surface of requests) store.openProactive(refA, surface, revision);
+      store.reconcileBrowserSurfaces(refA, ["existing-browser", "agent-browser"]);
 
       expect(
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
