@@ -3855,6 +3855,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var sentRuntimeModes: [FeatureRuntimeMode] = []
     var setRuntimeModeCalls: [FeatureRuntimeMode] = []
     var cancelTurnCallCount = 0
+    var cancelTurnHandler: (() async throws -> Void)?
+    var stopStatusHandler: (() async throws -> FeatureThread)?
     var signOutCallCount = 0
     var startTaskError: (any Error)?
     var sendMessageError: (any Error)?
@@ -4060,6 +4062,11 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
 
     func cancelTurn(threadID: String) async throws {
         cancelTurnCallCount += 1
+        try await cancelTurnHandler?()
+    }
+    func stopStatus(threadID: String) async throws -> FeatureThread {
+        if let stopStatusHandler { return try await stopStatusHandler() }
+        return snapshot.threads.first { $0.id == threadID } ?? createdThread
     }
     func setThreadSettled(id: String, settled: Bool) async throws {
         await beforeSettlementReturn?()
@@ -4121,5 +4128,239 @@ private final class FeatureSettingsSaveGate {
     func releaseFirst() {
         firstRelease?.resume()
         firstRelease = nil
+    }
+}
+
+extension FeatureRootModelTests {
+    @Test func duplicateStopWhileRequestHeld() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let started = AsyncStream<Void>.makeStream()
+        var held: CheckedContinuation<Void, Never>?
+        client.cancelTurnHandler = {
+            if held == nil {
+                await withCheckedContinuation { held = $0; started.continuation.yield(()) }
+            }
+        }
+        let first = Task { await model.cancelTurn(threadID: "created") }
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        await model.cancelTurn(threadID: "created")
+        #expect(client.cancelTurnCallCount == 1)
+        held?.resume()
+        await first.value
+    }
+
+    @Test func stopClaimsSynchronouslyAndAcknowledgementIsNotTerminal() async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        let called = AsyncStream<Void>.makeStream()
+        client.cancelTurnHandler = { called.continuation.yield(()) }
+        model.requestCancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .requesting)
+        model.requestCancelTurn(threadID: "created")
+        var calls = called.stream.makeAsyncIterator()
+        await calls.next()
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads[0].latestTurnState = "completed"
+        client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == nil)
+    }
+
+    @Test func stopSurvivesCloseReopenAndMissingReconnectSeed() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")
+        client.snapshot.threads = [thread]
+        client.createdThread = thread
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        let loaded = AsyncStream<Void>.makeStream()
+        var loads = loaded.stream.makeAsyncIterator()
+        for _ in 0..<2 {
+            let presentation = Task { await model.runThreadPresentation(id: "created") { loaded.continuation.yield(()) } }
+            await loads.next()
+            #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+            presentation.cancel()
+            await presentation.value
+        }
+        client.snapshot.threads = []
+        await model.reloadAfterConnection()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads = [thread]
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        #expect(client.cancelTurnCallCount == 1)
+    }
+
+    @Test(arguments: [false, true])
+    func lateOldStopResponseCannotClearNewTurn(fails: Bool) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        let started = AsyncStream<Void>.makeStream()
+        var held: CheckedContinuation<Void, any Error>?
+        client.cancelTurnHandler = { try await withCheckedThrowingContinuation { held = $0; started.continuation.yield(()) } }
+        let old = Task { await model.cancelTurn(threadID: "created") }
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        client.snapshot.threads[0].latestTurnID = "b"
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == nil)
+        client.cancelTurnHandler = nil
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        if fails { held?.resume(throwing: URLError(.networkConnectionLost)) }
+        else { held?.resume() }
+        await old.value
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        #expect(model.errorMessage == nil)
+        client.snapshot.threads[0].latestTurnID = "a"
+        client.snapshot.threads[0].latestTurnState = "completed"
+        client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+        await model.reload()
+        client.snapshot.threads[0].latestTurnID = "b"
+        client.snapshot.threads[0].latestTurnState = "running"
+        client.snapshot.threads[0].state = .working
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+    }
+
+    @Test func uncertainFailureRequiresStatusReceiptBeforeRetry() async {
+        let client = FeatureClientStub()
+        let thread = FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")
+        client.snapshot.threads = [thread]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+        let started = AsyncStream<Void>.makeStream()
+        let retried = AsyncStream<Void>.makeStream()
+        var held: CheckedContinuation<FeatureThread, any Error>?
+        client.stopStatusHandler = { try await withCheckedThrowingContinuation { held = $0; started.continuation.yield(()) } }
+        client.cancelTurnHandler = { retried.continuation.yield(()) }
+        model.retryCancelTurn(threadID: "created")
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(model.stopPhase(threadID: "created") == .requesting)
+        held?.resume(returning: thread)
+        var retries = retried.stream.makeAsyncIterator()
+        await retries.next()
+        #expect(client.cancelTurnCallCount == 2)
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+    }
+
+    @Test(arguments: [true, false])
+    func compactionAndUnknownIdentityStayExplicitlyUnconfirmed(hasIdentity: Bool) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: hasIdentity ? "a" : nil, latestTurnState: hasIdentity ? "completed" : nil)]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+    }
+
+    @Test(arguments: [false, true])
+    func retryPreservesRunningEvidenceAfterTerminalWhileBusy(statusStillBusy: Bool) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        await model.cancelTurn(threadID: "created")
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+
+        client.snapshot.threads[0].latestTurnState = "completed"
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+        var status = client.snapshot.threads[0]
+        status.state = statusStillBusy ? .working : .completed
+        status.settlementFacts = .init(sessionStatus: "ready")
+        client.stopStatusHandler = { status }
+        await model.retryCancelTurn(threadID: "created")?.value
+        #expect(client.cancelTurnCallCount == 1)
+        if statusStillBusy {
+            #expect(model.stopPhase(threadID: "created") == .unconfirmed)
+            client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+            await model.reload()
+        }
+        #expect(model.stopPhase(threadID: "created") == nil)
+        let rejectedRetry = model.retryCancelTurn(threadID: "created")
+        #expect(rejectedRetry == nil)
+        await rejectedRetry?.value
+        #expect(client.cancelTurnCallCount == 1)
+    }
+
+    @Test func matchingTerminalWhileStillWorkingDoesNotClearStop() async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        client.snapshot.threads[0].latestTurnState = "completed"
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads[0].state = .completed
+        client.snapshot.threads[0].settlementFacts = .init(sessionStatus: "ready")
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == nil)
+    }
+
+    @Test(arguments: ["completed", "different-turn", "unknown"])
+    func retryReconciliationDoesNotInterruptTerminalDifferentOrUnknownTurn(statusKind: String) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(id: "created", projectID: "p", title: "Work", state: .working, latestTurnID: "a", latestTurnState: "running")]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        await model.cancelTurn(threadID: "created")
+        var status = client.snapshot.threads[0]
+        if statusKind == "completed" {
+            status.latestTurnState = "completed"
+            status.state = .completed
+            status.settlementFacts = .init(sessionStatus: "ready")
+        }
+        if statusKind == "different-turn" { status.latestTurnID = "b" }
+        if statusKind == "unknown" { status.latestTurnState = nil }
+        client.stopStatusHandler = { status }
+        await model.retryCancelTurn(threadID: "created")?.value
+        #expect(client.cancelTurnCallCount == 1)
+        if statusKind == "completed" { #expect(model.stopPhase(threadID: "created") == nil) }
+    }
+
+    @Test(arguments: [nil, "missing-status", "unknown", "idle", "starting", "running"] as [String?])
+    func stopRetainsFeedbackWithoutKnownInactiveSession(sessionStatus: String?) async {
+        let client = FeatureClientStub()
+        client.snapshot.threads = [FeatureThread(
+            id: "created", projectID: "p", title: "Work", state: .waitingForApproval,
+            latestTurnID: "a", latestTurnState: "running",
+            settlementFacts: .init(sessionStatus: "running")
+        )]
+        let model = FeatureRootModel(client: client)
+        await model.reload()
+        await model.cancelTurn(threadID: "created")
+        client.snapshot.threads[0].latestTurnState = "interrupted"
+        client.snapshot.threads[0].settlementFacts = sessionStatus.map {
+            .init(sessionStatus: $0 == "missing-status" ? nil : $0)
+        }
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
+        client.snapshot.threads[0].state = .waitingForInput
+        await model.reload()
+        #expect(model.stopPhase(threadID: "created") == .awaitingOutcome)
     }
 }

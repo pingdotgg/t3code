@@ -2430,14 +2430,36 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return snapshot.thread.messages.contains { $0.id == messageID }
     }
 
+    func stopStatus(threadID: String) async throws -> FeatureThread {
+        let route = try threadRoute(for: threadID)
+        let generation = environmentGeneration
+        let bootstrapID = foregroundBootstrapID
+        try await refresh(client: route.client)
+        guard !Task.isCancelled, bootstrapID == foregroundBootstrapID,
+              isKnownClient(route.client, environmentID: route.environmentID, generation: generation) else {
+            throw CancellationError()
+        }
+        guard let thread = shellsByEnvironmentID[route.environmentID]?.threads
+            .first(where: { $0.id == route.wireID }) else {
+            throw NativeFeatureClientError.threadNotFound
+        }
+        return mapThread(thread, environment: route.client.environment)
+    }
+
     func cancelTurn(threadID: String) async throws {
+        let route = try threadRoute(for: threadID)
+        let turnID = shellsByEnvironmentID[route.environmentID]?.threads
+            .first(where: { $0.id == route.wireID })?.latestTurn?.turnId
+        try await cancelTurn(threadID: threadID, expectedTurnID: turnID)
+    }
+
+    func cancelTurn(threadID: String, expectedTurnID: String?) async throws {
         let route = try threadRoute(for: threadID)
         let generation = environmentGeneration
         let turnID = shellsByEnvironmentID[route.environmentID]?.threads
-            .first(where: { $0.id == route.wireID })?
-            .latestTurn?
-            .turnId
-        _ = try await route.client.interrupt(threadID: route.wireID, turnID: turnID)
+            .first(where: { $0.id == route.wireID })?.latestTurn?.turnId
+        guard turnID == expectedTurnID else { throw FeatureStopTurnChangedError() }
+        _ = try await route.client.interrupt(threadID: route.wireID, turnID: expectedTurnID)
         scheduleAcceptedCommandRefresh(
             threadID: route.uiID, client: route.client, generation: generation, refreshDetail: false
         )
@@ -6171,6 +6193,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 backgroundWorkIsActive: backgroundWorkIsActive,
                 fallbackUpdatedAt: thread.updatedAt
             ),
+            latestTurnID: thread.latestTurn?.turnId,
+            latestTurnState: thread.latestTurn?.state,
             latestTurnCompletedAt: thread.latestTurn?.completedAt.flatMap(parseValidDate),
             settlementFacts: settlementFacts(
                 override: thread.settledOverride,
@@ -6256,6 +6280,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 backgroundWorkIsActive: backgroundWorkIsActive,
                 fallbackUpdatedAt: thread.updatedAt
             ),
+            latestTurnID: thread.latestTurn?.turnId,
+            latestTurnState: thread.latestTurn?.state,
             latestTurnCompletedAt: thread.latestTurn?.completedAt.flatMap(parseValidDate),
             settlementFacts: settlementFacts(
                 override: thread.settledOverride,

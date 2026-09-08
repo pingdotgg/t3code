@@ -5,6 +5,106 @@ import XCTest
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
+    func testCapturedStopProjectionsRetainFeedbackUntilInactiveSession() async throws {
+        for scenario in ["approval", "approval-starting", "input", "background-ready-null", "active-running-null"] {
+            let fixture = try await AcceptedSendFixture.make(
+                captured: NativeStopProjectionFixtures.snapshot(scenario)
+            )
+            addTeardownBlock { await fixture.cleanUp() }
+            let expectedPhase: FeatureStopPhase = scenario == "background-ready-null"
+                ? .unconfirmed : .awaitingOutcome
+            var reads = fixture.transport.heldReads.makeAsyncIterator()
+            await fixture.transport.holdFollowups()
+            await fixture.model.cancelTurn(threadID: fixture.threadID)
+            XCTAssertEqual(fixture.model.stopPhase(threadID: fixture.threadID), expectedPhase, scenario)
+            let next = await reads.next()
+            let held = try XCTUnwrap(next)
+            XCTAssertEqual(held.path, "/api/orchestration/shell")
+            await fixture.transport.useCapturedPhase("requestHeld")
+            await fixture.transport.release(held.id)
+            await CapturedStopProjectionReceipt(model: fixture.model, threadID: fixture.threadID).wait()
+            XCTAssertEqual(fixture.model.stopPhase(threadID: fixture.threadID), expectedPhase, scenario)
+            await fixture.transport.allowFollowups()
+            await fixture.transport.useCapturedPhase("afterAcknowledged")
+            _ = await fixture.model.detail(for: fixture.threadID, force: true, fresh: true)
+            XCTAssertEqual(fixture.model.stopPhase(threadID: fixture.threadID), expectedPhase, scenario)
+            await fixture.transport.useCapturedPhase("afterTerminal")
+            _ = await fixture.model.detail(for: fixture.threadID, force: true, fresh: true)
+            XCTAssertEqual(fixture.model.stopPhase(threadID: fixture.threadID),
+                           scenario == "background-ready-null" ? .unconfirmed : nil, scenario)
+        }
+    }
+
+    func testCapturedInputStopFailureMapsToTranscript() async throws {
+        let fixture = try await AcceptedSendFixture.make(
+            captured: NativeStopProjectionFixtures.snapshot("input-failure")
+        )
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        await fixture.model.cancelTurn(threadID: fixture.threadID)
+        let next = await reads.next()
+        let held = try XCTUnwrap(next)
+        await fixture.transport.useCapturedPhase("requestHeld")
+        await fixture.transport.release(held.id)
+        await CapturedStopProjectionReceipt(model: fixture.model, threadID: fixture.threadID).wait()
+        XCTAssertEqual(fixture.model.stopPhase(threadID: fixture.threadID), .awaitingOutcome)
+        await fixture.transport.allowFollowups()
+        await fixture.transport.useCapturedPhase("afterFailure")
+        _ = await fixture.model.detail(for: fixture.threadID, force: true, fresh: true)
+        XCTAssertTrue(fixture.model.details[fixture.threadID]?.messages.contains {
+            $0.toolName == "provider.turn.interrupt.failed" && $0.role == .system
+        } == true)
+        XCTAssertNil(fixture.model.errorMessage)
+    }
+
+
+    func testExpectedStopTurnMismatchDoesNotDispatch() async throws {
+        let fixture = try await AcceptedSendFixture.make(turnID: "current-turn")
+        addTeardownBlock { await fixture.cleanUp() }
+        do {
+            try await fixture.client.cancelTurn(threadID: fixture.threadID, expectedTurnID: "older-turn")
+            XCTFail("Mismatched turn must be refused before dispatch")
+        } catch is FeatureStopTurnChangedError {}
+        let commands = await fixture.socket.commands
+        XCTAssertTrue(commands.isEmpty)
+        XCTAssertEqual(fixture.model.snapshot.threads.first?.latestTurnID, "current-turn")
+        XCTAssertEqual(fixture.model.details[fixture.threadID]?.thread.latestTurnID, "current-turn")
+        XCTAssertEqual(fixture.model.details[fixture.threadID]?.thread.latestTurnState, "running")
+    }
+
+    func testExpectedStopTurnPayloadAndAckDoNotWaitForRefresh() async throws {
+        let fixture = try await AcceptedSendFixture.make(turnID: "current-turn")
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.cancelTurn(threadID: fixture.threadID, expectedTurnID: "current-turn")
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["turnId"]?.stringValue, "current-turn")
+        let read = await reads.next()
+        XCTAssertEqual(read?.path, "/api/orchestration/shell")
+        await fixture.transport.failFollowups()
+    }
+
+    func testStopStatusWaitsForHTTPWithoutDispatching() async throws {
+        let fixture = try await AcceptedSendFixture.make(turnID: "current-turn")
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        let status = Task { try await fixture.client.stopStatus(threadID: fixture.threadID) }
+        let nextRead = await reads.next()
+        let read = try XCTUnwrap(nextRead)
+        XCTAssertEqual(read.path, "/api/orchestration/shell")
+        let commands = await fixture.socket.commands
+        XCTAssertTrue(commands.isEmpty)
+        await fixture.transport.release(read.id)
+        let thread = try await status.value
+        XCTAssertEqual(thread.latestTurnID, "current-turn")
+        XCTAssertEqual(thread.latestTurnState, "running")
+        await fixture.transport.failFollowups()
+    }
+
     func testLateStopAcknowledgementCannotCancelReplacementGenerationRefresh() async throws {
         let fixture = try await AcceptedSendFixture.make(includePeer: true)
         addTeardownBlock { await fixture.cleanUp() }
@@ -1076,7 +1176,9 @@ private struct AcceptedSendFixture {
     let socket: AcceptedSendSocket
     let runtime: EnvironmentRuntime
 
-    static func make(includePeer: Bool = false) async throws -> Self {
+    static func make(
+        includePeer: Bool = false, turnID: String? = nil, captured: JSONValue? = nil
+    ) async throws -> Self {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-accepted-send-\(UUID().uuidString)")
         let environment = Environment(
@@ -1092,7 +1194,7 @@ private struct AcceptedSendFixture {
         )
         try await store.save(includePeer ? [environment, peer] : [environment])
         try await store.setActiveEnvironment(id: environment.id)
-        let transport = AcceptedSendHTTPTransport()
+        let transport = AcceptedSendHTTPTransport(turnID: turnID, captured: captured)
         let socket = AcceptedSendSocket()
         let runtime = EnvironmentRuntime(
             environmentStore: store,
@@ -1113,8 +1215,9 @@ private struct AcceptedSendFixture {
         let model = FeatureRootModel(client: client, outboxStore: outbox)
         let modelTask = Task { await model.start() }
         do {
-            try await AcceptedSendRootReadiness(model: model).wait()
-            let threadID = FeatureScopedID.thread(environmentID: environment.id, wireID: "thread-existing")
+            let wireID = captured?["threadId"]?.stringValue ?? "thread-existing"
+            try await AcceptedSendRootReadiness(model: model, wireID: wireID).wait()
+            let threadID = FeatureScopedID.thread(environmentID: environment.id, wireID: wireID)
             _ = await model.detail(for: threadID)
             return Self(modelTask: modelTask, directory: directory, threadID: threadID,
                         settingsName: settingsName, client: client, model: model,
@@ -1141,9 +1244,13 @@ private struct AcceptedSendFixture {
 @MainActor
 private final class AcceptedSendRootReadiness {
     private let model: FeatureRootModel
+    private let wireID: String
     private var continuation: CheckedContinuation<Void, Error>?
 
-    init(model: FeatureRootModel) { self.model = model }
+    init(model: FeatureRootModel, wireID: String = "thread-existing") {
+        self.model = model
+        self.wireID = wireID
+    }
 
     func wait() async throws {
         try await withTaskCancellationHandler {
@@ -1162,7 +1269,7 @@ private final class AcceptedSendRootReadiness {
         let ready = withObservationTracking {
             !model.isLoading
                 && model.snapshot.projects.contains { $0.id == FeatureScopedID.project(environmentID: "accepted-send", wireID: "project-1") }
-                && model.snapshot.threads.contains { $0.id == FeatureScopedID.thread(environmentID: "accepted-send", wireID: "thread-existing") }
+                && model.snapshot.threads.contains { $0.id == FeatureScopedID.thread(environmentID: "accepted-send", wireID: wireID) }
                 && model.snapshot.environments.first(where: { $0.id == "accepted-send" })?.connectionState == .connected
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observe() }
@@ -1235,7 +1342,17 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
     private var pending: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var detailMessages: [UUID: String] = [:]
 
-    init() {
+    private let captured: JSONValue?
+    private var capturedPhase = "before"
+
+    func useCapturedPhase(_ phase: String) { capturedPhase = phase }
+    func allowFollowups() { holds = false }
+
+    private let turnID: String?
+
+    init(turnID: String? = nil, captured: JSONValue? = nil) {
+        self.captured = captured
+        self.turnID = turnID
         (heldReads, reads) = AsyncStream.makeStream()
         (cancellations, cancelled) = AsyncStream.makeStream()
     }
@@ -1264,6 +1381,11 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
                 Task { await self.cancel(id) }
             }
         }
+        if let captured {
+            let key = path == "/api/orchestration/shell" ? "shell" : "detail"
+            guard let snapshot = captured[capturedPhase]?[key] else { throw HTTPError.invalidResponse }
+            return (try JSONEncoder.t3.encode(snapshot), retryHTTPResponse(request))
+        }
         let data: Data
         if path == "/api/orchestration/shell" {
             data = try JSONEncoder.t3.encode(retryShellSnapshot())
@@ -1282,6 +1404,19 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
                     thread: try JSONValue.object(thread).decode(OrchestrationThread.self)
                 ))
             } else { data = try JSONEncoder.t3.encode(snapshot) }
+        }
+        if let turnID {
+            var root = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            let latest: [String: Any] = ["turnId": turnID, "state": "running", "requestedAt": "2026-07-30T12:00:00.000Z"]
+            if var threads = root["threads"] as? [[String: Any]] {
+                for index in threads.indices { threads[index]["latestTurn"] = latest }
+                root["threads"] = threads
+            }
+            if var thread = root["thread"] as? [String: Any] {
+                thread["latestTurn"] = latest
+                root["thread"] = thread
+            }
+            return (try JSONSerialization.data(withJSONObject: root), retryHTTPResponse(request))
         }
         return (data, retryHTTPResponse(request))
     }
@@ -1340,6 +1475,7 @@ private actor AcceptedSendSocket: WebSocketConnection {
     private(set) var commands: [JSONValue] = []
     private var queued: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
+    private var receiverID: UUID?
 
     func send(_ data: Data) throws {
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
@@ -1367,16 +1503,64 @@ private actor AcceptedSendSocket: WebSocketConnection {
 
     func receive() async throws -> Data {
         if !queued.isEmpty { return queued.removeFirst() }
-        return try await withCheckedThrowingContinuation { receiver = $0 }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                // This fixture reuses its socket across connector generations.
+                receiver?.resume(throwing: CancellationError())
+                receiver = continuation
+                receiverID = id
+            }
+        } onCancel: {
+            Task { await self.cancelReceive(id) }
+        }
+    }
+
+    private func cancelReceive(_ id: UUID) {
+        guard receiverID == id else { return }
+        receiver?.resume(throwing: CancellationError())
+        receiver = nil
+        receiverID = nil
     }
 
     func close() {
         receiver?.resume(throwing: CancellationError())
         receiver = nil
+        receiverID = nil
     }
 
     private func enqueue(_ data: Data) {
-        if let receiver { self.receiver = nil; receiver.resume(returning: data) }
+        if let receiver { self.receiver = nil; receiverID = nil; receiver.resume(returning: data) }
         else { queued.append(data) }
+    }
+}
+
+@MainActor
+private final class CapturedStopProjectionReceipt {
+    let model: FeatureRootModel
+    let threadID: String
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(model: FeatureRootModel, threadID: String) {
+        self.model = model
+        self.threadID = threadID
+    }
+
+    func wait() async {
+        await withCheckedContinuation { continuation = $0; observe() }
+    }
+
+    private func observe() {
+        guard continuation != nil else { return }
+        let ready = withObservationTracking {
+            model.snapshot.threads.first { $0.id == threadID }?.latestTurnState == "interrupted"
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observe() }
+        }
+        if ready { continuation?.resume(); continuation = nil }
     }
 }

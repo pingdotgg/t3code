@@ -297,6 +297,8 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var isRegeneratingTitle: Bool
     public var attentionAt: Date?
     public var workingStartedAt: Date?
+    public var latestTurnID: String?
+    public var latestTurnState: String?
     public var latestTurnCompletedAt: Date?
     public var settlementFacts: FeatureThreadSettlementFacts?
     public var runtimeMode: FeatureRuntimeMode
@@ -340,6 +342,8 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         isRegeneratingTitle: Bool = false,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
+        latestTurnID: String? = nil,
+        latestTurnState: String? = nil,
         latestTurnCompletedAt: Date? = nil,
         settlementFacts: FeatureThreadSettlementFacts? = nil,
         runtimeMode: FeatureRuntimeMode = .fullAccess,
@@ -382,6 +386,8 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.isRegeneratingTitle = isRegeneratingTitle
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
+        self.latestTurnID = latestTurnID
+        self.latestTurnState = latestTurnState
         self.latestTurnCompletedAt = latestTurnCompletedAt
         self.settlementFacts = settlementFacts
         self.runtimeMode = runtimeMode

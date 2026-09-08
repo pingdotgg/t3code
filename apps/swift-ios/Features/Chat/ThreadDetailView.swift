@@ -725,10 +725,12 @@ public struct ThreadDetailView: View {
                     isSending: isSending,
                     isWorking: detail.thread.state == .working || detail.thread.state == .queued
                         || isCompacting,
+                    stopPhase: model.stopPhase(threadID: thread.id),
+                    onRetryStop: { model.retryCancelTurn(threadID: thread.id) },
                     focused: $composerFocused,
                     onSend: send,
                     onStop: {
-                        Task { await model.cancelTurn(threadID: thread.id) }
+                        model.requestCancelTurn(threadID: thread.id)
                     },
                     pendingApprovals: detail.approvals,
                     pendingUserInputs: detail.userInputs,

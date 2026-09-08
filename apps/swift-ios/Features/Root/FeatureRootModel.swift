@@ -23,10 +23,107 @@ enum FeatureThreadLoadState: Equatable {
     case failed(String)
 }
 
+enum FeatureStopPhase: Equatable {
+    case requesting
+    case awaitingOutcome
+    case unconfirmed
+}
+
 @MainActor
 @Observable
 public final class FeatureRootModel {
     private static let maximumRetainedThreadDetails = 6
+
+    private struct StopKey: Hashable {
+        let threadID: String
+        let turnID: String?
+    }
+    private struct StopRequest {
+        let token: UUID
+        let key: StopKey
+        var canObserveOutcome: Bool
+        var phase: FeatureStopPhase
+    }
+    private var stopRequests: [String: StopRequest] = [:]
+
+    func stopPhase(threadID: String) -> FeatureStopPhase? {
+        let key = stopKey(threadID: threadID)
+        guard let request = stopRequests[threadID], request.key == key else { return nil }
+        return request.phase
+    }
+
+    private func stopKey(threadID: String) -> StopKey {
+        let thread = snapshot.threads.first { $0.id == threadID } ?? details[threadID]?.thread
+        return thread.map { StopKey(threadID: threadID, turnID: $0.latestTurnID) }
+            ?? stopRequests[threadID]?.key ?? StopKey(threadID: threadID, turnID: nil)
+    }
+
+    /// Claims the request on the tap's actor turn, before dispatching async work.
+    func requestCancelTurn(threadID: String) {
+        let key = stopKey(threadID: threadID)
+        guard let token = claimStop(key) else { return }
+        Task { await executeStop(key, token: token) }
+    }
+
+    private func claimStop(_ key: StopKey) -> UUID? {
+        guard stopRequests[key.threadID]?.key != key else { return nil }
+        let token = UUID()
+        let thread = snapshot.threads.first { $0.id == key.threadID } ?? details[key.threadID]?.thread
+        let canObserveOutcome = key.turnID != nil && thread?.latestTurnState == "running"
+        stopRequests[key.threadID] = StopRequest(
+            token: token, key: key, canObserveOutcome: canObserveOutcome, phase: .requesting
+        )
+        return token
+    }
+
+    /// A failed transport response may have followed acceptance. Reconcile before retrying.
+    @discardableResult
+    func retryCancelTurn(threadID: String) -> Task<Void, Never>? {
+        let key = stopKey(threadID: threadID)
+        guard let previous = stopRequests[key.threadID], previous.key == key,
+              previous.phase == .unconfirmed else { return nil }
+        let token = UUID()
+        // Retry must retain the running-turn evidence captured by this same request.
+        let canObserveOutcome = previous.canObserveOutcome
+        stopRequests[key.threadID] = StopRequest(
+            token: token, key: key, canObserveOutcome: canObserveOutcome, phase: .requesting
+        )
+        return Task {
+            do {
+                let status = try await client.stopStatus(threadID: threadID)
+                guard stopRequests[key.threadID]?.token == token else { return }
+                upsert(status)
+                guard stopRequests[key.threadID]?.token == token else { return }
+                guard status.latestTurnID == key.turnID else {
+                    stopRequests[key.threadID]?.phase = .unconfirmed
+                    return
+                }
+                guard status.latestTurnID != nil, status.latestTurnState == "running" else {
+                    stopRequests[key.threadID]?.phase = .unconfirmed
+                    return
+                }
+                stopRequests[key.threadID]?.canObserveOutcome = true
+                await executeStop(key, token: token)
+            } catch {
+                guard stopRequests[key.threadID]?.token == token else { return }
+                stopRequests[key.threadID]?.phase = .unconfirmed
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func reconcileStop(_ thread: FeatureThread) {
+        guard let turnID = thread.latestTurnID,
+              thread.latestTurnState == "completed" || thread.latestTurnState == "interrupted"
+                || thread.latestTurnState == "error" else { return }
+        // Approval and input presentation can hide a session that is still running.
+        guard let sessionStatus = thread.settlementFacts?.sessionStatus,
+              ["ready", "interrupted", "stopped", "error"].contains(sessionStatus),
+              thread.state != .working && thread.state != .queued,
+              let request = stopRequests[thread.id], request.canObserveOutcome,
+              request.key.turnID == turnID else { return }
+        stopRequests.removeValue(forKey: thread.id)
+    }
 
     private struct PendingSettlementMutation {
         let id: UUID
@@ -848,28 +945,60 @@ public final class FeatureRootModel {
     }
 
     public func cancelTurn(threadID: String) async {
+        let key = stopKey(threadID: threadID)
+        guard let token = claimStop(key) else { return }
+        await executeStop(key, token: token)
+    }
+
+    private func executeStop(_ key: StopKey, token: UUID) async {
+        guard stopRequests[key.threadID]?.token == token else { return }
+        do {
+            let sentRemotely = try await cancelClaimedTurn(key)
+            guard stopRequests[key.threadID]?.token == token else { return }
+            if !sentRemotely {
+                stopRequests.removeValue(forKey: key.threadID)
+            } else {
+                let phase: FeatureStopPhase = stopRequests[key.threadID]?.canObserveOutcome == true
+                    ? .awaitingOutcome : .unconfirmed
+                stopRequests[key.threadID]?.phase = phase
+            }
+        } catch {
+            guard stopRequests[key.threadID]?.token == token else { return }
+            if error is FeatureStopTurnChangedError {
+                stopRequests.removeValue(forKey: key.threadID)
+            } else {
+                stopRequests[key.threadID]?.phase = .unconfirmed
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func cancelClaimedTurn(_ key: StopKey) async throws -> Bool {
+        let threadID = key.threadID
         if pendingSubmissionsByID.values.contains(where: {
             $0.threadID == threadID && $0.creation != nil
         }) {
             await stopOutboxDrain()
             let queued = pendingSubmissionsByID.values.filter { $0.threadID == threadID }
+            var discardedAll = true
             for submission in queued {
                 if !(await discardQueuedSubmission(submission)) {
+                    discardedAll = false
                     scheduleOutboxRetry()
                 }
             }
+            guard discardedAll else { throw FeatureStopStatusUnavailableError() }
             if pendingThreadsByID[threadID] == nil,
                snapshot.threads.contains(where: { $0.id == threadID }) {
-                await perform {
-                    try await client.cancelTurn(threadID: threadID)
-                }
+                try await client.cancelTurn(threadID: threadID)
+                scheduleOutboxDrain()
+                return true
             }
             scheduleOutboxDrain()
-            return
+            return false
         }
-        await perform {
-            try await client.cancelTurn(threadID: threadID)
-        }
+        try await client.cancelTurn(threadID: threadID, expectedTurnID: key.turnID)
+        return true
     }
 
     public func resolveApproval(_ id: String, decision: FeatureApprovalDecision) async {
@@ -1110,6 +1239,7 @@ public final class FeatureRootModel {
     }
 
     private func upsert(_ thread: FeatureThread) {
+        reconcileStop(thread)
         let thread = retainingPendingSettlement(in: thread)
         discardStalePullRequest(for: thread)
         var metadataChanged = false
@@ -1145,6 +1275,7 @@ public final class FeatureRootModel {
     }
 
     private func removeThread(id: String) {
+        stopRequests = stopRequests.filter { $0.key != id }
         guard let index = snapshot.threads.firstIndex(where: { $0.id == id }) else { return }
         let projectID = snapshot.threads[index].projectID
         snapshot.threads.remove(at: index)
@@ -1162,6 +1293,7 @@ public final class FeatureRootModel {
 
     private func install(_ value: FeatureSnapshot) {
         var value = value
+        for thread in value.threads { reconcileStop(thread) }
         if settingsWriteTask != nil {
             // A shell refresh can still contain the settings from before a
             // queued write. Keep both the visible choice and its rollback point.
