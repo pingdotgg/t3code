@@ -11,7 +11,10 @@
  * every connected client the way `preview_open` does.
  */
 import {
+  type DeviceActionInput,
   type DeviceCloseInput,
+  type DeviceDetail,
+  type DeviceDetailInput,
   type DeviceError,
   type DeviceHostId,
   type DeviceId,
@@ -41,6 +44,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
+import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import type { DeviceHost, DeviceHostReady } from "./DeviceHost.ts";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
@@ -89,6 +93,10 @@ export class DeviceService extends Context.Service<
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
     readonly shutdown: (input: DeviceShutdownInput) => Effect.Effect<void, DeviceError>;
+    /** Current settings and foreground app for one device. */
+    readonly detail: (input: DeviceDetailInput) => Effect.Effect<DeviceDetail, DeviceError>;
+    /** Runs one action, then returns the refreshed detail. */
+    readonly action: (input: DeviceActionInput) => Effect.Effect<DeviceDetail, DeviceError>;
     readonly screenshot: (input: {
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
@@ -459,6 +467,40 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const resolveDevice = Effect.fn("DeviceService.resolveDevice")(function* (
+    hostId: DeviceHostId | undefined,
+    deviceId: DeviceId,
+  ) {
+    const host = yield* resolveHost(hostId);
+    const ready = yield* readiness(host.id);
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const device = findDevice(state, host.id, deviceId);
+    if (!device) return yield* new DeviceNotFoundError({ hostId: host.id, deviceId });
+    return { ready, device };
+  });
+
+  const detail: DeviceService["Service"]["detail"] = Effect.fn("DeviceService.detail")(
+    function* (input) {
+      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      const read = yield* readDeviceDetail(ready, device.platform, device.id);
+      return {
+        hostId: ready.hostId,
+        deviceId: device.id,
+        settings: read.settings,
+        foregroundApp: read.foregroundApp,
+        readAt: DateTime.formatIso(yield* DateTime.now),
+      };
+    },
+  );
+
+  const action: DeviceService["Service"]["action"] = Effect.fn("DeviceService.action")(
+    function* (input) {
+      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+      yield* runDeviceAction(ready, device.platform, input);
+      return yield* detail({ hostId: ready.hostId, deviceId: device.id });
+    },
+  );
+
   const sessionsForThread: DeviceService["Service"]["sessionsForThread"] = (threadId) =>
     SynchronizedRef.get(stateRef).pipe(
       Effect.map(({ state }) => state.sessions.filter((session) => session.threadId === threadId)),
@@ -471,6 +513,8 @@ export const make = Effect.gen(function* () {
     open,
     close,
     shutdown,
+    detail,
+    action,
     screenshot,
     readiness,
     readinessIfSupported,

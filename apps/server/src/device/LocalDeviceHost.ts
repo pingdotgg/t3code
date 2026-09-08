@@ -89,6 +89,7 @@ interface HubProcess {
 interface RunningHost {
   readonly hub: HubProcess;
   readonly agentDevice: AgentDeviceEndpoint;
+  readonly helpers: DeviceHostReady["helpers"];
 }
 
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
@@ -459,7 +460,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         const agentDevice = yield* startAgentDeviceDaemon(tools).pipe(
           Effect.tapError(() => stopHub(hub)),
         );
-        const next: RunningHost = { hub, agentDevice };
+        const candidate = helperPaths(tools);
+        const [axExists, cliExists] = yield* Effect.all([
+          fs.exists(candidate.serveSimAxSettings).pipe(Effect.orElseSucceed(() => false)),
+          fs.exists(candidate.serveSimCli).pipe(Effect.orElseSucceed(() => false)),
+        ]);
+        const next: RunningHost = {
+          hub,
+          agentDevice,
+          helpers: {
+            serveSimAxSettings: axExists ? candidate.serveSimAxSettings : null,
+            serveSimCli: cliExists ? candidate.serveSimCli : null,
+          },
+        };
         yield* Ref.set(runningRef, next);
         yield* Ref.set(restartDelayRef, 0);
         yield* Effect.forkDetach(superviseHub(hub, tools));
@@ -467,9 +480,45 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       }),
     );
 
+  const helperPaths = (tools: DeviceToolchainPaths) => {
+    const serveSimDist = path.join(
+      tools.hub.installDir,
+      "node_modules",
+      "expo-device-hub",
+      "vendor",
+      "serve-sim",
+      "dist",
+    );
+    return {
+      serveSimAxSettings: path.join(serveSimDist, "simax", "serve-sim-ax-settings"),
+      serveSimCli: path.join(serveSimDist, "serve-sim.js"),
+    };
+  };
+
+  const run: DeviceHostReady["run"] = (command, args, options) =>
+    runner
+      .run({
+        command,
+        args,
+        env: hostEnvironment,
+        timeout: Duration.millis(options?.timeoutMs ?? 20_000),
+        timeoutBehavior: "timedOutResult",
+        ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+      })
+      .pipe(
+        Effect.map((result) => ({
+          stdout: result.stdout,
+          stderr: result.stderr,
+          code: Number(result.code),
+        })),
+        Effect.catch((cause) => Effect.succeed({ stdout: "", stderr: String(cause), code: 127 })),
+      );
+
   const toReady = (running: RunningHost): DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHubEndpoint,
     agentDevice: running.agentDevice,
+    run,
+    helpers: running.helpers,
   });
 
   const current: DeviceHost["current"] = Ref.get(runningRef).pipe(

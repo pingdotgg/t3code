@@ -38,10 +38,17 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/devices$/,
   /^\/vendor\/serve-sim\/api$/,
   /^\/vendor\/serve-sim\/api\/screenshot$/,
+  /^\/vendor\/serve-sim\/api\/event-log(\/events)?$/,
   /^\/vendor\/serve-sim\/helper\/[^/]+\/(stream\.mjpeg|stream\.avcc|config|health|ax|foreground)$/,
   /^\/vendor\/serve-sim\/appstate$/,
-  /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings)$/,
+  /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility)$/,
   /^\/vendor\/serve-emu\/health$/,
+];
+
+/** Read paths are GET-only; only these accept other methods (screenshot captures, stream tuning). */
+const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
+  /^\/vendor\/serve-sim\/api\/screenshot$/,
+  /^\/vendor\/serve-emu\/api\/(screenshot|stream-mode|stream-settings)$/,
 ];
 
 const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
@@ -178,6 +185,10 @@ const handler = Effect.gen(function* () {
   );
   if (!allowed) {
     return HttpServerResponse.text("Not Found", { status: 404 });
+  }
+  const readOnly = request.method === "GET" || request.method === "HEAD";
+  if (!upgrade && !readOnly && !MUTABLE_PATHS.some((pattern) => pattern.test(hubPath))) {
+    return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
   yield* authenticate;
   const devices = yield* DeviceService;

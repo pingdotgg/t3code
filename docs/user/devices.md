@@ -22,6 +22,17 @@ focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
 iOS, and power off. Close the tab to stop watching; the device keeps running
 unless you power it off.
 
+## Tools
+
+The toolbar's **Tools** button opens a drawer for the open device. It shows the
+foreground app, and lets you switch light and dark mode, change text size,
+flip accessibility settings, overlay the accessibility element frames on the
+screen, set a fake location, and grant or revoke app permissions. iOS also
+exposes Liquid Glass, color filters, VoiceOver, and sending a test push
+notification; Android adds orientation and toggling the network. The drawer
+only shows what the platform can do, and every control reflects the value read
+back from the device after a change.
+
 ## Agents and devices
 
 When an agent opens a device, the panel opens in every client connected to the

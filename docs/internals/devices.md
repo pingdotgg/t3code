@@ -38,6 +38,18 @@ Stream responses carry `Cache-Control: no-transform`; the compression
 middleware would otherwise buffer an MJPEG body that never ends. In browser dev,
 the Vite proxy must forward WebSocket upgrades for `/api`, not only `/ws`.
 
+## Device settings never go through the hub
+
+serve-sim's preview drives its Tools panel by sending shell commands over that
+same exec channel. Proxying it, even allowlisted, would hand any environment
+session arbitrary command execution on the host, so T3 does not. The
+[`device.action`](../../apps/server/src/device/DeviceActions.ts) RPC runs the
+underlying `simctl`, `adb`, and serve-sim helper binaries itself through
+`DeviceHostReady.run`, one typed action per control, and returns the settings
+it reads back. The proxy allowlist grows only with read routes (accessibility
+tree, foreground app, event log) and refuses non-GET methods everywhere except
+screenshot capture and stream tuning.
+
 ## Agents drive through the CLI
 
 The `device_*` toolkit is deliberately four tools: list, open, screenshot, and

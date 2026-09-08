@@ -129,6 +129,168 @@ export const DeviceShutdownInput = Schema.Struct({
 });
 export type DeviceShutdownInput = typeof DeviceShutdownInput.Type;
 
+// Device settings and actions. Each setting names the platforms that support
+// it; the panel hides the rest. Values are normalized across platforms where
+// both have the concept (appearance, text size) and platform-specific where
+// only one does.
+
+export const DeviceAppearance = Schema.Literals(["light", "dark"]);
+export type DeviceAppearance = typeof DeviceAppearance.Type;
+
+/**
+ * iOS content-size categories map onto twelve steps; Android `font_scale`
+ * is continuous. Four shared steps cover what people actually reach for.
+ */
+export const DeviceTextSize = Schema.Literals(["small", "default", "large", "extra-large"]);
+export type DeviceTextSize = typeof DeviceTextSize.Type;
+
+export const DeviceColorFilter = Schema.Literals([
+  "none",
+  "grayscale",
+  "red-green",
+  "green-red",
+  "blue-yellow",
+]);
+export type DeviceColorFilter = typeof DeviceColorFilter.Type;
+
+export const DeviceOrientation = Schema.Literals([
+  "portrait",
+  "landscape_left",
+  "portrait_upside_down",
+  "landscape_right",
+]);
+export type DeviceOrientation = typeof DeviceOrientation.Type;
+
+/** Current values as read from the device; `undefined` means unsupported or unread. */
+export const DeviceSettings = Schema.Struct({
+  appearance: Schema.optional(DeviceAppearance),
+  textSize: Schema.optional(DeviceTextSize),
+  reduceMotion: Schema.optional(Schema.Boolean),
+  increaseContrast: Schema.optional(Schema.Boolean),
+  reduceTransparency: Schema.optional(Schema.Boolean),
+  showBorders: Schema.optional(Schema.Boolean),
+  voiceOver: Schema.optional(Schema.Boolean),
+  liquidGlass: Schema.optional(Schema.Literals(["clear", "tinted"])),
+  colorFilter: Schema.optional(DeviceColorFilter),
+  networkEnabled: Schema.optional(Schema.Boolean),
+  location: Schema.optional(
+    Schema.NullOr(Schema.Struct({ latitude: Schema.Number, longitude: Schema.Number })),
+  ),
+});
+export type DeviceSettings = typeof DeviceSettings.Type;
+
+/** The app in the foreground, when the platform can tell us. */
+export const DeviceForegroundApp = Schema.Struct({
+  id: Schema.String,
+  name: Schema.optional(Schema.String),
+  version: Schema.optional(Schema.String),
+});
+export type DeviceForegroundApp = typeof DeviceForegroundApp.Type;
+
+export const DeviceDetail = Schema.Struct({
+  hostId: DeviceHostId,
+  deviceId: DeviceId,
+  settings: DeviceSettings,
+  foregroundApp: Schema.NullOr(DeviceForegroundApp),
+  readAt: Schema.String,
+});
+export type DeviceDetail = typeof DeviceDetail.Type;
+
+export const DevicePermission = Schema.Literals([
+  "camera",
+  "microphone",
+  "photos",
+  "contacts",
+  "calendar",
+  "reminders",
+  "location",
+  "notifications",
+  "motion",
+  "media-library",
+  "faceid",
+]);
+export type DevicePermission = typeof DevicePermission.Type;
+
+const DeviceTarget = {
+  hostId: Schema.optional(DeviceHostId),
+  deviceId: DeviceId,
+};
+
+export const DeviceActionInput = Schema.Union([
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setAppearance"),
+    value: DeviceAppearance,
+  }),
+  Schema.Struct({ ...DeviceTarget, type: Schema.Literal("setTextSize"), value: DeviceTextSize }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setToggle"),
+    setting: Schema.Literals([
+      "reduceMotion",
+      "increaseContrast",
+      "reduceTransparency",
+      "showBorders",
+      "voiceOver",
+      "networkEnabled",
+    ]),
+    value: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setLiquidGlass"),
+    value: Schema.Literals(["clear", "tinted"]),
+  }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setColorFilter"),
+    value: DeviceColorFilter,
+  }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setOrientation"),
+    value: DeviceOrientation,
+  }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setLocation"),
+    latitude: Schema.Number.check(Schema.isBetween({ minimum: -90, maximum: 90 })),
+    longitude: Schema.Number.check(Schema.isBetween({ minimum: -180, maximum: 180 })),
+  }),
+  Schema.Struct({ ...DeviceTarget, type: Schema.Literal("clearLocation") }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("setPermission"),
+    appId: TrimmedNonEmptyString,
+    permission: DevicePermission,
+    decision: Schema.Literals(["grant", "revoke", "reset"]),
+  }),
+  Schema.Struct({ ...DeviceTarget, type: Schema.Literal("openUrl"), url: TrimmedNonEmptyString }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("launchApp"),
+    appId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("terminateApp"),
+    appId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ ...DeviceTarget, type: Schema.Literal("shake") }),
+  Schema.Struct({
+    ...DeviceTarget,
+    type: Schema.Literal("sendPush"),
+    appId: TrimmedNonEmptyString,
+    /** APNs-style payload; a bare string becomes the alert body. */
+    payload: Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.Unknown)]),
+  }),
+]);
+export type DeviceActionInput = typeof DeviceActionInput.Type;
+export type DeviceActionType = DeviceActionInput["type"];
+
+export const DeviceDetailInput = Schema.Struct(DeviceTarget);
+export type DeviceDetailInput = typeof DeviceDetailInput.Type;
+
 export class DeviceHostUnavailableError extends Schema.TaggedError<DeviceHostUnavailableError>()(
   "DeviceHostUnavailableError",
   {

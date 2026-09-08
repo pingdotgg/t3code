@@ -43,6 +43,21 @@ export interface AgentDeviceEndpoint {
 export interface DeviceHostReady {
   readonly hub: DeviceHubEndpoint;
   readonly agentDevice: AgentDeviceEndpoint;
+  /**
+   * Runs a host command (`xcrun`, `adb`, or a helper bundled with the hub)
+   * where the devices live. On the local host this is a plain spawn; a
+   * remote host would run it over its transport.
+   */
+  readonly run: (
+    command: string,
+    args: ReadonlyArray<string>,
+    options?: { readonly timeoutMs?: number; readonly stdin?: string },
+  ) => Effect.Effect<{ readonly stdout: string; readonly stderr: string; readonly code: number }>;
+  /** Absolute paths of helper binaries vendored with the hub, when present. */
+  readonly helpers: {
+    readonly serveSimAxSettings: string | null;
+    readonly serveSimCli: string | null;
+  };
 }
 
 export interface DeviceHost {

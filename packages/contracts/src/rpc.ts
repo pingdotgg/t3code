@@ -182,7 +182,10 @@ import {
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
+  DeviceActionInput,
   DeviceCloseInput,
+  DeviceDetail,
+  DeviceDetailInput,
   DeviceError,
   DeviceListInput,
   DeviceOpenInput,
@@ -326,6 +329,8 @@ export const WS_METHODS = {
   deviceOpen: "device.open",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
+  deviceDetail: "device.detail",
+  deviceAction: "device.action",
 
   // Server meta
   serverProbe: "server.probe",
@@ -1116,6 +1121,18 @@ const WsDeviceShutdownRpc = Rpc.make(WS_METHODS.deviceShutdown, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceDetailRpc = Rpc.make(WS_METHODS.deviceDetail, {
+  payload: DeviceDetailInput,
+  success: DeviceDetail,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
+  payload: DeviceActionInput,
+  success: DeviceDetail,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
@@ -1357,6 +1374,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,
+  WsDeviceDetailRpc,
+  WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,

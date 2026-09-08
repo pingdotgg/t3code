@@ -2782,6 +2782,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.deviceShutdown, deviceService.shutdown(input), {
             "rpc.aggregate": "device",
           }),
+        [WS_METHODS.deviceDetail]: (input) =>
+          observeRpcEffect(WS_METHODS.deviceDetail, deviceService.detail(input), {
+            "rpc.aggregate": "device",
+          }),
+        [WS_METHODS.deviceAction]: (input) =>
+          observeRpcEffect(WS_METHODS.deviceAction, deviceService.action(input), {
+            "rpc.aggregate": "device",
+          }),
         [WS_METHODS.subscribeDeviceState]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeDeviceState,
