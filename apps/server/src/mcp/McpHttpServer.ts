@@ -205,18 +205,51 @@ const boundSnapshotMetadata = (
     actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
   };
 
-  // Every field above has a fixed cap, so only the element list can still push
-  // the text over the ceiling. Halve it until the JSON fits.
-  let elements = bounded.interactiveElements;
-  let text = encodeJsonText(bounded);
-  while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES && elements.length > 0) {
-    elements = elements.slice(0, Math.floor(elements.length / 2));
-    text = encodeJsonText({ ...bounded, interactiveElements: elements });
+  // Per-field caps do not sum below the ceiling: three log arrays of 40 capped
+  // entries alone can pass 60 KB. Shed the least useful lists first, halving
+  // one list per round, until the JSON fits. With every list empty the rest
+  // is bounded by the identifier and visibleText caps, so this terminates.
+  const shedOrder = [
+    "actionTimeline",
+    "networkEntries",
+    "consoleEntries",
+    "interactiveElements",
+  ] as const;
+  const lists: Record<(typeof shedOrder)[number], ReadonlyArray<unknown>> = {
+    interactiveElements: bounded.interactiveElements,
+    consoleEntries: bounded.consoleEntries,
+    networkEntries: bounded.networkEntries,
+    actionTimeline: bounded.actionTimeline,
+  };
+  const dropped: Record<(typeof shedOrder)[number], number> = {
+    interactiveElements: 0,
+    consoleEntries: 0,
+    networkEntries: 0,
+    actionTimeline: 0,
+  };
+  let text = encodeJsonText({ ...bounded, ...lists });
+  while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
+    // Elements carry the locators, so they go last; logs shed newest-last.
+    const key =
+      shedOrder.find(
+        (candidate) => candidate !== "interactiveElements" && lists[candidate].length > 0,
+      ) ?? (lists.interactiveElements.length > 0 ? "interactiveElements" : undefined);
+    if (key === undefined) break;
+    const keep = Math.floor(lists[key].length / 2);
+    dropped[key] += lists[key].length - keep;
+    // slice(-0) keeps everything, so spell out the empty case.
+    lists[key] =
+      keep === 0
+        ? []
+        : key === "interactiveElements"
+          ? lists[key].slice(0, keep)
+          : lists[key].slice(-keep);
+    text = encodeJsonText({ ...bounded, ...lists });
   }
-  if (elements.length < bounded.interactiveElements.length) {
-    omitted.push(
-      `${bounded.interactiveElements.length - elements.length} of ${bounded.interactiveElements.length} interactive elements`,
-    );
+  for (const key of shedOrder) {
+    if (dropped[key] > 0) {
+      omitted.push(`${dropped[key]} of ${bounded[key].length} ${key}`);
+    }
   }
   return { text, omitted };
 };

@@ -443,6 +443,72 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
   ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("sheds log entries before locators when every list is full", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const long = "x".repeat(2_000);
+      const oversized = {
+        ...snapshotResult,
+        interactiveElements: Array.from({ length: 20 }, (_, i) => ({
+          tag: "button",
+          role: "button",
+          name: `Button ${i}`,
+          selector: `#button-${i}`,
+          x: 0,
+          y: 0,
+          width: 10,
+          height: 10,
+        })),
+        consoleEntries: Array.from({ length: 200 }, () => ({
+          level: long,
+          text: long,
+          timestamp: long,
+          source: long,
+        })),
+        networkEntries: Array.from({ length: 200 }, () => ({
+          url: long,
+          method: long,
+          status: 200,
+          failed: false,
+          errorText: long,
+          timestamp: long,
+        })),
+        actionTimeline: Array.from({ length: 200 }, () => ({
+          id: long,
+          action: long,
+          status: "succeeded",
+          startedAt: long,
+          completedAt: long,
+          error: long,
+        })),
+      };
+      yield* serveSnapshots("mcp-full-logs-client", oversized);
+
+      const snapshot = yield* callSnapshot({ includeImage: false });
+
+      const [text, notice] = snapshot.content;
+      const body = text?.type === "text" ? text.text : "";
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
+        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
+      );
+      const parsed = decodeJsonText(body) as {
+        readonly interactiveElements: ReadonlyArray<unknown>;
+        readonly consoleEntries: ReadonlyArray<unknown>;
+        readonly networkEntries: ReadonlyArray<unknown>;
+        readonly actionTimeline: ReadonlyArray<unknown>;
+      };
+      // Locators survive; the log lists take the cut.
+      expect(parsed.interactiveElements).toHaveLength(20);
+      expect(
+        parsed.consoleEntries.length + parsed.networkEntries.length + parsed.actionTimeline.length,
+      ).toBeLessThan(120);
+      const noticeText = notice?.type === "text" ? notice.text : "";
+      expect(noticeText).toContain("40 of 40 actionTimeline");
+      expect(noticeText).not.toMatch(/\d+ of \d+ interactiveElements/);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("terminates HTTP MCP sessions with DELETE", () =>
   Effect.scoped(
     Effect.gen(function* () {
