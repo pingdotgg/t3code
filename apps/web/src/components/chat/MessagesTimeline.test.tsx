@@ -272,6 +272,8 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  // Expanding history uses this suite's existing test renderer, deprecated in
+  // React 19. Migrate these interaction tests together when a DOM test setup is added.
   it.each([{}, { text: "Text-only answer", file: "Answer with a file" }])(
     "renders attachment-only question history alongside text answers: %j",
     async (answers) => {
