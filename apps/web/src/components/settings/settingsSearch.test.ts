@@ -232,6 +232,18 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it("anchors the hosting CLI path to its own id so provider rows can expand", () => {
+    // The field renders once per provider inside a collapsed row. The section
+    // owns the anchor, and the rows expand off this same id, so routing it to
+    // another target would land on the page with every field still hidden.
+    const result = searchSettings("hosting cli path")[0];
+    expect(result).toMatchObject({
+      id: "hosting-cli-path",
+      to: "/settings/source-control",
+    });
+    expect(result).not.toHaveProperty("targetId");
+  });
+
   it("routes browser recording quality to integrations", () => {
     const result = searchSettings("recording frame rate")[0];
     expect(result).toMatchObject({
