@@ -1,5 +1,4 @@
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -235,5 +234,3 @@ export const make = Effect.gen(function* () {
         ),
   });
 });
-
-export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make);

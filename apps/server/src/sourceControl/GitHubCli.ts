@@ -338,6 +338,7 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
   };
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 

@@ -61,7 +61,7 @@ export function parseSourceControlOwnerRef(
   return owner && refName ? { owner, refName } : undefined;
 }
 
-export function normalizeSourceBranch(headSelector: string): string {
+function normalizeSourceBranch(headSelector: string): string {
   return parseSourceControlOwnerRef(headSelector)?.refName ?? headSelector.trim();
 }
 

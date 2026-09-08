@@ -41,6 +41,8 @@ export function fromProviders(
 /**
  * The hosts this build can read change requests from. A host with no entry here still shows up
  * in the provider list as unimplemented, so its projects are explained rather than missing.
+ *
+ * @public Service construction is part of the canonical Effect module API.
  */
 export const make = Effect.map(
   Effect.all([

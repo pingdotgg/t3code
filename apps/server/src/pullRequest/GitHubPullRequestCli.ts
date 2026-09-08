@@ -714,7 +714,7 @@ export class GitHubPullRequestCli extends Context.Service<
  * The host is not read off the identity: it travels alongside it, because the identity a
  * project records is the path below its host and never names the host itself.
  */
-export function parseRepositorySelector(value: string): {
+function parseRepositorySelector(value: string): {
   readonly owner: string;
   readonly name: string;
 } {
@@ -980,6 +980,7 @@ function actionArgs(
   }
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
