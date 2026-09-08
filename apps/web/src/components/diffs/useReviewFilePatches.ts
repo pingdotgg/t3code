@@ -108,6 +108,9 @@ export function useReviewFilePatches({
     () => requestThrough(settledFileCount + 4),
     [requestThrough, settledFileCount],
   );
+  const refresh = useCallback(() => {
+    for (const query of queries) registry.refresh(query);
+  }, [queries, registry]);
   const retry = useCallback(
     (path: string) => {
       const query = queries[files.findIndex((file) => file.path === path)];
@@ -158,6 +161,7 @@ export function useReviewFilePatches({
   );
   return {
     scope,
+    refresh,
     fileStates,
     isPending: patches.some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,

@@ -13,12 +13,17 @@ import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
+import {
+  GitCommandError,
+  ReviewDiffPreviewInput,
+  type ReviewDiffFileContentsInput,
+} from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
@@ -813,6 +818,29 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("propagates patch failures instead of reporting an empty complete diff", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "changed\n");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) =>
+          ChildProcess.isStandardCommand(command) && command.args.includes("--patch")
+            ? Effect.succeed(makeNonRepositoryHandle())
+            : delegate.spawn(command),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const result = yield* driver.getReviewDiffPreview({ cwd }).pipe(Effect.result);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.equal(result.failure.operation, "GitVcsDriver.getReviewDiffPreview.patch");
+        }
+      }),
+    );
+
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
         const paths = splitNullSeparatedGitStdoutPaths({
@@ -1090,6 +1118,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["checkout", "-b", "feature/paths"]);
         yield* git(cwd, ["mv", "README.md", "renamed.md"]);
         yield* writeTextFile(cwd, "[literal].txt", "literal\n");
+        yield* writeTextFile(cwd, " leading.txt", "whitespace path\n");
         yield* writeTextFile(cwd, "l.txt", "other\n");
         yield* writeTextFile(cwd, "binary.dat", "binary\0data");
         if ((yield* HostProcessPlatform) !== "win32") {
@@ -1102,13 +1131,14 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           baseRef: initialBranch,
         });
         const branch = preview.sources.find((source) => source.kind === "branch-range")!;
-        for (const path of ["renamed.md", "[literal].txt"]) {
+        for (const path of ["renamed.md", "[literal].txt", " leading.txt"]) {
           const stat = branch.files!.find((file) => file.path === path)!;
-          const result = yield* driver.getReviewDiffPreview({
+          const request = Schema.decodeUnknownSync(ReviewDiffPreviewInput)({
             cwd,
             baseRef: initialBranch,
             file: { path, previousPath: stat.previousPath, sourceKind: "branch-range" },
           });
+          const result = yield* driver.getReviewDiffPreview(request);
           const scoped = result.sources.find((source) => source.kind === "branch-range")!;
           assert.deepStrictEqual(scoped.files, [stat]);
           assert.notInclude(scoped.diff, "b/l.txt");

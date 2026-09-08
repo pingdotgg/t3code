@@ -2570,7 +2570,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.cwd,
         [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
         { maxOutputBytes: patchLimit, appendTruncationMarker: true },
-      ).pipe(Effect.orElseSucceed(() => ({ stdout: "", stdoutTruncated: false })));
+      );
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult, dirtyUntracked] = yield* Effect.all(

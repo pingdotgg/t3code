@@ -9,8 +9,8 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
   file: Schema.optionalKey(
     Schema.Struct({
-      path: TrimmedNonEmptyString,
-      previousPath: Schema.NullOr(TrimmedNonEmptyString),
+      path: Schema.NonEmptyString,
+      previousPath: Schema.NullOr(Schema.NonEmptyString),
       sourceKind: Schema.Literals(["working-tree", "branch-range"]),
     }),
   ),
