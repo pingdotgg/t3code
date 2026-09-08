@@ -23,7 +23,7 @@ const testState = vi.hoisted(() => {
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
     getDraftThread: vi.fn(() => null),
-    getLastUsedRuntimeMode: vi.fn(() => null),
+    getLastUsedRuntimeMode: vi.fn((): string | null => null),
     setLastUsedRuntimeMode: vi.fn(),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
