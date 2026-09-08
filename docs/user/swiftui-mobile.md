@@ -92,3 +92,16 @@ will not send duplicate requests. Acceptance of the request does not mean the ag
 If the connection fails or the app cannot confirm the outcome, it shows **Stop unconfirmed**.
 **Retry stop** checks the computer’s current thread status before sending another request. Some
 background work does not report a turn outcome, so its stop may remain unconfirmed.
+
+
+The thread header shows the last update received on this device, with a local date and time.
+Connection status appears separately: **Connected** does not mean a new message has arrived.
+The receipt time stays unchanged while the thread is quiet. Refreshing cached content does not
+create a new receipt.
+A received thread snapshot is labeled separately from a new update.
+
+## Tool activity
+
+Tool activity stays in transcript order. Consecutive updates to the same tool call share a row;
+an update after text or another tool call starts a new row, preserving the earlier activity.
+Each tool and activity row shows its latest update’s local date and time on the right.
