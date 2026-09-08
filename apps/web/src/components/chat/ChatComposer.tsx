@@ -4846,6 +4846,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // collapse. Both leave the footer unrendered, so the strip is the only place
   // to see or change the model without expanding the composer.
   const composerControlsInStrip = isComposerResting || isComposerCollapsedMobile;
+  // The inline stash action only exists for an expanded composer with draft
+  // content, so the editor gutter it needs is reserved in exactly those modes.
+  const showComposerStashAction =
+    !isComposerApprovalState &&
+    !isComposerResting &&
+    !projectSelectionRequired &&
+    pendingUserInputs.length === 0 &&
+    activePendingProgress === null &&
+    !isComposerCollapsedMobile &&
+    (prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim().length > 0 ||
+      composerImages.length > 0 ||
+      composerFiles.length > 0);
   const composerControlsVisibleInStrip = composerControlsInStrip && restingControlsVisible;
   const composerControlsHidden = composerControlsInStrip && !restingControlsVisible;
   if (composerControlsHidden && isComposerModelPickerOpen) {
@@ -6928,15 +6940,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : "pr-12"),
                 )}
               >
-                {!isComposerApprovalState &&
-                !isComposerResting &&
-                !projectSelectionRequired &&
-                pendingUserInputs.length === 0 &&
-                activePendingProgress === null &&
-                !isComposerCollapsedMobile &&
-                (prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER).join("").trim().length > 0 ||
-                  composerImages.length > 0 ||
-                  composerFiles.length > 0) ? (
+                {showComposerStashAction ? (
                   <div
                     className={cn(
                       "absolute flex top-[calc(0.5lh-1rem)] right-[calc(var(--chat-composer-drawer-inset)-0.75rem-1px)] z-10 leading-relaxed [font-size:var(--font-size-prompt,0.875rem)] sm:right-[calc(var(--chat-composer-drawer-inset)-1rem-1px)] [@media(max-width:39.999rem)_and_(pointer:coarse)]:[font-size:max(var(--font-size-prompt,1rem),16px)]",
@@ -6948,7 +6952,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <Button
                       variant="ghost-muted"
                       size="icon-sm"
-                      aria-label="Stash current draft"
+                      aria-label="Stash this draft"
                       className="group/stash h-8 min-w-8 w-auto gap-0 bg-(--chat-composer-glass-surface) px-2 text-xs sm:h-8 sm:w-auto sm:text-xs [&_svg]:mx-0"
                       onPointerDown={(event) => event.preventDefault()}
                       onClick={() => {
@@ -7020,14 +7024,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     skills={selectedProviderSkills}
                     containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
                     className={cn(
-                      !isComposerResting && "pr-28",
+                      showComposerStashAction && "pr-28",
                       showMobilePendingAnswerActions && "max-sm:pb-12",
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
                       isComposerApprovalState && "min-h-10",
                     )}
                     placeholderClassName={cn(
-                      !isComposerResting && "pr-28",
+                      showComposerStashAction && "pr-28",
                       isComposerResting &&
                         "flex items-center overflow-hidden whitespace-nowrap leading-8",
                     )}
