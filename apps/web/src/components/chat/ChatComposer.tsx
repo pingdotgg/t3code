@@ -88,12 +88,6 @@ import {
   type PromptStashEntry,
 } from "../../promptStashStore";
 import { ChevronUpIcon } from "lucide-react";
-import { COMPOSER_STASH_DURATION_MS } from "../../composerStashMotion";
-import {
-  ComposerStashFlight,
-  type StashFlight,
-  type StashFlightGeometry,
-} from "./ComposerStashFlight";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -264,8 +258,6 @@ const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 function useComposerRestingTransition(
   isCollapsed: boolean,
   isResting: boolean,
-  stashFlightKey: number | null,
-  stashDestinationRef: React.RefObject<HTMLButtonElement | null>,
   restingControlsRef: React.RefObject<HTMLDivElement | null>,
   onOverlayHeightChange: (height: number) => void,
 ) {
@@ -273,13 +265,6 @@ function useComposerRestingTransition(
   const isCollapsedRef = useRef(isCollapsed);
   const previousCollapsedRef = useRef(isCollapsed);
   const previousRestingRef = useRef(isResting);
-  const isStashing = stashFlightKey !== null;
-  const previousStashFlightKeyRef = useRef(stashFlightKey);
-  const isStashSettlingRef = useRef(false);
-  const isStashingRef = useRef(isStashing);
-  isStashingRef.current = isStashing;
-  const stashGeometryRef = useRef<StashFlightGeometry | null>(null);
-  const stashGeometryListenerRef = useRef<((geometry: StashFlightGeometry) => void) | null>(null);
   const previousHeightRef = useRef<number | null>(null);
   const previousContentOffsetsRef = useRef<{
     promptFromTop: number | null;
@@ -387,20 +372,6 @@ function useComposerRestingTransition(
       if (overlayHeight !== null) {
         onOverlayHeightChange(overlayHeight);
       }
-      // Read the tab in its final layout before applying the height animation.
-      if (isStashingRef.current) {
-        const destination = stashDestinationRef.current?.getBoundingClientRect();
-        stashGeometryRef.current = destination
-          ? {
-              x: destination.x + destination.width / 2,
-              y: destination.y + destination.height / 2,
-              startTime: stateChanged
-                ? document.timeline.currentTime
-                : (stashGeometryRef.current?.startTime ?? document.timeline.currentTime),
-            }
-          : null;
-        if (stashGeometryRef.current) stashGeometryListenerRef.current?.(stashGeometryRef.current);
-      }
       const nextPromptRect = prompt?.getBoundingClientRect() ?? null;
       const nextPromptTop = nextPromptRect?.top ?? null;
       const nextActionTop = action?.getBoundingClientRect().top ?? null;
@@ -420,24 +391,14 @@ function useComposerRestingTransition(
         previousHeight !== null &&
         Math.abs(previousHeight - nextHeight) >= 0.5
       ) {
-        const transitionDuration = isStashSettlingRef.current
-          ? COMPOSER_STASH_DURATION_MS
-          : COMPOSER_RESTING_TRANSITION_DURATION_MS;
         const remainingDuration =
           typeof interruptedDuration === "number" && interruptedCurrentTime !== null
             ? Math.max(1, interruptedDuration - interruptedCurrentTime)
-            : transitionDuration;
-        const stashStartTime = stashGeometryRef.current?.startTime;
+            : COMPOSER_RESTING_TRANSITION_DURATION_MS;
         const duration =
-          isStashSettlingRef.current && typeof stashStartTime === "number" && !stateChanged
-            ? Math.max(
-                1,
-                COMPOSER_STASH_DURATION_MS -
-                  (Number(document.timeline.currentTime) - stashStartTime),
-              )
-            : interruptedHeight !== null && !targetChanged
-              ? remainingDuration
-              : transitionDuration;
+          interruptedHeight !== null && !targetChanged
+            ? remainingDuration
+            : COMPOSER_RESTING_TRANSITION_DURATION_MS;
         element.style.overflow = "clip";
         surface.style.height = "100%";
 
@@ -480,18 +441,9 @@ function useComposerRestingTransition(
           [{ height: `${previousHeight}px` }, { height: `${nextHeight}px` }],
           {
             duration,
-            easing: isStashSettlingRef.current
-              ? "cubic-bezier(0.4, 0, 0.2, 1)"
-              : COMPOSER_RESTING_TRANSITION_EASING,
+            easing: COMPOSER_RESTING_TRANSITION_EASING,
           },
         );
-        if (
-          stateChanged &&
-          isStashSettlingRef.current &&
-          stashGeometryRef.current?.startTime != null
-        ) {
-          animation.startTime = stashGeometryRef.current.startTime;
-        }
         animationRef.current = animation;
         animationTargetHeightRef.current = nextHeight;
 
@@ -519,9 +471,7 @@ function useComposerRestingTransition(
               [{ transform: `translateY(${String(offset)}px)` }, { transform: "none" }],
               {
                 duration,
-                easing: isStashSettlingRef.current
-                  ? "cubic-bezier(0.4, 0, 0.2, 1)"
-                  : COMPOSER_RESTING_TRANSITION_EASING,
+                easing: COMPOSER_RESTING_TRANSITION_EASING,
               },
             ),
           );
@@ -554,9 +504,7 @@ function useComposerRestingTransition(
                 ],
                 {
                   duration,
-                  easing: isStashSettlingRef.current
-                    ? "cubic-bezier(0.4, 0, 0.2, 1)"
-                    : COMPOSER_RESTING_TRANSITION_EASING,
+                  easing: COMPOSER_RESTING_TRANSITION_EASING,
                 },
               ),
             );
@@ -587,9 +535,7 @@ function useComposerRestingTransition(
                   duration: nextIsCollapsed ? duration : duration / 2,
                   delay: nextIsCollapsed ? 0 : duration / 2,
                   fill: "backwards",
-                  easing: isStashSettlingRef.current
-                    ? "cubic-bezier(0.4, 0, 0.2, 1)"
-                    : COMPOSER_RESTING_TRANSITION_EASING,
+                  easing: COMPOSER_RESTING_TRANSITION_EASING,
                 },
               ),
             );
@@ -608,9 +554,7 @@ function useComposerRestingTransition(
                 duration: nextIsCollapsed ? duration : duration / 2,
                 delay: nextIsCollapsed ? 0 : duration / 2,
                 fill: "backwards",
-                easing: isStashSettlingRef.current
-                  ? "cubic-bezier(0.4, 0, 0.2, 1)"
-                  : COMPOSER_RESTING_TRANSITION_EASING,
+                easing: COMPOSER_RESTING_TRANSITION_EASING,
               }),
             );
           }
@@ -658,16 +602,13 @@ function useComposerRestingTransition(
         actionFromBottom: nextActionTop === null ? null : nextRect.bottom - nextActionTop,
       };
     },
-    [clearTransitionStyles, onOverlayHeightChange, restingControlsRef, stashDestinationRef],
+    [clearTransitionStyles, onOverlayHeightChange, restingControlsRef],
   );
 
   useLayoutEffect(() => {
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;
-    const stashStarted = isStashing && previousStashFlightKeyRef.current !== stashFlightKey;
-    previousStashFlightKeyRef.current = stashFlightKey;
-    const stateChanged = previousCollapsedRef.current !== isCollapsed || stashStarted;
-    if (stateChanged || !isStashing) isStashSettlingRef.current = stashStarted;
+    const stateChanged = previousCollapsedRef.current !== isCollapsed;
     // A non-Git context strip enters or leaves flow through ChatView state in
     // an earlier layout effect. Let React flush that parent update before the
     // FLIP reads its destination geometry, while still running before paint.
@@ -680,7 +621,7 @@ function useComposerRestingTransition(
         transitionLayoutRequestRef.current += 1;
       }
     };
-  }, [isCollapsed, isStashing, stashFlightKey, transitionToCurrentGeometry]);
+  }, [isCollapsed, transitionToCurrentGeometry]);
 
   // The resting flag can change while the collapsed layout stays the same,
   // for example when an unfocused thread crosses the phone breakpoint. The
@@ -750,7 +691,7 @@ function useComposerRestingTransition(
     };
   }, [clearTransitionStyles]);
 
-  return { elementRef, stashGeometryRef, stashGeometryListenerRef };
+  return elementRef;
 }
 
 function composerCommandMenuPositionsEqual(
@@ -1919,10 +1860,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerScrollCollapseEligibleRef = useRef(false);
   const windowRefocusInFlightRef = useRef(false);
   const composerScrollGestureRef = useRef(createComposerScrollGestureState());
-  const stashDestinationRef = useRef<HTMLButtonElement>(null);
-  const [stashFlight, setStashFlight] = useState<StashFlight | null>(null);
-  const activeStashFlight =
-    stashFlight?.target === composerTargetKey(composerDraftTarget) ? stashFlight : null;
   const stashPulseKeyRef = useRef(0);
   const stashPulseTimeoutRef = useRef<number | null>(null);
   /**
@@ -3222,13 +3159,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }, 1200);
   }, []);
 
-  const finishStashFlight = useCallback(() => {
-    setStashFlight(null);
-    pulseStashBadge();
-  }, [pulseStashBadge]);
-
-  useEffect(() => setStashFlight(null), [composerDraftTarget]);
-
   const restoreStashEntry = useCallback(
     async (menuEntry: PromptStashEntry) => {
       const filesToVerify = menuEntry.files ?? [];
@@ -3587,14 +3517,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashInFlightRef.current.add(snapshotKey);
 
     const stashTarget = composerDraftTarget;
-    const flightEditor = composerSurfaceRef.current?.querySelector<HTMLElement>(
-      '[data-testid="composer-editor"]',
-    );
-    const flightSource = flightEditor?.getBoundingClientRect();
-    // Keep the flight copy aligned with text, excluding the editor's button gutter.
-    const flightTextWidth = flightEditor
-      ? flightEditor.clientWidth - parseFloat(getComputedStyle(flightEditor).paddingRight)
-      : 0;
     const entryId = randomUUID();
     try {
       // Persist the text-only entry *first*, then clear. Ordering matters in
@@ -3649,26 +3571,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerCursor(0);
       setComposerTrigger(null);
       setIsStashMenuOpen(false);
-      if (
-        durable &&
-        flightSource &&
-        flightSource.width > 0 &&
-        flightSource.height > 0 &&
-        flightTextWidth > 0 &&
-        !window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ) {
-        setStashFlight({
-          key: ++stashPulseKeyRef.current,
-          target: composerTargetKey(stashTarget),
-          text: prompt || `${images.length + files.length} saved attachments`,
-          x: flightSource.x,
-          y: flightSource.y,
-          width: flightTextWidth,
-          height: flightSource.height,
-        });
-      } else {
-        pulseStashBadge();
-      }
+      pulseStashBadge();
 
       if (evicted) {
         for (const file of evicted.files ?? []) {
@@ -3912,15 +3815,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ) : null}
       </div>
     ) : null;
-  const {
-    elementRef: composerMainSurfaceRef,
-    stashGeometryRef,
-    stashGeometryListenerRef,
-  } = useComposerRestingTransition(
+  const composerMainSurfaceRef = useComposerRestingTransition(
     composerControlsInStrip,
     isComposerResting,
-    activeStashFlight?.key ?? null,
-    stashDestinationRef,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
   );
@@ -5061,7 +4958,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         </ComposerBanner.Column>
         {!isComposerApprovalState ? (
           <ComposerStashBadge
-            destinationRef={stashDestinationRef}
             count={stashQueue.length}
             menuOpen={isStashMenuOpen}
             pulseKey={stashPulse.key}
@@ -5070,16 +4966,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           />
         ) : null}
       </ComposerBanner.Dock>
-      {activeStashFlight ? (
-        <ComposerStashFlight
-          key={activeStashFlight.key}
-          flight={activeStashFlight}
-          destinationRef={stashDestinationRef}
-          geometryRef={stashGeometryRef}
-          geometryListenerRef={stashGeometryListenerRef}
-          onDone={finishStashFlight}
-        />
-      ) : null}
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
