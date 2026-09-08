@@ -313,38 +313,11 @@ export function commandDetailRepeatsCommand(input: {
   );
 }
 
-export function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
+function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
   if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") return true;
   if (entry.command !== undefined && entry.command.trim().length > 0) return true;
   if (entry.requestKind !== undefined) return true;
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
-}
-
-/** Maps item and task status to the status shown on a work-log row. */
-export function extractWorkLogToolLifecycleStatus(
-  payloadValue: unknown,
-): WorkLogToolLifecycleStatus | undefined {
-  const payload = asRecord(payloadValue);
-  switch (payload?.status) {
-    case "pending":
-    case "running":
-    case "waiting":
-      return "inProgress";
-    case "cancelled":
-    case "interrupted":
-      return "stopped";
-    case "idle":
-      // A batch becomes idle when its parent turn ends. Other idle tasks can resume.
-      return payload.taskType === "subagent_batch" ? "stopped" : undefined;
-    case "inProgress":
-    case "completed":
-    case "failed":
-    case "declined":
-    case "stopped":
-      return payload.status;
-    default:
-      return undefined;
-  }
 }
 
 // Some providers report completion even when the output describes a failure.
@@ -408,7 +381,7 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogPresentationEntry): 
   );
 }
 
-export function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean {
+function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean {
   return (
     entry.itemType === "file_search" ||
     (entry.itemType === "web_search" &&
