@@ -1,1 +1,0 @@
-export const COMPOSER_STASH_DURATION_MS = 550;
