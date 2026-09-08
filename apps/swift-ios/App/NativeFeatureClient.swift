@@ -2698,7 +2698,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         let key = NativeSourceControlMonitorKey(
             environmentID: route.environmentID,
-            workingDirectory: URL(fileURLWithPath: context.cwd).standardizedFileURL.path
+            workingDirectory: context.cwd
         )
         let subscriberID = UUID()
         let monitor: NativeSourceControlMonitor

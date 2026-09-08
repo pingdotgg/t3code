@@ -5,6 +5,40 @@ import XCTest
 
 @MainActor
 final class NativeMultiEnvironmentTests: XCTestCase {
+    func testSourceControlMonitorPreservesTheRemoteWorkingDirectory() async throws {
+        for path in [#"C:\work\My Repo"#, #"\\server\share\repo"#, "/srv/my repo"] {
+            let server = MultiEnvironmentConfigurationServer()
+            let fixture = try await Self.makeFixture(
+                webSocketConnector: MultiEnvironmentConfigurationConnector(server: server)
+            )
+            let client = fixture.client
+            let directory = fixture.directory
+            addTeardownBlock {
+                await client.disconnect()
+                try? FileManager.default.removeItem(at: directory)
+            }
+            await fixture.transport.setShell(
+                multiEnvironmentShell(
+                    projectID: "project-two", threadID: "thread-two", title: "Remote work",
+                    workspaceRoot: path
+                ),
+                host: "two.example"
+            )
+            let snapshot = try await fixture.client.initialSnapshot()
+            let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
+            let monitor = Task {
+                for await _ in client.sourceControlStatusEvents(threadID: thread.id) {}
+            }
+            defer { monitor.cancel() }
+            let request = await server.nextSourceControlDirectory()
+            XCTAssertEqual(request.host, "two.example")
+            XCTAssertEqual(request.cwd, path)
+            monitor.cancel()
+            await monitor.value
+            await client.disconnect()
+        }
+    }
+
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
         let normalized = NativeFeatureClient.normalizedProviders([
             FeatureProvider(
@@ -1579,6 +1613,8 @@ private struct UnavailableMultiEnvironmentWebSocketConnector: WebSocketConnectin
 }
 
 private actor MultiEnvironmentConfigurationServer {
+    private var sourceControlDirectories: [(host: String, cwd: String)] = []
+    private var sourceControlWaiters: [CheckedContinuation<(host: String, cwd: String), Never>] = []
     private var settingsByHost: [String: [String: JSONValue]] = [:]
     private var settingsUpdateHosts: [String] = []
     private let restartSupportHosts: Set<String>
@@ -1588,6 +1624,10 @@ private actor MultiEnvironmentConfigurationServer {
     }
 
     func updatedHosts() -> [String] { settingsUpdateHosts }
+    func nextSourceControlDirectory() async -> (host: String, cwd: String) {
+        if !sourceControlDirectories.isEmpty { return sourceControlDirectories.removeFirst() }
+        return await withCheckedContinuation { sourceControlWaiters.append($0) }
+    }
     func settings(host: String) -> [String: JSONValue] { settingsByHost[host] ?? [:] }
 
     func response(to request: JSONValue, host: String) throws -> JSONValue? {
@@ -1595,6 +1635,16 @@ private actor MultiEnvironmentConfigurationServer {
               case let .number(id)? = request["id"] else { return nil }
         let value: JSONValue
         switch tag {
+        case RPCMethod.subscribeVCSStatus.rawValue:
+            guard let cwd = request["payload"]?["cwd"]?.stringValue else {
+                throw URLError(.badServerResponse)
+            }
+            if sourceControlWaiters.isEmpty {
+                sourceControlDirectories.append((host, cwd))
+            } else {
+                sourceControlWaiters.removeFirst().resume(returning: (host, cwd))
+            }
+            return nil
         case RPCMethod.subscribeServerConfig.rawValue:
             return .object([
                 "_tag": .string("Chunk"), "requestId": .number(id),
@@ -1809,7 +1859,8 @@ func multiEnvironmentShell(
     snapshotSequence: Int = 1,
     settledOverride: String? = nil,
     settledAt: String? = nil,
-    titleRegeneration: ThreadTitleRegeneration? = nil
+    titleRegeneration: ThreadTitleRegeneration? = nil,
+    workspaceRoot: String? = nil
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
@@ -1819,7 +1870,7 @@ func multiEnvironmentShell(
             OrchestrationProject(
                 id: projectID,
                 title: title,
-                workspaceRoot: "/work/\(projectID)",
+                workspaceRoot: workspaceRoot ?? "/work/\(projectID)",
                 repositoryIdentity: repositoryIdentity,
                 defaultModelSelection: model,
                 scripts: [],
