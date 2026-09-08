@@ -982,6 +982,7 @@ public final class FeatureRootModel {
             $0.threadID == threadID && $0.creation != nil
         }) {
             await stopOutboxDrain()
+            defer { scheduleOutboxDrain() }
             let queued = pendingSubmissionsByID.values.filter { $0.threadID == threadID }
             var discardedAll = true
             for submission in queued {
@@ -994,10 +995,8 @@ public final class FeatureRootModel {
             if pendingThreadsByID[threadID] == nil,
                snapshot.threads.contains(where: { $0.id == threadID }) {
                 try await client.cancelTurn(threadID: threadID)
-                scheduleOutboxDrain()
                 return true
             }
-            scheduleOutboxDrain()
             return false
         }
         try await client.cancelTurn(threadID: threadID, expectedTurnID: key.turnID)
