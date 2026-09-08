@@ -35,6 +35,7 @@ function resolveRequestedKind(
   return Effect.succeed(kind);
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
 

@@ -289,6 +289,7 @@ const serversEqual = (
   return true;
 };
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;

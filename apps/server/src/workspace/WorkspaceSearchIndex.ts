@@ -551,6 +551,8 @@ function parseWorkspaceSearchIndexKey(key: string): {
  * workspace root and variant. WorkspaceSearchIndexMap owns memoization and
  * idle cleanup; using a default cwd here would mix resources from different
  * workspaces.
+ *
+ * @public Service construction is part of the canonical Effect module API.
  */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
