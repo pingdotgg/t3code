@@ -102,6 +102,7 @@ public enum HTTPRequestPolicy {
 public enum HTTPError: LocalizedError, Sendable {
     case invalidResponse
     case status(Int, message: String, traceID: String?)
+    case threadNotFound(message: String, traceID: String?)
     case missingCredential
     case incompatibleCredential
     case managedAuthorizationUnavailable
@@ -113,6 +114,8 @@ public enum HTTPError: LocalizedError, Sendable {
             "The server returned an invalid response."
         case let .status(status, message, traceID):
             traceID.map { "\(message) (trace \($0))" } ?? "\(message) (HTTP \(status))"
+        case let .threadNotFound(message, traceID):
+            traceID.map { "\(message) (trace \($0))" } ?? "\(message) (HTTP 404)"
         case .missingCredential:
             "This environment has no saved credential."
         case .incompatibleCredential:
@@ -189,6 +192,7 @@ enum DPoPFailurePresentation {
 }
 
 struct EnvironmentErrorBody: Decodable {
+    let code: String?
     let message: String?
     let reason: String?
     let dpopFailureReason: DPoPFailureReason?
@@ -621,6 +625,10 @@ public actor EnvironmentAPI {
                 )
             } else {
                 message = body?.message ?? body?.reason ?? "Environment request failed."
+            }
+            if response.statusCode == 404, body?.code == "not_found",
+               body?.reason == "thread_not_found" {
+                throw HTTPError.threadNotFound(message: message, traceID: body?.traceId)
             }
             throw HTTPError.status(
                 response.statusCode,

@@ -74,6 +74,9 @@ public protocol FeatureClient: AnyObject {
     func deleteThread(id: String) async throws
 
     func loadThread(id: String) async throws -> FeatureThreadDetail
+    /// Looks up a queued thread independently of the partially hydrated sidebar.
+    /// `nil` means the owning server explicitly reported thread_not_found.
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread?
     func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail
     func loadEarlierThreadTurns(id: String) async throws -> FeatureThreadDetail?
     func releaseThread(id: String)
@@ -245,6 +248,10 @@ public protocol FeatureClient: AnyObject {
 }
 
 public extension FeatureClient {
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread? {
+        throw URLError(.resourceUnavailable)
+    }
+
     func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot {
         throw FeatureCapabilityUnavailable("Server preferences")
     }
