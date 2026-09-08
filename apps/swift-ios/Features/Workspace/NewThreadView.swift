@@ -29,7 +29,6 @@ public struct NewThreadView: View {
     @State private var branchSelectionError: String?
     @State private var activePicker: NewTaskPicker?
     @State private var isSubmitting = false
-    @State private var submissionFailed = false
     @State private var submissionValidationError: String?
     @State private var restoredDraftProjectID: String?
     @State private var draftRestoreContext: NewTaskDraftRestoreContext?
@@ -231,13 +230,6 @@ public struct NewThreadView: View {
                     onRefresh: { Task { await loadBranches(refresh: true) } }
                 )
             }
-        }
-        .alert("Couldn’t start task", isPresented: $submissionFailed) {
-            // Refocus on dismissal, not on failure: the alert takes first
-            // responder, so an earlier refocus never survives it.
-            Button("OK") { promptFocused = true }
-        } message: {
-            Text("Check your connection and try again.")
         }
         .interactiveDismissDisabled(isSubmitting || isSwitchingBranch)
         .presentationDetents([.large])
@@ -629,6 +621,7 @@ public struct NewThreadView: View {
         case .disconnected: return "Offline"
         case .connecting: return "Connecting"
         case .reconnecting: return "Reconnecting"
+        case .needsPairing: return "Pair again"
         case .connected, .none: return nil
         }
     }
@@ -840,7 +833,9 @@ public struct NewThreadView: View {
             } else {
                 isSubmitting = false
                 persistCurrentDraftImmediately()
-                submissionFailed = true
+                submissionValidationError = model.lastTaskStartError
+                    ?? "Could not start the task. Check the connection and try again."
+                promptFocused = true
             }
         }
     }

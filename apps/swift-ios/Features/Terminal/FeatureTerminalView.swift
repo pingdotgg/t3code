@@ -163,7 +163,6 @@ public struct FeatureTerminalView: View {
     @State private var columns = 80
     @State private var rows = 24
     @State private var focusRequest = 0
-    @State private var surfaceGeneration = 0
     @State private var isLoading = true
     @State private var isOpening = false
     @State private var errorMessage: String?
@@ -204,7 +203,7 @@ public struct FeatureTerminalView: View {
                     stepFontSize(direction)
                 }
             )
-            .id("\(terminalTaskID):\(fontSize):\(surfaceGeneration)")
+            .id(terminalTaskID)
             .padding(.top, 48)
 
             if isLoading, terminal == nil {
@@ -274,11 +273,7 @@ public struct FeatureTerminalView: View {
                 guard !Task.isCancelled, terminalID == activeTerminalID else { break }
                 let shouldSyncGrid = !isRunning
                     && (update.state == .running || update.state == .starting)
-                let currentBuffer = terminal?.buffer
                 guard updateTerminal(update) else { continue }
-                if let currentBuffer, !update.buffer.hasPrefix(currentBuffer) {
-                    surfaceGeneration += 1
-                }
                 if shouldSyncGrid {
                     try? await client.resizeTerminal(
                         threadID: threadID,
@@ -622,7 +617,6 @@ public struct FeatureTerminalView: View {
         do {
             if terminalID == activeTerminalID {
                 terminal?.buffer = ""
-                surfaceGeneration += 1
             }
             try await client.clearTerminal(
                 threadID: threadID,

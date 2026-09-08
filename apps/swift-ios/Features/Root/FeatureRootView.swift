@@ -29,13 +29,7 @@ public struct FeatureRootView: View {
                 WorkspaceView(
                     model: model,
                     navigationRequest: navigationRequest,
-                    onNavigationRequestConsumed: onNavigationRequestConsumed,
-                    submitNewTask: { request in
-                        await model.startTask(request)
-                    },
-                    submitMessage: { submission in
-                        await model.sendMessage(submission)
-                    }
+                    onNavigationRequestConsumed: onNavigationRequestConsumed
                 )
             } else {
                 ConnectionOnboardingView(model: model)

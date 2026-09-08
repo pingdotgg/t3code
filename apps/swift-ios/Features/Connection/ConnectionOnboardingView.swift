@@ -9,6 +9,9 @@ public struct ConnectionOnboardingView: View {
     private let onConnected: @MainActor () -> Void
     private let onCancel: (@MainActor () -> Void)?
     private let showsT3ConnectOption: Bool
+    /// Pre-fills the endpoint and opens the details form. Used to pair again
+    /// with a computer whose saved credential was rejected.
+    private let initialEndpoint: String?
 
     @State private var stage = ConnectionStage.welcome
     @State private var endpoint = ""
@@ -25,12 +28,14 @@ public struct ConnectionOnboardingView: View {
     public init(
         model: FeatureRootModel,
         showsT3ConnectOption: Bool = true,
+        initialEndpoint: String? = nil,
         onConnected: @escaping @MainActor () -> Void = {},
         onCancel: (@MainActor () -> Void)? = nil
     ) {
         self.model = model
         readinessChecker = LocalNetworkAccessChecker()
         self.showsT3ConnectOption = showsT3ConnectOption
+        self.initialEndpoint = initialEndpoint
         self.onConnected = onConnected
         self.onCancel = onCancel
     }
@@ -39,12 +44,14 @@ public struct ConnectionOnboardingView: View {
         model: FeatureRootModel,
         readinessChecker: any ConnectionReadinessChecking,
         showsT3ConnectOption: Bool = true,
+        initialEndpoint: String? = nil,
         onConnected: @escaping @MainActor () -> Void = {},
         onCancel: (@MainActor () -> Void)? = nil
     ) {
         self.model = model
         self.readinessChecker = readinessChecker
         self.showsT3ConnectOption = showsT3ConnectOption
+        self.initialEndpoint = initialEndpoint
         self.onConnected = onConnected
         self.onCancel = onCancel
     }
@@ -107,6 +114,13 @@ public struct ConnectionOnboardingView: View {
         }
         .onOpenURL { url in
             applyConnectionString(url.absoluteString, heading: "Confirm connection")
+        }
+        .onAppear {
+            guard let initialEndpoint, stage == .welcome else { return }
+            endpoint = initialEndpoint
+            entryHeading = "Pair again"
+            stage = .details
+            focusedField = .pairingCode
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active, showsPermissionAction {

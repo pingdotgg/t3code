@@ -3,8 +3,12 @@ import SwiftUI
 struct UsageLimitsView: View {
     let client: any FeatureClient
     @Binding var resetCreditStates: [UsageResetCreditTarget: UsageResetCreditState]
+    /// The parent keeps this view mounted behind the usage tab. Only the visible
+    /// tab may add toolbar items.
+    var isActive = true
 
     @State private var environments: [FeatureEnvironmentUsageLimits] = []
+    @State private var groups: [UsageLimitsGroup] = []
     @State private var hasSnapshot = false
     @State private var isRefreshing = false
     @State private var streamError: String?
@@ -12,8 +16,9 @@ struct UsageLimitsView: View {
     @State private var refreshErrors: [String: String] = [:]
     @State private var now = Date()
     @State private var subscriptionID = UUID()
+    /// Subscriptions start on the first visit and then outlive tab switches.
+    @State private var hasActivated = false
 
-    private var groups: [UsageLimitsGroup] { UsageLimitsPresentation.groups(environments) }
     private var hasLimits: Bool { groups.contains(where: \.hasLimits) }
     private var isWaiting: Bool {
         !hasSnapshot || (!environments.isEmpty && environments.allSatisfy {
@@ -33,9 +38,9 @@ struct UsageLimitsView: View {
                 }
 
                 if isWaiting, streamError == nil {
-                    Text("Loading subscription limits...")
+                    Text("Loading subscription limits")
                         .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textSecondary)
+                        .foregroundStyle(T3Colors.textTertiary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 64)
                 } else if environments.isEmpty {
@@ -57,14 +62,20 @@ struct UsageLimitsView: View {
         .scrollIndicators(.hidden)
         .refreshable { await refresh() }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Refresh limits", systemImage: "arrow.clockwise") {
-                    Task { await refresh() }
+            if isActive {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Refresh limits", systemImage: "arrow.clockwise") {
+                        Task { await refresh() }
+                    }
+                    .disabled(isRefreshing)
                 }
-                .disabled(isRefreshing)
             }
         }
-        .task(id: subscriptionID) {
+        .onChange(of: isActive, initial: true) { _, active in
+            if active { hasActivated = true }
+        }
+        .task(id: hasActivated ? subscriptionID : nil) {
+            guard hasActivated else { return }
             let subscription = subscriptionID
             do {
                 for try await snapshot in client.usageLimitsUpdates() {
@@ -193,6 +204,7 @@ struct UsageLimitsView: View {
 
     private func receive(_ snapshot: [FeatureEnvironmentUsageLimits]) {
         environments = UsageLimitsPresentation.retainingPendingRows(snapshot, previous: environments)
+        groups = UsageLimitsPresentation.groups(environments)
         hasSnapshot = true
         now = Date()
         let ids = Set(snapshot.map(\.environmentID))
@@ -206,9 +218,9 @@ struct UsageLimitsView: View {
         refreshErrors = [:]
         defer {
             isRefreshing = false
-            // A failed environment's stream has ended. A manual refresh starts
-            // a new subscription so that environment can report live updates again.
-            if !Task.isCancelled { subscriptionID = UUID() }
+            // A failed stream has ended. Only then does a manual refresh start a
+            // new subscription. A healthy stream keeps its sockets open.
+            if !Task.isCancelled, streamError != nil { subscriptionID = UUID() }
         }
         do {
             let result = try await client.refreshUsageLimits()
@@ -296,11 +308,21 @@ private struct UsageLimitWindowView: View {
     let now: Date
 
     var body: some View {
+        if window.resetsAt != nil {
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                content(now: context.date)
+            }
+        } else {
+            content(now: now)
+        }
+    }
+
+    private func content(now: Date) -> some View {
         let remaining = UsageLimitsMath.remainingPercent(window)
         let timeLeft = UsageLimitsMath.elapsedShare(window, now: now).map { 1 - $0 }
         let pace = UsageLimitsMath.pace(window, now: now)
         let resetsIn = UsageLimitsMath.resetsIn(window, now: now)
-        VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(window.label)
                 Spacer(minLength: 8)
@@ -343,9 +365,7 @@ private struct UsageLimitWindowView: View {
     private func barColor(remaining: Double) -> Color {
         if remaining <= 10 { return T3Colors.danger }
         if remaining <= 30 { return T3Colors.warning }
-        return driver == "claudeAgent"
-            ? Color(red: 0.851, green: 0.467, blue: 0.341)
-            : T3Colors.textPrimary
+        return driver == "claudeAgent" ? UsageProviderKind.claudeColor : T3Colors.textPrimary
     }
 }
 

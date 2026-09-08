@@ -1,5 +1,6 @@
 import Observation
 import SwiftUI
+import UIKit
 
 struct FeaturePullRequestRow: Identifiable, Equatable {
     let environmentID: String
@@ -43,8 +44,33 @@ final class PullRequestsModel {
     private var loadGeneration: UInt64 = 0
     private var loadedInput: PullRequestListInput?
 
+    /// Each push creates a new model, so the last result per input lives here.
+    /// Returning to an input shows those rows at once while the refresh runs.
+    private struct CachedList {
+        let input: PullRequestListInput
+        let environments: [FeaturePullRequestEnvironmentList]
+    }
+
+    private static var cache: [ObjectIdentifier: [CachedList]] = [:]
+    private static let cacheLimit = 8
+
     init(client: any FeatureClient) {
         self.client = client
+    }
+
+    private var currentInput: PullRequestListInput {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filters = PullRequestListFilters(
+            draft: draftFilter,
+            review: reviewFilter,
+            checks: checksFilter
+        )
+        return PullRequestListInput(
+            state: state,
+            involvement: involvement,
+            filters: filters == PullRequestListFilters() ? nil : filters,
+            query: trimmedQuery.isEmpty ? nil : trimmedQuery
+        )
     }
 
     func load(invalidate: Bool = false) async {
@@ -58,29 +84,38 @@ final class PullRequestsModel {
                 isLoading = false
             }
         }
+        let input = currentInput
+        if !invalidate, let cached = cachedEnvironments(for: input) {
+            loadedInput = input
+            environments = cached
+            updateRows()
+        }
         do {
             if invalidate { try await client.invalidatePullRequests(nil) }
-            let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            let filters = PullRequestListFilters(
-                draft: draftFilter,
-                review: reviewFilter,
-                checks: checksFilter
-            )
-            let input = PullRequestListInput(
-                state: state,
-                involvement: involvement,
-                filters: filters == PullRequestListFilters() ? nil : filters,
-                query: trimmedQuery.isEmpty ? nil : trimmedQuery
-            )
             let result = try await client.pullRequestLists(input)
             guard !Task.isCancelled, loadGeneration == generation else { return }
             loadedInput = input
             environments = result
+            remember()
             updateRows()
         } catch {
             guard loadGeneration == generation, !(error is CancellationError) else { return }
             errorMessage = error.localizedDescription
         }
+    }
+
+    private var cacheKey: ObjectIdentifier { ObjectIdentifier(client) }
+
+    private func cachedEnvironments(for input: PullRequestListInput) -> [FeaturePullRequestEnvironmentList]? {
+        Self.cache[cacheKey]?.first { $0.input == input }?.environments
+    }
+
+    private func remember() {
+        guard let loadedInput else { return }
+        var entries = Self.cache[cacheKey] ?? []
+        entries.removeAll { $0.input == loadedInput }
+        entries.insert(CachedList(input: loadedInput, environments: environments), at: 0)
+        Self.cache[cacheKey] = Array(entries.prefix(Self.cacheLimit))
     }
 
     var hasMorePages: Bool {
@@ -151,6 +186,7 @@ final class PullRequestsModel {
                     result: result,
                     errorMessage: page.errorMessage
                 )
+                remember()
                 updateRows()
             } catch {
                 guard loadGeneration == generation,
@@ -171,8 +207,12 @@ final class PullRequestsModel {
         }
     }
 
+    /// The server already matched `loadedInput.query` against body, labels, and
+    /// branches, so the text filter only runs locally while a newer query is
+    /// still in flight.
     func applyLocalFilters() {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let needle = trimmed == (loadedInput?.query ?? "") ? "" : trimmed.lowercased()
         rows = allRows.filter { row in
             (environmentFilter == nil || row.environmentID == environmentFilter)
                 && (hostFilter == nil || row.entry.host == hostFilter)
@@ -257,7 +297,7 @@ public struct PullRequestsView: View {
         .onChange(of: model.query) {
             searchTask?.cancel()
             searchTask = Task {
-                try? await Task.sleep(for: .milliseconds(300))
+                try? await Task.sleep(for: .milliseconds(400))
                 guard !Task.isCancelled else { return }
                 await model.load()
             }
@@ -390,7 +430,7 @@ public struct PullRequestsView: View {
     @ViewBuilder
     private var content: some View {
         if model.isLoading, model.rows.isEmpty {
-            ProgressView("Loading pull requests…")
+            PullRequestLoadingText()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = model.errorMessage, model.rows.isEmpty {
             ContentUnavailableView("Couldn’t load pull requests", systemImage: "exclamationmark.triangle", description: Text(error))
@@ -432,14 +472,8 @@ public struct PullRequestsView: View {
                     Button {
                         Task { await model.loadMore() }
                     } label: {
-                        HStack {
-                            Spacer()
-                            if model.isLoadingMore {
-                                ProgressView()
-                            }
-                            Text(model.isLoadingMore ? "Loading more..." : "Load more")
-                            Spacer()
-                        }
+                        Text(model.isLoadingMore ? "Loading more" : "Load more")
+                            .frame(maxWidth: .infinity)
                     }
                     .disabled(model.isLoading || model.isLoadingMore)
                     .listRowBackground(Color.clear)
@@ -452,6 +486,15 @@ public struct PullRequestsView: View {
 
     private func reload() {
         Task { await model.load() }
+    }
+}
+
+/// Static loading copy. Spinners repaint continuously, which pegs the GPU.
+private struct PullRequestLoadingText: View {
+    var body: some View {
+        Text("Loading")
+            .font(T3Typography.supporting)
+            .foregroundStyle(T3Colors.textTertiary)
     }
 }
 
@@ -528,22 +571,33 @@ private final class PullRequestDetailModel {
         isLoading = false
     }
 
+    /// Runs under the Files tab's `.task(id:)`, so leaving the tab cancels it
+    /// between pages. Parsing runs off the main actor.
     func loadDiff() async {
         guard detail?.capabilities.diff == true, diffFiles.isEmpty, !isLoadingDiff else { return }
         isLoadingDiff = true
+        defer { isLoadingDiff = false }
         do {
             var cursor: String?
             var pagination = PullRequestDiffPagination()
             repeat {
+                try Task.checkCancellation()
                 let page = try await client.pullRequestDiff(target, cursor: cursor)
                 cursor = pagination.append(page)
             } while cursor != nil
-            diffFiles = PullRequestDiffParser.parse(pagination.patch)
+            try Task.checkCancellation()
+            let patch = pagination.patch
+            let files = await Task.detached(priority: .userInitiated) {
+                PullRequestDiffParser.parse(patch)
+            }.value
+            try Task.checkCancellation()
+            diffFiles = files
             isDiffIncomplete = pagination.isIncomplete
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
         }
-        isLoadingDiff = false
     }
 
     func run(
@@ -653,11 +707,16 @@ private enum PullRequestDetailTab: String, CaseIterable {
 }
 
 struct PullRequestDetailView: View {
-    private struct PendingAction: Identifiable {
-        let id = UUID()
-        let action: PullRequestAction
-        var mergeMethod: PullRequestMergeMethod?
-        var updateMethod: PullRequestUpdateMethod?
+    private enum PendingAction: Identifiable {
+        case merge(PullRequestMergeMethod)
+        case close
+
+        var id: String {
+            switch self {
+            case .merge(let method): "merge:\(method.rawValue)"
+            case .close: "close"
+            }
+        }
     }
 
     @Bindable var rootModel: FeatureRootModel
@@ -683,7 +742,7 @@ struct PullRequestDetailView: View {
     var body: some View {
         Group {
             if model.isLoading, model.detail == nil {
-                ProgressView("Loading pull request…")
+                PullRequestLoadingText()
             } else if let detail = model.detail {
                 VStack(spacing: 0) {
                     detailHeader(detail)
@@ -713,8 +772,9 @@ struct PullRequestDetailView: View {
         }
         .t3NavigationChrome()
         .task { await model.load() }
-        .onChange(of: tab) { _, value in
-            if value == .files { Task { await model.loadDiff() } }
+        .task(id: tab) {
+            guard tab == .files else { return }
+            await model.loadDiff()
         }
         .sheet(item: $editor) { editor in
             PullRequestEditSheet(editor: editor) { value in
@@ -742,26 +802,46 @@ struct PullRequestDetailView: View {
             set: { if !$0 { model.errorMessage = nil } }
         )) { Button("OK") {} } message: { Text(model.errorMessage ?? "") }
         .alert(
-            "Confirm pull request action",
+            pendingAction.map(confirmationTitle) ?? "",
             isPresented: Binding(
                 get: { pendingAction != nil },
                 set: { if !$0 { pendingAction = nil } }
             ),
             presenting: pendingAction
         ) { pending in
-            Button(pending.action.label, role: .destructive) {
-                pendingAction = nil
-                Task {
-                    await model.run(
-                        pending.action,
-                        mergeMethod: pending.mergeMethod,
-                        updateMethod: pending.updateMethod
-                    )
+            switch pending {
+            case .merge(let method):
+                Button("Merge") {
+                    pendingAction = nil
+                    Task { await model.run(.merge, mergeMethod: method) }
+                }
+            case .close:
+                Button("Close", role: .destructive) {
+                    pendingAction = nil
+                    Task { await model.run(.close) }
                 }
             }
             Button("Cancel", role: .cancel) { pendingAction = nil }
         } message: { pending in
-            Text("This action will \(pending.action.label.lowercased()).")
+            Text(confirmationMessage(pending))
+        }
+    }
+
+    private func confirmationTitle(_ pending: PendingAction) -> String {
+        switch pending {
+        case .merge: "Merge pull request?"
+        case .close: "Close pull request?"
+        }
+    }
+
+    private func confirmationMessage(_ pending: PendingAction) -> String {
+        let number = target.reference.number
+        switch pending {
+        case .merge(let method):
+            let base = model.detail?.baseBranch ?? "the base branch"
+            return "\(method.label) #\(number) into \(base). You cannot undo a merge."
+        case .close:
+            return "#\(number) will be closed without merging. You can reopen it later."
         }
     }
 
@@ -794,7 +874,7 @@ struct PullRequestDetailView: View {
                 activity: model.activity,
                 model: model,
                 onUpdateBranch: { method in
-                    pendingAction = PendingAction(action: .updateBranch, updateMethod: method)
+                    Task { await model.run(.updateBranch, updateMethod: method) }
                 }
             )
         case .conversation:
@@ -845,8 +925,8 @@ struct PullRequestDetailView: View {
                        action != .merge,
                        action != .updateBranch {
                         Button(action.label, systemImage: action.systemImage) {
-                            if action == .close || action == .enableAutoMerge {
-                                pendingAction = PendingAction(action: action)
+                            if action == .close {
+                                pendingAction = .close
                             } else {
                                 Task { await model.run(action) }
                             }
@@ -858,13 +938,13 @@ struct PullRequestDetailView: View {
                     Menu("Merge pull request") {
                         ForEach(availableMergeMethods(detail), id: \.self) { method in
                             Button(method.label) {
-                                pendingAction = PendingAction(action: .merge, mergeMethod: method)
+                                pendingAction = .merge(method)
                             }
                         }
                     }
                 }
             } label: {
-                if model.isActing { ProgressView() } else { Image(systemName: "ellipsis.circle") }
+                Image(systemName: "ellipsis.circle")
             }
             .disabled(model.isActing)
         }
@@ -1079,7 +1159,7 @@ private struct PullRequestActivityView: View {
                         ContentUnavailableView("No activity", systemImage: "text.bubble")
                     }
                 } else {
-                    ProgressView("Loading activity…")
+                    PullRequestLoadingText()
                 }
             }
             .padding(16)
@@ -1166,6 +1246,7 @@ private struct PullRequestFilesView: View {
     let canComment: Bool
     let sendToAgent: (PullRequestDiffLine, PullRequestDiffFile) -> Void
     @State private var commentingLine: PullRequestDiffSelection?
+    @State private var selectedLine: PullRequestDiffSelection?
 
     var body: some View {
         ScrollView {
@@ -1179,7 +1260,7 @@ private struct PullRequestFilesView: View {
                     .foregroundStyle(T3Colors.warning)
                 }
                 if isLoading {
-                    ProgressView("Loading diff…")
+                    PullRequestLoadingText()
                         .frame(maxWidth: .infinity)
                         .padding(.top, 50)
                 } else if files.isEmpty {
@@ -1189,7 +1270,8 @@ private struct PullRequestFilesView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(file.path)
                                 .font(T3Typography.supportingStrong.monospaced())
-                                .padding(12)
+                                .foregroundStyle(T3Colors.textPrimary)
+                                .padding(.vertical, 10)
                             Divider().overlay(T3Colors.separator)
                             ScrollView(.horizontal) {
                                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -1209,26 +1291,42 @@ private struct PullRequestFilesView: View {
                                         .padding(.vertical, 2)
                                         .background(line.background)
                                         .contentShape(Rectangle())
-                                        .contextMenu {
-                                            if canComment, line.position != nil {
-                                                Button("Add review comment", systemImage: "text.bubble") {
-                                                    commentingLine = PullRequestDiffSelection(file: file, line: line)
-                                                }
-                                            }
-                                            Button("Send line to agent", systemImage: "paperplane") {
-                                                sendToAgent(line, file)
-                                            }
+                                        .onTapGesture {
+                                            guard line.kind != .header else { return }
+                                            selectedLine = PullRequestDiffSelection(file: file, line: line)
                                         }
                                     }
                                 }
                             }
                         }
-                        .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(T3Colors.border))
+                        // One menu per file. A menu per line costs one interaction per row.
+                        .contextMenu {
+                            Button("Copy file path", systemImage: "doc.on.doc") {
+                                UIPasteboard.general.string = file.path
+                            }
+                            Button("Copy diff", systemImage: "doc.on.doc") {
+                                UIPasteboard.general.string = file.lines.map(\.text).joined(separator: "\n")
+                            }
+                        }
                     }
                 }
             }
             .padding(16)
+        }
+        .confirmationDialog(
+            selectedLine.map { "\($0.file.path):\($0.line.displayLineNumber)" } ?? "",
+            isPresented: Binding(
+                get: { selectedLine != nil },
+                set: { if !$0 { selectedLine = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: selectedLine
+        ) { selection in
+            if canComment, selection.line.position != nil {
+                Button("Add review comment") { commentingLine = selection }
+            }
+            Button("Send line to agent") { sendToAgent(selection.line, selection.file) }
+            Button("Copy line") { UIPasteboard.general.string = selection.line.text }
         }
         .sheet(item: $commentingLine) { selection in
             PullRequestTextSheet(title: "Review comment", initialValue: "") { body in
@@ -1305,7 +1403,7 @@ private struct PullRequestReviewerSheet: View {
         NavigationStack {
             List {
                 if model.isLoadingReviewers, model.reviewerCandidates.isEmpty {
-                    ProgressView("Loading reviewers…")
+                    PullRequestLoadingText()
                 }
                 ForEach(model.reviewerCandidates) { reviewer in
                     Button {

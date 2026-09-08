@@ -39,17 +39,23 @@ struct FeatureComposerApprovalPanel: View {
                         .textCase(.uppercase)
                         .foregroundStyle(T3Colors.textTertiary)
 
-                    Text(approval.detail)
-                        .font(
-                            approval.kind == .command
-                                ? T3Typography.code
-                                : T3Typography.threadBody
-                        )
-                        .foregroundStyle(T3Colors.textPrimary.opacity(0.92))
-                        .lineSpacing(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .t3CodeTextSize(approval.kind == .command)
+                    // A patch or command can be a whole diff. Scroll it so
+                    // the decision buttons below never leave the screen.
+                    ScrollView {
+                        Text(approval.detail)
+                            .font(
+                                approval.kind == .command
+                                    ? T3Typography.code
+                                    : T3Typography.threadBody
+                            )
+                            .foregroundStyle(T3Colors.textPrimary.opacity(0.92))
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                            .t3CodeTextSize(approval.kind == .command)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 220)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -85,10 +91,12 @@ struct FeatureComposerApprovalPanel: View {
                             onDecision(option.decision)
                         }
                         .foregroundStyle(T3Colors.danger)
+                        .frame(minHeight: T3Metrics.minimumTapTarget)
                     }
 
                     Button("Cancel turn", action: onCancelTurn)
                         .foregroundStyle(T3Colors.textTertiary)
+                        .frame(minHeight: T3Metrics.minimumTapTarget)
                 }
                 .font(T3Typography.supportingStrong)
                 .buttonStyle(.plain)

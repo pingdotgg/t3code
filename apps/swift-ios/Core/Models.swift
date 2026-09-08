@@ -482,6 +482,7 @@ public struct OrchestrationThreadShell: Codable, Identifiable, Equatable, Sendab
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var pinOrderKey: String? = nil
     public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let session: OrchestrationSession?
     public let latestUserMessageAt: String?
@@ -560,6 +561,7 @@ public struct OrchestrationThread: Codable, Identifiable, Equatable, Sendable {
     public let snoozedUntil: String?
     public let snoozedAt: String?
     public let pinnedAt: String?
+    public var pinOrderKey: String? = nil
     public var titleRegeneration: ThreadTitleRegeneration? = nil
     public let deletedAt: String?
     @ForwardCompatibleArray public var messages: [OrchestrationMessage]

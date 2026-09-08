@@ -47,16 +47,21 @@ public final class FeatureRootModel {
     }
 
     public private(set) var snapshot = FeatureSnapshot()
+    /// Why the last `startTask` returned nil, for the sheet that made the request.
+    public private(set) var lastTaskStartError: String?
     private(set) var pullRequestsByThreadID: [String: HomeThreadPullRequestPresentation] = [:]
     private var pullRequestObservationIdentities: [String: String] = [:]
     public private(set) var details: [String: FeatureThreadDetail] = [:]
     private(set) var detailLoadStates: [String: FeatureThreadLoadState] = [:]
     private(set) var threadSyncStates: [String: FeatureThreadSyncState] = [:]
     private var backgroundedAt: Date?
-    /// Advances whenever a Home presentation input changes.
+    /// Advances when a Home shelf or order input changes (see `HomeOrderKey`)
+    /// or when projects, environments, providers, or preferences change.
+    /// Streaming updates to a row's own content do not advance it.
     public private(set) var homePresentationRevision: UInt64 = 0
-    /// Advances when a Home-visible thread is inserted, removed, or changed.
-    public private(set) var threadCollectionRevision: UInt64 = 0
+    /// Advances on any thread insert, removal, or field change. Rows read this
+    /// to refresh their own content without re-sorting the list.
+    public private(set) var threadRowRevision: UInt64 = 0
     /// Advances for any selected-thread metadata, message, approval, or input change.
     public private(set) var detailRevision: UInt64 = 0
     /// The latest detail revision for each loaded thread.
@@ -64,6 +69,9 @@ public final class FeatureRootModel {
     private(set) var detailRenderUpdates: [String: FeatureDetailRenderUpdate] = [:]
     public private(set) var isLoading = true
     public private(set) var isPerformingAction = false
+    /// Approval and question IDs with a response in flight. Views disable
+    /// only that request, not every request in every thread.
+    public private(set) var resolvingRequestIDs: Set<String> = []
     public private(set) var isManagingConnections = false
     private(set) var isSigningOutT3Connect = false
     public var errorMessage: String?
@@ -79,8 +87,6 @@ public final class FeatureRootModel {
     private var pendingSubmissionsByID: [String: FeatureQueuedSubmission] = [:]
     private var pendingThreadsByID: [String: FeatureThread] = [:]
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
-    private var pendingCompletionSubmissionIDs: Set<String> = []
-    private var pendingDiscardSubmissionIDs: Set<String> = []
     private var detailRecency: [String] = []
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
@@ -218,11 +224,10 @@ public final class FeatureRootModel {
             var cleanupError: (any Error)?
             do {
                 try await outboxStore.removeAll(environmentID: id)
-                removePendingSubmissions(environmentID: id)
             } catch {
-                markPendingSubmissionsForDiscard(environmentID: id)
                 cleanupError = error
             }
+            removePendingSubmissions(environmentID: id)
             do {
                 try await draftStore.removeDrafts(
                     environmentID: id,
@@ -370,8 +375,9 @@ public final class FeatureRootModel {
         guard !prompt.isEmpty || !request.attachments.isEmpty else { return nil }
         guard request.workspaceMode != .worktree || request.branch != nil else { return nil }
 
+        lastTaskStartError = nil
         guard let project = snapshot.projects.first(where: { $0.id == request.projectID }) else {
-            errorMessage = "That project is no longer available."
+            lastTaskStartError = "That project is no longer available."
             return nil
         }
         let identity = FeatureSubmissionIdentity()
@@ -417,9 +423,7 @@ public final class FeatureRootModel {
                 attachments: uploads,
                 identity: identity
             )
-            if !(await completeQueuedSubmission(queued)) {
-                scheduleOutboxRetry()
-            }
+            await completeQueuedSubmission(queued)
             if thread.id != queued.threadID {
                 removeThread(id: queued.threadID)
                 removeDetail(id: queued.threadID)
@@ -434,12 +438,11 @@ public final class FeatureRootModel {
                 return snapshot.threads.first { $0.id == threadID }
                     ?? pendingThreadsByID[threadID]
             }
-            let discarded = await discardQueuedSubmission(queued)
-            if !discarded {
-                scheduleOutboxRetry()
-            }
-            if discarded, !Self.isBenignCancellation(error) {
-                errorMessage = error.localizedDescription
+            await discardQueuedSubmission(queued)
+            if !Self.isBenignCancellation(error) {
+                // The New Task sheet shows this inline. Writing errorMessage
+                // here as well raised a second alert over the sheet.
+                lastTaskStartError = error.localizedDescription
             }
             return nil
         }
@@ -470,9 +473,8 @@ public final class FeatureRootModel {
     public func setArchived(_ id: String, archived: Bool) async {
         if archived,
            let thread = snapshot.threads.first(where: { $0.id == id }),
-           [.queued, .working, .monitoring, .waitingForApproval, .waitingForInput]
-               .contains(thread.state) {
-            errorMessage = "This thread is still active. Stop it before archiving."
+           !thread.canArchive {
+            // Rows hide Archive on live work; a stale row can still race in.
             return
         }
         let environment = currentEnvironmentIdentity
@@ -697,16 +699,6 @@ public final class FeatureRootModel {
         evictOldThreadDetailsIfNeeded()
     }
 
-    public func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async -> Bool {
-        await sendMessage(
-            FeatureMessageSubmission(
-                threadID: threadID,
-                text: text,
-                selection: selection
-            )
-        )
-    }
-
     public func sendMessage(_ submission: FeatureMessageSubmission) async -> Bool {
         let trimmed = submission.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !submission.attachments.isEmpty else { return false }
@@ -766,9 +758,7 @@ public final class FeatureRootModel {
                 attachments: uploads,
                 identity: identity
             )
-            if !(await completeQueuedSubmission(queued)) {
-                scheduleOutboxRetry()
-            }
+            await completeQueuedSubmission(queued)
             return true
         } catch {
             if Self.shouldQueue(error, environmentID: environmentID, snapshot: snapshot) {
@@ -777,11 +767,8 @@ public final class FeatureRootModel {
                 }
                 return true
             }
-            let discarded = await discardQueuedSubmission(queued)
-            if !discarded {
-                scheduleOutboxRetry()
-            }
-            if discarded, !Self.isBenignCancellation(error) {
+            await discardQueuedSubmission(queued)
+            if !Self.isBenignCancellation(error) {
                 errorMessage = error.localizedDescription
             }
             return false
@@ -795,9 +782,7 @@ public final class FeatureRootModel {
             await stopOutboxDrain()
             let queued = pendingSubmissionsByID.values.filter { $0.threadID == threadID }
             for submission in queued {
-                if !(await discardQueuedSubmission(submission)) {
-                    scheduleOutboxRetry()
-                }
+                await discardQueuedSubmission(submission)
             }
             if pendingThreadsByID[threadID] == nil,
                snapshot.threads.contains(where: { $0.id == threadID }) {
@@ -814,6 +799,8 @@ public final class FeatureRootModel {
     }
 
     public func resolveApproval(_ id: String, decision: FeatureApprovalDecision) async {
+        guard resolvingRequestIDs.insert(id).inserted else { return }
+        defer { resolvingRequestIDs.remove(id) }
         let environment = currentEnvironmentIdentity
         await perform {
             try await client.resolveApproval(id: id, decision: decision)
@@ -836,6 +823,8 @@ public final class FeatureRootModel {
         _ id: String, answers: [String: FeatureInputAnswer],
         attachmentsByQuestionID: [String: [FeatureUploadAttachment]] = [:]
     ) async {
+        guard resolvingRequestIDs.insert(id).inserted else { return }
+        defer { resolvingRequestIDs.remove(id) }
         let environment = currentEnvironmentIdentity
         await perform {
             try await client.resolveUserInput(id: id, answers: answers, attachmentsByQuestionID: attachmentsByQuestionID)
@@ -854,6 +843,8 @@ public final class FeatureRootModel {
     }
 
     public func dismissUserInput(_ id: String) async {
+        guard resolvingRequestIDs.insert(id).inserted else { return }
+        defer { resolvingRequestIDs.remove(id) }
         let environment = currentEnvironmentIdentity
         await perform {
             try await client.dismissUserInput(id: id)
@@ -866,14 +857,6 @@ public final class FeatureRootModel {
                 }
             }
         }
-    }
-
-    /// Convenience for callers that only submit free-form or single-select text.
-    public func resolveUserInput(_ id: String, answers: [String: String]) async {
-        await resolveUserInput(
-            id,
-            answers: answers.mapValues(FeatureInputAnswer.text)
-        )
     }
 
     @discardableResult
@@ -1000,10 +983,8 @@ public final class FeatureRootModel {
 
     private static func isBenignCancellation(_ error: any Error) -> Bool {
         if error is CancellationError { return true }
-        let message = error.localizedDescription
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return message == "cancelled" || message == "canceled"
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
     }
 
     private var currentEnvironmentIdentity: String {
@@ -1017,9 +998,21 @@ public final class FeatureRootModel {
         switch event {
         case let .snapshot(value):
             install(value)
-        case let .connection(value):
-            guard snapshot.connection != value else { return }
-            snapshot.connection = value
+        case let .connection(value, environmentID):
+            var changed = false
+            if snapshot.connection != value {
+                snapshot.connection = value
+                changed = true
+            }
+            if let environmentID,
+               let index = snapshot.environments.firstIndex(where: { $0.id == environmentID }),
+               snapshot.environments[index].connectionState != value.state
+                || snapshot.environments[index].connectionDetail != value.detail {
+                snapshot.environments[index].connectionState = value.state
+                snapshot.environments[index].connectionDetail = value.detail
+                changed = true
+            }
+            guard changed else { return }
             homePresentationRevision &+= 1
             if value.state == .connected {
                 scheduleOutboxDrain()
@@ -1054,11 +1047,13 @@ public final class FeatureRootModel {
         let thread = retainingPendingSettlement(in: thread)
         discardStalePullRequest(for: thread)
         var metadataChanged = false
+        var orderChanged = false
         if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
             let previous = snapshot.threads[index]
             if previous != thread {
                 snapshot.threads[index] = thread
                 metadataChanged = true
+                orderChanged = HomeOrderKey(previous) != HomeOrderKey(thread)
                 if previous.projectID != thread.projectID {
                     adjustProjectCount(id: previous.projectID, by: -1)
                     adjustProjectCount(id: thread.projectID, by: 1)
@@ -1068,9 +1063,12 @@ public final class FeatureRootModel {
             snapshot.threads.append(thread)
             adjustProjectCount(id: thread.projectID, by: 1)
             metadataChanged = true
+            orderChanged = true
         }
         if metadataChanged {
-            threadCollectionRevision &+= 1
+            threadRowRevision &+= 1
+        }
+        if orderChanged {
             homePresentationRevision &+= 1
         }
         let detailChanged = mutateDetail(
@@ -1092,7 +1090,7 @@ public final class FeatureRootModel {
         pullRequestsByThreadID.removeValue(forKey: id)
         pullRequestObservationIdentities.removeValue(forKey: id)
         adjustProjectCount(id: projectID, by: -1)
-        threadCollectionRevision &+= 1
+        threadRowRevision &+= 1
         homePresentationRevision &+= 1
     }
 
@@ -1151,17 +1149,24 @@ public final class FeatureRootModel {
             bumpDetailMetadataRevision(id: thread.id)
         }
 
+        let threadsChanged = snapshot.threads != value.threads
+        let orderChanged = threadsChanged && (
+            snapshot.threads.count != value.threads.count
+                || zip(snapshot.threads, value.threads).contains { previous, next in
+                    previous.id != next.id || HomeOrderKey(previous) != HomeOrderKey(next)
+                }
+        )
         if snapshot.connection != value.connection
             || snapshot.environments != value.environments
             || snapshot.projects != value.projects
             || snapshot.providers != value.providers
             || snapshot.providersByEnvironment != value.providersByEnvironment
             || snapshot.preferencesByEnvironment != value.preferencesByEnvironment
-            || snapshot.threads != value.threads {
+            || orderChanged {
             homePresentationRevision &+= 1
         }
-        if snapshot.threads != value.threads {
-            threadCollectionRevision &+= 1
+        if threadsChanged {
+            threadRowRevision &+= 1
         }
         snapshot = value
         if value.connection.state == .connected
@@ -1189,7 +1194,7 @@ public final class FeatureRootModel {
             mutation(&snapshot.threads[index])
             if snapshot.threads[index] != previous {
                 metadataChanged = true
-                threadCollectionRevision &+= 1
+                threadRowRevision &+= 1
                 homePresentationRevision &+= 1
             }
         }
@@ -1555,33 +1560,21 @@ public final class FeatureRootModel {
     }
 
     private func scheduleQueuedSubmissionCompletion(_ submission: FeatureQueuedSubmission) {
-        guard pendingCompletionSubmissionIDs.insert(submission.id).inserted else { return }
-        pendingDiscardSubmissionIDs.remove(submission.id)
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            if !(await self.completeQueuedSubmission(submission)) {
-                self.scheduleOutboxRetry()
-            }
+            await self?.completeQueuedSubmission(submission)
         }
     }
 
-    @discardableResult
-    private func completeQueuedSubmission(_ submission: FeatureQueuedSubmission) async -> Bool {
-        pendingCompletionSubmissionIDs.insert(submission.id)
-        pendingDiscardSubmissionIDs.remove(submission.id)
-        do {
-            try await outboxStore.remove(id: submission.id)
-        } catch {
-            errorMessage = "The message was delivered, but its queued copy could not be cleared: \(error.localizedDescription)"
-            return false
-        }
-        pendingCompletionSubmissionIDs.remove(submission.id)
+    /// Delivered: forget the queued copy. If the local remove fails, the entry
+    /// is resent on next launch with the same command identity, which the
+    /// server treats as a duplicate, so there is nothing to retry here.
+    private func completeQueuedSubmission(_ submission: FeatureQueuedSubmission) async {
+        try? await outboxStore.remove(id: submission.id)
         pendingSubmissionsByID.removeValue(forKey: submission.id)
         setAttachmentOutboxOwnership(false, for: submission)
         pendingThreadsByID.removeValue(forKey: submission.threadID)
         markQueuedMessageDelivered(submission)
         outboxRetryAttempt = 0
-        return true
     }
 
     private func markQueuedMessageDelivered(_ submission: FeatureQueuedSubmission) {
@@ -1596,17 +1589,8 @@ public final class FeatureRootModel {
         }
     }
 
-    @discardableResult
-    private func discardQueuedSubmission(_ submission: FeatureQueuedSubmission) async -> Bool {
-        pendingCompletionSubmissionIDs.remove(submission.id)
-        pendingDiscardSubmissionIDs.insert(submission.id)
-        do {
-            try await outboxStore.remove(id: submission.id)
-        } catch {
-            errorMessage = "Could not remove the queued message: \(error.localizedDescription)"
-            return false
-        }
-        pendingDiscardSubmissionIDs.remove(submission.id)
+    private func discardQueuedSubmission(_ submission: FeatureQueuedSubmission) async {
+        try? await outboxStore.remove(id: submission.id)
         pendingSubmissionsByID.removeValue(forKey: submission.id)
         setAttachmentOutboxOwnership(false, for: submission)
         let wasPendingCreation = pendingThreadsByID.removeValue(forKey: submission.threadID) != nil
@@ -1618,7 +1602,6 @@ public final class FeatureRootModel {
                 $0.messages.removeAll { $0.id == submission.identity.messageID }
             }
         }
-        return true
     }
 
     private func setAttachmentOutboxOwnership(
@@ -1641,8 +1624,6 @@ public final class FeatureRootModel {
             $0.environmentID == environmentID
         }
         for submission in removed {
-            pendingCompletionSubmissionIDs.remove(submission.id)
-            pendingDiscardSubmissionIDs.remove(submission.id)
             pendingSubmissionsByID.removeValue(forKey: submission.id)
             setAttachmentOutboxOwnership(false, for: submission)
             if pendingThreadsByID.removeValue(forKey: submission.threadID) != nil {
@@ -1653,13 +1634,6 @@ public final class FeatureRootModel {
                     $0.messages.removeAll { $0.id == submission.identity.messageID }
                 }
             }
-        }
-    }
-
-    private func markPendingSubmissionsForDiscard(environmentID: String) {
-        for submission in pendingSubmissionsByID.values where submission.environmentID == environmentID {
-            pendingCompletionSubmissionIDs.remove(submission.id)
-            pendingDiscardSubmissionIDs.insert(submission.id)
         }
     }
 
@@ -1705,18 +1679,6 @@ public final class FeatureRootModel {
         var needsRetry = false
         for submission in submissions where pendingSubmissionsByID[submission.id] != nil {
             guard !Task.isCancelled, outboxGeneration == generation else { return false }
-            if pendingCompletionSubmissionIDs.contains(submission.id) {
-                if !(await completeQueuedSubmission(submission)) {
-                    needsRetry = true
-                }
-                continue
-            }
-            if pendingDiscardSubmissionIDs.contains(submission.id) {
-                if !(await discardQueuedSubmission(submission)) {
-                    needsRetry = true
-                }
-                continue
-            }
             var policySnapshot = snapshot
             if pendingThreadsByID[submission.threadID] != nil {
                 policySnapshot.threads.removeAll { $0.id == submission.threadID }
@@ -1731,9 +1693,7 @@ public final class FeatureRootModel {
                 )
             ) {
             case .discard:
-                if !(await discardQueuedSubmission(submission)) {
-                    needsRetry = true
-                }
+                await discardQueuedSubmission(submission)
             case .wait:
                 // Connectivity and snapshot events wake the drain immediately.
                 // Avoid a permanent timer while the owning device is offline.
@@ -1762,9 +1722,7 @@ public final class FeatureRootModel {
                         )
                         guard !Task.isCancelled,
                               outboxGeneration == generation else { return false }
-                        if !(await completeQueuedSubmission(submission)) {
-                            needsRetry = true
-                        }
+                        await completeQueuedSubmission(submission)
                         if thread.id != submission.threadID {
                             removeThread(id: submission.threadID)
                             removeDetail(id: submission.threadID)
@@ -1781,9 +1739,7 @@ public final class FeatureRootModel {
                         )
                         guard !Task.isCancelled,
                               outboxGeneration == generation else { return false }
-                        if !(await completeQueuedSubmission(submission)) {
-                            needsRetry = true
-                        }
+                        await completeQueuedSubmission(submission)
                     }
                 } catch {
                     if Self.shouldQueue(
@@ -1793,11 +1749,8 @@ public final class FeatureRootModel {
                     ) {
                         needsRetry = true
                     } else {
-                        if !(await discardQueuedSubmission(submission)) {
-                            needsRetry = true
-                        } else {
-                            errorMessage = error.localizedDescription
-                        }
+                        await discardQueuedSubmission(submission)
+                        errorMessage = error.localizedDescription
                     }
                 }
             }
@@ -1812,27 +1765,34 @@ public final class FeatureRootModel {
         return environment.isEnabled && environment.connectionState == .connected
     }
 
+    /// Only transport failures keep a submission queued. A server that
+    /// answered and rejected the command is final, so the message is dropped
+    /// and the error shown. Matching on error text queued permanent failures
+    /// (a provider "connection refused", a validation error mentioning
+    /// "network") and retried them forever.
     static func shouldQueue(
         _ error: any Error,
         environmentID: String,
         snapshot: FeatureSnapshot
     ) -> Bool {
         if error is CancellationError || error is URLError { return true }
-        if let rpcError = error as? RPCError,
-           case .responseTimedOut = rpcError {
-            return true
+        if let rpcError = error as? RPCError {
+            switch rpcError {
+            case .responseTimedOut, .connectionUnavailable, .disconnected: return true
+            case .remote, .protocolViolation: break
+            }
+        }
+        if let httpError = error as? HTTPError {
+            switch httpError {
+            case .invalidResponse: return true
+            case let .status(status, _, _): return status >= 500
+            default: break
+            }
         }
         if let environment = snapshot.environments.first(where: { $0.id == environmentID }) {
-            let disconnected = !environment.isEnabled
-                || environment.connectionState != .connected
-            if disconnected { return true }
+            return !environment.isEnabled || environment.connectionState != .connected
         }
-        let message = error.localizedDescription.lowercased()
-        return [
-            "cancelled", "canceled", "connection", "network", "offline",
-            "socket", "timed out", "timeout", "transport", "not connected",
-            "request deadline",
-        ].contains { message.contains($0) }
+        return false
     }
 }
 

@@ -6,6 +6,7 @@ enum ConnectionHubStatus: Equatable {
     case connecting
     case offline
     case online
+    case needsPairing
 
     var title: String {
         switch self {
@@ -14,6 +15,7 @@ enum ConnectionHubStatus: Equatable {
         case .connecting: "Connecting"
         case .offline: "Offline"
         case .online: "Online"
+        case .needsPairing: "Pair again"
         }
     }
 }
@@ -84,6 +86,7 @@ enum ConnectionHubPresentation {
         case .connected: .online
         case .connecting, .reconnecting: .connecting
         case .disconnected: .offline
+        case .needsPairing: .needsPairing
         case nil: .checking
         }
     }

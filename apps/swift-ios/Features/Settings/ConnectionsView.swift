@@ -507,6 +507,7 @@ private struct ConnectionDetailView: View {
 
     @State private var showingRemoval = false
     @State private var isUpdatingAutomaticSettlement = false
+    @State private var showingPairAgain = false
 
     var body: some View {
         List {
@@ -523,6 +524,13 @@ private struct ConnectionDetailView: View {
                         ).title
                     )
                     LabeledContent("Connection", value: environment.source.title)
+                    if environment.connectionState == .needsPairing,
+                       environment.source == .direct {
+                        Text(environment.connectionDetail ?? "The saved pairing was rejected.")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.danger)
+                        Button("Pair again") { showingPairAgain = true }
+                    }
                 }
 
                 Section("Server") {
@@ -585,6 +593,18 @@ private struct ConnectionDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(removalMessage)
+        }
+        .sheet(isPresented: $showingPairAgain) {
+            ConnectionOnboardingView(
+                model: model,
+                showsT3ConnectOption: false,
+                initialEndpoint: environment?.endpoint,
+                onConnected: {
+                    showingPairAgain = false
+                    Task { await model.reloadAfterConnection() }
+                },
+                onCancel: { showingPairAgain = false }
+            )
         }
     }
 
@@ -682,7 +702,7 @@ private extension ConnectionHubStatus {
         switch self {
         case .disabled, .checking: T3Colors.textTertiary
         case .connecting: T3Colors.warning
-        case .offline: T3Colors.danger
+        case .offline, .needsPairing: T3Colors.danger
         case .online: T3Colors.success
         }
     }

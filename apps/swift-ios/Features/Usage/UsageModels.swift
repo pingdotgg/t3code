@@ -112,6 +112,7 @@ struct UsageLoadState: Equatable {
     private(set) var windowInput: UsageSummaryInput
     private(set) var environments: [FeatureEnvironmentUsage] = []
     private(set) var merged = MergedUsage()
+    private(set) var presentation = UsagePresentation()
     private(set) var isLoading = true
     private(set) var errorMessage: String?
     private var activeLoadID: UUID?
@@ -165,6 +166,7 @@ struct UsageLoadState: Equatable {
         windowInput = UsageWindow.make(days: days, now: now, timeZone: timeZone)
         environments = []
         merged = MergedUsage()
+        presentation = UsagePresentation()
         isLoading = true
         errorMessage = nil
     }
@@ -196,6 +198,7 @@ struct UsageLoadState: Equatable {
             )
         }
         merged = UsageMerger.merge(environments, resolution: request.input.resolution)
+        presentation = UsagePresentation.make(merged, input: request.input)
         errorMessage = nil
         return true
     }
@@ -525,15 +528,11 @@ enum UsageWindow {
     }
 
     private static func isoString(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: date)
+        UsageFormat.isoString(date)
     }
 
     private static func isoDate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        UsageFormat.isoDate(value)
     }
 
     static func days(in input: UsageSummaryInput) -> [String] {
@@ -562,5 +561,174 @@ enum UsageWindow {
             cursor = next
         }
         return result
+    }
+}
+
+/// Chart bars stack one segment per provider for each day or hour in the window.
+struct UsageChartSegment: Identifiable, Equatable {
+    let period: String
+    let provider: UsageProviderKind
+    let start: Double
+    let end: Double
+
+    var id: String { "\(period):\(provider.rawValue)" }
+}
+
+struct UsagePeriodRow: Identifiable, Equatable {
+    let id: String
+    let label: String
+    let costUsd: Double
+    let totalTokens: Int
+}
+
+/// Sorted, labelled, and charted values the usage screen renders. Computed once
+/// per received result so the view body only reads stored values.
+struct UsagePresentation: Equatable {
+    var providersByCost: [UsageProviderTotals] = []
+    var providersByTokens: [UsageProviderTotals] = []
+    var costSegments: [UsageChartSegment] = []
+    var tokenSegments: [UsageChartSegment] = []
+    var hasCostActivity = false
+    var hasTokenActivity = false
+    /// Newest period first.
+    var periods: [UsagePeriodRow] = []
+    var activePeriodCount = 0
+    var periodAverageTokens = 0
+    var cachedInputShare = 0.0
+    var sinceLabel = ""
+    var untilLabel = ""
+
+    static func make(_ merged: MergedUsage, input: UsageSummaryInput) -> UsagePresentation {
+        var result = UsagePresentation()
+        result.providersByCost = merged.providers.sorted { $0.costUsd > $1.costUsd }
+        result.providersByTokens = merged.providers.sorted { $0.totalTokens > $1.totalTokens }
+        result.hasCostActivity = merged.daily.contains { $0.costUsd > 0 }
+        result.hasTokenActivity = merged.daily.contains { $0.totalTokens > 0 }
+        result.sinceLabel = UsageFormat.dayShort(input.sinceDay)
+        result.untilLabel = UsageFormat.dayShort(input.untilDay)
+
+        let periodKeys: [String]
+        let byPeriod: [String: [UsageProviderKind: UsageProviderValue]]
+        if input.resolution == .hour {
+            let hourStyle = UsageFormat.hourStyle(timeZone: input.timeZone)
+            periodKeys = UsageWindow.hours(in: input)
+            byPeriod = Dictionary(uniqueKeysWithValues: merged.hourly.map { ($0.hourStart, $0.byProvider) })
+            result.periods = merged.hourly.reversed().map {
+                UsagePeriodRow(
+                    id: $0.hourStart,
+                    label: UsageFormat.hourShort($0.hourStart, style: hourStyle),
+                    costUsd: $0.costUsd,
+                    totalTokens: $0.totalTokens
+                )
+            }
+            result.activePeriodCount = merged.hourly.filter { $0.totalTokens > 0 }.count
+        } else {
+            periodKeys = UsageWindow.days(in: input)
+            byPeriod = Dictionary(uniqueKeysWithValues: merged.daily.map { ($0.day, $0.byProvider) })
+            result.periods = merged.daily.reversed().map {
+                UsagePeriodRow(
+                    id: $0.day,
+                    label: UsageFormat.dayShort($0.day),
+                    costUsd: $0.costUsd,
+                    totalTokens: $0.totalTokens
+                )
+            }
+            result.activePeriodCount = merged.daily.filter { $0.totalTokens > 0 }.count
+        }
+        result.costSegments = segments(periodKeys, byPeriod: byPeriod) { $0.costUsd }
+        result.tokenSegments = segments(periodKeys, byPeriod: byPeriod) { Double($0.totalTokens) }
+        result.periodAverageTokens = result.activePeriodCount == 0
+            ? 0
+            : merged.totalTokens / result.activePeriodCount
+        let observedInput = merged.uncachedInputTokens + merged.cachedInputTokens
+        result.cachedInputShare = observedInput == 0
+            ? 0
+            : Double(merged.cachedInputTokens) / Double(observedInput)
+        return result
+    }
+
+    private static func segments(
+        _ periods: [String],
+        byPeriod: [String: [UsageProviderKind: UsageProviderValue]],
+        value: (UsageProviderValue) -> Double
+    ) -> [UsageChartSegment] {
+        periods.flatMap { period in
+            let totals = byPeriod[period] ?? [:]
+            var start = 0.0
+            return UsageProviderKind.allCases.map { provider in
+                let amount = totals[provider].map(value) ?? 0
+                defer { start += amount }
+                return UsageChartSegment(period: period, provider: provider, start: start, end: start + amount)
+            }
+        }
+    }
+}
+
+/// Format styles are Sendable values, so each one is built once here instead of
+/// once per call. All of them follow the current locale.
+enum UsageFormat {
+    private static let isoFractional = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+    private static let isoWholeSeconds = Date.ISO8601FormatStyle()
+    private static let dayParser = Date.ISO8601FormatStyle().year().month().day()
+    private static let dayLabel = Date.FormatStyle(timeZone: .gmt).month(.abbreviated).day()
+    private static let usdStyle = FloatingPointFormatStyle<Double>.Currency(code: "USD")
+        .precision(.fractionLength(2))
+    private static let countStyle = IntegerFormatStyle<Int>()
+    private static let percentStyle = FloatingPointFormatStyle<Double>.Percent()
+        .precision(.fractionLength(1))
+
+    static func usd(_ value: Double) -> String {
+        usdStyle.format(value)
+    }
+
+    static func count(_ value: Int) -> String {
+        countStyle.format(value)
+    }
+
+    static func tokens(_ value: Int) -> String {
+        let magnitude = abs(Double(value))
+        if magnitude >= 1_000_000_000_000 { return compact(Double(value) / 1_000_000_000_000, suffix: "T") }
+        if magnitude >= 1_000_000_000 { return compact(Double(value) / 1_000_000_000, suffix: "B") }
+        if magnitude >= 1_000_000 { return compact(Double(value) / 1_000_000, suffix: "M") }
+        if magnitude >= 1_000 { return compact(Double(value) / 1_000, suffix: "K") }
+        return count(value)
+    }
+
+    static func percent(_ value: Double) -> String {
+        percentStyle.format(value)
+    }
+
+    /// "2026-08-18" becomes "Aug 18" in the current locale.
+    static func dayShort(_ day: String) -> String {
+        (try? dayParser.parse(day)).map(dayLabel.format) ?? day
+    }
+
+    /// One style per window, since the label follows the window's time zone.
+    static func hourStyle(timeZone: String) -> Date.FormatStyle {
+        Date.FormatStyle(timeZone: TimeZone(identifier: timeZone) ?? .current)
+            .weekday(.abbreviated)
+            .hour(.defaultDigits(amPM: .abbreviated))
+    }
+
+    static func hourShort(_ value: String, style: Date.FormatStyle) -> String {
+        isoDate(value).map(style.format) ?? value
+    }
+
+    static func isoString(_ date: Date) -> String {
+        isoFractional.format(date)
+    }
+
+    static func isoDate(_ value: String) -> Date? {
+        (try? isoFractional.parse(value)) ?? (try? isoWholeSeconds.parse(value))
+    }
+
+    private static func compact(_ value: Double, suffix: String) -> String {
+        let digits = abs(value) >= 100 ? 0 : abs(value) >= 10 ? 1 : 2
+        var formatted = String(format: "%.*f", digits, value)
+        while formatted.hasSuffix("0"), formatted.contains(".") {
+            formatted.removeLast()
+        }
+        if formatted.hasSuffix(".") { formatted.removeLast() }
+        return formatted + suffix
     }
 }

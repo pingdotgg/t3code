@@ -113,7 +113,10 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         try await fixture.client.sendMessage(
             threadID: remoteThread.id,
             text: "Run this on Steam Box",
-            selection: selection
+            selection: selection,
+            runtimeMode: detail.thread.runtimeMode,
+            attachments: [],
+            identity: FeatureSubmissionIdentity(threadID: remoteThread.id)
         )
 
         let records = await fixture.transport.dispatchRecords()

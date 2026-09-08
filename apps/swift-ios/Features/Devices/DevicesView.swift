@@ -17,12 +17,9 @@ public struct DevicesView: View {
     public var body: some View {
         Group {
             if isLoading, sessions.isEmpty {
-                VStack(spacing: 12) {
-                    ProgressView()
-                    Text("Loading devices")
-                        .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textSecondary)
-                }
+                Text("Loading devices")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textTertiary)
             } else if let errorMessage, sessions.isEmpty {
                 ContentUnavailableView {
                     Label("Couldn’t load devices", systemImage: "exclamationmark.circle")
@@ -108,13 +105,15 @@ public struct DevicesView: View {
     private var deviceList: some View {
         List {
             if let currentSession {
-                Section("THIS DEVICE") {
+                Section {
                     DeviceSessionRow(session: currentSession)
+                } header: {
+                    sectionHeader("This device")
                 }
             }
 
             if !otherSessions.isEmpty {
-                Section("OTHER DEVICES") {
+                Section {
                     ForEach(otherSessions) { session in
                         DeviceSessionRow(session: session)
                             .contentShape(Rectangle())
@@ -131,6 +130,8 @@ public struct DevicesView: View {
                                 }
                             }
                     }
+                } header: {
+                    sectionHeader("Other devices")
                 }
             }
 
@@ -139,7 +140,7 @@ public struct DevicesView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Label(errorMessage, systemImage: "exclamationmark.circle")
                             .font(T3Typography.control)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(T3Colors.warning)
                         Button("Try again") {
                             Task { await reload() }
                         }
@@ -157,11 +158,20 @@ public struct DevicesView: View {
         }
         .overlay(alignment: .top) {
             if isRevoking {
-                ProgressView()
+                Text("Updating device access")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textTertiary)
                     .padding(.top, 12)
-                    .accessibilityLabel("Updating device access")
             }
         }
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(T3Typography.navigationTitle)
+            .foregroundStyle(T3Colors.textPrimary)
+            .textCase(nil)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var currentSession: FeatureDeviceSession? {
@@ -223,21 +233,22 @@ private struct DeviceSessionRow: View {
         HStack(alignment: .top, spacing: 13) {
             Image(systemName: session.deviceType.systemImage)
                 .font(.system(size: 19, weight: .medium))
-                .foregroundStyle(session.isCurrent ? .green : .secondary)
+                .foregroundStyle(session.isCurrent ? T3Colors.success : T3Colors.textSecondary)
                 .frame(width: 26, height: 26)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(session.displayName)
                         .font(T3Typography.homeTitle)
+                        .foregroundStyle(T3Colors.textPrimary)
                     if session.isCurrent {
                         Text("Current")
                             .font(T3Typography.supportingStrong)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(T3Colors.success)
                     } else if session.isConnected {
                         Text("Online")
                             .font(T3Typography.supportingStrong)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(T3Colors.success)
                     }
                 }
 

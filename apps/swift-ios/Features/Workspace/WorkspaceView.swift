@@ -63,71 +63,18 @@ public struct WorkspaceView: View {
     @State private var homePresentationCache = HomePresentationCache()
     @FocusState private var isSearchFocused: Bool
 
-    public init(
-        model: FeatureRootModel,
-        submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
-    ) {
-        self.init(
-            model: model,
-            navigationRequest: nil,
-            onNavigationRequestConsumed: { _ in },
-            submitNewTask: submitNewTask,
-            submitMessage: submitMessage
-        )
-    }
-
+    /// Both submit paths go through `FeatureRootModel`, which owns the outbox
+    /// and optimistic rows. Views never call the client to send a turn.
     init(
         model: FeatureRootModel,
-        navigationRequest: FeatureWorkspaceNavigationRequest?,
-        onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void,
-        submitNewTask: ((NewTaskRequest) async -> FeatureThread?)? = nil,
-        submitMessage: ((FeatureMessageSubmission) async -> Bool)? = nil
+        navigationRequest: FeatureWorkspaceNavigationRequest? = nil,
+        onNavigationRequestConsumed: @escaping @MainActor (UUID) -> Void = { _ in }
     ) {
         self.model = model
         self.navigationRequest = navigationRequest
         self.onNavigationRequestConsumed = onNavigationRequestConsumed
-        self.submitNewTask = submitNewTask ?? { request in
-            do {
-                let thread = try await model.client.createThreadAndSend(
-                    projectID: request.projectID,
-                    prompt: request.trimmedPrompt,
-                    selection: request.selection,
-                    runtimeMode: request.runtimeMode,
-                    interactionMode: request.interactionMode,
-                    workspaceMode: request.workspaceMode,
-                    branch: request.branch,
-                    worktreePath: request.worktreePath,
-                    startFromOrigin: request.startFromOrigin,
-                    attachments: request.attachments.map(\.uploadValue)
-                )
-                await model.reload()
-                return thread
-            } catch {
-                return nil
-            }
-        }
-        self.submitMessage = submitMessage ?? { submission in
-            if submission.attachments.isEmpty {
-                return await model.sendMessage(
-                    threadID: submission.threadID,
-                    text: submission.text,
-                    selection: submission.selection
-                )
-            }
-            do {
-                try await model.client.sendMessage(
-                    threadID: submission.threadID,
-                    text: submission.text,
-                    selection: submission.selection,
-                    attachments: submission.attachments.map(\.uploadValue)
-                )
-                _ = await model.detail(for: submission.threadID, force: true)
-                return true
-            } catch {
-                return false
-            }
-        }
+        self.submitNewTask = { request in await model.startTask(request) }
+        self.submitMessage = { submission in await model.sendMessage(submission) }
     }
 
     public var body: some View {
@@ -261,6 +208,7 @@ public struct WorkspaceView: View {
         let presentation = homePresentationCache.presentation(
             snapshot: model.snapshot,
             revision: model.homePresentationRevision,
+            rowRevision: model.threadRowRevision,
             query: searchText,
             projectID: selectedProjectID,
             now: sidebarBoundaryNow,
@@ -276,8 +224,6 @@ public struct WorkspaceView: View {
                 selectedThreadID: threadSelection.highlightedID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
                 hapticsEnabled: model.snapshot.settings.hapticsEnabled,
-                settings: model.snapshot.settings,
-                pullRequestsByThreadID: model.pullRequestsByThreadID,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,
@@ -610,9 +556,7 @@ public struct WorkspaceView: View {
     private var nextSidebarBoundary: Date? {
         DailyUXSidebarRefresh.nextBoundary(
             for: model.snapshot.threads,
-            after: max(sidebarBoundaryNow, .now),
-            settings: model.snapshot.settings,
-            pullRequestsByThreadID: model.pullRequestsByThreadID
+            after: max(sidebarBoundaryNow, .now)
         )
     }
 
@@ -703,12 +647,6 @@ public struct WorkspaceView: View {
     }
 }
 
-private extension FeatureDraftAttachment {
-    var uploadValue: FeatureUploadAttachment {
-        FeatureUploadAttachment(self)
-    }
-}
-
 struct HomePresentation {
     let pinned: [FeatureThread]
     let active: [FeatureThread]
@@ -717,6 +655,42 @@ struct HomePresentation {
     let archived: [FeatureThread]
     let searchResults: [FeatureThread]
     let rowContexts: [String: HomeThreadRowContext]
+
+    private init(
+        pinned: [FeatureThread],
+        active: [FeatureThread],
+        snoozed: [FeatureThread],
+        settled: [FeatureThread],
+        archived: [FeatureThread],
+        searchResults: [FeatureThread],
+        rowContexts: [String: HomeThreadRowContext]
+    ) {
+        self.pinned = pinned
+        self.active = active
+        self.snoozed = snoozed
+        self.settled = settled
+        self.archived = archived
+        self.searchResults = searchResults
+        self.rowContexts = rowContexts
+    }
+
+    /// Same shelves and order, latest thread values. O(n) dictionary lookup
+    /// instead of the grouping and sorting passes in `init(snapshot:)`.
+    func refreshingRows(from snapshot: FeatureSnapshot) -> HomePresentation {
+        let byID = snapshot.threads.reduce(into: [String: FeatureThread]()) { $0[$1.id] = $1 }
+        func refresh(_ threads: [FeatureThread]) -> [FeatureThread] {
+            threads.map { byID[$0.id] ?? $0 }
+        }
+        return HomePresentation(
+            pinned: refresh(pinned),
+            active: refresh(active),
+            snoozed: refresh(snoozed),
+            settled: refresh(settled),
+            archived: refresh(archived),
+            searchResults: refresh(searchResults),
+            rowContexts: rowContexts
+        )
+    }
 
     init(
         snapshot: FeatureSnapshot,
@@ -758,6 +732,10 @@ struct HomePresentation {
     }
 }
 
+/// Grouping and sorting run only when a shelf or order input changes
+/// (`homePresentationRevision`). A streaming turn advances `threadRowRevision`
+/// many times a second; that path swaps in the latest thread values by id and
+/// keeps the computed order.
 @MainActor
 private final class HomePresentationCache {
     private struct Key: Equatable {
@@ -768,11 +746,13 @@ private final class HomePresentationCache {
     }
 
     private var cachedKey: Key?
+    private var cachedRowRevision: UInt64?
     private var cachedPresentation: HomePresentation?
 
     func presentation(
         snapshot: FeatureSnapshot,
         revision: UInt64,
+        rowRevision: UInt64,
         query: String,
         projectID: String?,
         now: Date,
@@ -785,7 +765,13 @@ private final class HomePresentationCache {
             now: now
         )
         if cachedKey == key, let cachedPresentation {
-            return cachedPresentation
+            if cachedRowRevision == rowRevision {
+                return cachedPresentation
+            }
+            let refreshed = cachedPresentation.refreshingRows(from: snapshot)
+            self.cachedPresentation = refreshed
+            cachedRowRevision = rowRevision
+            return refreshed
         }
 
         let presentation = HomePresentation(
@@ -796,6 +782,7 @@ private final class HomePresentationCache {
             pullRequestsByThreadID: pullRequestsByThreadID
         )
         cachedKey = key
+        cachedRowRevision = rowRevision
         cachedPresentation = presentation
         return presentation
     }
@@ -1230,6 +1217,8 @@ struct FeatureThreadRow: View {
             "wifi"
         case .disconnected:
             "wifi.slash"
+        case .needsPairing:
+            "key.slash"
         case .connected, nil:
             "server.rack"
         }
@@ -1239,7 +1228,7 @@ struct FeatureThreadRow: View {
         switch context.connectionState {
         case .connecting, .reconnecting:
             T3Colors.warning.opacity(0.78)
-        case .disconnected:
+        case .disconnected, .needsPairing:
             T3Colors.danger.opacity(0.78)
         case .connected, nil:
             T3Colors.textTertiary

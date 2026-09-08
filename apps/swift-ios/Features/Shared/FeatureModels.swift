@@ -6,6 +6,10 @@ public struct FeatureConnection: Sendable, Equatable, Codable {
         case connecting
         case connected
         case reconnecting
+        /// The server rejected the saved credential (expired, revoked, or
+        /// restored onto a new device). Retrying cannot fix it; only pairing
+        /// again can.
+        case needsPairing
     }
 
     public var state: State
@@ -287,6 +291,9 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var snoozedUntil: Date?
     public var snoozedAt: Date?
     public var pinnedAt: Date?
+    /// User-arranged position in the pinned block. Shared with web and
+    /// React Native; keyless pins sort after keyed ones by creation date.
+    public var pinOrderKey: String?
     public var supportsSettlement: Bool?
     public var supportsSnooze: Bool?
     public var supportsPinning: Bool?
@@ -332,6 +339,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         snoozedUntil: Date? = nil,
         snoozedAt: Date? = nil,
         pinnedAt: Date? = nil,
+        pinOrderKey: String? = nil,
         supportsSettlement: Bool? = nil,
         supportsSnooze: Bool? = nil,
         supportsPinning: Bool? = nil,
@@ -374,6 +382,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.snoozedUntil = snoozedUntil
         self.snoozedAt = snoozedAt
         self.pinnedAt = pinnedAt
+        self.pinOrderKey = pinOrderKey
         self.supportsSettlement = supportsSettlement
         self.supportsSnooze = supportsSnooze
         self.supportsPinning = supportsPinning
@@ -404,6 +413,26 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
 
     public var canToggleSnooze: Bool {
         snoozedUntil != nil || supportsSnooze == true
+    }
+
+    /// The server refuses to archive a thread with live work. Hide the action
+    /// on those rows instead of offering it and then reporting the refusal.
+    public var canArchive: Bool {
+        switch state {
+        case .queued, .working, .monitoring, .waitingForApproval, .waitingForInput:
+            false
+        case .idle, .completed, .failed:
+            true
+        }
+    }
+
+    /// Mirrors the server's `thread.snooze` guard and client-runtime
+    /// `canSnooze`: a raised hand or a turn that is still being adopted blocks
+    /// snooze. The session lifecycle state on its own does not.
+    public func canSnoozeNow(at now: Date) -> Bool {
+        guard canToggleSnooze else { return false }
+        if state == .waitingForApproval || state == .waitingForInput { return false }
+        return !hasQueuedTurnStart(at: now)
     }
 
 }
@@ -1293,7 +1322,9 @@ public enum FeatureThreadSyncState: Sendable, Equatable {
 
 public enum FeatureEvent: Sendable {
     case snapshot(FeatureSnapshot)
-    case connection(FeatureConnection)
+    /// Active environment connection change. `environmentID` lets the model
+    /// patch that environment's row without installing a whole snapshot.
+    case connection(FeatureConnection, environmentID: String? = nil)
     case thread(FeatureThread)
     case threadRemoved(id: String)
     case detail(FeatureThreadDetail)

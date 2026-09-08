@@ -24,8 +24,6 @@ enum T3Colors {
     static let subtleStrong = color(
         light: rgb(0x000000, alpha: 0.08), dark: rgb(0xFFFFFF, alpha: 0.08))
     static let shadow = color(light: rgb(0x000000, alpha: 0.18), dark: rgb(0x000000, alpha: 0.32))
-    static let ledgerSurface = surface
-    static let ledgerSelected = surfaceRaised
 
     static let textPrimary = Color(uiColor: uiTextPrimary)
     static let textSecondary = Color(uiColor: uiTextSecondary)

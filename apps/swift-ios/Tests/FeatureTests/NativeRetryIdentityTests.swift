@@ -43,18 +43,22 @@ final class NativeRetryIdentityTests: XCTestCase {
 
         await connection.failReceive()
 
-        var receivedRepublish = false
+        var receivedReconnect = false
         while let event = await events.next() {
-            guard case let .snapshot(snapshot) = event,
-                  snapshot.connection.state == .reconnecting else {
+            guard case let .connection(state, _) = event,
+                  state.state == .reconnecting else {
                 continue
             }
-            XCTAssertEqual(snapshot.settings.textSize.steps, 2)
-            XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
-            receivedRepublish = true
+            receivedReconnect = true
             break
         }
-        XCTAssertTrue(receivedRepublish)
+        XCTAssertTrue(receivedReconnect)
+        // A reconnect patches the connection instead of republishing the
+        // snapshot. The next snapshot the client builds must still carry the
+        // saved sizes.
+        let republished = try await client.backgroundSnapshot()
+        XCTAssertEqual(republished.settings.textSize.steps, 2)
+        XCTAssertEqual(republished.settings.codeSize.steps, -1)
         await client.disconnect()
     }
 
@@ -93,13 +97,17 @@ final class NativeRetryIdentityTests: XCTestCase {
         await connection.waitUntilConnected()
         await transport.rejectShellReads()
 
-        async let firstAttempt = failedBootstrap(client: client, prompt: "First task")
-        async let secondAttempt = failedBootstrap(client: client, prompt: "Second task")
+        // The root model keeps one identity per queued submission and reuses
+        // it on every retry. Model that here so the two retries are distinct.
+        let firstIdentity = FeatureSubmissionIdentity()
+        let secondIdentity = FeatureSubmissionIdentity()
+        async let firstAttempt = failedBootstrap(client: client, prompt: "First task", identity: firstIdentity)
+        async let secondAttempt = failedBootstrap(client: client, prompt: "Second task", identity: secondIdentity)
         _ = await (firstAttempt, secondAttempt)
         await connection.waitUntilDispatchCount(2)
 
-        await failedBootstrap(client: client, prompt: "First task")
-        await failedBootstrap(client: client, prompt: "Second task")
+        await failedBootstrap(client: client, prompt: "First task", identity: firstIdentity)
+        await failedBootstrap(client: client, prompt: "Second task", identity: secondIdentity)
 
         let commands = await connection.dispatchCommands()
         XCTAssertEqual(commands.count, 4)
@@ -168,6 +176,7 @@ final class NativeRetryIdentityTests: XCTestCase {
                     threadID: "thread-existing",
                     text: "Retry without duplicating",
                     selection: nil,
+                    runtimeMode: .approvalRequired,
                     attachments: [],
                     identity: turnIdentity
                 )
@@ -183,7 +192,12 @@ final class NativeRetryIdentityTests: XCTestCase {
                     selection: FeatureSelection(providerID: "codex", modelID: "gpt-5.4"),
                     runtimeMode: .autoAcceptEdits,
                     interactionMode: .plan,
-                    attachments: []
+                    workspaceMode: .local,
+                    branch: nil,
+                    worktreePath: nil,
+                    startFromOrigin: false,
+                    attachments: [],
+                    identity: FeatureSubmissionIdentity()
                 )
                 XCTFail("The synthetic bootstrap should fail ambiguously.")
             } catch {}
@@ -317,7 +331,11 @@ final class NativeRetryIdentityTests: XCTestCase {
         }
     }
 
-    private func failedBootstrap(client: NativeFeatureClient, prompt: String) async {
+    private func failedBootstrap(
+        client: NativeFeatureClient,
+        prompt: String,
+        identity: FeatureSubmissionIdentity
+    ) async {
         do {
             _ = try await client.createThreadAndSend(
                 projectID: "project-1",
@@ -325,7 +343,12 @@ final class NativeRetryIdentityTests: XCTestCase {
                 selection: FeatureSelection(providerID: "codex", modelID: "gpt-5.4"),
                 runtimeMode: .fullAccess,
                 interactionMode: .standard,
-                attachments: []
+                workspaceMode: .local,
+                branch: nil,
+                worktreePath: nil,
+                startFromOrigin: false,
+                attachments: [],
+                identity: identity
             )
             XCTFail("The synthetic dispatch should fail ambiguously.")
         } catch {}

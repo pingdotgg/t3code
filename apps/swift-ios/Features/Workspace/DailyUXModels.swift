@@ -697,16 +697,6 @@ struct DailyUXSidebarIndex {
     let settled: [FeatureThread]
     let searchResults: [FeatureThread]
 
-    var needsInput: [FeatureThread] {
-        active.filter {
-            $0.state == .waitingForApproval || $0.state == .waitingForInput
-        }
-    }
-
-    var failed: [FeatureThread] {
-        active.filter { $0.state == .failed }
-    }
-
     init(
         snapshot: FeatureSnapshot,
         query: String,
@@ -725,7 +715,7 @@ struct DailyUXSidebarIndex {
                 $0.pinnedAt != nil
                     && !($0.supportsSettlement == true && $0.isEffectivelySettled())
             }
-            .sorted(by: Self.creationOrder)
+            .sorted(by: Self.pinnedOrder)
 
         active = available
             .filter {
@@ -777,6 +767,20 @@ struct DailyUXSidebarIndex {
         )
     }
 
+    /// Same rule as client-runtime `sortPinnedThreadsByOrderKey`: user-arranged
+    /// keys first by string compare, then keyless pins newest-created first, so
+    /// every client renders one pinned order.
+    private static func pinnedOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
+        switch (lhs.pinOrderKey, rhs.pinOrderKey) {
+        case (.some, .none): return true
+        case (.none, .some): return false
+        case let (.some(left), .some(right)):
+            return left == right ? activeIdentityOrder(lhs, rhs) : left < right
+        case (.none, .none):
+            return creationOrder(lhs, rhs)
+        }
+    }
+
     private static func creationOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
         if lhs.createdAt != rhs.createdAt {
             return lhs.createdAt > rhs.createdAt
@@ -816,14 +820,69 @@ struct DailyUXSidebarIndex {
     }
 }
 
+/// Every thread field the sidebar index reads to pick a shelf or an order.
+/// `FeatureRootModel` bumps the Home presentation revision only when one of
+/// these changes, so a streaming turn (which touches `updatedAt`, `preview`,
+/// and `settlementFacts.latestTurn` several times a second) reconfigures its
+/// own row without re-sorting the whole list.
+struct HomeOrderKey: Equatable {
+    let projectID: String
+    let isArchived: Bool
+    let state: FeatureThreadState
+    let createdAt: Date
+    let unsettledAt: Date?
+    let activeOrderKey: String?
+    let pinnedAt: Date?
+    let pinOrderKey: String?
+    let snoozedUntil: Date?
+    let snoozedAt: Date?
+    let attentionAt: Date?
+    let latestTurnCompletedAt: Date?
+    let supportsSettlement: Bool?
+    let settlementOverride: FeatureThreadSettlementOverride?
+    let latestUserMessageAt: Date?
+    let sessionStatus: String?
+    let latestTurn: FeatureThreadSettlementFacts.LatestTurn?
+    let keepsActive: Bool
+    let isSettled: Bool
+    let title: String
+    /// Only the archived shelf orders by `updatedAt`; live shelves ignore it.
+    let archivedSortDate: Date?
+    /// Only a settled thread's position depends on its settled sort date.
+    let settledSortDate: Date?
+
+    init(_ thread: FeatureThread) {
+        projectID = thread.projectID
+        isArchived = thread.isArchived
+        state = thread.state
+        createdAt = thread.createdAt
+        unsettledAt = thread.unsettledAt
+        activeOrderKey = thread.activeOrderKey
+        pinnedAt = thread.pinnedAt
+        pinOrderKey = thread.pinOrderKey
+        snoozedUntil = thread.snoozedUntil
+        snoozedAt = thread.snoozedAt
+        attentionAt = thread.attentionAt
+        latestTurnCompletedAt = thread.latestTurnCompletedAt
+        supportsSettlement = thread.supportsSettlement
+        settlementOverride = thread.settlementFacts?.settlementOverride
+        latestUserMessageAt = thread.settlementFacts?.latestUserMessageAt
+        sessionStatus = thread.settlementFacts?.sessionStatus
+        latestTurn = thread.settlementFacts?.latestTurn
+        keepsActive = thread.keepsActive
+        isSettled = thread.isSettled
+        title = thread.title
+        archivedSortDate = thread.isArchived ? thread.updatedAt : nil
+        settledSortDate = thread.isEffectivelySettled() ? thread.settledSortDate : nil
+    }
+}
+
 /// The Home list only needs a parent-level refresh when a thread crosses a shelf boundary.
 /// Working timers and relative ages are rendered by each visible row instead.
 enum DailyUXSidebarRefresh {
     static func nextBoundary(
         for threads: [FeatureThread],
-        after now: Date,
-        settings _: FeatureSettings = .init(),
-        pullRequestsByThreadID _: [String: HomeThreadPullRequestPresentation] = [:]
+        after now: Date
     ) -> Date? {
         threads.reduce(nil as Date?) { earliest, thread in
             let snoozeBoundary = thread.isEffectivelySnoozed(at: now)

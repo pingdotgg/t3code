@@ -218,6 +218,9 @@ final class FeatureVoiceInputController {
         case .error:
             clearError()
         case .preparing:
+            // The asset download can take minutes on cellular. Cancel it so
+            // the operation gate releases and the mic button works again.
+            operationTask?.cancel()
             invalidateOperation()
             setPhase(.idle)
         case .recording:

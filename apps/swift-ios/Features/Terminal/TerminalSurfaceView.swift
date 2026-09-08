@@ -184,6 +184,94 @@ enum TerminalText {
     }
 }
 
+/// Ghostty only accepts bytes to append, but the client hands the view its
+/// whole retained buffer after every output event. This works out which bytes
+/// the surface still needs. Everything is in UTF-8 offsets so no step walks
+/// the full string, and a client that trims the head of its buffer does not
+/// force a surface rebuild.
+enum TerminalBufferDelta: Equatable {
+    /// Feed these bytes after what the surface already shows.
+    case append(Data)
+    /// Reset the surface, then feed these bytes.
+    case replace(Data)
+
+    /// How many trailing bytes of applied content are kept to find the same
+    /// content again after the client trims the head of its buffer.
+    static let anchorLength = 4_096
+
+    /// What the surface has been fed so far: the byte count and the last
+    /// `anchorLength` bytes.
+    struct Applied: Equatable {
+        private(set) var utf8Count = 0
+        private(set) var anchor = Data()
+
+        init() {}
+
+        init(buffer: String) {
+            utf8Count = buffer.utf8.count
+            anchor = Data(buffer.utf8.suffix(TerminalBufferDelta.anchorLength))
+        }
+
+        mutating func apply(_ delta: TerminalBufferDelta) {
+            switch delta {
+            case .append(let data):
+                guard !data.isEmpty else { return }
+                utf8Count += data.count
+                anchor = data.count >= TerminalBufferDelta.anchorLength
+                    ? Data(data.suffix(TerminalBufferDelta.anchorLength))
+                    : Data((anchor + data).suffix(TerminalBufferDelta.anchorLength))
+            case .replace(let data):
+                utf8Count = data.count
+                anchor = Data(data.suffix(TerminalBufferDelta.anchorLength))
+            }
+        }
+    }
+
+    static func compute(previous: Applied, next: String) -> TerminalBufferDelta {
+        var next = next
+        return next.withUTF8 { bytes in
+            guard previous.utf8Count > 0 else { return .append(Data(buffer: bytes)) }
+            return previous.anchor.withUnsafeBytes { rawAnchor in
+                let anchor = rawAnchor.bindMemory(to: UInt8.self)
+                // The anchor cannot end after the applied count or after the
+                // buffer. When the buffer only grew it sits exactly there, so
+                // the first comparison matches. When the client trimmed the
+                // head it moved toward the start by the trimmed amount, which
+                // is about one output event, so the search stays short.
+                let searchEnd = min(previous.utf8Count, bytes.count)
+                if let anchorStart = lastOffset(of: anchor, in: bytes, before: searchEnd) {
+                    return .append(slice(bytes, from: anchorStart + anchor.count))
+                }
+                return .replace(Data(buffer: bytes))
+            }
+        }
+    }
+
+    private static func slice(_ bytes: UnsafeBufferPointer<UInt8>, from offset: Int) -> Data {
+        Data(buffer: UnsafeBufferPointer(rebasing: bytes[offset...]))
+    }
+
+    private static func lastOffset(
+        of needle: UnsafeBufferPointer<UInt8>,
+        in haystack: UnsafeBufferPointer<UInt8>,
+        before end: Int
+    ) -> Int? {
+        guard !needle.isEmpty, end <= haystack.count,
+              let needleBase = needle.baseAddress, let haystackBase = haystack.baseAddress else {
+            return nil
+        }
+        var offset = end - needle.count
+        while offset >= 0 {
+            if haystackBase[offset] == needleBase[0],
+               memcmp(haystackBase + offset, needleBase, needle.count) == 0 {
+                return offset
+            }
+            offset -= 1
+        }
+        return nil
+    }
+}
+
 private enum GhosttyRuntime {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var initialized = false
@@ -562,10 +650,10 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     private static let minimumVerticalScrollStepPoints: CGFloat = 18
     private static let verticalScrollStepMultiplier: CGFloat = 1.15
     private static let darkThemeConfig = """
-    background = #0a0a0a
+    background = #000000
     foreground = #adadb1
     cursor-color = #009fff
-    cursor-text = #0a0a0a
+    cursor-text = #000000
     cursor-style-blink = false
     palette = 0=#141415
     palette = 1=#ff2e3f
@@ -607,6 +695,9 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     palette = 14=#08c0ef
     palette = 15=#c6c6c8
     """
+    /// Full reset, drop scrollback, clear, home. Puts an existing surface in
+    /// the same state as a new one without rebuilding it.
+    private static let resetSequence = Data("\u{1B}c\u{1B}[3J\u{1B}[2J\u{1B}[H".utf8)
 
     var onInput: ((String) -> Void)?
     var onPaste: ((String) -> Void)?
@@ -618,7 +709,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         didSet {
             guard oldValue != isDarkMode else { return }
             applyChromeAppearance()
-            refreshSurface()
+            refreshSurfaceIfCreated()
         }
     }
 
@@ -640,13 +731,10 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
 
     var buffer = "" {
         didSet {
-            guard oldValue != buffer else { return }
-            applyRemoteBuffer(buffer)
-            if UIAccessibility.isVoiceOverRunning {
-                terminalViewport.accessibilityValue = TerminalText.plainText(
-                    from: String(buffer.suffix(8_192))
-                )
-            }
+            guard applyRemoteBuffer(buffer), UIAccessibility.isVoiceOverRunning else { return }
+            terminalViewport.accessibilityValue = TerminalText.plainText(
+                from: String(buffer.suffix(8_192))
+            )
         }
     }
 
@@ -654,7 +742,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         didSet {
             guard oldValue != fontSize else { return }
             inputField.font = .monospacedSystemFont(ofSize: max(fontSize, 13), weight: .regular)
-            refreshSurface()
+            refreshSurfaceIfCreated()
         }
     }
 
@@ -704,7 +792,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     private var lastViewportSize: CGSize = .zero
     private var lastContentScale: CGFloat = 0
     private var lastReportedGrid: (columns: Int, rows: Int)?
-    private var lastAppliedBuffer = ""
+    private var appliedBuffer = TerminalBufferDelta.Applied()
     private var isReplayingBuffer = false
     private var pendingVerticalScrollPoints: CGFloat = 0
     private var hasAutoFocused = false
@@ -813,6 +901,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        if let surface { ghostty_surface_set_occlusion(surface, window != nil) }
         guard window != nil, isRunning, !hasAutoFocused else { return }
         hasAutoFocused = true
         DispatchQueue.main.async { [weak self] in self?.requestKeyboardFocus() }
@@ -916,6 +1005,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
             : GHOSTTY_COLOR_SCHEME_LIGHT
         ghostty_app_set_color_scheme(createdApp, ghosttyColorScheme)
         ghostty_surface_set_color_scheme(createdSurface, ghosttyColorScheme)
+        if inputField.isFirstResponder { ghostty_surface_set_focus(createdSurface, true) }
         setupWriteCallback()
         resizeSurface()
         feedBuffer(buffer)
@@ -923,7 +1013,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
 
     private func resetSurface() {
         destroySurface()
-        lastAppliedBuffer = ""
+        appliedBuffer = TerminalBufferDelta.Applied()
         lastViewportSize = .zero
         lastContentScale = 0
         lastReportedGrid = nil
@@ -932,10 +1022,9 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     }
 
     private func applyChromeAppearance() {
-        let background =
-            isDarkMode
-            ? UIColor(red: 10 / 255, green: 10 / 255, blue: 10 / 255, alpha: 1)
-            : UIColor(red: 242 / 255, green: 242 / 255, blue: 247 / 255, alpha: 1)
+        let background = T3Colors.uiBackground.resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: isDarkMode ? .dark : .light)
+        )
         backgroundColor = background
         terminalViewport.backgroundColor = background
         accessoryView.overrideUserInterfaceStyle = isDarkMode ? .dark : .light
@@ -955,7 +1044,11 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         keyboardButton.configuration = keyboardConfiguration
     }
 
-    private func refreshSurface() {
+    /// Ghostty reads font size and theme when a surface is created, so those
+    /// changes rebuild the surface. Before the first layout there is nothing to
+    /// rebuild, and creation picks up the current values.
+    private func refreshSurfaceIfCreated() {
+        guard surface != nil else { return }
         resetSurface()
         createSurfaceIfPossible()
     }
@@ -980,43 +1073,51 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         app = nil
     }
 
-    private func applyRemoteBuffer(_ newBuffer: String) {
+    /// Feeds the surface whatever `newBuffer` adds on top of what it already
+    /// shows. Returns false when nothing changed.
+    @discardableResult
+    private func applyRemoteBuffer(_ newBuffer: String) -> Bool {
         guard surface != nil else {
             createSurfaceIfPossible()
-            return
+            return true
         }
-        guard newBuffer != lastAppliedBuffer else { return }
-
-        if newBuffer.isEmpty {
-            feedData(Data("\u{1B}[2J\u{1B}[H".utf8))
-            lastAppliedBuffer = ""
-            return
+        let delta = TerminalBufferDelta.compute(previous: appliedBuffer, next: newBuffer)
+        appliedBuffer.apply(delta)
+        switch delta {
+        case .append(let data):
+            guard !data.isEmpty else { return false }
+            feedData(data)
+        case .replace(let data):
+            replay {
+                feedData(Self.resetSequence)
+                feedData(data)
+            }
         }
-
-        if newBuffer.hasPrefix(lastAppliedBuffer) {
-            feedData(Data(newBuffer.dropFirst(lastAppliedBuffer.count).utf8))
-            lastAppliedBuffer = newBuffer
-            return
-        }
-
-        resetSurface()
-        createSurfaceIfPossible()
+        return true
     }
 
+    /// Feeds the whole buffer into a fresh surface.
     private func feedBuffer(_ value: String) {
+        appliedBuffer = TerminalBufferDelta.Applied(buffer: value)
         guard !value.isEmpty else { return }
+        var value = value
+        replay { value.withUTF8 { feedBytes($0) } }
+    }
+
+    /// Replayed history must not echo terminal query replies back to the host.
+    private func replay(_ body: () -> Void) {
         isReplayingBuffer = true
         defer { isReplayingBuffer = false }
-        feedData(Data(value.utf8))
-        lastAppliedBuffer = value
+        body()
     }
 
     private func feedData(_ data: Data) {
-        guard let surface, !data.isEmpty else { return }
-        data.withUnsafeBytes { bytes in
-            guard let pointer = bytes.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            ghostty_surface_feed_data(surface, pointer, bytes.count)
-        }
+        data.withUnsafeBytes { feedBytes($0.bindMemory(to: UInt8.self)) }
+    }
+
+    private func feedBytes(_ bytes: UnsafeBufferPointer<UInt8>) {
+        guard let surface, let pointer = bytes.baseAddress, !bytes.isEmpty else { return }
+        ghostty_surface_feed_data(surface, pointer, bytes.count)
         redrawSurface()
     }
 
@@ -1034,10 +1135,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     }
 
     private func resizeSurface() {
-        guard let surface else {
-            emitEstimatedResize()
-            return
-        }
+        guard let surface else { return }
 
         let scale = contentScaleFactor
         let width = UInt32(max(floor(terminalViewport.bounds.width * scale), 1))
@@ -1059,20 +1157,12 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         emitGhosttyResize()
     }
 
+    /// Reports the grid only once the surface has measured it, so the host
+    /// never sees a guessed size followed by the real one.
     private func emitGhosttyResize() {
-        guard let surface else {
-            emitEstimatedResize()
-            return
-        }
+        guard let surface else { return }
         let size = ghostty_surface_size(surface)
         emitResize(columns: max(1, Int(size.columns)), rows: max(1, Int(size.rows)))
-    }
-
-    private func emitEstimatedResize() {
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let columns = max(20, min(400, Int(bounds.width / max(fontSize * 0.62, 1))))
-        let rows = max(5, min(200, Int(bounds.height / max(fontSize * 1.35, 1))))
-        emitResize(columns: columns, rows: rows)
     }
 
     private func emitResize(columns: Int, rows: Int) {

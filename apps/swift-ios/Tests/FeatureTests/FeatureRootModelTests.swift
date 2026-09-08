@@ -1464,11 +1464,7 @@ struct FeatureRootModelTests {
         await model.reload()
         _ = await model.detail(for: thread.id)
 
-        let sent = await model.sendMessage(
-            threadID: thread.id,
-            text: "  ship it  ",
-            selection: nil
-        )
+        let sent = await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "  ship it  ", selection: nil))
 
         #expect(sent)
         #expect(client.sentText == "ship it")
@@ -1502,11 +1498,7 @@ struct FeatureRootModelTests {
         let model = testRootModel(client: client)
         await model.reload()
 
-        let sent = await model.sendMessage(
-            threadID: thread.id,
-            text: "Use the saved permission",
-            selection: nil
-        )
+        let sent = await model.sendMessage(FeatureMessageSubmission(threadID: thread.id, text: "Use the saved permission", selection: nil))
 
         #expect(sent)
         #expect(client.sentRuntimeModes == [.automatic])
@@ -1628,212 +1620,6 @@ struct FeatureRootModelTests {
         #expect(model.details[thread.id]?.messages.map(\.id) == [older.id, recent.id])
         #expect(model.details[thread.id]?.page?.hasMore == false)
         #expect(client.loadEarlierCallCount == 1)
-    }
-
-    @Test
-    func failedDiscardKeepsTheDurableAndOptimisticSubmission() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("t3-root-discard-failure-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer {
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o700))],
-                ofItemAtPath: directory.path
-            )
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
-        let thread = FeatureThread(
-            id: "thread-1",
-            projectID: "project-1",
-            environmentID: "environment-1",
-            title: "Thread"
-        )
-        let client = FeatureClientStub()
-        client.snapshot = FeatureSnapshot(
-            connection: .init(state: .connected),
-            environments: [
-                .init(
-                    id: "environment-1",
-                    name: "Studio",
-                    endpoint: "https://studio.example",
-                    isActive: true,
-                    connectionState: .connected
-                ),
-            ],
-            threads: [thread]
-        )
-        client.threadDetail = FeatureThreadDetail(thread: thread)
-        client.beforeSendMessage = {
-            try FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o500))],
-                ofItemAtPath: directory.path
-            )
-        }
-        client.sendMessageError = FeatureCapabilityUnavailable("Rejected message")
-        let model = FeatureRootModel(client: client, outboxStore: store)
-        await model.reload()
-        _ = await model.detail(for: thread.id)
-
-        let sent = await model.sendMessage(
-            threadID: thread.id,
-            text: "Keep this queued",
-            selection: nil
-        )
-
-        #expect(!sent)
-        #expect(try await store.submissions().count == 1)
-        #expect(model.details[thread.id]?.messages.last?.text == "Keep this queued")
-        #expect(model.details[thread.id]?.messages.last?.state == .queued)
-    }
-
-    @Test
-    func failedDeliveryCleanupKeepsTheDurableAndOptimisticSubmission() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("t3-root-completion-failure-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer {
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o700))],
-                ofItemAtPath: directory.path
-            )
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
-        let thread = FeatureThread(
-            id: "thread-1",
-            projectID: "project-1",
-            environmentID: "environment-1",
-            title: "Thread"
-        )
-        let client = FeatureClientStub()
-        client.snapshot = FeatureSnapshot(
-            connection: .init(state: .connected),
-            environments: [
-                .init(
-                    id: "environment-1",
-                    name: "Studio",
-                    endpoint: "https://studio.example",
-                    isActive: true,
-                    connectionState: .connected
-                ),
-            ],
-            threads: [thread]
-        )
-        client.threadDetail = FeatureThreadDetail(thread: thread)
-        client.beforeSendMessage = {
-            try FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o500))],
-                ofItemAtPath: directory.path
-            )
-        }
-        let model = FeatureRootModel(client: client, outboxStore: store)
-        await model.reload()
-        _ = await model.detail(for: thread.id)
-
-        let sent = await model.sendMessage(
-            threadID: thread.id,
-            text: "Already delivered",
-            selection: nil
-        )
-
-        #expect(sent)
-        #expect(client.sendMessageCallCount == 1)
-        #expect(try await store.submissions().count == 1)
-        #expect(model.details[thread.id]?.messages.last?.text == "Already delivered")
-        #expect(model.details[thread.id]?.messages.last?.state == .queued)
-        #expect(model.errorMessage?.contains("delivered") == true)
-    }
-
-    @Test
-    func failedEnvironmentOutboxCleanupKeepsPendingState() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("t3-root-environment-cleanup-failure-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: true
-        )
-        defer {
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o700))],
-                ofItemAtPath: directory.path
-            )
-            try? FileManager.default.removeItem(at: directory)
-        }
-
-        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
-        let identity = FeatureSubmissionIdentity(
-            threadID: "queued-thread",
-            commandID: "queued-command",
-            messageID: "queued-message"
-        )
-        let submission = FeatureQueuedSubmission(
-            environmentID: "environment-1",
-            identity: identity,
-            threadID: "environment-1::thread::queued-thread",
-            text: "Create from the outbox",
-            selection: .init(providerID: "codex", modelID: "gpt-5.6-sol"),
-            runtimeMode: .fullAccess,
-            interactionMode: .standard,
-            attachments: [],
-            creation: .init(
-                projectID: "project-1",
-                projectName: "Native",
-                workspaceMode: .local,
-                branch: nil,
-                worktreePath: nil,
-                startFromOrigin: false
-            )
-        )
-        try await store.enqueue(submission)
-
-        let client = FeatureClientStub()
-        client.snapshot = FeatureSnapshot(
-            connection: .init(state: .disconnected),
-            environments: [
-                .init(
-                    id: "environment-1",
-                    name: "Studio",
-                    endpoint: "https://studio.example",
-                    isActive: true,
-                    connectionState: .disconnected
-                ),
-            ],
-            projects: [
-                .init(
-                    id: "project-1",
-                    environmentID: "environment-1",
-                    name: "Native",
-                    path: "/native"
-                ),
-            ]
-        )
-        client.snapshotAfterEnvironmentRemoval = FeatureSnapshot(
-            connection: .init(state: .disconnected)
-        )
-        client.finishEvents()
-        let model = FeatureRootModel(client: client, outboxStore: store)
-        await model.start()
-        try FileManager.default.setAttributes(
-            [.posixPermissions: NSNumber(value: Int16(0o500))],
-            ofItemAtPath: directory.path
-        )
-
-        await model.removeEnvironment("environment-1")
-
-        #expect(client.removedEnvironmentID == "environment-1")
-        #expect(model.snapshot.environments.isEmpty)
-        #expect(model.snapshot.threads.contains(where: { $0.id == submission.threadID }))
-        #expect(try await store.submissions() == [submission])
-        #expect(model.errorMessage?.contains("queued messages") == true)
     }
 
     @Test
@@ -2016,10 +1802,10 @@ struct FeatureRootModelTests {
 
         await model.setArchived(thread.id, archived: true)
 
+        // Rows hide Archive on live work; the model drops a stray call quietly.
         #expect(model.snapshot.threads.first?.isArchived == false)
-        #expect(model.errorMessage?.contains("still active") == true)
+        #expect(model.errorMessage == nil)
 
-        model.errorMessage = nil
         await model.setSettled(thread.id, settled: true)
 
         #expect(model.snapshot.threads.first?.isSettled == false)
@@ -2471,7 +2257,7 @@ struct FeatureRootModelTests {
 
         #expect(model.snapshot.threads.isEmpty)
         #expect(model.snapshot.projects[0].threadCount == 0)
-        #expect(model.threadCollectionRevision == 2)
+        #expect(model.threadRowRevision == 2)
         #expect(model.homePresentationRevision == 4)
     }
 
@@ -3702,25 +3488,12 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         interactionMode: FeatureInteractionMode,
-        attachments: [FeatureUploadAttachment]
-    ) async throws -> FeatureThread {
-        if let startTaskError { throw startTaskError }
-        startedPrompt = prompt
-        startedAttachments = attachments
-        return createdThread
-    }
-
-    func createThreadAndSend(
-        projectID: String,
-        prompt: String,
-        selection: FeatureSelection?,
-        runtimeMode: FeatureRuntimeMode,
-        interactionMode: FeatureInteractionMode,
         workspaceMode: FeatureWorkspaceMode,
         branch: String?,
         worktreePath: String?,
         startFromOrigin: Bool,
-        attachments: [FeatureUploadAttachment]
+        attachments: [FeatureUploadAttachment],
+        identity: FeatureSubmissionIdentity
     ) async throws -> FeatureThread {
         try await beforeStartTask?()
         if let startTaskError { throw startTaskError }
@@ -3748,7 +3521,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         try await preuploadHandler?(attachment, environmentID)
     }
 
-    func loadThread(id: String) async throws -> FeatureThreadDetail {
+    func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail {
         if let loadThreadError {
             throw loadThreadError
         }
@@ -3767,13 +3540,6 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         return earlierThreadDetail
     }
 
-    func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async throws {
-        sendMessageCallCount += 1
-        try beforeSendMessage?()
-        if let sendMessageError { throw sendMessageError }
-        sentText = text
-    }
-
     func sendMessage(
         threadID: String,
         text: String,
@@ -3783,7 +3549,10 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         identity _: FeatureSubmissionIdentity
     ) async throws {
         sentRuntimeModes.append(runtimeMode)
-        try await sendMessage(threadID: threadID, text: text, selection: selection)
+        sendMessageCallCount += 1
+        try beforeSendMessage?()
+        if let sendMessageError { throw sendMessageError }
+        sentText = text
     }
 
     func cancelTurn(threadID: String) async throws {
@@ -3796,7 +3565,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {}
     func resolveUserInput(
         id: String,
-        answers: [String: FeatureInputAnswer]
+        answers: [String: FeatureInputAnswer],
+        attachmentsByQuestionID _: [String: [FeatureUploadAttachment]]
     ) async throws {
         resolvedInputID = id
         resolvedInputAnswers = answers

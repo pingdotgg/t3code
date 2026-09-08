@@ -520,21 +520,12 @@ struct DailyUXSidebarTests {
         let index = DailyUXSidebarIndex(snapshot: snapshot, query: "", now: now)
 
         #expect(index.active.map(\.id) == ["approval", "input", "failed", "working"])
-        #expect(index.needsInput.map(\.id) == ["approval", "input"])
-        #expect(index.failed.map(\.id) == ["failed"])
         #expect(
             DailyUXSidebarIndex.matchingThreads(
-                index.failed,
+                index.active,
                 snapshot: snapshot,
                 query: "build"
-            ).map(\.id) == ["failed"]
-        )
-        #expect(
-            DailyUXSidebarIndex.matchingThreads(
-                index.needsInput,
-                snapshot: snapshot,
-                query: "build"
-            ).isEmpty
+            ).map(\.id) == ["failed", "working"]
         )
     }
 

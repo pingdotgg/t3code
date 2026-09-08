@@ -66,7 +66,7 @@ struct FeatureComposerView: View {
     private let forceExpanded: Bool
     private let pendingApprovals: [FeatureApproval]
     private let pendingUserInputs: [FeatureUserInput]
-    private let isResolvingRequest: Bool
+    private let resolvingRequestIDs: Set<String>
     private let powerFeatures: FeatureComposerPowerFeatures
     private let onSend: () -> Void
     private let onStop: () -> Void
@@ -98,7 +98,7 @@ struct FeatureComposerView: View {
         forceExpanded: Bool = false,
         pendingApprovals: [FeatureApproval] = [],
         pendingUserInputs: [FeatureUserInput] = [],
-        isResolvingRequest: Bool = false,
+        resolvingRequestIDs: Set<String> = [],
         powerFeatures: FeatureComposerPowerFeatures = .disabled,
         showsKeyboardDismissControl: Bool = false,
         onDismissKeyboard: (() -> Void)? = nil,
@@ -133,7 +133,7 @@ struct FeatureComposerView: View {
         self.forceExpanded = forceExpanded
         self.pendingApprovals = pendingApprovals
         self.pendingUserInputs = pendingUserInputs
-        self.isResolvingRequest = isResolvingRequest
+        self.resolvingRequestIDs = resolvingRequestIDs
         self.powerFeatures = powerFeatures
         self.showsKeyboardDismissControl = showsKeyboardDismissControl
         self.onDismissKeyboard = onDismissKeyboard
@@ -240,13 +240,19 @@ struct FeatureComposerView: View {
     }
 
     private var composerSurface: some View {
+        composerSurfaceContent
+            .frame(maxWidth: T3Metrics.readingWidth)
+            .frame(maxWidth: .infinity)
+    }
+
+    private var composerSurfaceContent: some View {
         VStack(spacing: 0) {
             if let approval = pendingApprovals.first, let onApprovalDecision {
                 FeatureComposerApprovalPanel(
                     approval: approval,
                     position: 1,
                     total: pendingApprovals.count,
-                    isResponding: isResolvingRequest,
+                    isResponding: resolvingRequestIDs.contains(approval.id),
                     onDecision: { decision in
                         onApprovalDecision(approval.id, decision)
                     },
@@ -255,7 +261,7 @@ struct FeatureComposerView: View {
             } else if let input = pendingUserInputs.first, let onUserInputSubmit {
                 FeatureComposerUserInputPanel(
                     input: input,
-                    isResponding: isResolvingRequest,
+                    isResponding: resolvingRequestIDs.contains(input.id),
                     onSubmit: { answers, attachments in
                         await onUserInputSubmit(input.id, answers, attachments)
                     },
@@ -704,7 +710,7 @@ struct FeatureComposerView: View {
             containsFiles: attachments.contains { !$0.mimeType.hasPrefix("image/") },
             isSending: isSending,
             preparationState: attachmentPreparation
-        ) && !uploadStatus.blocksSend && draftSaveError == nil
+        ) && !uploadStatus.blocksSend
     }
 
     private var imagesAllowed: Bool {

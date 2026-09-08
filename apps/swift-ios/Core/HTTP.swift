@@ -636,13 +636,21 @@ public actor EnvironmentAPI {
     }
 }
 
-private extension HTTPError {
+public extension HTTPError {
+    /// The server refused the saved credential. Callers stop retrying and ask
+    /// the user to pair again instead of reporting the server as unreachable.
     var isRejectedAuthorization: Bool {
         switch self {
-        case .unauthenticatedSession: return true
+        case .unauthenticatedSession, .missingCredential, .incompatibleCredential: return true
         case let .status(status, _, _): return status == 401
         default: return false
         }
+    }
+}
+
+public extension Error {
+    var isRejectedAuthorization: Bool {
+        (self as? HTTPError)?.isRejectedAuthorization == true
     }
 }
 

@@ -611,35 +611,6 @@ public actor T3Client {
         try await api.revokeOtherClientSessions(for: environment).revokedCount
     }
 
-    /// HTTP live-sync fallback. Each iteration is an independent request, so a
-    /// transient network loss naturally reconnects without replaying commands.
-    public func pollShell(
-        every interval: Duration = .seconds(2)
-    ) -> AsyncThrowingStream<OrchestrationShellSnapshot, Error> {
-        AsyncThrowingStream { continuation in
-            let task = Task {
-                var lastSequence: Int?
-                while !Task.isCancelled {
-                    do {
-                        let snapshot = try await self.shellSnapshot()
-                        if lastSequence != snapshot.snapshotSequence {
-                            lastSequence = snapshot.snapshotSequence
-                            continuation.yield(snapshot)
-                        }
-                    } catch is CancellationError {
-                        break
-                    } catch {
-                        // Keep retrying transient HTTP failures. Authentication
-                        // failures surface from direct loads and pairing UI.
-                    }
-                    try? await Task.sleep(for: interval)
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
-        }
-    }
-
     public func shellEventBatches(
         after sequence: Int? = nil,
         reconnect: Bool = true

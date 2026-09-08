@@ -139,7 +139,11 @@ public struct ThreadDetailView: View {
                             workspaceRoot: markdownImageContext?.workspaceRoot
                         )
                     case .review:
-                        FeatureReviewView(client: model.client, threadID: thread.id)
+                        FeatureReviewView(
+                            client: model.client,
+                            threadID: thread.id,
+                            sendMessage: submitMessage
+                        )
                     case .sourceControl:
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
                     case .terminal:
@@ -189,53 +193,7 @@ public struct ThreadDetailView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .environment(\.openURL, OpenURLAction { url in
-            if handleArtifactTemplateURL(url) { return .handled }
-            if handleTypedMediaPreviewURL(url) { return .handled }
-            if case let .workspaceFile(hostPath) = MarkdownImageSource.classify(
-                url.absoluteString, workspaceRoot: markdownImageContext?.workspaceRoot
-            ) {
-                let kind = FeatureFilePreviewKind.infer(path: hostPath)
-                let suffix = URL(fileURLWithPath: hostPath).pathExtension.lowercased()
-                if kind == .image || kind == .video || kind == .pdf || ["html", "htm"].contains(suffix) {
-                    resolveHostMedia(path: hostPath, kind: kind)
-                    return .handled
-                }
-            }
-            guard let workspaceRoot = markdownImageContext?.workspaceRoot,
-                  let path = MarkdownWorkspaceFileLink.relativePath(
-                      for: url,
-                      workspaceRoot: workspaceRoot
-                  ) else {
-                if url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https",
-                   let kind = FeatureLinkedMediaPreview.previewKind(for: url) {
-                    linkedMediaPreview = FeatureLinkedMediaPreview(
-                        source: url.isFileURL ? .file(url) : .remote(url),
-                        kind: kind,
-                        fileName: url.lastPathComponent
-                    )
-                    return .handled
-                }
-                if url.isFileURL {
-                    let path = url.path
-                    let kind = FeatureFilePreviewKind.infer(path: path)
-                    if kind == .image || kind == .video {
-                        resolveHostMedia(path: path, kind: kind)
-                        return .handled
-                    }
-                }
-                if url.scheme?.lowercased() == "t3code" { return .discarded }
-                parentOpenURL(url)
-                return .handled
-            }
-            let kind = FeatureFilePreviewKind.infer(path: path)
-            if kind == .image || kind == .video {
-                resolveHostMedia(path: path, kind: kind)
-                return .handled
-            }
-            toolSurface = .file(path)
-            return .handled
-        })
+        .environment(\.openURL, transcriptOpenURL)
         .fullScreenCover(item: $linkedMediaPreview) { preview in
             NavigationStack {
                 FeatureNativeMediaPreviewView(
@@ -435,7 +393,7 @@ public struct ThreadDetailView: View {
                 } label: {
                     Label("Permissions", systemImage: "checkmark.shield")
                 }
-                .disabled(model.isPerformingAction)
+                .disabled(isSending)
                 if currentThread.canTogglePin, !currentThread.isArchived {
                     Button {
                         Task {
@@ -674,6 +632,7 @@ public struct ThreadDetailView: View {
                 FeatureTranscriptCollectionView(
                     threadID: thread.id,
                     messages: timelineMessages(detail.messages),
+                    openURL: transcriptOpenURL,
                     imageContext: markdownImageContext,
                     attachmentContext: (model.client as? any FeatureAttachmentAssetResolving).map {
                         FeatureAttachmentContext(threadID: thread.id, resolver: $0)
@@ -724,7 +683,7 @@ public struct ThreadDetailView: View {
                     },
                     pendingApprovals: detail.approvals,
                     pendingUserInputs: detail.userInputs,
-                    isResolvingRequest: model.isPerformingAction,
+                    resolvingRequestIDs: model.resolvingRequestIDs,
                     powerFeatures: composerPowerFeatures,
                     showsKeyboardDismissControl: true,
                     onDismissKeyboard: dismissKeyboard,
@@ -955,6 +914,14 @@ public struct ThreadDetailView: View {
                 } else {
                     try? await draftStore.setDraft(followUpDraft, for: draftKey)
                 }
+                // Release the sent attachments' bytes and upload jobs.
+                if let environmentID = currentThread.environmentID {
+                    model.attachmentUploads.syncOwner(
+                        draftKey: draftKey,
+                        environmentID: environmentID,
+                        attachments: followUpDraft.attachments
+                    )
+                }
             } else {
                 let currentDraft = draft
                 let restoredMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1096,7 +1063,7 @@ public struct ThreadDetailView: View {
     }
 
     private func scheduleDraftSave() {
-        guard didRestoreDraft, !isSending else { return }
+        guard didRestoreDraft else { return }
         let previousSave = draftSaveTask
         previousSave?.cancel()
         let snapshot = composerDraft
@@ -1127,7 +1094,7 @@ public struct ThreadDetailView: View {
     }
 
     private func persistDraftImmediately() {
-        guard didRestoreDraft, !isSending else { return }
+        guard didRestoreDraft else { return }
         let previousSave = draftSaveTask
         previousSave?.cancel()
         let snapshot = composerDraft
@@ -1155,8 +1122,63 @@ public struct ThreadDetailView: View {
     }
 
     private func persistDraftBeforeLeaving() {
-        guard didRestoreDraft, !isSending else { return }
+        guard didRestoreDraft else { return }
         persistDraftImmediately()
+    }
+
+    /// Routes transcript links in-app: workspace files open the Files sheet,
+    /// media opens the native preview, artifact templates fill the composer.
+    /// Installed on the SwiftUI tree and injected into every hosted cell,
+    /// because `UIHostingConfiguration` does not inherit the parent
+    /// environment across the representable boundary.
+    private var transcriptOpenURL: OpenURLAction {
+        OpenURLAction { url in
+            if handleArtifactTemplateURL(url) { return .handled }
+            if handleTypedMediaPreviewURL(url) { return .handled }
+            if case let .workspaceFile(hostPath) = MarkdownImageSource.classify(
+                url.absoluteString, workspaceRoot: markdownImageContext?.workspaceRoot
+            ) {
+                let kind = FeatureFilePreviewKind.infer(path: hostPath)
+                let suffix = URL(fileURLWithPath: hostPath).pathExtension.lowercased()
+                if kind == .image || kind == .video || kind == .pdf || ["html", "htm"].contains(suffix) {
+                    resolveHostMedia(path: hostPath, kind: kind)
+                    return .handled
+                }
+            }
+            guard let workspaceRoot = markdownImageContext?.workspaceRoot,
+                  let path = MarkdownWorkspaceFileLink.relativePath(
+                      for: url,
+                      workspaceRoot: workspaceRoot
+                  ) else {
+                if url.scheme?.lowercased() == "http" || url.scheme?.lowercased() == "https",
+                   let kind = FeatureLinkedMediaPreview.previewKind(for: url) {
+                    linkedMediaPreview = FeatureLinkedMediaPreview(
+                        source: url.isFileURL ? .file(url) : .remote(url),
+                        kind: kind,
+                        fileName: url.lastPathComponent
+                    )
+                    return .handled
+                }
+                if url.isFileURL {
+                    let path = url.path
+                    let kind = FeatureFilePreviewKind.infer(path: path)
+                    if kind == .image || kind == .video {
+                        resolveHostMedia(path: path, kind: kind)
+                        return .handled
+                    }
+                }
+                if url.scheme?.lowercased() == "t3code" { return .discarded }
+                parentOpenURL(url)
+                return .handled
+            }
+            let kind = FeatureFilePreviewKind.infer(path: path)
+            if kind == .image || kind == .video {
+                resolveHostMedia(path: path, kind: kind)
+                return .handled
+            }
+            toolSurface = .file(path)
+            return .handled
+        }
     }
 
     private var composerDraft: FeatureComposerDraft {
@@ -1175,6 +1197,7 @@ enum ThreadRefreshPresentation: Equatable {
     case reconnecting
     case offline
     case failed
+    case needsPairing
 
     var title: String {
         switch self {
@@ -1183,6 +1206,7 @@ enum ThreadRefreshPresentation: Equatable {
         case .reconnecting: "Reconnecting..."
         case .offline: "Computer offline"
         case .failed: "Could not update thread"
+        case .needsPairing: "Pair with this computer again in Settings"
         }
     }
 
@@ -1191,6 +1215,7 @@ enum ThreadRefreshPresentation: Equatable {
         case .loading, .catchingUp: "hourglass"
         case .reconnecting: "wifi"
         case .offline, .failed: "wifi.exclamationmark"
+        case .needsPairing: "key.slash"
         }
     }
 
@@ -1216,6 +1241,7 @@ enum ThreadRefreshPresentation: Equatable {
         switch connectionState {
         case .connecting, .reconnecting: return .reconnecting
         case .disconnected: return .offline
+        case .needsPairing: return .needsPairing
         case .connected, nil: return nil
         }
     }
@@ -1339,6 +1365,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
     let threadID: String
     let messages: [FeatureMessage]
+    let openURL: OpenURLAction
     let imageContext: MarkdownImageContext?
     let attachmentContext: FeatureAttachmentContext?
     let skills: [FeatureProviderSkill]
@@ -1366,7 +1393,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         )
         collectionView.backgroundColor = T3Colors.uiBackground
         collectionView.alwaysBounceVertical = true
-        collectionView.keyboardDismissMode = .onDrag
+        collectionView.keyboardDismissMode = .interactive
         collectionView.delaysContentTouches = false
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.isPrefetchingEnabled = true
@@ -1376,6 +1403,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
     }
 
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
+        context.coordinator.currentOpenURL = openURL
         context.coordinator.update(
             threadID: threadID,
             messages: messages,
@@ -1434,6 +1462,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var messagesByID: [String: FeatureMessage] = [:]
         private var orderedIDs: [String] = []
         private var currentThreadID: String?
+        var currentOpenURL: OpenURLAction?
         private var currentImageContext: MarkdownImageContext?
         private var currentAttachmentContext: FeatureAttachmentContext?
         private var currentSkills: [FeatureProviderSkill] = []
@@ -1498,6 +1527,10 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .environment(\.t3CodeSizeSteps, self?.currentCodeSizeSteps ?? 0)
+                        .environment(
+                            \.openURL,
+                            self?.currentOpenURL ?? OpenURLAction { _ in .systemAction }
+                        )
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
@@ -1673,7 +1706,12 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 [weak self, weak collectionView] in
                 guard let self, let collectionView else { return }
                 DispatchQueue.main.async {
-                    if shouldFollowBottom {
+                    // A streaming delta lands every ~80 ms. Never fight a
+                    // finger that is on the list.
+                    let userIsScrolling = collectionView.isTracking
+                        || collectionView.isDragging
+                        || collectionView.isDecelerating
+                    if shouldFollowBottom, !userIsScrolling {
                         self.scrollToBottom(
                             collectionView,
                             animated: !isInitialLoad && lastIDChanged
@@ -1897,7 +1935,6 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
             (scrollView as? BottomAnchoredTranscriptCollectionView)?.maintainsBottomAnchor = false
-            onDismissKeyboard?()
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -2499,6 +2536,15 @@ struct FeatureMessageView: View {
                             skills: skills
                         )
                     }
+                    if message.state == .queued {
+                        Label("Queued. Sends when connected.", systemImage: "clock")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textTertiary)
+                    } else if message.state == .failed {
+                        Label("Not sent", systemImage: "exclamationmark.circle")
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.danger)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
@@ -2518,14 +2564,6 @@ struct FeatureMessageView: View {
             .accessibilityIdentifier("message-\(message.id)")
         case .assistant:
             VStack(alignment: .leading, spacing: 10) {
-                if message.state == .streaming {
-                    HStack(spacing: 6) {
-                        Image(systemName: "circle.dotted")
-                        Text("Working")
-                    }
-                    .font(T3Typography.supportingStrong)
-                    .foregroundStyle(T3Colors.statusRunning)
-                }
                 FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
                 if !message.text.isEmpty {
                     MarkdownMessageView(

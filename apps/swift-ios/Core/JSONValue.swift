@@ -69,6 +69,11 @@ public enum JSONValue: Codable, Equatable, Sendable {
         return value
     }
 
+    public var boolValue: Bool? {
+        guard case let .bool(value) = self else { return nil }
+        return value
+    }
+
     public static func encode<T: Encodable & Sendable>(
         _ value: T,
         encoder: JSONEncoder = .t3

@@ -9,11 +9,9 @@ private enum UsageMetric: String, CaseIterable, Identifiable {
     var label: String { rawValue.uppercased() }
 }
 
-private enum UsageBreakdown: String, CaseIterable, Identifiable {
+private enum UsageBreakdown {
     case model
     case time
-
-    var id: Self { self }
 }
 
 private enum UsageTab: String {
@@ -37,6 +35,7 @@ public struct UsageView: View {
     private var windowInput: UsageSummaryInput { loadState.windowInput }
     private var environments: [FeatureEnvironmentUsage] { loadState.environments }
     private var merged: MergedUsage { loadState.merged }
+    private var presentation: UsagePresentation { loadState.presentation }
     private var isLoading: Bool { loadState.isLoading }
     private var errorMessage: String? { loadState.errorMessage }
     private var windowDays: Binding<Int> {
@@ -58,10 +57,21 @@ public struct UsageView: View {
             .padding(.top, 16)
             .padding(.bottom, 12)
 
-            if tab == .limits {
-                UsageLimitsView(client: client, resetCreditStates: $resetCreditStates)
-            } else {
+            // Both tabs stay mounted. Switching only toggles visibility, so the
+            // usage load and every limit subscription survive a tab change.
+            ZStack {
                 usageContent
+                    .opacity(tab == .usage ? 1 : 0)
+                    .allowsHitTesting(tab == .usage)
+                    .accessibilityHidden(tab != .usage)
+                UsageLimitsView(
+                    client: client,
+                    resetCreditStates: $resetCreditStates,
+                    isActive: tab == .limits
+                )
+                .opacity(tab == .limits ? 1 : 0)
+                .allowsHitTesting(tab == .limits)
+                .accessibilityHidden(tab != .limits)
             }
         }
         .background(T3Colors.background)
@@ -79,11 +89,14 @@ public struct UsageView: View {
             }
         }
         .t3NavigationChrome()
+        .task(id: loadState.windowDays) {
+            await load()
+        }
     }
 
     private var usageContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: 20) {
                 Picker("Usage window", selection: windowDays) {
                     Text("24h").tag(1)
                     Text("7d").tag(7)
@@ -97,9 +110,9 @@ public struct UsageView: View {
 
                 if isLoading, !hasCompatibleSummary,
                    environments.isEmpty || environments.contains(where: \.isPending) {
-                    Text("Scanning provider transcripts…")
+                    Text("Scanning provider transcripts")
                         .font(T3Typography.supporting)
-                        .foregroundStyle(T3Colors.textSecondary)
+                        .foregroundStyle(T3Colors.textTertiary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 64)
                 } else if let errorMessage, environments.isEmpty {
@@ -127,9 +140,12 @@ public struct UsageView: View {
                         Button("Try again") { Task { await load() } }
                     }
                 } else {
-                    chartCard
+                    chartSection
+                    usageDivider
                     providersSection
+                    usageDivider
                     totalsSection
+                    usageDivider
                     breakdownSection
                 }
             }
@@ -139,9 +155,6 @@ public struct UsageView: View {
         }
         .scrollIndicators(.hidden)
         .refreshable { await load() }
-        .task(id: loadState.windowDays) {
-            await load()
-        }
     }
 
     @ViewBuilder
@@ -185,13 +198,11 @@ public struct UsageView: View {
             }
             .font(T3Typography.supporting)
             .foregroundStyle(T3Colors.textSecondary)
-            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 16))
         }
     }
 
-    private var chartCard: some View {
+    private var chartSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -228,14 +239,9 @@ public struct UsageView: View {
                 .tint(T3Colors.textPrimary)
             }
 
-            if merged.daily.contains(where: {
-                metric == .cost ? $0.costUsd > 0 : $0.totalTokens > 0
-            }) {
+            if metric == .cost ? presentation.hasCostActivity : presentation.hasTokenActivity {
                 UsagePeriodChart(
-                    input: windowInput,
-                    daily: merged.daily,
-                    hourly: merged.hourly,
-                    metric: metric
+                    segments: metric == .cost ? presentation.costSegments : presentation.tokenSegments
                 )
                 .frame(height: 180)
             } else {
@@ -246,11 +252,11 @@ public struct UsageView: View {
             }
 
             HStack(spacing: 8) {
-                Text(UsageFormat.dayShort(windowInput.sinceDay))
+                Text(presentation.sinceLabel)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 14) {
-                    ForEach(merged.providers) { provider in
+                    ForEach(presentation.providersByCost) { provider in
                         HStack(spacing: 5) {
                             Circle()
                                 .fill(provider.provider.color)
@@ -261,30 +267,24 @@ public struct UsageView: View {
                 }
                 .fixedSize()
 
-                Text(UsageFormat.dayShort(windowInput.untilDay))
+                Text(presentation.untilLabel)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .font(.caption)
             .foregroundStyle(T3Colors.textTertiary)
         }
-        .padding(16)
-        .background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 24))
     }
 
     @ViewBuilder
     private var providersSection: some View {
-        if !merged.providers.isEmpty {
+        let ordered = metric == .cost ? presentation.providersByCost : presentation.providersByTokens
+        if !ordered.isEmpty {
             UsageSection(title: "Providers") {
-                let ordered = merged.providers.sorted {
-                    metric == .cost
-                        ? $0.costUsd > $1.costUsd
-                        : $0.totalTokens > $1.totalTokens
-                }
                 VStack(spacing: 0) {
                     ForEach(Array(ordered.enumerated()), id: \.element.id) { index, provider in
                         if index > 0 { usageDivider }
                         let share = metric == .cost ? provider.costShare : provider.tokenShare
-                        VStack(alignment: .leading, spacing: 9) {
+                        VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .firstTextBaseline, spacing: 10) {
                                 Circle()
                                     .fill(provider.provider.color)
@@ -312,10 +312,9 @@ public struct UsageView: View {
                             .font(T3Typography.supporting)
                             .foregroundStyle(T3Colors.textSecondary)
                         }
-                        .padding(16)
+                        .padding(.vertical, 10)
                     }
                 }
-                .usageCard()
             }
         }
     }
@@ -323,14 +322,6 @@ public struct UsageView: View {
     private var totalsSection: some View {
         UsageSection(title: "Totals") {
             let isHourly = windowInput.resolution == .hour
-            let activePeriods = isHourly
-                ? merged.hourly.filter { $0.totalTokens > 0 }.count
-                : merged.daily.filter { $0.totalTokens > 0 }.count
-            let periodAverage = activePeriods == 0 ? 0 : merged.totalTokens / activePeriods
-            let observedInput = merged.uncachedInputTokens + merged.cachedInputTokens
-            let cachedShare = observedInput == 0
-                ? 0
-                : Double(merged.cachedInputTokens) / Double(observedInput)
             LazyVGrid(
                 columns: [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)],
                 alignment: .leading,
@@ -339,7 +330,7 @@ public struct UsageView: View {
                 UsageMetricCell(
                     label: "Processed tokens",
                     value: UsageFormat.tokens(merged.totalTokens),
-                    detail: "\(UsageFormat.tokens(periodAverage)) per active \(isHourly ? "hour" : "day")"
+                    detail: "\(UsageFormat.tokens(presentation.periodAverageTokens)) per active \(isHourly ? "hour" : "day")"
                 )
                 UsageMetricCell(
                     label: "Cache savings",
@@ -351,7 +342,7 @@ public struct UsageView: View {
                 UsageMetricCell(
                     label: "Cached input",
                     value: UsageFormat.tokens(merged.cachedInputTokens),
-                    detail: "\(UsageFormat.percent(cachedShare)) of observed input"
+                    detail: "\(UsageFormat.percent(presentation.cachedInputShare)) of observed input"
                 )
                 UsageMetricCell(
                     label: "Uncached input",
@@ -369,13 +360,12 @@ public struct UsageView: View {
                     detail: "of records, excluded from cost"
                 )
             }
-            .usageCard()
         }
     }
 
     private var breakdownSection: some View {
         UsageSection(title: "Breakdown") {
-            VStack(spacing: 12) {
+            VStack(spacing: 4) {
                 Picker("Breakdown", selection: $breakdown) {
                     Text("Model").tag(UsageBreakdown.model)
                     Text(windowInput.resolution == .hour ? "Hour" : "Day")
@@ -395,58 +385,46 @@ public struct UsageView: View {
     @ViewBuilder
     private var modelBreakdown: some View {
         if merged.models.isEmpty {
-            Text("No activity in this window.")
-                .font(T3Typography.threadBody)
-                .foregroundStyle(T3Colors.textSecondary)
-                .frame(maxWidth: .infinity)
-                .padding(24)
-                .usageCard()
+            noActivity
         } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(merged.models.enumerated()), id: \.element.id) { index, model in
-                        if index > 0 { usageDivider }
-                        HStack(spacing: 12) {
-                            Circle()
-                                .fill(model.provider.color)
-                                .frame(width: 10, height: 10)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(model.model)
-                                    .font(T3Typography.threadBody)
-                                    .foregroundStyle(T3Colors.textPrimary)
-                                    .lineLimit(1)
-                                Text(
-                                    "\(UsageFormat.percent(model.costShare)) of cost · "
-                                        + "\(UsageFormat.tokens(model.totalTokens)) tokens"
-                                )
-                                .font(T3Typography.supporting)
-                                .foregroundStyle(T3Colors.textSecondary)
-                            }
-                            Spacer(minLength: 8)
-                            Text(UsageFormat.usd(model.costUsd))
+            VStack(spacing: 0) {
+                ForEach(Array(merged.models.enumerated()), id: \.element.id) { index, model in
+                    if index > 0 { usageDivider }
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(model.provider.color)
+                            .frame(width: 10, height: 10)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.model)
                                 .font(T3Typography.threadBody)
-                                .monospacedDigit()
                                 .foregroundStyle(T3Colors.textPrimary)
+                                .lineLimit(1)
+                            Text(
+                                "\(UsageFormat.percent(model.costShare)) of cost · "
+                                    + "\(UsageFormat.tokens(model.totalTokens)) tokens"
+                            )
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
                         }
-                        .padding(16)
+                        Spacer(minLength: 8)
+                        Text(UsageFormat.usd(model.costUsd))
+                            .font(T3Typography.threadBody)
+                            .monospacedDigit()
+                            .foregroundStyle(T3Colors.textPrimary)
                     }
+                    .padding(.vertical, 10)
                 }
-                .usageCard()
+            }
         }
     }
 
     @ViewBuilder
     private var timeBreakdown: some View {
-        let periods = usagePeriods
-        if periods.isEmpty {
-            Text("No activity in this window.")
-                .font(T3Typography.threadBody)
-                .foregroundStyle(T3Colors.textSecondary)
-                .frame(maxWidth: .infinity)
-                .padding(24)
-                .usageCard()
+        if presentation.periods.isEmpty {
+            noActivity
         } else {
             LazyVStack(spacing: 0) {
-                ForEach(Array(periods.enumerated()), id: \.element.id) { index, period in
+                ForEach(Array(presentation.periods.enumerated()), id: \.element.id) { index, period in
                     if index > 0 { usageDivider }
                     HStack(spacing: 12) {
                         Text(period.label)
@@ -463,32 +441,18 @@ public struct UsageView: View {
                                 .foregroundStyle(T3Colors.textSecondary)
                         }
                     }
-                    .padding(16)
+                    .padding(.vertical, 10)
                 }
             }
-            .usageCard()
         }
     }
 
-    private var usagePeriods: [UsagePeriodPresentation] {
-        if windowInput.resolution == .hour {
-            return merged.hourly.reversed().map {
-                UsagePeriodPresentation(
-                    id: $0.hourStart,
-                    label: UsageFormat.hourShort($0.hourStart, timeZone: windowInput.timeZone),
-                    costUsd: $0.costUsd,
-                    totalTokens: $0.totalTokens
-                )
-            }
-        }
-        return merged.daily.reversed().map {
-            UsagePeriodPresentation(
-                id: $0.day,
-                label: UsageFormat.dayShort($0.day),
-                costUsd: $0.costUsd,
-                totalTokens: $0.totalTokens
-            )
-        }
+    private var noActivity: some View {
+        Text("No activity in this window.")
+            .font(T3Typography.threadBody)
+            .foregroundStyle(T3Colors.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
     }
 
     private var usageDivider: some View {
@@ -525,46 +489,7 @@ public struct UsageView: View {
 }
 
 private struct UsagePeriodChart: View {
-    let input: UsageSummaryInput
-    let daily: [UsageDailyTotals]
-    let hourly: [UsageHourlyTotals]
-    let metric: UsageMetric
-
-    private var segments: [UsageChartSegment] {
-        if input.resolution == .hour {
-            let hourlyByStart = Dictionary(uniqueKeysWithValues: hourly.map { ($0.hourStart, $0) })
-            return UsageWindow.hours(in: input).flatMap { hourStart in
-                chartSegments(
-                    period: hourStart,
-                    byProvider: hourlyByStart[hourStart]?.byProvider ?? [:]
-                )
-            }
-        }
-        let dailyByDay = Dictionary(uniqueKeysWithValues: daily.map { ($0.day, $0) })
-        return UsageWindow.days(in: input).flatMap { day in
-            chartSegments(period: day, byProvider: dailyByDay[day]?.byProvider ?? [:])
-        }
-    }
-
-    private func chartSegments(
-        period: String,
-        byProvider: [UsageProviderKind: UsageProviderValue]
-    ) -> [UsageChartSegment] {
-        var start = 0.0
-        return UsageProviderKind.allCases.map { provider in
-            let totals = byProvider[provider]
-            let value = metric == .cost
-                ? totals?.costUsd ?? 0
-                : Double(totals?.totalTokens ?? 0)
-            defer { start += value }
-            return UsageChartSegment(
-                period: period,
-                provider: provider,
-                start: start,
-                end: start + value
-            )
-        }
-    }
+    let segments: [UsageChartSegment]
 
     var body: some View {
         Chart(segments) { segment in
@@ -581,22 +506,6 @@ private struct UsagePeriodChart: View {
     }
 }
 
-private struct UsageChartSegment: Identifiable {
-    let period: String
-    let provider: UsageProviderKind
-    let start: Double
-    let end: Double
-
-    var id: String { "\(period):\(provider.rawValue)" }
-}
-
-private struct UsagePeriodPresentation: Identifiable {
-    let id: String
-    let label: String
-    let costUsd: Double
-    let totalTokens: Int
-}
-
 private struct UsageSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
@@ -604,9 +513,9 @@ private struct UsageSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(T3Typography.supportingStrong)
-                .foregroundStyle(T3Colors.textSecondary)
-                .padding(.horizontal, 14)
+                .font(T3Typography.navigationTitle)
+                .foregroundStyle(T3Colors.textPrimary)
+                .accessibilityAddTraits(.isHeader)
             content
         }
     }
@@ -633,7 +542,8 @@ private struct UsageMetricCell: View {
                 .foregroundStyle(T3Colors.textTertiary)
                 .lineLimit(2)
         }
-        .padding(16)
+        .padding(.vertical, 8)
+        .padding(.trailing, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -656,84 +566,15 @@ private struct UsageProgressBar: View {
     }
 }
 
-private extension View {
-    func usageCard() -> some View {
-        background(T3Colors.surface, in: RoundedRectangle(cornerRadius: 24))
-    }
-}
+extension UsageProviderKind {
+    /// Claude's brand orange. Usage charts and limit bars share this one value.
+    static let claudeColor = Color(red: 0.851, green: 0.467, blue: 0.341)
 
-private extension UsageProviderKind {
     var color: Color {
         switch self {
         case .codex: T3Colors.textPrimary
-        case .claude: Color(red: 0.851, green: 0.467, blue: 0.341)
+        case .claude: Self.claudeColor
         case .grok: T3Colors.textSecondary
         }
-    }
-}
-
-private enum UsageFormat {
-    static func usd(_ value: Double) -> String {
-        value.formatted(
-            .currency(code: "USD")
-                .locale(Locale(identifier: "en_US"))
-                .precision(.fractionLength(2))
-        )
-    }
-
-    static func count(_ value: Int) -> String {
-        value.formatted(.number.locale(Locale(identifier: "en_US")))
-    }
-
-    static func tokens(_ value: Int) -> String {
-        let magnitude = abs(Double(value))
-        if magnitude >= 1_000_000_000_000 { return compact(Double(value) / 1_000_000_000_000, suffix: "T") }
-        if magnitude >= 1_000_000_000 { return compact(Double(value) / 1_000_000_000, suffix: "B") }
-        if magnitude >= 1_000_000 { return compact(Double(value) / 1_000_000, suffix: "M") }
-        if magnitude >= 1_000 { return compact(Double(value) / 1_000, suffix: "K") }
-        return count(value)
-    }
-
-    static func percent(_ value: Double) -> String {
-        String(format: "%.1f%%", value * 100)
-    }
-
-    static func dayShort(_ day: String) -> String {
-        let components = day.split(separator: "-")
-        guard components.count == 3,
-              let month = Int(components[1]),
-              let dayOfMonth = Int(components[2]),
-              (1...12).contains(month) else {
-            return day
-        }
-        let months = [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ]
-        return "\(months[month - 1]) \(dayOfMonth)"
-    }
-
-    static func hourShort(_ value: String, timeZone: String) -> String {
-        let withFractional = ISO8601DateFormatter()
-        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = withFractional.date(from: value)
-                ?? ISO8601DateFormatter().date(from: value) else {
-            return value
-        }
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.timeZone = TimeZone(identifier: timeZone) ?? .current
-        formatter.setLocalizedDateFormatFromTemplate("EEEha")
-        return formatter.string(from: date)
-    }
-
-    private static func compact(_ value: Double, suffix: String) -> String {
-        let digits = abs(value) >= 100 ? 0 : abs(value) >= 10 ? 1 : 2
-        var formatted = String(format: "%.*f", digits, value)
-        while formatted.hasSuffix("0"), formatted.contains(".") {
-            formatted.removeLast()
-        }
-        if formatted.hasSuffix(".") { formatted.removeLast() }
-        return formatted + suffix
     }
 }

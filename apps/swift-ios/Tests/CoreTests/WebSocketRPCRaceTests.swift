@@ -7,7 +7,6 @@ final class WebSocketRPCRaceTests: XCTestCase {
         let connection = SubscriptionTrafficConnection()
         let client = WebSocketRPCClient(
             connector: SequencedConnector(connections: [connection]),
-            subscriptionBufferLimit: 256,
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
         let stream = await client.subscribeBatches("thread.events", reconnect: false, as: Int.self)
@@ -23,27 +22,34 @@ final class WebSocketRPCRaceTests: XCTestCase {
         await client.stop()
     }
 
-    func testBatchOverflowDoesNotAcknowledgeDroppedEvents() async throws {
-        let connection = OverflowingSubscriptionConnection()
+    /// The server sends one Chunk of up to 512 shell events, and an unbounded
+    /// one for thread catch-up. All of them must reach the consumer, in order,
+    /// with one Ack for the chunk and no socket teardown.
+    func testLargeServerChunkDeliversEveryValueWithOneAcknowledgement() async throws {
+        let connection = SubscriptionTrafficConnection()
         let client = WebSocketRPCClient(
             connector: SequencedConnector(connections: [connection]),
-            subscriptionBufferLimit: 2,
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
-        let stream = await client.subscribeBatches("thread.events", reconnect: false, as: String.self)
-        // A unary request is not needed: the connection closes only after overflow.
-        await connection.waitUntilClosed()
+        let stream = await client.subscribeBatches("thread.events", reconnect: false, as: Int.self)
+        await connection.waitUntilSubscriptionStarted()
+        try await connection.sendSubscriptionValues((0..<600).map { .number(Double($0)) })
+
         var iterator = stream.makeAsyncIterator()
-        let buffered = try await iterator.next()
-        XCTAssertEqual(buffered, ["first", "second"])
-        do {
-            _ = try await iterator.next()
-            XCTFail("Overflow must require resynchronization.")
-        } catch let error as RPCError {
-            guard case .protocolViolation = error else { return XCTFail("Unexpected error: \(error)") }
+        var received: [Int] = []
+        var batchSizes: [Int] = []
+        while received.count < 600, let batch = try await iterator.next() {
+            batchSizes.append(batch.count)
+            received.append(contentsOf: batch)
         }
+        XCTAssertEqual(received, Array(0..<600))
+        XCTAssertEqual(batchSizes, Array(repeating: 64, count: 9) + [24])
+
+        await connection.waitUntilAcknowledgementCount(1)
         let acknowledgements = await connection.acknowledgementCount()
-        XCTAssertEqual(acknowledgements, 0)
+        XCTAssertEqual(acknowledgements, 1, "One chunk earns exactly one Ack.")
+        let isConnected = await client.isConnected()
+        XCTAssertTrue(isConnected, "A large chunk must not tear down the socket.")
         await client.stop()
     }
 
@@ -216,83 +222,6 @@ final class WebSocketRPCRaceTests: XCTestCase {
         let isConnected = await client.isConnected()
         XCTAssertTrue(isConnected, "Valid stream traffic proves that the socket is still alive.")
         _ = stream
-        await client.stop()
-    }
-
-    func testSubscriptionOverflowReconnectsAndRestoresLiveEventsWithoutAcknowledgingDroppedEvents() async throws {
-        let overflowing = OverflowingSubscriptionConnection()
-        let recovered = SubscriptionTrafficConnection()
-        let connector = SequencedConnector(connections: [overflowing, recovered])
-        let client = WebSocketRPCClient(
-            connector: connector,
-            subscriptionBufferLimit: 2,
-            reconnectBackoff: { _ in .zero },
-            endpointProvider: { URL(string: "wss://studio.example/ws")! }
-        )
-
-        let stream = await client.subscribe("thread.events", as: JSONValue.self)
-        await connector.waitUntilConnectionCount(2)
-        await recovered.waitUntilSubscriptionStarted()
-
-        var iterator = stream.makeAsyncIterator()
-        let firstValue = try await iterator.next()
-        let secondValue = try await iterator.next()
-        XCTAssertEqual(firstValue, .string("first"))
-        XCTAssertEqual(secondValue, .string("second"))
-        try await recovered.sendSubscriptionValue(.string("recovered"))
-        let recoveredValue = try await iterator.next()
-        XCTAssertEqual(recoveredValue, .string("recovered"))
-
-        let acknowledgementCount = await overflowing.acknowledgementCount()
-        XCTAssertEqual(acknowledgementCount, 0)
-
-        let response = try await client.request("server.afterOverflow", as: JSONValue.self)
-        XCTAssertEqual(response, .object(["ok": .bool(true)]))
-        let recoveredRequestTags = await recovered.requestTags()
-        XCTAssertEqual(recoveredRequestTags, ["thread.events", "server.afterOverflow"])
-        await client.stop()
-    }
-
-    func testOneShotSubscriptionOverflowFailsWithoutReplayingItsCommand() async throws {
-        let overflowing = OverflowingSubscriptionConnection()
-        let recovered = SubscriptionTrafficConnection()
-        let connector = SequencedConnector(connections: [overflowing, recovered])
-        let client = WebSocketRPCClient(
-            connector: connector,
-            subscriptionBufferLimit: 2,
-            reconnectBackoff: { _ in .zero },
-            endpointProvider: { URL(string: "wss://studio.example/ws")! }
-        )
-
-        let stream = await client.subscribe(
-            "git.runAction",
-            reconnect: false,
-            as: JSONValue.self
-        )
-        await connector.waitUntilConnectionCount(2)
-
-        var iterator = stream.makeAsyncIterator()
-        let firstValue = try await iterator.next()
-        let secondValue = try await iterator.next()
-        XCTAssertEqual(firstValue, .string("first"))
-        XCTAssertEqual(secondValue, .string("second"))
-        do {
-            _ = try await iterator.next()
-            XCTFail("An overflowing command stream must finish with its protocol error.")
-        } catch let error as RPCError {
-            guard case .protocolViolation = error else {
-                await client.stop()
-                return XCTFail("Unexpected RPC error: \(error)")
-            }
-        }
-
-        let acknowledgementCount = await overflowing.acknowledgementCount()
-        XCTAssertEqual(acknowledgementCount, 0)
-
-        let response = try await client.request("server.afterOneShotOverflow", as: JSONValue.self)
-        XCTAssertEqual(response, .object(["ok": .bool(true)]))
-        let recoveredRequestTags = await recovered.requestTags()
-        XCTAssertEqual(recoveredRequestTags, ["server.afterOneShotOverflow"])
         await client.stop()
     }
 
@@ -733,6 +662,8 @@ private actor SubscriptionTrafficConnection: WebSocketConnection {
     private var receiver: CheckedContinuation<Data, Error>?
     private var pingCount = 0
     private var pingWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var acknowledgements = 0
+    private var acknowledgementWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var subscriptionEnded: Bool?
     private var subscriptionEndWaiters: [CheckedContinuation<Bool, Never>] = []
 
@@ -773,6 +704,11 @@ private actor SubscriptionTrafficConnection: WebSocketConnection {
             ready.forEach { $0.1.resume() }
         case "Interrupt":
             finishSubscription(interrupted: true)
+        case "Ack":
+            acknowledgements += 1
+            let ready = acknowledgementWaiters.filter { acknowledgements >= $0.0 }
+            acknowledgementWaiters.removeAll { acknowledgements >= $0.0 }
+            ready.forEach { $0.1.resume() }
         default:
             break
         }
@@ -796,6 +732,17 @@ private actor SubscriptionTrafficConnection: WebSocketConnection {
         await withCheckedContinuation { continuation in
             pingWaiters.append((count, continuation))
         }
+    }
+
+    func waitUntilAcknowledgementCount(_ count: Int) async {
+        guard acknowledgements < count else { return }
+        await withCheckedContinuation { continuation in
+            acknowledgementWaiters.append((count, continuation))
+        }
+    }
+
+    func acknowledgementCount() -> Int {
+        acknowledgements
     }
 
     func waitUntilSubscriptionEnded() async -> Bool {
@@ -868,64 +815,6 @@ private actor SubscriptionTrafficConnection: WebSocketConnection {
                 ]),
             ])
         )
-    }
-}
-
-private actor OverflowingSubscriptionConnection: WebSocketConnection {
-    private var queuedResponses: [Data] = []
-    private var receiver: CheckedContinuation<Data, Error>?
-    private var acknowledgements = 0
-    private var closed = false
-    private var closeWaiter: CheckedContinuation<Void, Never>?
-
-    func waitUntilClosed() async {
-        guard !closed else { return }
-        await withCheckedContinuation { closeWaiter = $0 }
-    }
-
-    func send(_ data: Data) throws {
-        let envelope = try JSONDecoder.t3.decode(JSONValue.self, from: data)
-        if envelope["_tag"]?.stringValue == "Ack" {
-            acknowledgements += 1
-            return
-        }
-        guard envelope["_tag"]?.stringValue == "Request",
-              case let .number(requestID)? = envelope["id"] else { return }
-        let chunk = JSONValue.object([
-            "_tag": .string("Chunk"),
-            "requestId": .number(requestID),
-            "values": .array([
-                .string("first"),
-                .string("second"),
-                .string("overflow"),
-            ]),
-        ])
-        let response = try JSONEncoder.t3.encode(chunk)
-        if let receiver {
-            self.receiver = nil
-            receiver.resume(returning: response)
-        } else {
-            queuedResponses.append(response)
-        }
-    }
-
-    func receive() async throws -> Data {
-        if !queuedResponses.isEmpty {
-            return queuedResponses.removeFirst()
-        }
-        return try await withCheckedThrowingContinuation { receiver = $0 }
-    }
-
-    func close() {
-        closed = true
-        closeWaiter?.resume()
-        closeWaiter = nil
-        receiver?.resume(throwing: CancellationError())
-        receiver = nil
-    }
-
-    func acknowledgementCount() -> Int {
-        acknowledgements
     }
 }
 

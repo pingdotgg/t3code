@@ -148,7 +148,7 @@ struct HomeThreadSwipeActionTests {
                 at: now
             )
 
-            #expect(actions == [.archive, .delete])
+            #expect(actions == [.delete])
             #expect(!HomeThreadSwipeAction.performsFullSwipe(with: actions))
         }
     }
@@ -1164,8 +1164,6 @@ struct HomeThreadSwipeActionTests {
             selectedThreadID: selectedThreadID,
             forceRichRows: forceRichRows,
             hapticsEnabled: false,
-            settings: snapshot.settings,
-            pullRequestsByThreadID: [:],
             isSnoozedExpanded: false,
             isSettledExpanded: isSettledExpanded,
             isArchiveExpanded: false,
@@ -1305,14 +1303,41 @@ private final class SwipeSettlementClientStub: FeatureClient {
     func setThreadArchived(id: String, archived: Bool) async throws {}
     func deleteThread(id: String) async throws {}
 
-    func loadThread(id: String) async throws -> FeatureThreadDetail {
+    func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail {
         FeatureThreadDetail(
             thread: snapshot.threads.first { $0.id == id }
                 ?? FeatureThread(id: id, projectID: "project", title: "Task")
         )
     }
 
-    func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async throws {}
+    func createThreadAndSend(
+        projectID: String,
+        prompt: String,
+        selection: FeatureSelection?,
+        runtimeMode: FeatureRuntimeMode,
+        interactionMode: FeatureInteractionMode,
+        workspaceMode: FeatureWorkspaceMode,
+        branch: String?,
+        worktreePath: String?,
+        startFromOrigin: Bool,
+        attachments: [FeatureUploadAttachment],
+        identity: FeatureSubmissionIdentity
+    ) async throws -> FeatureThread {
+        FeatureThread(id: identity.threadID, projectID: projectID, title: prompt)
+    }
+    func sendMessage(
+        threadID: String,
+        text: String,
+        selection: FeatureSelection?,
+        runtimeMode: FeatureRuntimeMode,
+        attachments: [FeatureUploadAttachment],
+        identity: FeatureSubmissionIdentity
+    ) async throws {}
+    func resolveUserInput(
+        id: String,
+        answers: [String: FeatureInputAnswer],
+        attachmentsByQuestionID: [String: [FeatureUploadAttachment]]
+    ) async throws {}
     func cancelTurn(threadID: String) async throws {}
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {}
     func saveSettings(_ settings: FeatureSettings) async throws {}

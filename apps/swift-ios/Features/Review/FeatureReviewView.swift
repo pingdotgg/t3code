@@ -5,14 +5,22 @@ public struct FeatureReviewView: View {
     @SwiftUI.Environment(\.scenePhase) private var scenePhase
     let client: any FeatureClient
     let threadID: String
+    /// Comments are ordinary turns. They go through the same queue as the
+    /// composer so an offline comment is kept and retried, not dropped.
+    let sendMessage: (FeatureMessageSubmission) async -> Bool
 
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
 
-    public init(client: any FeatureClient, threadID: String) {
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        sendMessage: @escaping (FeatureMessageSubmission) async -> Bool
+    ) {
         self.client = client
         self.threadID = threadID
+        self.sendMessage = sendMessage
     }
 
     public var body: some View {
@@ -86,7 +94,12 @@ public struct FeatureReviewView: View {
                 }
                 ForEach(review.files) { file in
                     NavigationLink {
-                        FeatureDiffView(client: client, threadID: threadID, file: file)
+                        FeatureDiffView(
+                            client: client,
+                            threadID: threadID,
+                            file: file,
+                            sendMessage: sendMessage
+                        )
                     } label: {
                         FeatureReviewFileRow(file: file)
                     }
@@ -189,6 +202,7 @@ private struct FeatureDiffView: View {
     let client: any FeatureClient
     let threadID: String
     let file: FeatureReviewFile
+    let sendMessage: (FeatureMessageSubmission) async -> Bool
 
     @State private var renderedLines: [FeatureDiffLine]
     @State private var isHydrating = false
@@ -199,10 +213,16 @@ private struct FeatureDiffView: View {
     @State private var commentError: String?
     @FocusState private var isCommentFocused: Bool
 
-    init(client: any FeatureClient, threadID: String, file: FeatureReviewFile) {
+    init(
+        client: any FeatureClient,
+        threadID: String,
+        file: FeatureReviewFile,
+        sendMessage: @escaping (FeatureMessageSubmission) async -> Bool
+    ) {
         self.client = client
         self.threadID = threadID
         self.file = file
+        self.sendMessage = sendMessage
         _renderedLines = State(initialValue: file.lines)
     }
 
@@ -406,14 +426,16 @@ private struct FeatureDiffView: View {
         isSending = true
         commentError = nil
         Task {
-            do {
-                try await client.sendMessage(threadID: threadID, text: prompt, selection: nil)
+            let sent = await sendMessage(
+                FeatureMessageSubmission(threadID: threadID, text: prompt, selection: nil)
+            )
+            if sent {
                 comment = ""
                 selectedLine = nil
                 isCommenting = false
                 isCommentFocused = false
-            } catch {
-                commentError = error.localizedDescription
+            } else {
+                commentError = "Could not send the comment."
             }
             isSending = false
         }
