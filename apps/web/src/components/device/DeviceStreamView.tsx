@@ -33,12 +33,13 @@ export function DeviceStreamView(props: {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly visible: boolean;
+  readonly hostId: string;
   /** Draw accessibility element frames over the screen. */
   readonly axOverlay?: boolean;
   readonly onHandle?: (handle: DeviceStreamHandle | null) => void;
   readonly onScreen?: (screen: DeviceScreenSize | null) => void;
 }) {
-  const access = useDeviceHubAccess(props.environmentId);
+  const access = useDeviceHubAccess(props.environmentId, props.hostId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DeviceStreamClient | null>(null);
   const [status, setStatus] = useState<DeviceStreamStatus>("connecting");

@@ -161,7 +161,9 @@ const handlers = {
       const target =
         input.deviceId !== undefined
           ? { hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID, deviceId: input.deviceId }
-          : sessions.at(-1);
+          : sessions
+              .filter((session) => input.hostId === undefined || session.hostId === input.hostId)
+              .at(-1);
       if (!target) {
         return yield* new DeviceToolUnavailableError({
           reason: "No device is open in this thread. Call device_open first.",
@@ -183,6 +185,7 @@ const handlers = {
       const devices = yield* DeviceService.DeviceService;
       yield* devices.close({
         threadId: scope.threadId,
+        ...(input.hostId === undefined ? {} : { hostId: input.hostId }),
         ...(input.deviceId === undefined ? {} : { deviceId: input.deviceId }),
         ...(input.shutdown === undefined ? {} : { shutdown: input.shutdown }),
       });

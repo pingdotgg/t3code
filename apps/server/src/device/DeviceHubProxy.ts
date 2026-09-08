@@ -196,7 +196,7 @@ const handler = Effect.gen(function* () {
     (!readOnly && /\/api\/stream-(mode|settings)$/.test(hubPath));
   yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
   const devices = yield* DeviceService.DeviceService;
-  const ready = yield* devices.currentReadiness();
+  const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
   }
@@ -206,6 +206,7 @@ const handler = Effect.gen(function* () {
   // The ticket authenticates here and must not travel on to the hub.
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");
+  upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
   const upstreamPath = `${hubPath}${search}`;
   if (upgrade) {

@@ -95,6 +95,13 @@ export const DeviceServiceState = Schema.Struct({
   hosts: Schema.Array(DeviceHostSummary),
   hostStatus: DeviceHostStatus,
   hostStatusDetail: Schema.optional(Schema.String),
+  hostStatuses: Schema.Record(
+    DeviceHostId,
+    Schema.Struct({
+      status: DeviceHostStatus,
+      detail: Schema.optional(Schema.String),
+    }),
+  ),
   devices: Schema.Array(DeviceSummary),
   sessions: Schema.Array(DeviceSession),
   bootingDevices: Schema.optional(
@@ -129,6 +136,7 @@ export const DeviceOpenInput = Schema.Struct({
 export type DeviceOpenInput = typeof DeviceOpenInput.Type;
 
 export const DeviceCloseInput = Schema.Struct({
+  hostId: Schema.optional(DeviceHostId),
   threadId: ThreadId,
   /** Omit to close every device session for the thread. */
   deviceId: Schema.optional(DeviceId),
