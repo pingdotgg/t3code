@@ -139,20 +139,31 @@ export function enumerateCommandPaletteItems(
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
+// A project as the palette shows it. `displayName` is the grouped label (for
+// example "owner/repo" when projects are merged across machines). Keep `title`
+// as the real project title: the automatic project icon is derived from it, and
+// every other surface uses the real title, so overriding it desyncs the icon.
+export type CommandPaletteProject = Project & { readonly displayName: string };
+
 export function buildProjectActionItems(input: {
-  projects: ReadonlyArray<Project>;
+  projects: ReadonlyArray<CommandPaletteProject>;
   valuePrefix: string;
-  icon: (project: Project) => ReactNode;
-  runProject: (project: Project) => Promise<void>;
-  searchTerms?: (project: Project) => ReadonlyArray<string>;
-  renderDescription?: (project: Project) => ReactNode;
+  icon: (project: CommandPaletteProject) => ReactNode;
+  runProject: (project: CommandPaletteProject) => Promise<void>;
+  searchTerms?: (project: CommandPaletteProject) => ReadonlyArray<string>;
+  renderDescription?: (project: CommandPaletteProject) => ReactNode;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [project.title, project.workspaceRoot, ...(input.searchTerms?.(project) ?? [])],
-    title: project.title,
+    searchTerms: [
+      project.displayName,
+      project.title,
+      project.workspaceRoot,
+      ...(input.searchTerms?.(project) ?? []),
+    ],
+    title: project.displayName,
     description: input.renderDescription?.(project) ?? project.workspaceRoot,
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),

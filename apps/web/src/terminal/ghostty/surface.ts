@@ -321,7 +321,11 @@ export function isTerminalCopyShortcut(
   event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  if (event.key.toLowerCase() !== "c") return false;
+  const key = event.key.toLowerCase();
+  if (key === "insert" && !isMacPlatform(platform)) {
+    return event.ctrlKey && !event.shiftKey && !event.metaKey;
+  }
+  if (key !== "c") return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
@@ -1027,12 +1031,12 @@ export class GhosttyTerminalSurface {
       // A plain Ctrl+C/Cmd+C fires the browser's native copy event, caught in
       // onCopyEvent; not preventing the default keeps that path alive. WebKit
       // omits the keyboard copy event without a DOM selection, so race the
-      // clipboard write against it the same way paste races its read. The
-      // Shift variant has no native event (Chrome binds Ctrl+Shift+C to
+      // clipboard write against it the same way paste races its read. Ctrl+Shift+C
+      // and Ctrl+Insert have no native copy event (Chrome binds the former to
       // inspect), so synthesize one with execCommand("copy").
       const selection = this.getSelection();
       this.primeCopy(selection);
-      if (event.shiftKey) {
+      if (event.shiftKey || event.key.toLowerCase() === "insert") {
         event.preventDefault();
         document.execCommand("copy");
       } else {
