@@ -45,6 +45,8 @@ final class T3ShareViewController: UIViewController {
 }
 
 struct T3ShareExtensionView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     enum Phase: Equatable {
         case ready
         case saving
@@ -60,19 +62,10 @@ struct T3ShareExtensionView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                Text("T3 Code")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                HStack {
-                    Button("Cancel", action: cancel)
-                        .foregroundStyle(.secondary)
-                        .disabled(isSaving)
-                    Spacer()
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 15)
+            header
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 15)
 
             Divider()
 
@@ -96,7 +89,7 @@ struct T3ShareExtensionView: View {
                 .padding(.horizontal, 28)
                 .padding(.vertical, 24)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
 
             Button(action: primaryAction) {
                 Text(primaryTitle)
@@ -114,6 +107,37 @@ struct T3ShareExtensionView: View {
             .padding(.bottom, 18)
         }
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                headerTitle
+                cancelButton
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ZStack {
+                headerTitle
+                HStack {
+                    cancelButton
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var headerTitle: some View {
+        Text("T3 Code")
+            .font(.headline)
+            .foregroundStyle(.primary)
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel", action: cancel)
+            .foregroundStyle(.secondary)
+            .disabled(isSaving)
     }
 
     private var isSaving: Bool {
