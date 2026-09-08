@@ -2588,7 +2588,7 @@ struct FeatureMessageView: View {
     private var accessibilityValue: String {
         let attachmentSummary = message.attachments.isEmpty
             ? ""
-            : "\(message.attachments.count) image attachment"
+            : "\(message.attachments.count) attachment"
                 + (message.attachments.count == 1 ? "" : "s")
         return [message.state == .queued ? "Queued" : "", message.text, attachmentSummary]
             .filter { !$0.isEmpty }
