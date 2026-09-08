@@ -34,6 +34,7 @@ final class NativeRetryIdentityTests: XCTestCase {
         let fixture = try await AcceptedSendFixture.make(captured:
             JSONDecoder.t3.decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: capture)), supportsPagination: true)
         addTeardownBlock { await fixture.cleanUp() }
+        XCTAssertEqual(fixture.model.details[fixture.threadID]?.page?.hasMore, true)
         await fixture.transport.useCapturedPhase("older")
         let result = try await fixture.client.loadEarlierThreadTurns(id: fixture.threadID)
         let rows = try XCTUnwrap(result?.messages)
@@ -1273,10 +1274,18 @@ private struct AcceptedSendFixture {
             webSocketConnector: AcceptedSendConnector(socket: socket, peer: AcceptedSendSocket())
         )
         let settingsName = "t3-accepted-send-\(UUID().uuidString)"
+        let configurationReady = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        defer { configurationReady.continuation.finish() }
         let client = NativeFeatureClient(
             runtime: runtime, settingsStore: UserDefaults(suiteName: settingsName)!,
             fallbackPollingInitialDelay: .seconds(3600), aggregateRefreshInterval: .seconds(3600),
-            aggregateIdleRefreshInterval: .seconds(3600)
+            aggregateIdleRefreshInterval: .seconds(3600),
+            aggregateRefreshReceipt: { receipt in
+                if case .configurationApplied(environmentID: environment.id) = receipt {
+                    configurationReady.continuation.yield(())
+                    configurationReady.continuation.finish()
+                }
+            }
         )
         let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
         let model = FeatureRootModel(client: client, outboxStore: outbox)
@@ -1284,6 +1293,10 @@ private struct AcceptedSendFixture {
         do {
             let wireID = captured?["threadId"]?.stringValue ?? "thread-existing"
             try await AcceptedSendRootReadiness(model: model, wireID: wireID).wait()
+            if supportsPagination {
+                var readiness = configurationReady.stream.makeAsyncIterator()
+                guard let _ = await readiness.next() else { throw CancellationError() }
+            }
             let threadID = FeatureScopedID.thread(environmentID: environment.id, wireID: wireID)
             _ = await model.detail(for: threadID)
             return Self(modelTask: modelTask, directory: directory, threadID: threadID,
