@@ -12,12 +12,14 @@ const usersList = Command.make("list", {
   ),
   // Boolean flag
   active: Flag.boolean("active").pipe(
-    Flag.withDescription("Show only active users")
+    Flag.withDescription("Show only active users"),
+    Flag.withDefault(false)
   ),
   // Option with both short and long aliases
   verbose: Flag.boolean("verbose").pipe(
     Flag.withAlias("v"),
-    Flag.withDescription("Show detailed information")
+    Flag.withDescription("Show detailed information"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("users list", {
@@ -45,7 +47,8 @@ const usersCreate = Command.make("create", {
   // Boolean with explicit value support
   notify: Flag.boolean("notify").pipe(
     Flag.withAlias("n"),
-    Flag.withDescription("Send notification email")
+    Flag.withDescription("Send notification email"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("users create", {
@@ -117,7 +120,8 @@ const admin = Command.make("admin").pipe(
   Command.withSharedFlags({
     // Boolean that can be set to false explicitly
     sudo: Flag.boolean("sudo").pipe(
-      Flag.withDescription("Run with elevated privileges")
+      Flag.withDescription("Run with elevated privileges"),
+      Flag.withDefault(false)
     )
   }),
   Command.withDescription("Administrative commands"),
@@ -136,11 +140,13 @@ const copy = Command.make("copy", {
   // Boolean flags with short aliases
   recursive: Flag.boolean("recursive").pipe(
     Flag.withAlias("r"),
-    Flag.withDescription("Copy directories recursively")
+    Flag.withDescription("Copy directories recursively"),
+    Flag.withDefault(false)
   ),
   force: Flag.boolean("force").pipe(
     Flag.withAlias("f"),
-    Flag.withDescription("Overwrite existing files")
+    Flag.withDescription("Overwrite existing files"),
+    Flag.withDefault(false)
   ),
   // Integer option
   buffer: Flag.integer("buffer-size").pipe(
@@ -167,7 +173,8 @@ const move = Command.make("move", {
   // Options
   interactive: Flag.boolean("interactive").pipe(
     Flag.withAlias("i"),
-    Flag.withDescription("Prompt before overwrite")
+    Flag.withDescription("Prompt before overwrite"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("move", {
@@ -186,15 +193,18 @@ const remove = Command.make("remove", {
   // Multiple boolean options
   recursive: Flag.boolean("recursive").pipe(
     Flag.withAlias("r"),
-    Flag.withDescription("Remove directories and contents")
+    Flag.withDescription("Remove directories and contents"),
+    Flag.withDefault(false)
   ),
   force: Flag.boolean("force").pipe(
     Flag.withAlias("f"),
-    Flag.withDescription("Force removal without prompts")
+    Flag.withDescription("Force removal without prompts"),
+    Flag.withDefault(false)
   ),
   verbose: Flag.boolean("verbose").pipe(
     Flag.withAlias("v"),
-    Flag.withDescription("Explain what is being done")
+    Flag.withDescription("Explain what is being done"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("remove", {
@@ -214,7 +224,8 @@ const build = Command.make("build", {
   ),
   verbose: Flag.boolean("verbose").pipe(
     Flag.withAlias("v"),
-    Flag.withDescription("Enable verbose output")
+    Flag.withDescription("Enable verbose output"),
+    Flag.withDefault(false)
   ),
   configFile: Flag.string("config-file").pipe(
     Flag.withAlias("f"),
@@ -252,7 +263,8 @@ const gitAdd = Command.make("add", {
     Argument.withDescription("Files to add")
   ),
   update: Flag.boolean("update").pipe(
-    Flag.withDescription("Update tracked files")
+    Flag.withDescription("Update tracked files"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("git add", {
@@ -264,7 +276,8 @@ const gitAdd = Command.make("add", {
 
 const gitStatus = Command.make("status", {
   short: Flag.boolean("short").pipe(
-    Flag.withDescription("Show short format")
+    Flag.withDescription("Show short format"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("git status", {
@@ -276,7 +289,8 @@ const gitStatus = Command.make("status", {
 const git = Command.make("git").pipe(
   Command.withSharedFlags({
     verbose: Flag.boolean("verbose").pipe(
-      Flag.withDescription("Enable verbose output")
+      Flag.withDescription("Enable verbose output"),
+      Flag.withDefault(false)
     )
   }),
   Command.withHandler((config) =>
@@ -335,7 +349,8 @@ const deployCommand = Command.make("deploy", {
     )
   },
   dryRun: Flag.boolean("dry-run").pipe(
-    Flag.withDescription("Perform a dry run")
+    Flag.withDescription("Perform a dry run"),
+    Flag.withDefault(false)
   )
 }, (config) =>
   logAction("deploy", {
@@ -401,7 +416,8 @@ export const ComprehensiveCli = Command.make("mycli").pipe(
     // Global options available to all subcommands
     debug: Flag.boolean("debug").pipe(
       Flag.withAlias("d"),
-      Flag.withDescription("Enable debug logging")
+      Flag.withDescription("Enable debug logging"),
+      Flag.withDefault(false)
     ),
     config: Flag.file("config").pipe(
       Flag.withAlias("c"),
@@ -410,7 +426,8 @@ export const ComprehensiveCli = Command.make("mycli").pipe(
     ),
     quiet: Flag.boolean("quiet").pipe(
       Flag.withAlias("q"),
-      Flag.withDescription("Suppress non-error output")
+      Flag.withDescription("Suppress non-error output"),
+      Flag.withDefault(false)
     )
   }),
   Command.withDescription("A comprehensive CLI tool demonstrating all features"),

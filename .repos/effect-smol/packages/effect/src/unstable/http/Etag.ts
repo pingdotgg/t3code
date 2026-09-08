@@ -71,7 +71,7 @@ export const toString = (self: Etag): string => {
 /**
  * Service for generating ETags from filesystem file information or Web `File`-like metadata.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class Generator extends Context.Service<Generator, {

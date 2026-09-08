@@ -399,6 +399,117 @@ describe("Pool", () => {
       deepStrictEqual(yield* Fiber.await(fiber), Exit.interrupt(fiberId))
     }))
 
+  it.effect("interrupts pending gets without leaking usage", () =>
+    Effect.gen(function*() {
+      const pool = yield* Pool.make({ acquire: Effect.succeed("resource"), size: 1 })
+      const scope = yield* Scope.make()
+      yield* Scope.provide(Pool.get(pool), scope)
+      const fibers: Array<Fiber.Fiber<string>> = []
+      for (let i = 0; i < 10; i++) {
+        fibers.push(yield* Effect.forkChild(Pool.get(pool), { startImmediately: true }))
+      }
+      yield* Effect.repeat(Effect.andThen(Effect.yieldNow, Effect.sync(() => pool.state.waiters.size)), {
+        until: (size) => size === fibers.length
+      })
+      yield* Effect.all(fibers.map(Fiber.interrupt), { concurrency: "unbounded", discard: true })
+      strictEqual(pool.state.waiters.size, 0)
+      strictEqual(pool.state.usage, 1)
+      yield* Scope.close(scope, Exit.void)
+      strictEqual(pool.state.usage, 0)
+    }))
+
+  it.effect("does not re-wake waiters registered during notification", () =>
+    Effect.gen(function*() {
+      const acquire = yield* Deferred.make<void>()
+      const pool = yield* Pool.makeWithTTL({
+        acquire: Effect.as(Deferred.await(acquire), "resource"),
+        min: 0,
+        max: 1,
+        timeToLive: Duration.infinity
+      })
+      const fibers: Array<Fiber.Fiber<string>> = []
+      for (let i = 0; i < 10; i++) {
+        fibers.push(yield* Effect.forkChild(Effect.scoped(Pool.get(pool)), { startImmediately: true }))
+      }
+      yield* Effect.repeat(Effect.andThen(Effect.yieldNow, Effect.sync(() => pool.state.waiters.size)), {
+        until: (size) => size === fibers.length
+      })
+      yield* Deferred.succeed(acquire, undefined)
+      yield* Effect.all(fibers.map(Fiber.join), { concurrency: "unbounded", discard: true })
+      strictEqual(pool.state.waiters.size, 0)
+      strictEqual(pool.state.usage, 0)
+    }))
+
+  it.effect("use borrows and returns an item", () =>
+    Effect.gen(function*() {
+      const count = yield* Ref.make(0)
+      const get = Effect.acquireRelease(
+        Ref.updateAndGet(count, (n) => n + 1),
+        () => Ref.update(count, (n) => n - 1)
+      )
+      const pool = yield* Pool.make({ acquire: get, size: 2 })
+      yield* Effect.repeat(Ref.get(count), { until: (n) => n === 2 })
+      const results: Array<number> = []
+      yield* Effect.repeat(
+        Effect.tap(Pool.use(pool, (item) => Effect.succeed(item)), (item) =>
+          Effect.sync(() => {
+            results.push(item)
+          })),
+        { times: 9 }
+      )
+      deepStrictEqual(results, [1, 2, 1, 2, 1, 2, 1, 2, 1, 2])
+      strictEqual(yield* Ref.get(count), 2)
+    }))
+
+  it.effect("use releases the item on failure", () =>
+    Effect.gen(function*() {
+      const pool = yield* Pool.make({ acquire: Effect.succeed("resource"), size: 1 })
+      const failure = yield* Effect.flip(Pool.use(pool, () => Effect.fail("boom")))
+      strictEqual(failure, "boom")
+      strictEqual(yield* Pool.use(pool, (item) => Effect.succeed(item)), "resource")
+    }))
+
+  it.effect("use releases the item on interruption", () =>
+    Effect.gen(function*() {
+      const started = yield* Deferred.make<void>()
+      const pool = yield* Pool.make({ acquire: Effect.succeed("resource"), size: 1 })
+      const fiber = yield* Effect.forkChild(
+        Pool.use(pool, () => Effect.andThen(Deferred.succeed(started, void 0), Effect.never)),
+        { startImmediately: true }
+      )
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
+      strictEqual(yield* Pool.use(pool, (item) => Effect.succeed(item)), "resource")
+    }))
+
+  it.effect("use waits for an available item", () =>
+    Effect.gen(function*() {
+      const pool = yield* Pool.make({ acquire: Effect.succeed("resource"), size: 1 })
+      const scope = yield* Scope.make()
+      yield* Scope.provide(Pool.get(pool), scope)
+      const fiber = yield* Effect.forkChild(
+        Pool.use(pool, (item) => Effect.succeed(item)),
+        { startImmediately: true }
+      )
+      assert.isUndefined(fiber.pollUnsafe())
+      yield* Scope.close(scope, Exit.void)
+      strictEqual(yield* Fiber.join(fiber), "resource")
+      strictEqual(pool.state.usage, 0)
+    }))
+
+  it.effect("use reports acquire failures", () =>
+    Effect.gen(function*() {
+      const pool = yield* Pool.makeWithTTL({
+        acquire: Effect.fail("nope"),
+        min: 0,
+        max: 1,
+        timeToLive: Duration.infinity
+      })
+      const failure = yield* Effect.flip(Pool.use(pool, () => Effect.void))
+      strictEqual(failure, "nope")
+      strictEqual(pool.state.usage, 0)
+    }))
+
   it.effect("finalizer is called for failed allocations", () =>
     Effect.gen(function*() {
       const scope = yield* Scope.make()

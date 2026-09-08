@@ -1,4 +1,4 @@
-import { Channel, Data, pipe, Result } from "effect"
+import { Channel, Data, type Effect, pipe, Result } from "effect"
 import { describe, expect, it } from "tstyche"
 
 class ErrorA extends Data.TaggedError("ErrorA")<{ readonly message: string }> {}
@@ -108,5 +108,11 @@ describe("Channel.catchReasons", () => {
       )
     )
     expect(result).type.toBe<Channel.Channel<number, ErrorA | ErrorB>>()
+  })
+})
+
+describe("Channel.runCount", () => {
+  it("returns the output count", () => {
+    expect(Channel.runCount(Channel.fromIterable([1, 2, 3]))).type.toBe<Effect.Effect<number>>()
   })
 })
