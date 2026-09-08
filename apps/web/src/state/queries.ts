@@ -92,22 +92,6 @@ export function useThreadSearch(
   };
 }
 
-export function useBranches(target: VcsRefTarget) {
-  const query = target.query?.trim() ?? "";
-  return useEnvironmentQuery(
-    target.environmentId !== null && target.cwd !== null
-      ? vcsEnvironment.listRefs({
-          environmentId: target.environmentId,
-          input: {
-            cwd: target.cwd,
-            ...(query.length > 0 ? { query } : {}),
-            limit: VCS_REF_LIST_LIMIT,
-          },
-        })
-      : null,
-  );
-}
-
 export function usePaginatedBranches(target: VcsRefTarget) {
   const query = target.query?.trim() ?? "";
   const targetKey =

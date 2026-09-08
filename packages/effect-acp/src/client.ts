@@ -592,11 +592,6 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   });
 });
 
-export const layer = (
-  stdio: AcpProtocol.AcpStdio,
-  options: AcpClientOptions = {},
-): Layer.Layer<AcpClient> => Layer.effect(AcpClient, make(stdio, options));
-
 export const layerChildProcess = (
   handle: ChildProcessSpawner.ChildProcessHandle,
   options: AcpClientOptions = {},

@@ -23,7 +23,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import {
   RelayEnvironmentAuth,
   RelayEnvironmentPrincipal,
-  RelayServerGroup,
+  RelayApi,
 } from "@t3tools/contracts/relay";
 
 import {
@@ -547,7 +547,9 @@ describe("relay routing fallback", () => {
             }),
           ),
       });
-      const routes = HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayServerGroup)).pipe(
+      const routes = HttpApiBuilder.layer(
+        HttpApi.make("RelayApi").add(RelayApi.groups.server),
+      ).pipe(
         Layer.provide(serverApi.pipe(Layer.provide([publisher, signatures]))),
         Layer.provide(auth),
         Layer.provide([NodeServices.layer, NodeHttpPlatform.layer, Etag.layerWeak]),

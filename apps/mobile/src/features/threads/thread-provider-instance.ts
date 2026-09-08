@@ -24,7 +24,7 @@ export function resolveThreadProviderInstance(
   thread: EnvironmentThreadShell,
 ): ThreadRowProviderInstance | null {
   const providers = serverConfigs.get(thread.environmentId)?.providers ?? [];
-  const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const snapshot = providers.find((provider) => provider.instanceId === instanceId);
   if (!snapshot) return null;
   const entry = {

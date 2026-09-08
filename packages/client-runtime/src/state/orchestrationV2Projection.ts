@@ -164,7 +164,9 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.metadata-updated":
+    case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":

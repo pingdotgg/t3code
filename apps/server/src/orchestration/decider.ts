@@ -1,4 +1,12 @@
-import { EventId, MessageId, UserInputRequestedPayload } from "@t3tools/contracts";
+import {
+  EventId,
+  MAX_SCRIPT_ID_LENGTH,
+  SCRIPT_RUN_COMMAND_PATTERN,
+  MessageId,
+  ThreadLinkedPullRequest,
+  UserInputRequestedPayload,
+  isImportedAgentSessionMessageId,
+} from "@t3tools/contracts";
 import {
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -6,6 +14,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts/legacy-orchestration";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -32,8 +41,11 @@ import {
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
+const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
+
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
+const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -62,10 +74,8 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 // Scans the read model's activities, which the projector caps at the most
 // recent 500 plus pending async questions. Async questions remain actionable
 // while the agent works, so they must not expire with the activity window.
-function hasOpenBlockingRequest(thread: {
-  readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
-}): boolean {
-  const openRequestIds = new Set<string>();
+function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+  const requests = new Map<string, OrchestrationThreadActivity>();
   for (const activity of thread.activities) {
     const payload =
       typeof activity.payload === "object" && activity.payload !== null
@@ -74,18 +84,18 @@ function hasOpenBlockingRequest(thread: {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
     if (requestId === null) continue;
     if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
+      requests.set(requestId, activity);
     } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
+      requests.delete(requestId);
     } else if (
       (activity.kind === "provider.approval.respond.failed" ||
         activity.kind === "provider.user-input.respond.failed") &&
       isStaleRequestFailureDetail(payload)
     ) {
-      openRequestIds.delete(requestId);
+      requests.delete(requestId);
     }
   }
-  return openRequestIds.size > 0;
+  return requests;
 }
 
 /** Apply the shared shell-level rule to the detailed command read model. */
@@ -96,7 +106,7 @@ function hasQueuedTurnStartForThread(
   let latestUserMessageAt: string | null = null;
   let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
   for (const message of thread.messages) {
-    if (message.role !== "user") continue;
+    if (message.role !== "user" || isImportedAgentSessionMessageId(message.id)) continue;
     const messageAtMs = Date.parse(message.createdAt);
     latestUserMessageAtMs = Math.max(latestUserMessageAtMs, messageAtMs);
     if (messageAtMs === latestUserMessageAtMs) {
@@ -236,11 +246,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
-      yield* requireProject({
+      const project = yield* requireProject({
         readModel,
         command,
         projectId: command.projectId,
       });
+      if (command.scripts !== undefined) {
+        // Persisted IDs predate shortcut validation. Let users edit or remove them
+        // without allowing another invalid ID to enter the project.
+        const existingIds = new Set(project.scripts.map((script) => script.id));
+        for (const script of command.scripts) {
+          if (!existingIds.has(script.id) && !isScriptRunCommand(`script.${script.id}.run`)) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `Script ID '${script.id}' must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit.`,
+            });
+          }
+        }
+      }
       if (command.workspaceRoot !== undefined) {
         yield* requireActiveProjectWorkspaceRootAbsent({
           readModel,
@@ -449,10 +472,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (thread.session?.status === "starting" || thread.session?.status === "running") {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
-      // Pending approval / user-input requests are blocked-on-you work: a
-      // raced or stale client must not park them behind a settled override
-      // that would surface only after the request resolves.
-      if (hasOpenBlockingRequest(thread)) {
+      const pendingRequests = openRequests(thread);
+      // Manual settlement dismisses async questions without answering them.
+      // Native callbacks and approvals still need a response or interruption.
+      if (
+        Array.from(pendingRequests.values()).some(
+          (activity) =>
+            command.type === "thread.auto-settle" ||
+            activity.kind !== "user-input.requested" ||
+            !Predicate.isObject(activity.payload) ||
+            activity.payload.responseMode !== "message",
+        )
+      ) {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       const occurredAt = yield* nowIso;
@@ -488,6 +519,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Settling is "I'm done with this": clear states that would keep the
       // row pinned or snoozed instead of showing the new settled state.
       const companionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      for (const [requestId, request] of pendingRequests) {
+        companionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: command.threadId,
+            activity: {
+              id: EventId.make(`settle:${command.commandId}:${requestId}`),
+              kind: "user-input.resolved",
+              summary: "User input dismissed",
+              tone: "info",
+              turnId: request.turnId,
+              createdAt: occurredAt,
+              payload: { requestId, responseMode: "message" },
+            },
+          },
+        });
+      }
       if (thread.pinnedAt != null) {
         companionEvents.push({
           ...(yield* withEventBase({
@@ -574,7 +628,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // user-input request is the agent waiting on the user, and hiding it
       // defeats the request. (A running session IS snoozable — snooze only
       // affects visibility, never the agent.)
-      if (hasOpenBlockingRequest(thread)) {
+      if (openRequests(thread).size > 0) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -781,6 +835,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.active.reorder": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Snooze retains this slot. Changing it cannot wake the thread, and
+      // accepting it handles races with snooze and retained wake timestamps.
+      if (
+        thread.deletedAt !== null ||
+        thread.pinnedAt != null ||
+        thread.settledOverride === "settled"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is not active and cannot be reordered`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          activeOrderKey: command.orderKey,
+          // Arranging the list is not thread activity or a lifecycle transition.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,
@@ -827,6 +917,63 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.pull-request.sync": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} was deleted before pull request discovery`,
+        });
+      }
+      if (
+        thread.projectId !== command.projectId ||
+        thread.branch !== command.expected.branch ||
+        thread.worktreePath !== command.expected.worktreePath ||
+        !threadPullRequestLinksEqual(
+          thread.linkedPullRequest ?? null,
+          command.expected.linkedPullRequest,
+        ) ||
+        !threadPullRequestLinksEqual(
+          thread.branchPullRequest ?? null,
+          command.expected.branchPullRequest,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} changed before pull request discovery`,
+        });
+      }
+      const project = yield* requireProject({ readModel, command, projectId: command.projectId });
+      if (project.deletedAt !== null || project.workspaceRoot !== command.expected.workspaceRoot) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `project ${command.projectId} changed before pull request discovery`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          branchPullRequest: command.branchPullRequest,
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
+          updatedAt: thread.updatedAt,
         },
       };
     }
@@ -903,6 +1050,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
+      if (isImportedAgentSessionMessageId(command.message.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.message.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       const targetThread = yield* requireThread({
         readModel,
         command,
@@ -946,7 +1099,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           role: "user",
           text: command.message.text,
           attachments: command.message.attachments,
-          ...(command.message.context !== undefined ? { context: command.message.context } : {}),
           turnId: null,
           streaming: false,
           createdAt: command.createdAt,
@@ -1155,7 +1307,51 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
-    case "thread.conversation.revert":
+    case "thread.user-input.dismiss": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const request = userInputActivity;
+      if (request === undefined || request.kind !== "user-input.requested") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This question has already been answered.",
+        });
+      }
+      // Only async questions can be dropped silently. A native callback
+      // question leaves the provider blocked until it gets a reply, so it
+      // still needs an answer or an interrupted turn.
+      if (!Predicate.isObject(request.payload) || request.payload.responseMode !== "message") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This question needs an answer. Answer it or stop the turn.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: EventId.make(`async-dismiss:${command.requestId}`),
+            kind: "user-input.resolved",
+            summary: "User input dismissed",
+            tone: "info",
+            turnId: request.turnId,
+            createdAt: command.createdAt,
+            payload: { requestId: command.requestId, responseMode: "message" },
+          },
+        },
+      };
+    }
+
     case "thread.checkpoint.revert": {
       yield* requireThread({
         readModel,
@@ -1173,7 +1369,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
-          ...(command.type === "thread.conversation.revert" ? { restoreFiles: false } : {}),
           createdAt: command.createdAt,
         },
       };
@@ -1273,6 +1468,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.delta": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1300,6 +1501,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1324,6 +1531,77 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.history.import": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.messages.length > 0 ||
+        thread.latestTurn !== null ||
+        thread.session !== null ||
+        openRequests(thread).size > 0
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' must be active and empty before history can be imported.`,
+        });
+      }
+      const firstMessage = command.messages[0];
+      if (firstMessage === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Thread history imports require at least one message.",
+        });
+      }
+
+      const events: Array<PlannedOrchestrationEvent> = [];
+      for (const message of command.messages) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: message.messageId,
+            role: message.role,
+            text: message.text,
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.createdAt,
+          },
+        });
+      }
+      const settledAt = command.messages.reduce(
+        (latest, message) =>
+          compareDateTimeStrings(message.createdAt, latest) > 0 ? message.createdAt : latest,
+        firstMessage.createdAt,
+      );
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: settledAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.settled",
+        payload: {
+          threadId: command.threadId,
+          settledAt,
+          updatedAt: settledAt,
+        },
+      });
+      return events;
     }
 
     case "thread.proposed-plan.upsert": {

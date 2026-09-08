@@ -1,5 +1,6 @@
 import {
   NodeId,
+  ProviderSessionId,
   RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
@@ -67,6 +68,7 @@ describe("pending v2 questions", () => {
         createdAt: "2026-06-20T00:00:00.000Z",
         responseCapability: "message",
         responseMode: "message",
+        dismissible: true,
         questions: [
           {
             id: "next",
@@ -80,6 +82,23 @@ describe("pending v2 questions", () => {
         ],
       },
     ]);
+  });
+
+  it("only marks asynchronous questions as dismissible", () => {
+    const live = {
+      ...projection,
+      runtimeRequests: projection.runtimeRequests.map((request) => ({
+        ...request,
+        responseCapability: {
+          type: "live" as const,
+          providerSessionId: ProviderSessionId.make("live-session"),
+        },
+      })),
+      turnItems: projection.turnItems.map((item) =>
+        item.type === "user_input_request" ? { ...item, responseMode: undefined } : item,
+      ),
+    };
+    expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
   });
 
   it("removes answered requests from the composer while retaining their answers in projection data", () => {

@@ -48,7 +48,6 @@ import {
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
-  describePullRequestState,
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
