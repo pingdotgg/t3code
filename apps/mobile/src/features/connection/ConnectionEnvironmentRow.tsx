@@ -96,7 +96,7 @@ export function ConnectionEnvironmentRow(props: {
             <Text
               className={cn(
                 "text-xs",
-                hasConnectionFailure ? "text-adaptive-rose-500-400" : "text-foreground-muted",
+                hasConnectionFailure ? "text-danger-foreground" : "text-foreground-muted",
               )}
               numberOfLines={props.expanded ? undefined : 1}
               selectable={props.expanded}

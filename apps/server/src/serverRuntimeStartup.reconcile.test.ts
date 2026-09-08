@@ -151,6 +151,7 @@ it.effect("marks active running sessions that have persisted resume state", () =
           ),
         ),
       upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+      recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -169,9 +170,16 @@ it.effect("marks active running sessions that have persisted resume state", () =
   );
 });
 
-it.effect.each(["marked update", "opt-in restart"] as const)(
-  "continues %s sessions after activation with provider-specific input",
-  (recovery) =>
+it.effect.each(
+  (["marked update", "opt-in restart"] as const).flatMap((recovery) =>
+    (["current", "previous", "missing"] as const).map((persistedTurn) => ({
+      recovery,
+      persistedTurn,
+    })),
+  ),
+)(
+  "continues $recovery sessions with a $persistedTurn directory turn",
+  ({ recovery, persistedTurn }) =>
     Effect.gen(function* () {
       const codex = makeThread(
         "thread-continue-codex",
@@ -203,15 +211,22 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
               thread.id === codex.id ? providerInstanceId : fallbackProviderInstanceId,
             status: "running" as const,
             resumeCursor: { threadId: thread.id },
-            runtimePayload:
-              recovery === "marked update"
+            runtimePayload: {
+              activeTurnId:
+                thread.id === codex.id && persistedTurn !== "current"
+                  ? persistedTurn === "previous"
+                    ? "previous-provider-turn"
+                    : null
+                  : thread.session.activeTurnId,
+              ...(recovery === "marked update"
                 ? {
                     continueAfterServerUpdate:
                       thread.id === codex.id
                         ? codex.session.activeTurnId
                         : fallbackContinuationTurnId,
                   }
-                : { activeTurnId: thread.session.activeTurnId },
+                : {}),
+            },
           },
         ]),
       );
@@ -265,6 +280,7 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
                 firstMarkerCleared ? Deferred.succeed(continuationCleared, undefined) : Effect.void,
               ),
             ),
+          recordImportedTranscript: () => Effect.die("unused"),
           getProvider: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.succeed([]),
@@ -274,6 +290,12 @@ it.effect.each(["marked update", "opt-in restart"] as const)(
             Effect.as({ sequence: dispatched.length }),
           ),
       });
+      assert.isTrue(
+        dispatched.every(
+          (command) =>
+            command.type === "thread.session.set" && command.session.status === "starting",
+        ),
+      );
       yield* Deferred.await(continuationSent);
       yield* Deferred.await(continuationCleared);
 
@@ -391,6 +413,7 @@ it.effect("does not continue archived or deleted marked sessions", () => {
         );
       },
       upsert: () => Effect.void,
+      recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -446,6 +469,7 @@ it.effect("retries continuation preparation before settling a persistent failure
           }),
         ),
       upsert: () => Effect.void,
+      recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -517,6 +541,7 @@ it.effect("reconciles multiple active and archived orphans but skips live sessio
           ),
         ),
       upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+      recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -596,6 +621,7 @@ it.effect(
                   }),
                 ),
         upsert: () => Effect.fail(writeFailure),
+        recordImportedTranscript: () => Effect.die("unused"),
         getProvider: () => Effect.die("unused"),
         listThreadIds: () => Effect.die("unused"),
         listBindings: () => Effect.succeed([]),
@@ -633,6 +659,7 @@ it.effect("retries failed projections and continues after a persistent failure",
     directory: {
       getBinding: () => Effect.succeed(Option.none()),
       upsert: () => Effect.void,
+      recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -682,6 +709,7 @@ it.effect("does not fail startup when the live provider session inventory cannot
     Effect.provideService(ProviderSessionDirectory.ProviderSessionDirectory, {
       getBinding: () => Effect.die("unused"),
       upsert: () => Effect.die("unused"),
+      recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
       listBindings: () => Effect.succeed([]),
@@ -705,9 +733,7 @@ for (const scenario of [
   "stopped projection",
   "finished projection",
   "stopped binding",
-  "finished binding",
   "missing cursor",
-  "mismatched turn",
   "marked without cursor",
   "marked stopped projection",
   "marked superseded turn",
@@ -740,12 +766,7 @@ for (const scenario of [
               status: scenario === "stopped binding" ? "stopped" : "running",
               ...(scenario.includes("cursor") ? {} : { resumeCursor: { threadId: thread.id } }),
               runtimePayload: {
-                activeTurnId:
-                  scenario === "finished binding"
-                    ? null
-                    : scenario === "mismatched turn" || scenario === "marked superseded turn"
-                      ? "another-turn"
-                      : turnId,
+                activeTurnId: scenario === "marked superseded turn" ? "another-turn" : turnId,
                 ...(scenario.startsWith("marked") ? { continueAfterServerUpdate: turnId } : {}),
               },
             }),
@@ -754,6 +775,7 @@ for (const scenario of [
           Effect.sync(() => {
             upserts.push(binding);
           }),
+        recordImportedTranscript: () => Effect.die("unused"),
         getProvider: () => Effect.die("unused"),
         listThreadIds: () => Effect.die("unused"),
         listBindings: () => Effect.succeed([]),
@@ -827,6 +849,7 @@ for (const preparedStatus of [
               if (binding.status !== "starting" || sends.length === 0) return;
               yield* Deferred.succeed(cleared, undefined);
             }),
+          recordImportedTranscript: () => Effect.die("unused"),
           getProvider: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () =>
@@ -932,6 +955,7 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
           Effect.sync(() => {
             binding = next;
           }),
+        recordImportedTranscript: () => Effect.die("unused"),
         getProvider: () => Effect.die("unused"),
         listThreadIds: () => Effect.die("unused"),
         listBindings: () => Effect.succeed([]),

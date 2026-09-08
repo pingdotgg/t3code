@@ -30,10 +30,10 @@ type ConnectionLayerSource =
   | typeof mobileBackgroundActivityObserverLayer
   | typeof mobileBackgroundActivityReporterLayer;
 
-const providedClientConnectionLayer = Layer.merge(
-  Connection.layerWithOptions({ usageLimitSources: true }),
-  snapshotLoaderLayer,
-).pipe(
+const providedClientConnectionLayer = snapshotLoaderLayer.pipe(
+  Layer.provideMerge(
+    Connection.layerWithOptions({ usageLimitSources: true, usageLimitsCommand: true }),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(
       runtimeContextLayer,

@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `forecast:QueryWhatIfForecast` on `*`. Provide the
  * implementation with `Effect.provide(AWS.Forecast.QueryWhatIfForecastHttp)`.
  *
- * @binding
- * @section Querying Forecasts
- * @example Compare a Scenario
+ * ### Querying Forecasts
+ * **Example:** Compare a Scenario
  * ```typescript
  * // init
  * const queryWhatIfForecast = yield* AWS.Forecast.QueryWhatIfForecast();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *   Filters: { item_id: "sku_1234" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface QueryWhatIfForecast extends Binding.Service<
   QueryWhatIfForecast,

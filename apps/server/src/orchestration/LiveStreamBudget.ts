@@ -6,8 +6,8 @@ import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-export const LIVE_STREAM_MAX_ITEMS = 1_000;
-export const LIVE_STREAM_MAX_SERIALIZED_BYTES = 8 * 1024 * 1024;
+const LIVE_STREAM_MAX_ITEMS = 1_000;
+const LIVE_STREAM_MAX_SERIALIZED_BYTES = 8 * 1024 * 1024;
 
 export interface RetainedLiveItem<A> {
   readonly value: A;
@@ -93,7 +93,7 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
       return Effect.succeed(item);
     });
 
-  // Replace one coalescing batch atomically. Both raw and projected payloads
+  // Replace one coalescing batch atomically. Queued and coalesced payloads
   // count against the same budget, and discarded updates release their charge.
   const replace = <A extends object>(
     previous: ReadonlyArray<RetainedLiveItem<unknown>>,

@@ -51,6 +51,7 @@
     "@expo/metro-runtime": "~57.0.14",
     "@expo/ui": "~57.0.14",
     "@legendapp/list": "catalog:",
+    "@material/material-color-utilities": "0.3.0",
     "@noble/curves": "catalog:",
     "@pierre/diffs": "catalog:",
     "@react-native-ai/apple": "0.12.0",
@@ -128,6 +129,7 @@
     "@effect/vitest": "catalog:",
     "@pierre/trees": "1.0.0-beta.4",
     "@types/react": "~19.2.0",
+    "@types/react-dom": "~19.2.3",
     "babel-preset-expo": "~57.0.9",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"

@@ -1,3 +1,4 @@
+import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
   EditorId,
@@ -18,7 +19,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe2 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -47,7 +48,6 @@ import { buildFileReviewComment } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
-import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
@@ -72,9 +72,8 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
-import { FileSaveCoordinator } from "./fileSaveCoordinator";
+import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
-  confirmProjectFileQueryData,
   getOptimisticProjectFileQueryData,
   setProjectFileQueryData,
   useProjectFileQuery,
@@ -101,7 +100,6 @@ interface FilePreviewPanelProps {
 const FILE_EXPLORER_STORAGE_KEY = "t3code.fileExplorerOpen";
 const RENDER_MARKDOWN_STORAGE_KEY = "t3code.renderMarkdown";
 const RENDER_BROWSER_FILE_STORAGE_KEY = "t3code.renderBrowserFile";
-const FILE_SAVE_DEBOUNCE_MS = 500;
 const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
@@ -201,7 +199,7 @@ function WorkspaceImagePreview(props: {
     </div>
   ) : (
     <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-      <LoaderCircle className="size-5 animate-spin" />
+      <Spinner className="size-5" />
     </div>
   );
 }
@@ -255,7 +253,7 @@ function AttachmentBrowserPreview(props: {
   if (assetUrl._tag !== "Success") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-        <LoaderCircle className="size-5 animate-spin" />
+        <Spinner className="size-5" />
       </div>
     );
   }
@@ -311,7 +309,7 @@ function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag !== "Success") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-        <LoaderCircle className="size-5 animate-spin" />
+        <Spinner className="size-5" />
       </div>
     );
   }
@@ -611,37 +609,6 @@ interface EditableFileSurfaceProps {
 interface FileSelectionOverride {
   revealRequestId: number;
   range: SelectedLineRange | null;
-}
-
-function useFileSaveCoordinator({
-  environmentId,
-  cwd,
-  relativePath,
-  onPendingChange,
-}: Pick<
-  EditableFileSurfaceProps,
-  "environmentId" | "cwd" | "relativePath" | "onPendingChange"
->): FileSaveCoordinator {
-  const writeFile = useAtomCommand(projectEnvironment.writeFile);
-  const coordinator = useMemo(
-    () =>
-      new FileSaveCoordinator({
-        debounceMs: FILE_SAVE_DEBOUNCE_MS,
-        onPendingChange: (pending) => onPendingChange(relativePath, pending),
-        persist: (nextContents) =>
-          writeFile({
-            environmentId,
-            input: { cwd, relativePath, contents: nextContents },
-          }),
-        onConfirmed: (confirmedContents) => {
-          confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents);
-        },
-      }),
-    [cwd, environmentId, onPendingChange, relativePath, writeFile],
-  );
-
-  useEffect(() => () => coordinator.dispose(), [coordinator]);
-  return coordinator;
 }
 
 function EditableFileSurface({
@@ -1296,11 +1263,15 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data === null ? (
             <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-              <LoaderCircle className="size-5 animate-spin" />
+              <Spinner className="size-5" />
             </div>
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
+              // Markdown reconciles in place across text updates, so a file
+              // switch needs a new key or the previous file's disclosure and
+              // wrap state carries into the next document.
               <RenderedMarkdownSurface
+                key={relativePath}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}

@@ -14,6 +14,7 @@ import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -22,6 +23,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -654,6 +656,24 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("skips a disabled provider instance when picking the text generation fallback", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      // The Providers UI writes providerInstances only, so the legacy providers
+      // map decodes to defaults where codex is enabled and listed first.
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"codex":{"driver":"codex","enabled":false,"config":{}}}}',
+      );
+
+      const settings = yield* serverSettings.getSettings;
+
+      assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("keeps unused providers disabled in existing sparse settings files", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;
@@ -1039,6 +1059,128 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("keeps the inline value on disk when secret migration fails", () => {
+    const cause = new ServerSecretStore.SecretStorePersistError({
+      resource: "provider environment secret",
+      cause: new Error("Secret storage unavailable"),
+    });
+    const secretLayer = Layer.effect(
+      ServerSecretStore.ServerSecretStore,
+      Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
+        ...store,
+        set: () => Effect.fail(cause),
+      })),
+    ).pipe(Layer.provide(ServerSecretStore.layer));
+    const settingsLayer = ServerSettingsModule.layer.pipe(
+      Layer.provide(secretLayer),
+      Layer.provideMerge(Layer.fresh(SqlitePersistenceMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3code-inline-secret-failure-test-",
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const original =
+        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}';
+      yield* fs.writeFileString(config.settingsPath, original);
+      const error = yield* Effect.flip(
+        service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true }],
+              config: {},
+            },
+          },
+        }),
+      );
+      assert.equal(error.operation, "write-secret");
+      assert.strictEqual(error.cause, cause);
+      assert.equal(yield* fs.readFileString(config.settingsPath), original);
+      const settings = yield* service.getSettings;
+      assert.equal(
+        settings.providerInstances[instanceId]?.environment?.[0]?.value,
+        "inline-test-token",
+      );
+    }).pipe(Effect.provide(settingsLayer));
+  });
+
+  for (const { label, variable, expected, duplicate } of [
+    {
+      label: "preserves an inline secret on a redacted settings save",
+      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+      expected: "inline-test-token",
+    },
+    {
+      label: "preserves the effective last inline secret when names are duplicated",
+      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+      expected: "last-inline-test-token",
+      duplicate: true,
+    },
+    {
+      label: "replaces an inline secret with an explicit value",
+      variable: { name: "API_TOKEN", value: "replacement-test-token", sensitive: true },
+      expected: "replacement-test-token",
+    },
+    {
+      label: "clears an inline secret with an explicit empty value",
+      variable: { name: "API_TOKEN", value: "", sensitive: true },
+      expected: "",
+    },
+  ]) {
+    it.effect(label, () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          duplicate
+            ? '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true},{"name":"API_TOKEN","value":"last-inline-test-token","sensitive":true}],"config":{}}}}'
+            : '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}',
+        );
+        const initial = yield* serverSettings.getSettings;
+        assert.equal(
+          initial.providerInstances[instanceId]?.environment?.[0]?.value,
+          "inline-test-token",
+        );
+
+        const next = yield* serverSettings.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              displayName: "Renamed provider",
+              environment: duplicate ? [variable, variable] : [variable],
+              config: {},
+            },
+          },
+        });
+        assert.equal(next.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        assert.notInclude(raw, "inline-test-token");
+        assert.notInclude(raw, "replacement-test-token");
+
+        const reloaded = yield* Effect.gen(function* () {
+          const fresh = yield* ServerSettingsModule.ServerSettingsService;
+          return yield* fresh.getSettings;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+          ),
+        );
+        assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    );
+  }
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -1100,6 +1242,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("materializes provider secrets for terminal environment resolution", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("codex_terminal");
+
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [
+              { name: "OPENROUTER_API_KEY", value: "sk-terminal-secret", sensitive: true },
+            ],
+            config: { homePath: "~/.codex-terminal" },
+          },
+        },
+      });
+
+      const environment = yield* resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: instanceId,
+        env: undefined,
+      });
+      const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+
+      assert.equal(environment.OPENROUTER_API_KEY, "sk-terminal-secret");
+      assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
+      assert.notInclude(persisted, "sk-terminal-secret");
+      assert.include(persisted, '"valueRedacted": true');
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

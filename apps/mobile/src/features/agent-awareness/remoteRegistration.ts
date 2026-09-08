@@ -54,7 +54,7 @@ const AgentAwarenessOperation = Schema.Literals([
   "prime-live-activity",
 ]);
 
-export class AgentAwarenessOperationError extends Schema.TaggedErrorClass<AgentAwarenessOperationError>()(
+export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwarenessOperationError>()(
   "AgentAwarenessOperationError",
   {
     operation: AgentAwarenessOperation,
@@ -137,16 +137,6 @@ export function mergeAgentAwarenessRegistrationPreferences(
   override: Partial<Preferences> | undefined,
 ): Preferences {
   return { ...stored, ...override };
-}
-
-export function normalizeAgentAwarenessRelayBaseUrl(
-  value: string | null | undefined,
-): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed.replace(/\/+$/g, "");
 }
 
 function readRelayConfig(): { readonly url: string } | null {

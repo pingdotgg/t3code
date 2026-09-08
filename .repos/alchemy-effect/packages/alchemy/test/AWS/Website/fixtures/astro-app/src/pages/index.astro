@@ -1,0 +1,22 @@
+---
+// On-demand SSR: interpolates request state so the page can never be
+// prerendered into a static file by accident.
+const marker = "ASTRO_AWS_PAGE_MARKER";
+const host = Astro.url.host;
+const method = Astro.request.method;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Astro AWS Fixture</title>
+  </head>
+  <body>
+    <h1>Astro AWS Fixture</h1>
+    <p id="mode">on-demand</p>
+    <p id="marker">{marker}</p>
+    <p id="host">{host}</p>
+    <p id="method">{method}</p>
+    <p><a href="/prerendered/">prerendered</a></p>
+  </body>
+</html>

@@ -299,7 +299,7 @@ function CloudEnvironmentRowShell(props: {
       traceId: props.connectionErrorTraceId,
     });
   const statusClassName = props.connectionError
-    ? "text-adaptive-rose-500-400"
+    ? "text-danger-foreground"
     : "text-foreground-muted";
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;

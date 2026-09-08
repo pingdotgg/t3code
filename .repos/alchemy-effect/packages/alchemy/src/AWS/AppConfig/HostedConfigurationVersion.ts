@@ -57,9 +57,8 @@ export interface HostedConfigurationVersion extends Resource<
  * change to the content produces a new version (a replacement), and its
  * `versionNumber` is what you deploy through a {@link Deployment}.
  *
- * @resource
- * @section Creating a Hosted Configuration Version
- * @example JSON Configuration
+ * ### Creating a Hosted Configuration Version
+ * **Example:** JSON Configuration
  * ```typescript
  * const version = yield* AppConfig.HostedConfigurationVersion("V1", {
  *   applicationId: app.applicationId,
@@ -69,6 +68,8 @@ export interface HostedConfigurationVersion extends Resource<
  * });
  * // version.versionNumber -> 1
  * ```
+ *
+ * @resource
  */
 export const HostedConfigurationVersion = Resource<HostedConfigurationVersion>(
   "AWS.AppConfig.HostedConfigurationVersion",

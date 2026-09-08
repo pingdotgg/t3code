@@ -98,10 +98,11 @@ function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
 function themeHalvesSignature(halves: ThemeHalves | null): string {
   return `${halves?.light ?? ""}|${halves?.dark ?? ""}`;
 }
+
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
 
-export class ThemeStorageError extends Schema.TaggedErrorClass<ThemeStorageError>()(
+export class ThemeStorageError extends Schema.TaggedError<ThemeStorageError>()(
   "ThemeStorageError",
   {
     operation: Schema.Literals(["read", "write"]),
@@ -117,7 +118,7 @@ export class ThemeStorageError extends Schema.TaggedErrorClass<ThemeStorageError
 
 export const isThemeStorageError = Schema.is(ThemeStorageError);
 
-export class DesktopThemeSyncError extends Schema.TaggedErrorClass<DesktopThemeSyncError>()(
+export class DesktopThemeSyncError extends Schema.TaggedError<DesktopThemeSyncError>()(
   "DesktopThemeSyncError",
   {
     theme: ThemePreference,
@@ -322,7 +323,9 @@ export function syncBrowserChromeTheme() {
 function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview = true } = {}) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   // Keep the editor's draft visible until an explicit refresh restores the selection.
-  if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) return;
+  if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) {
+    return;
+  }
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
@@ -349,8 +352,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     themeHalves,
   );
   applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
-  const isDark = resolvedAppearance === "dark";
-  document.documentElement.classList.toggle("dark", isDark);
+  document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);

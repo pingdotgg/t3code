@@ -61,16 +61,15 @@ export interface DatasetGroup extends Resource<
  * expensive training work lives in predictors and forecasts provisioned
  * separately.
  *
- * @resource
- * @section Creating a Dataset Group
- * @example Custom Dataset Group
+ * ### Creating a Dataset Group
+ * **Example:** Custom Dataset Group
  * ```typescript
  * const group = yield* Forecast.DatasetGroup("Sales", {
  *   domain: "CUSTOM",
  * });
  * ```
  *
- * @example Dataset Group with Attached Datasets
+ * **Example:** Dataset Group with Attached Datasets
  * ```typescript
  * const group = yield* Forecast.DatasetGroup("Sales", {
  *   domain: "RETAIL",
@@ -78,6 +77,8 @@ export interface DatasetGroup extends Resource<
  *   tags: { team: "planning" },
  * });
  * ```
+ *
+ * @resource
  */
 export const DatasetGroup = Resource<DatasetGroup>("AWS.Forecast.DatasetGroup");
 

@@ -450,7 +450,90 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     background-repeat: no-repeat;
     background-clip: text;
     animation: live-tool-shine 2.2s steps(30) infinite;
+    animation-play-state: var(--visible-animation-state, paused);
   }
+}
+
+@utility visible-animate-spin {
+  animation: var(--animate-spin);
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+}
+
+@keyframes live-activity-focus {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes live-activity-focus-counter {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@utility live-activity-focus {
+  --live-activity-focus-width: 4.5rem;
+
+  right: auto;
+  left: calc(-1 * var(--live-activity-focus-width));
+  width: calc(100% + var(--live-activity-focus-width) + var(--live-activity-focus-width));
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  -webkit-mask-repeat: no-repeat;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    rgb(0 0 0 / 12%) 0.675rem,
+    rgb(0 0 0 / 55%) 1.575rem,
+    black 2.25rem,
+    rgb(0 0 0 / 55%) 2.925rem,
+    rgb(0 0 0 / 12%) 3.825rem,
+    transparent var(--live-activity-focus-width),
+    transparent 100%
+  );
+  mask-repeat: no-repeat;
+  animation: live-activity-focus 2.2s linear infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    animation: none;
+    opacity: 0;
+    will-change: auto;
+  }
+}
+
+@utility live-activity-focus-counter {
+  width: 100%;
+  animation: live-activity-focus-counter 2.2s linear infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+@utility live-activity-focus-aligned {
+  width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
+  margin-left: var(--live-activity-focus-width);
 }
 
 @property --assistant-citation-highlight-opacity {
@@ -526,6 +609,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer components {
+  /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
+     expose their final layout immediately, otherwise each animation frame
+     restarts the parent's transition and the dialog trails behind its content. */
+  [data-slot="animated-height"] [data-slot="collapsible-panel"] {
+    height: auto !important;
+    transition: none !important;
+  }
+
+  [data-slot="animated-height"] [data-slot="collapsible-panel"][data-closed] {
+    display: none;
+  }
+
   /* Each maintainer palette gives the same line art its own material: rose
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage
@@ -1302,9 +1397,7 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   }
 }
 
-/* Contrast stays in ordinary custom properties so both Tailwind utilities and
-   global/imperative chrome styles resolve the same adjusted role. Redeclare on
-   the sidebar because it owns a local semantic palette. */
+/* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
 [data-app-sidebar] {
   --contrast-toolbar-foreground: color-mix(
@@ -1508,6 +1601,16 @@ code {
 /* Window drag region (frameless titlebar) */
 .drag-region {
   -webkit-app-region: drag;
+}
+
+/* Electron 44 inherits app-region. Reset children to the initial value so they
+   do not add drag rectangles over fixed controls. Explicit `none` is treated
+   as `no-drag` and breaks titlebar dragging; `initial` emits no rectangle.
+   The base layer lets explicit drag/no-drag utilities take precedence. */
+@layer base {
+  .drag-region > * {
+    -webkit-app-region: initial;
+  }
 }
 
 .drag-region button,
@@ -1832,6 +1935,17 @@ code {
   }
 }
 
+/* Expanded capture preview swaps between the screenshot and its extracted text.
+   One-shot fade on whichever panel mounts, so nothing repaints continuously. */
+@keyframes snap-shot-contents-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes provider-update-pill-countdown {
   from {
     transform: scaleX(1);
@@ -1935,5 +2049,20 @@ code {
 
   .preview-loading-progress[data-loading="true"] {
     transform: scaleX(0.9);
+  }
+}
+
+/* Let the sortable rows open label clearance before painting the dividers.
+   This runs once per pickup; rows retain dnd-kit's normal 200ms transitions. */
+.sidebar-drag-boundary-label {
+  animation: sidebar-drag-label-reveal 200ms step-end;
+}
+
+@keyframes sidebar-drag-label-reveal {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
   }
 }

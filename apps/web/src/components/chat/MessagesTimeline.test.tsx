@@ -1,9 +1,17 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
-import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
-import { createRef, type ReactNode, type Ref } from "react";
+import {
+  ApprovalRequestId,
+  CheckpointRef,
+  EnvironmentId,
+  MessageId,
+  TurnId,
+} from "@t3tools/contracts";
+import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
+import { useComposerFocusState } from "./useComposerFocusState";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -181,11 +189,11 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
-    turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaries: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
-    revertTurnCountByUserMessageId: new Map(),
-    onRevertUserMessage: () => {},
+    supportsConversationRollback: false,
+    onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
@@ -236,61 +244,212 @@ function buildAssistantTimelineEntry(text: string) {
   };
 }
 
+function buildSnapShotTimelineEntry(previewUrl?: string) {
+  const entry = buildUserTimelineEntry("First prompt.");
+  return {
+    ...entry,
+    message: {
+      ...entry.message,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "attachment-1",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+          ...(previewUrl ? { previewUrl } : {}),
+          source: {
+            kind: "snap-shot" as const,
+            capturedAt: "2026-03-17T19:12:28.000Z",
+            appName: "Terminal",
+            windowTitle: "t3code — Tests",
+            appIconDataUrl: "data:image/png;base64,aWNvbg==",
+          },
+        },
+      ],
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
-  it("renders a feedback command and its pending response as normal thread messages", () => {
-    const submission = {
-      id: MessageId.make("feedback-command"),
-      command: "/feedback The agent stopped early.",
-      createdAt: MESSAGE_CREATED_AT,
-      status: "uploading" as const,
+  it("renders previous and next controls with the minimap", () => {
+    const first = buildUserTimelineEntry("First turn");
+    const secondBase = buildUserTimelineEntry("Second turn");
+    const second = {
+      ...secondBase,
+      id: "entry-2",
+      message: {
+        ...secondBase.message,
+        id: MessageId.make("message-2"),
+      },
     };
-    const messages = [
-      codexFeedbackMessage(submission),
-      codexFeedbackMessage(submission, "assistant"),
-    ];
     const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={messages.map((message) => ({
-          id: message.id,
-          kind: "message" as const,
-          createdAt: message.createdAt,
-          message,
-        }))}
-      />,
+      <MessagesTimeline {...buildProps()} timelineEntries={[first, second]} />,
     );
 
-    expect(markup).toContain("/feedback The agent stopped early.");
-    expect(markup).toContain("Sending feedback to OpenAI...");
+    expect(markup).toContain('aria-label="Previous turn"');
+    expect(markup).toContain('aria-label="Next turn"');
   });
 
-  it("renders the returned Codex thread ID in the feedback response", () => {
-    const submission = {
-      id: MessageId.make("feedback-command"),
-      command: "/feedback The agent stopped early.",
-      createdAt: MESSAGE_CREATED_AT,
-      status: "sent" as const,
-      feedbackId: "codex-thread-1",
-    };
-    const messages = [
-      codexFeedbackMessage(submission),
-      codexFeedbackMessage(submission, "assistant"),
-    ];
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={messages.map((message) => ({
-          id: message.id,
-          kind: "message" as const,
-          createdAt: message.createdAt,
-          message,
-        }))}
-      />,
-    );
+  // Expanding history uses this suite's existing test renderer, deprecated in
+  // React 19. Migrate these interaction tests together when a DOM test setup is added.
+  it.each([{}, { text: "Text-only answer", file: "Answer with a file" }])(
+    "renders attachment-only question history alongside text answers: %j",
+    async (answers) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={[
+                {
+                  id: "answer-entry",
+                  kind: "work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  entry: {
+                    id: "answer-work",
+                    createdAt: MESSAGE_CREATED_AT,
+                    label: "Question answer submitted",
+                    tone: "info",
+                    questionAnswer: {
+                      requestId: ApprovalRequestId.make("question-request"),
+                      answers,
+                      questionTextById: { file: "Provide a spec", image: "Provide a screenshot" },
+                      attachmentsByQuestionId: {
+                        file: [
+                          {
+                            type: "file",
+                            id: "spec",
+                            name: "spec.txt",
+                            mimeType: "text/plain",
+                            sizeBytes: 4,
+                          },
+                        ],
+                        image: [
+                          {
+                            type: "image",
+                            id: "shot",
+                            name: "shot.png",
+                            mimeType: "image/png",
+                            sizeBytes: 4,
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              ]}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        await act(() => toggle.props.onClick());
+        const markup = JSON.stringify(renderer!.toJSON());
+        expect(markup.match(/Provide a spec/g)).toHaveLength(1);
+        expect(markup.match(/spec\.txt/g)).toHaveLength(1);
+        expect(markup).toContain("Provide a screenshot");
+        expect(markup).toContain("shot.png");
+        for (const answer of Object.values(answers)) expect(markup).toContain(answer);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
 
-    expect(markup).toContain("Feedback sent to OpenAI.");
-    expect(markup).toContain("codex-thread-1");
-  });
+  it.each([
+    { toolLifecycleStatus: "inProgress", isAtEnd: true },
+    { toolLifecycleStatus: "inProgress", isAtEnd: false },
+    { toolLifecycleStatus: "completed", isAtEnd: true },
+    { toolLifecycleStatus: "completed", isAtEnd: false },
+  ] as const)(
+    "restores the composer after closing $toolLifecycleStatus tool output only at the end: $isAtEnd",
+    async ({ toolLifecycleStatus, isAtEnd }) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const props = buildProps();
+      let timelineIsAtEnd = isAtEnd;
+      props.listRef.current = {
+        getState: () => ({ isAtEnd: timelineIsAtEnd }),
+        getScrollableNode: () => null,
+      } as unknown as LegendListRef;
+      let isResting = false;
+      let composerState: ReturnType<typeof useComposerFocusState> | undefined;
+      function ThreadProbe() {
+        const composer = useComposerFocusState();
+        useLayoutEffect(() => {
+          composerState = composer;
+          isResting = shouldUseRestingComposerLayout({
+            isExistingThread: true,
+            isMobileViewport: false,
+            isScrollCollapsed: composer.isComposerScrollCollapsed,
+            hasExpandedChrome: false,
+            hasMultilinePrompt: false,
+            timelineOverflows: true,
+          });
+        });
+        return (
+          <MessagesTimeline
+            {...props}
+            isWorking={toolLifecycleStatus === "inProgress"}
+            onToolOutputCollapsedAtEnd={composer.restoreAfterTimelineReachedEnd}
+            timelineEntries={[
+              {
+                id: "running-tool",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "running-tool",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "Run command",
+                  tone: "tool",
+                  toolLifecycleStatus,
+                  detail: "Command output",
+                },
+              },
+            ]}
+          />
+        );
+      }
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(<ThreadProbe />);
+        });
+        // The user scrolled up to read, so the composer is resting.
+        await act(() => composerState!.setIsComposerScrollCollapsed(true));
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        await act(() => toggle.props.onClick());
+        await flushFrame();
+        await flushFrame();
+        expect(isResting).toBe(true);
+
+        timelineIsAtEnd = false;
+        await act(() => toggle.props.onClick());
+        await flushFrame();
+        timelineIsAtEnd = isAtEnd;
+        await flushFrame();
+        expect(isResting).toBe(!isAtEnd);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
 
   it("renders elapsed time for a completed turn", () => {
     const turnId = TurnId.make("turn-with-fold");
@@ -357,22 +516,17 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
-        turnDiffSummaryByAssistantMessageId={
-          new Map([
-            [
-              assistantMessageId,
-              {
-                turnId,
-                checkpointTurnCount: 1,
-                checkpointRef: CheckpointRef.make("checkpoint-with-files"),
-                status: "ready",
-                files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-                assistantMessageId,
-                completedAt: MESSAGE_CREATED_AT,
-              },
-            ],
-          ])
-        }
+        turnDiffSummaries={[
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("checkpoint-with-files"),
+            status: "ready",
+            files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+            assistantMessageId,
+            completedAt: MESSAGE_CREATED_AT,
+          },
+        ]}
       />,
     );
 
@@ -389,6 +543,7 @@ describe("MessagesTimeline", () => {
     const {
       resolveTimelineIsAtEnd,
       resolveTimelineMinimapHasPersistentGutter,
+      resolveTimelineMinimapCurrentIndex,
       resolveTimelineMinimapHeightStyle,
       resolveTimelineMinimapHitStripWidth,
       resolveTimelineMinimapIndexFromPointer,
@@ -448,6 +603,35 @@ describe("MessagesTimeline", () => {
         pointerY: 999,
       }),
     ).toBe(100);
+    expect(
+      resolveTimelineMinimapCurrentIndex({
+        scrollTop: 100,
+        scrollBottom: 500,
+        itemBounds: [
+          { top: 80, height: 20 },
+          { top: 120, height: 20 },
+          { top: 220, height: 20 },
+        ],
+      }),
+    ).toBe(1);
+    expect(
+      resolveTimelineMinimapCurrentIndex({
+        scrollTop: 150,
+        scrollBottom: 200,
+        itemBounds: [
+          { top: 80, height: 20 },
+          { top: 120, height: 20 },
+          { top: 220, height: 20 },
+        ],
+      }),
+    ).toBe(1);
+    expect(
+      resolveTimelineMinimapCurrentIndex({
+        scrollTop: 0,
+        scrollBottom: 50,
+        itemBounds: [{ top: 80, height: 20 }],
+      }),
+    ).toBeNull();
     expect(resolveTimelineMinimapHasPersistentGutter(832)).toBe(false);
     expect(resolveTimelineMinimapHasPersistentGutter(863)).toBe(false);
     expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
@@ -473,6 +657,75 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(0, true)).toBe("22rem");
     expect(resolveTimelineMinimapInteractiveWidth(14, true)).toBe("22rem");
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
+  });
+
+  it("anchors the first user message using its measured height", () => {
+    const onAnchorReady = vi.fn();
+    const firstEntry = buildSnapShotTimelineEntry("data:image/png;base64,iVBORw0KGgo=");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={firstEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        contentInsetEndAdjustment={144}
+        timelineEntries={[firstEntry]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="0"');
+    expect(markup).toContain('data-anchor-offset="24"');
+    expect(markup).not.toContain("data-anchor-max-size=");
+    expect(markup).toContain('data-content-inset-end="144"');
+    expect(markup).toContain("[overflow-anchor:none]");
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-visible-content-position="object"');
+    expect(markup).toContain('data-maintain-visible-content-position-data="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-size="true"');
+    expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
+    expect(markup).toContain("Terminal");
+    expect(markup).toContain("t3code — Tests");
+    expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
+    expect(markup).toContain("h-28 w-52 max-w-full");
+    expect(markup).not.toContain("col-span-2");
+    expect(onAnchorReady).toHaveBeenCalledOnce();
+    expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
+  });
+
+  it("does not render window details before the preview URL resolves", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildSnapShotTimelineEntry()]} />,
+    );
+
+    expect(markup).toContain("screenshot.png");
+    expect(markup).not.toContain("Terminal");
+    expect(markup).not.toContain("t3code — Tests");
+    expect(markup).not.toContain('src="data:image/png;base64,aWNvbg=="');
+    expect(markup).not.toContain("h-28 w-52 max-w-full");
+  });
+
+  it("does not reserve end space for a follow-up user message", () => {
+    const onAnchorReady = vi.fn();
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={secondEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        timelineEntries={[firstEntry, secondEntry]}
+      />,
+    );
+
+    expect(markup).not.toContain("data-anchor-index=");
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(onAnchorReady).not.toHaveBeenCalled();
   });
 
   it("gives browser documents separate preview and download controls", () => {

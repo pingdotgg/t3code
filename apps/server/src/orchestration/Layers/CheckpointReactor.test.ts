@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   CommandId,
+  CheckpointRef,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -291,6 +292,7 @@ describe("CheckpointReactor", () => {
   async function createHarness(options?: {
     readonly hasSession?: boolean;
     readonly seedFilesystemCheckpoints?: boolean;
+    readonly initializeGit?: boolean;
     readonly projectWorkspaceRoot?: string;
     readonly threadWorktreePath?: string | null;
     readonly threadBranch?: string | null;
@@ -300,8 +302,12 @@ describe("CheckpointReactor", () => {
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
+    readonly pullRequestRefresh?: Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
+    if (options?.initializeGit === false) {
+      NodeFS.rmSync(NodePath.join(cwd, ".git"), { recursive: true });
+    }
     tempDirs.push(cwd);
     const provider = createProviderServiceHarness(
       cwd,
@@ -352,7 +358,7 @@ describe("CheckpointReactor", () => {
       refreshPullRequestStatus: (cwd: string) =>
         Effect.sync(() => {
           options?.pullRequestRefreshCalls?.push(cwd);
-        }).pipe(Effect.as(null)),
+        }).pipe(Effect.andThen(options?.pullRequestRefresh ?? Effect.void), Effect.as(null)),
       streamStatus: () => Stream.empty,
     });
 
@@ -667,6 +673,167 @@ describe("CheckpointReactor", () => {
     }),
   );
 
+  effectIt.effect.each(["turn.completed", "turn.aborted"] as const)(
+    "captures every edit after a mid-turn diff update on %s",
+    (terminalEventType) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({ seedFilesystemCheckpoints: false }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const turnId = asTurnId("turn-1");
+        const assistantMessageId = MessageId.make("assistant:mid-turn");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-mid-turn-running"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("evt-mid-turn-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.baseline.captured",
+        });
+
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, "early.ts"), "export const early = 1;\n");
+        yield* harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make("cmd-mid-turn-diff"),
+          threadId,
+          turnId,
+          completedAt: createdAt,
+          checkpointRef: CheckpointRef.make("provider-diff:mid-turn"),
+          assistantMessageId,
+          status: "missing",
+          files: [],
+          checkpointTurnCount: 1,
+          createdAt,
+        });
+        yield* Effect.promise(harness.drain);
+
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, "late.ts"), "export const late = 2;\n");
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-mid-turn-settled"),
+          threadId,
+          session: {
+            threadId,
+            status: terminalEventType === "turn.aborted" ? "interrupted" : "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        harness.provider.emit({
+          eventId: EventId.make("evt-mid-turn-complete"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId,
+          ...(terminalEventType === "turn.completed"
+            ? { type: "turn.completed", payload: { state: "completed" } }
+            : { type: "turn.aborted", payload: { reason: "Interrupted by user." } }),
+        });
+        yield* Effect.promise(harness.drain);
+        expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 1))).toBe(true);
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId,
+          checkpointTurnCount: 1,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "turn.processing.quiesced",
+          turnId,
+        });
+        yield* Effect.promise(harness.drain);
+        const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.checkpoints).toHaveLength(1);
+        expect(thread?.checkpoints[0]?.status).toBe("ready");
+        expect(thread?.latestTurn?.state).toBe(
+          terminalEventType === "turn.aborted" ? "interrupted" : "completed",
+        );
+        expect(thread?.checkpoints[0]?.assistantMessageId).toBe(assistantMessageId);
+        expect(thread?.checkpoints[0]?.files.map((file) => file.path)).toEqual([
+          "early.ts",
+          "late.ts",
+        ]);
+        expect(
+          gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "late.ts"),
+        ).toBe("export const late = 2;\n");
+
+        const followUpTurnId = asTurnId("turn-2");
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("evt-follow-up-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: followUpTurnId,
+        });
+        harness.provider.emit({
+          type: "turn.completed",
+          eventId: EventId.make("evt-follow-up-complete"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: followUpTurnId,
+          payload: { state: "completed" },
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId: followUpTurnId,
+          checkpointTurnCount: 2,
+        });
+        const followUp = (yield* Effect.promise(harness.readModel)).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(
+          followUp?.checkpoints.find((checkpoint) => checkpoint.turnId === followUpTurnId),
+        ).toMatchObject({ checkpointTurnCount: 2, files: [] });
+      }),
+  );
+
+  it("does not capture an aborted turn without a matching start or active session", async () => {
+    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    harness.provider.emit({
+      type: "turn.aborted",
+      eventId: EventId.make("evt-untracked-abort"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-untracked"),
+      payload: { reason: "Interrupted before the turn started." },
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === "thread-1");
+    expect(thread?.checkpoints).toEqual([]);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(false);
+  });
+
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
     const harness = await createHarness({
@@ -712,6 +879,49 @@ describe("CheckpointReactor", () => {
 
     expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
   });
+
+  effectIt.effect("captures files while the pull request lookup is still pending", () =>
+    Effect.gen(function* () {
+      const lookupStarted = yield* Deferred.make<void>();
+      const finishLookup = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          seedFilesystemCheckpoints: false,
+          threadBranch: "t3code/feature",
+          localStatusRefName: "t3code/feature",
+          pullRequestRefresh: Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishLookup)),
+          ),
+        }),
+      );
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "completed turn\n");
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-turn-completed-slow-pr"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-slow-pr"),
+        payload: { state: "completed" },
+      });
+
+      yield* Deferred.await(lookupStarted);
+      yield* Effect.gen(function* () {
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId: "turn-slow-pr",
+        });
+        expect(
+          gitShowFileAtRef(
+            harness.cwd,
+            checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+            "README.md",
+          ),
+        ).toBe("completed turn\n");
+      }).pipe(Effect.ensuring(Deferred.succeed(finishLookup, undefined)));
+      yield* Effect.promise(harness.drain);
+    }),
+  );
 
   it("re-asks for the pull request after adopting a drifted checkout", async () => {
     const pullRequestRefreshCalls: string[] = [];
@@ -792,23 +1002,22 @@ describe("CheckpointReactor", () => {
     expect(thread?.branch).toBe("t3code/renamed-by-agent");
   });
 
-  it("does not adopt a drifted checkout when the worktree is shared by another thread", async () => {
+  it("follows a checkout from a saved placeholder branch and refreshes its pull request", async () => {
     const pullRequestRefreshCalls: string[] = [];
     const harness = await createHarness({
       seedFilesystemCheckpoints: false,
-      threadBranch: "t3code/original-branch",
-      localStatusRefName: "t3code/renamed-by-agent",
-      secondThreadSharingWorktree: true,
+      threadBranch: "t3code/fd9cbe0e",
+      localStatusRefName: "fix/mobile-tool-detail-expansion",
       pullRequestRefreshCalls,
     });
 
     harness.provider.emit({
       type: "turn.completed",
-      eventId: EventId.make("evt-turn-completed-branch-drift-shared"),
+      eventId: EventId.make("evt-turn-completed-placeholder-drift"),
       provider: ProviderDriverKind.make("codex"),
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId: ThreadId.make("thread-1"),
-      turnId: asTurnId("turn-branch-drift-shared"),
+      turnId: asTurnId("turn-placeholder-drift"),
       payload: { state: "completed" },
     });
 
@@ -816,9 +1025,41 @@ describe("CheckpointReactor", () => {
 
     const snapshot = await harness.readModel();
     const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(thread?.branch).toBe("t3code/original-branch");
-    expect(pullRequestRefreshCalls).toEqual([]);
+    expect(thread?.branch).toBe("fix/mobile-tool-detail-expansion");
+    expect(thread?.worktreePath).toBe(harness.cwd);
+    expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
   });
+
+  it.each(["t3code/original-branch", "t3code/fd9cbe0e"])(
+    "does not adopt a drifted checkout from %s when the worktree is shared by another thread",
+    async (threadBranch) => {
+      const pullRequestRefreshCalls: string[] = [];
+      const harness = await createHarness({
+        seedFilesystemCheckpoints: false,
+        threadBranch,
+        localStatusRefName: "t3code/renamed-by-agent",
+        secondThreadSharingWorktree: true,
+        pullRequestRefreshCalls,
+      });
+
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-turn-completed-branch-drift-shared"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-branch-drift-shared"),
+        payload: { state: "completed" },
+      });
+
+      await harness.drain();
+
+      const snapshot = await harness.readModel();
+      const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.branch).toBe(threadBranch);
+      expect(pullRequestRefreshCalls).toEqual([]);
+    },
+  );
 
   it("does not adopt a temporary placeholder checkout as the thread branch", async () => {
     const harness = await createHarness({
@@ -996,52 +1237,148 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
-  it("appends capture failure activity when turn diff summary cannot be derived", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
-    const createdAt = "2026-01-01T00:00:00.000Z";
-
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.make("cmd-session-set-missing-baseline-diff"),
+  effectIt.effect("captures a checkpoint without a summary when the baseline is missing", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false }),
+      );
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-turn-completed-missing-baseline"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
         threadId: ThreadId.make("thread-1"),
-        session: {
-          threadId: ThreadId.make("thread-1"),
-          status: "ready",
-          providerName: "codex",
+        turnId: asTurnId("turn-missing-baseline"),
+        payload: { state: "completed" },
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.diff.finalized",
+        checkpointTurnCount: 1,
+      });
+      yield* Effect.promise(harness.drain);
+      const thread = (yield* Effect.promise(harness.readModel)).threads[0];
+      expect(thread?.checkpoints[0]).toMatchObject({
+        status: "ready",
+        checkpointTurnCount: 1,
+        files: [],
+      });
+      expect(
+        gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+      ).toBe(true);
+      expect(
+        thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+      ).toBe(false);
+    }),
+  );
+
+  effectIt.effect.each([
+    { timing: "between turns", commit: false },
+    { timing: "between turns", commit: true },
+    { timing: "during a turn", commit: false },
+    { timing: "during a turn", commit: true },
+  ])("resumes checkpointing after git init $timing (commit: $commit)", ({ timing, commit }) =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ initializeGit: false, seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const emit = (type: "turn.started" | "turn.completed", turn: number) =>
+        harness.provider.emit({
+          type,
+          eventId: EventId.make(`${type}-${turn}`),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: asTurnId(`turn-${turn}`),
+          ...(type === "turn.completed" ? { payload: { state: "completed" } } : {}),
+        });
+      emit("turn.started", 1);
+      yield* Effect.promise(harness.drain);
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "before git\n");
+      emit("turn.completed", 1);
+      yield* Effect.promise(harness.drain);
+      expect((yield* Effect.promise(harness.readModel)).threads[0]?.checkpoints).toEqual([]);
+
+      if (timing === "during a turn") {
+        emit("turn.started", 2);
+        yield* Effect.promise(harness.drain);
+      }
+      runGit(harness.cwd, ["init", "--initial-branch=main"]);
+      if (commit) {
+        runGit(harness.cwd, ["add", "."]);
+        runGit(harness.cwd, [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "commit",
+          "-m",
+          "Initial",
+        ]);
+      }
+      if (timing === "between turns") {
+        // Exercise the domain entry point as well as the provider turn-start event.
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-after-git-init"),
+          threadId,
+          message: {
+            messageId: MessageId.make("message-after-git-init"),
+            role: "user",
+            text: "continue",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
-          activeTurnId: null,
-          lastError: null,
-          updatedAt: createdAt,
-        },
-        createdAt,
-      }),
-    );
+          createdAt,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.baseline.captured",
+          checkpointTurnCount: 0,
+        });
+        emit("turn.started", 2);
+        yield* Effect.promise(harness.drain);
+      }
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "after git\n");
+      emit("turn.completed", 2);
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.diff.finalized",
+        checkpointTurnCount: 1,
+      });
+      expect(yield* harness.nextReceipt).toMatchObject({ type: "turn.processing.quiesced" });
+      yield* Effect.promise(harness.drain);
+      const firstCheckpoint = (yield* Effect.promise(harness.readModel)).threads[0]?.checkpoints[0];
+      expect(firstCheckpoint?.files).toEqual(
+        timing === "between turns"
+          ? [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }]
+          : [],
+      );
+      expect(
+        gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 1), "README.md"),
+      ).toBe("after git\n");
+      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 0))).toBe(
+        timing === "between turns",
+      );
 
-    harness.provider.emit({
-      type: "turn.completed",
-      eventId: EventId.make("evt-turn-completed-missing-baseline"),
-      provider: ProviderDriverKind.make("codex"),
-
-      createdAt: "2026-01-01T00:00:00.000Z",
-      threadId: ThreadId.make("thread-1"),
-      turnId: asTurnId("turn-missing-baseline"),
-      payload: { state: "completed" },
-    });
-
-    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
-    const thread = await waitForThread(
-      harness.readModel,
-      (entry) =>
-        entry.checkpoints.length === 1 &&
-        entry.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
-    );
-
-    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
-    expect(
-      thread.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
-    ).toBe(true);
-  });
+      emit("turn.started", 3);
+      yield* Effect.promise(harness.drain);
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "next turn\n");
+      emit("turn.completed", 3);
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.diff.finalized",
+        checkpointTurnCount: 2,
+      });
+      yield* Effect.promise(harness.drain);
+      const thread = (yield* Effect.promise(harness.readModel)).threads[0];
+      expect(thread?.checkpoints[1]?.files).toEqual([
+        { path: "README.md", kind: "modified", additions: 1, deletions: 1 },
+      ]);
+      expect(
+        thread?.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
+      ).toBe(false);
+    }),
+  );
 
   it("captures pre-turn baseline from project workspace root when thread worktree is unset", async () => {
     const harness = await createHarness({
@@ -1078,6 +1415,36 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v1\n");
+  });
+
+  it("does not create checkpoints while importing historical user messages", async () => {
+    const harness = await createHarness({
+      hasSession: false,
+      seedFilesystemCheckpoints: false,
+      threadWorktreePath: null,
+    });
+    if (runtime === null) throw new Error("Checkpoint test runtime was not initialized.");
+
+    await runtime.runPromise(
+      harness.engine.dispatch({
+        type: "thread.history.import",
+        commandId: CommandId.make("cmd-import-history-without-checkpoint"),
+        threadId: ThreadId.make("thread-1"),
+        messages: [
+          {
+            messageId: MessageId.make("imported-user-message"),
+            role: "user",
+            text: "A message from an existing agent session",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    await harness.drain();
+
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+    ).toBe(false);
   });
 
   it("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {

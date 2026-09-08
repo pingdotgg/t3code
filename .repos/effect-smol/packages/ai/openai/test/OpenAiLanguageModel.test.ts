@@ -2,7 +2,7 @@ import { type Generated, OpenAiClient, OpenAiLanguageModel, OpenAiSchema, OpenAi
 import { assert, describe, it } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Array, Context, Effect, Layer, Redacted, Ref, Schema, Stream } from "effect"
-import { LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
+import { LanguageModel, Prompt, Response as AiResponse, Tool, Toolkit } from "effect/unstable/ai"
 import { HttpClient, type HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 
 describe("OpenAiLanguageModel", () => {
@@ -31,6 +31,69 @@ describe("OpenAiLanguageModel", () => {
 
   describe("generateText", () => {
     describe("message preparation", () => {
+      it.effect("forwards prompt cache configuration and text breakpoints", () =>
+        Effect.gen(function*() {
+          const breakpoint = { mode: "explicit" } as const
+          yield* LanguageModel.generateText({
+            prompt: Prompt.make([
+              Prompt.systemMessage({
+                content: "Stable instructions",
+                options: { openai: { promptCacheBreakpoint: breakpoint } }
+              }),
+              Prompt.userMessage({
+                content: [Prompt.textPart({
+                  text: "Stable context",
+                  options: { openai: { promptCacheBreakpoint: breakpoint } }
+                })]
+              })
+            ])
+          }).pipe(
+            Effect.provide(OpenAiLanguageModel.model("gpt-5.6", {
+              prompt_cache_key: "assistant:v1",
+              prompt_cache_options: { mode: "explicit", ttl: "30m" }
+            }))
+          )
+
+          const requests = yield* MockHttpClient.requests
+          const body = yield* getRequestBody(requests[0])
+
+          strictEqual(body.prompt_cache_key, "assistant:v1")
+          deepStrictEqual(body.prompt_cache_options, { mode: "explicit", ttl: "30m" })
+          deepStrictEqual(body.input, [{
+            role: "developer",
+            content: [{
+              type: "input_text",
+              text: "Stable instructions",
+              prompt_cache_breakpoint: breakpoint
+            }]
+          }, {
+            role: "user",
+            content: [{
+              type: "input_text",
+              text: "Stable context",
+              prompt_cache_breakpoint: breakpoint
+            }]
+          }])
+        }).pipe(Effect.provide(makeTestLayer({ body: { model: "gpt-5.6" as any } }))))
+
+      it.effect("forwards implicit prompt cache mode without text breakpoints", () =>
+        Effect.gen(function*() {
+          yield* LanguageModel.generateText({ prompt: "Stable context" }).pipe(
+            Effect.provide(OpenAiLanguageModel.model("gpt-5.6", {
+              prompt_cache_options: { mode: "implicit" }
+            }))
+          )
+
+          const requests = yield* MockHttpClient.requests
+          const body = yield* getRequestBody(requests[0])
+
+          deepStrictEqual(body.prompt_cache_options, { mode: "implicit" })
+          deepStrictEqual(body.input, [{
+            role: "user",
+            content: [{ type: "input_text", text: "Stable context" }]
+          }])
+        }).pipe(Effect.provide(makeTestLayer({ body: { model: "gpt-5.6" as any } }))))
+
       describe("system messages", () => {
         it.effect("uses system role for standard models", () =>
           Effect.gen(function*() {
@@ -319,6 +382,45 @@ describe("OpenAiLanguageModel", () => {
             strictEqual(reasoningItem.id, "reasoning_123")
           }).pipe(Effect.provide(makeTestLayer({ body: { model: "o1" } }))))
 
+        it.effect("replays encrypted reasoning from response parts", () =>
+          Effect.gen(function*() {
+            const history = Prompt.fromResponseParts([
+              AiResponse.makePart("reasoning-start", {
+                id: "reasoning_123:0",
+                metadata: { openai: { itemId: "reasoning_123" } }
+              }),
+              AiResponse.makePart("reasoning-delta", {
+                id: "reasoning_123:0",
+                delta: "Let me think..."
+              }),
+              AiResponse.makePart("reasoning-end", {
+                id: "reasoning_123:0",
+                metadata: {
+                  openai: {
+                    itemId: "reasoning_123",
+                    encryptedContent: "encrypted-reasoning"
+                  }
+                }
+              })
+            ])
+
+            yield* LanguageModel.generateText({
+              prompt: Prompt.concat(history, Prompt.make("Continue"))
+            }).pipe(Effect.provide(OpenAiLanguageModel.model("o1")))
+
+            const requests = yield* MockHttpClient.requests
+            const body = yield* getRequestBody(requests[0])
+            const reasoningItem = body.input.find((item: any) => item.type === "reasoning")
+
+            assert.isDefined(reasoningItem)
+            deepStrictEqual(reasoningItem, {
+              type: "reasoning",
+              id: "reasoning_123",
+              summary: [{ type: "summary_text", text: "Let me think..." }],
+              encrypted_content: "encrypted-reasoning"
+            })
+          }).pipe(Effect.provide(makeTestLayer({ body: { model: "o1" } }))))
+
         it.effect("converts tool call parts to function_call", () =>
           Effect.gen(function*() {
             yield* LanguageModel.generateText({
@@ -342,7 +444,8 @@ describe("OpenAiLanguageModel", () => {
                       id: "call_abc",
                       name: "TestTool",
                       isFailure: false,
-                      result: { output: "result" }
+                      result: { output: "result" },
+                      providerExecuted: false
                     })
                   ]
                 }
@@ -384,7 +487,8 @@ describe("OpenAiLanguageModel", () => {
                       id: "call_abc",
                       name: "TestTool",
                       isFailure: false,
-                      result: { output: "result" }
+                      result: { output: "result" },
+                      providerExecuted: false
                     })
                   ]
                 }
@@ -400,6 +504,144 @@ describe("OpenAiLanguageModel", () => {
             strictEqual(toolOutput.call_id, "call_abc")
             strictEqual(toolOutput.output, JSON.stringify({ output: "result" }))
           }).pipe(Effect.provide([makeTestLayer(), TestToolkitLayer])))
+
+        it.effect("emits only the specialized output for apply_patch results", () =>
+          Effect.gen(function*() {
+            const toolkit = Toolkit.make(OpenAiTool.ApplyPatch({}))
+            yield* LanguageModel.generateText({
+              prompt: Prompt.make([
+                { role: "user", content: "Apply a patch" },
+                {
+                  role: "assistant",
+                  content: [Prompt.toolCallPart({
+                    id: "call_apply_patch",
+                    name: "OpenAiApplyPatch",
+                    params: {
+                      call_id: "call_apply_patch",
+                      operation: { type: "delete_file", path: "old.ts" }
+                    },
+                    providerExecuted: false
+                  })]
+                },
+                {
+                  role: "tool",
+                  content: [Prompt.toolResultPart({
+                    id: "call_apply_patch",
+                    name: "OpenAiApplyPatch",
+                    isFailure: false,
+                    result: { status: "completed", output: "deleted" },
+                    providerExecuted: false
+                  })]
+                }
+              ]),
+              toolkit,
+              disableToolCallResolution: true
+            }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")))
+
+            const requests = yield* MockHttpClient.requests
+            const body = yield* getRequestBody(requests[0])
+            const outputs = body.input.filter((item: any) =>
+              item.call_id === "call_apply_patch" && item.type.endsWith("_output")
+            )
+
+            deepStrictEqual(outputs.map((item: any) => item.type), ["apply_patch_call_output"])
+          }).pipe(Effect.provide(makeTestLayer())))
+
+        it.effect("emits only the specialized output for shell results", () =>
+          Effect.gen(function*() {
+            const toolkit = Toolkit.make(OpenAiTool.Shell({}))
+            yield* LanguageModel.generateText({
+              prompt: Prompt.make([
+                { role: "user", content: "Run a shell command" },
+                {
+                  role: "assistant",
+                  content: [Prompt.toolCallPart({
+                    id: "call_shell",
+                    name: "OpenAiShell",
+                    params: {
+                      action: {
+                        commands: ["echo hello"],
+                        timeout_ms: null,
+                        max_output_length: null
+                      }
+                    },
+                    providerExecuted: false
+                  })]
+                },
+                {
+                  role: "tool",
+                  content: [Prompt.toolResultPart({
+                    id: "call_shell",
+                    name: "OpenAiShell",
+                    isFailure: false,
+                    result: {
+                      output: [{
+                        stdout: "hello\n",
+                        stderr: "",
+                        outcome: { type: "exit", exit_code: 0 }
+                      }]
+                    },
+                    providerExecuted: false
+                  })]
+                }
+              ]),
+              toolkit,
+              disableToolCallResolution: true
+            }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")))
+
+            const requests = yield* MockHttpClient.requests
+            const body = yield* getRequestBody(requests[0])
+            const outputs = body.input.filter((item: any) =>
+              item.call_id === "call_shell" && item.type.endsWith("_output")
+            )
+
+            deepStrictEqual(outputs.map((item: any) => item.type), ["shell_call_output"])
+          }).pipe(Effect.provide(makeTestLayer())))
+
+        it.effect("emits only the specialized output for local_shell results", () =>
+          Effect.gen(function*() {
+            const toolkit = Toolkit.make(OpenAiTool.LocalShell({}))
+            yield* LanguageModel.generateText({
+              prompt: Prompt.make([
+                { role: "user", content: "Run a local shell command" },
+                {
+                  role: "assistant",
+                  content: [Prompt.toolCallPart({
+                    id: "call_local_shell",
+                    name: "OpenAiLocalShell",
+                    params: {
+                      action: {
+                        type: "exec",
+                        command: ["echo", "hello"],
+                        env: {}
+                      }
+                    },
+                    providerExecuted: false
+                  })]
+                },
+                {
+                  role: "tool",
+                  content: [Prompt.toolResultPart({
+                    id: "call_local_shell",
+                    name: "OpenAiLocalShell",
+                    isFailure: false,
+                    result: { output: "hello\n" },
+                    providerExecuted: false
+                  })]
+                }
+              ]),
+              toolkit,
+              disableToolCallResolution: true
+            }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")))
+
+            const requests = yield* MockHttpClient.requests
+            const body = yield* getRequestBody(requests[0])
+            const outputs = body.input.filter((item: any) =>
+              item.call_id === "call_local_shell" && item.type.endsWith("_output")
+            )
+
+            deepStrictEqual(outputs.map((item: any) => item.type), ["local_shell_call_output"])
+          }).pipe(Effect.provide(makeTestLayer())))
       })
     })
 
@@ -752,6 +994,38 @@ describe("OpenAiLanguageModel", () => {
           }
         }))))
 
+      it.each(["gpt-4.1", "gpt-5.6"] as const)(
+        "maps stable web search action to tool call parameters with %s",
+        (model) =>
+          Effect.runPromise(
+            Effect.gen(function*() {
+              const toolkit = Toolkit.make(OpenAiTool.WebSearch({}))
+              const result = yield* LanguageModel.generateText({
+                prompt: "Search the web",
+                toolkit
+              }).pipe(Effect.provide(OpenAiLanguageModel.model(model)))
+
+              const toolCall = result.content.find((part) => part.type === "tool-call")
+              assert.isDefined(toolCall)
+              assert.deepStrictEqual(toolCall.params, {
+                action: { type: "search", query: "Effect TypeScript" }
+              })
+
+              const toolResult = result.content.find((part) => part.type === "tool-result")
+              assert.isDefined(toolResult)
+              assert.deepStrictEqual(toolResult.result, {
+                action: { type: "search", query: "Effect TypeScript" },
+                status: "completed"
+              })
+            }).pipe(Effect.provide(makeTestLayer({
+              body: {
+                model,
+                output: [makeWebSearchCall()]
+              }
+            })))
+          )
+      )
+
       it.effect("uses canonical OpenAiMcp name for mcp_approval_request", () =>
         Effect.gen(function*() {
           const result = yield* LanguageModel.generateText({
@@ -1097,6 +1371,59 @@ describe("OpenAiLanguageModel", () => {
 
         const toolParamsEnd = parts.find((part) => part.type === "tool-params-end" && part.id === "call_1")
         assert.isDefined(toolParamsEnd)
+      }))
+
+    it.effect("waits for the stable streamed web search action before emitting the tool call", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(OpenAiTool.WebSearch({}))
+        const streamEvents = [
+          {
+            type: "response.created",
+            sequence_number: 1,
+            response: makeDefaultResponse({ status: "in_progress" })
+          },
+          {
+            type: "response.output_item.added",
+            sequence_number: 2,
+            output_index: 0,
+            item: {
+              type: "web_search_call",
+              id: "ws_123",
+              status: "in_progress"
+            }
+          },
+          {
+            type: "response.output_item.done",
+            sequence_number: 3,
+            output_index: 0,
+            item: makeWebSearchCall()
+          }
+        ] as unknown as ReadonlyArray<typeof Generated.ResponseStreamEvent.Type>
+
+        const parts = yield* LanguageModel.streamText({
+          prompt: "Search the web",
+          toolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(makeStreamTestLayer(streamEvents))
+        )
+
+        const toolCalls = parts.filter((part) => part.type === "tool-call")
+        strictEqual(toolCalls.length, 1)
+        const toolCall = toolCalls[0]
+        assert.isDefined(toolCall)
+        assert.deepStrictEqual(toolCall.params, {
+          action: { type: "search", query: "Effect TypeScript" }
+        })
+
+        const toolResult = parts.find((part) => part.type === "tool-result")
+        assert.isDefined(toolResult)
+        assert.deepStrictEqual(toolResult.result, {
+          action: { type: "search", query: "Effect TypeScript" },
+          status: "completed"
+        })
       }))
 
     it.effect("handles reasoning summary events when reasoning state is missing", () =>
@@ -1509,6 +1836,16 @@ const makeFunctionCall = (
   name,
   arguments: JSON.stringify(args),
   status: "completed",
+  ...overrides
+})
+
+const makeWebSearchCall = (
+  overrides: Partial<Generated.WebSearchToolCall> = {}
+): Generated.WebSearchToolCall => ({
+  type: "web_search_call",
+  id: "ws_123",
+  status: "completed",
+  action: { type: "search", query: "Effect TypeScript" },
   ...overrides
 })
 

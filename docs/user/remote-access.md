@@ -24,6 +24,11 @@ On your other device, sign in to the same T3 Connect account and choose the
 environment. Over SSH, the CLI prints a browser link and accepts the returned
 authorization code, so you do not need to forward an OAuth callback port.
 
+T3 Connect renews access credentials when needed without disconnecting a healthy
+connection. Pull request diffs and provider settings keep working after the
+previous credential expires. A failed renewal affects that request; it does not
+disconnect an otherwise healthy conversation.
+
 ## Pair over a LAN or private network
 
 Use direct pairing when the other device can reach the host's network address.
@@ -55,6 +60,23 @@ for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
+
+### Balance new threads across machines
+
+Auto balance is off by default. On web and desktop, enable it in
+**Settings → Connections → Load balancing** to automatically choose a machine for
+new threads in projects grouped across connected environments.
+Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
+memory available, **Less often** to reduce its share, or **Manual only** to exclude
+it from automatic selection. These are preferences, not fixed traffic percentages.
+Preferences are saved separately in each client.
+
+The composer checks eligible machines when choosing a draft's environment, then keeps
+that choice stable. Choose **Auto balance** again to check current resources, or choose
+a specific machine to override it. Choosing a branch or worktree also keeps the draft
+on that machine. Existing threads stay where they started. If resource checks are
+unavailable or all eligible machines are full, choose a machine manually to continue.
+Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS
 
@@ -126,6 +148,9 @@ On the host, **Settings → Connections** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `npx t3 auth --help`.
+
+A session with an open connection stays listed after its access credential
+expires.
 
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This

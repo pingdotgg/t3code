@@ -52,9 +52,8 @@ interface EventDescriptor {
  * Use it through the {@link consumeBusEvents} helper; the host-specific
  * implementation layer (e.g. `AWS.Lambda.EventSource`) creates the rule,
  * grants EventBridge invoke permission, and dispatches events at runtime.
- * @binding
- * @section Consuming Events
- * @example Consume Matching Events on a Lambda Function
+ * ### Consuming Events
+ * **Example:** Consume Matching Events on a Lambda Function
  * ```typescript
  * // init — subscribe to matching events (provide AWS.Lambda.EventSource on the Function)
  * yield* AWS.EventBridge.consumeBusEvents(
@@ -68,6 +67,8 @@ interface EventDescriptor {
  *     ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface EventSource extends Binding.Service<
   EventSource,

@@ -71,7 +71,7 @@ export const BoundPipeLive = Layer.effect(
 export default PipesBindingsFunction.make(
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

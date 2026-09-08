@@ -12,7 +12,6 @@ import {
   isTerminalCompositionCommitInput,
   isTerminalCompositionKey,
   isTerminalCopyShortcut,
-  isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
   primeTerminalCopyInput,
@@ -23,8 +22,6 @@ import {
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
-  terminalLinkAtColumn,
-  terminalLinkAtPosition,
   terminalLinkAtPositionWithRange,
   terminalContentOriginY,
   terminalFontFamily,
@@ -170,7 +167,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
-      pointer(type: string, clientX: number, buttons: number) {
+      pointer(type: string, clientX: number, buttons: number, shiftKey = false) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
@@ -178,6 +175,7 @@ describe("GhosttyTerminalSurface visibility", () => {
             pointerId: 1,
             button: 0,
             buttons,
+            shiftKey,
           }),
         );
       },
@@ -280,6 +278,84 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelection()).toBe("");
     expect(surface.getSelectionPosition()).toBeNull();
     expect(harness.renderedSnapshot.rowData[0]?.cells.some((cell) => cell.selected)).toBe(false);
+  });
+
+  it("starts a selection when dragging from a link", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 37, 1);
+    harness.pointer("pointerup", 37, 0);
+
+    expect(onLinkActivate).not.toHaveBeenCalled();
+    expect(surface.getSelection()).toBe("https");
+  });
+
+  it("keeps a link click active through slight pointer movement", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 6, 1);
+    harness.pointer("pointerup", 6, 0);
+
+    expect(onLinkActivate).toHaveBeenCalledOnce();
+  });
+
+  it("uses repeated link clicks for word and line selection", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com tail");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    expect(onLinkActivate).toHaveBeenCalledOnce();
+    expect(surface.getSelection()).not.toBe("");
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    expect(onLinkActivate).toHaveBeenCalledOnce();
+    expect(surface.getSelection()).toBe("https://example.com tail");
+  });
+
+  it("uses Shift drags over links for selection", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1, true);
+    harness.pointer("pointermove", 37, 1, true);
+    harness.pointer("pointerup", 37, 0, true);
+    expect(onLinkActivate).not.toHaveBeenCalled();
+    expect(surface.getSelection()).toBe("https");
+  });
+
+  it("does not activate a link replaced before pointer release", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://first.example");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    surface.write("\x1b[2J\x1b[Hhttps://second.example");
+    harness.flushFrame();
+    harness.pointer("pointerup", 5, 0);
+
+    expect(onLinkActivate).not.toHaveBeenCalled();
   });
 
   it("stops zero-size mounts and repaints when the same size returns", async () => {
@@ -433,7 +509,7 @@ describe("shouldBlinkTerminalCursor", () => {
   });
 });
 
-describe("terminalLinkAtColumn", () => {
+describe("terminalLinkAtPositionWithRange", () => {
   it("maps terminal cells to UTF-16 offsets after a wide emoji", () => {
     const cells = [
       cell("🙂"),
@@ -450,9 +526,11 @@ describe("terminalLinkAtColumn", () => {
       wrapsToNext: false,
     };
 
-    expect(terminalLinkAtColumn(row, 2)).toBe("https://t3.codes");
-    expect(terminalLinkAtColumn(row, cells.length - 1)).toBe("https://t3.codes");
-    expect(terminalLinkAtColumn(row, 0)).toBeNull();
+    expect(terminalLinkAtPositionWithRange([row], 0, 2)?.text).toBe("https://t3.codes");
+    expect(terminalLinkAtPositionWithRange([row], 0, cells.length - 1)?.text).toBe(
+      "https://t3.codes",
+    );
+    expect(terminalLinkAtPositionWithRange([row], 0, 0)).toBeNull();
     expect(terminalLinkAtPositionWithRange([row], 0, 8)?.range).toEqual({
       start: { x: 2, y: 0 },
       end: { x: cells.length - 1, y: 0 },
@@ -473,10 +551,10 @@ describe("terminalLinkAtColumn", () => {
       row("C:\\repo\\file.ts", false),
     ];
 
-    expect(terminalLinkAtPosition(rows, 0, 8)).toBe("https://example.com/reference");
-    expect(terminalLinkAtPosition(rows, 1, 4)).toBe("https://example.com/reference");
-    expect(terminalLinkAtPosition(rows, 2, 2)).toBe("~/project/file");
-    expect(terminalLinkAtPosition(rows, 3, 4)).toBe("C:\\repo\\file.ts");
+    expect(terminalLinkAtPositionWithRange(rows, 0, 8)?.text).toBe("https://example.com/reference");
+    expect(terminalLinkAtPositionWithRange(rows, 1, 4)?.text).toBe("https://example.com/reference");
+    expect(terminalLinkAtPositionWithRange(rows, 2, 2)?.text).toBe("~/project/file");
+    expect(terminalLinkAtPositionWithRange(rows, 3, 4)?.text).toBe("C:\\repo\\file.ts");
     expect(terminalLinkAtPositionWithRange(rows, 1, 4)).toEqual({
       text: "https://example.com/reference",
       range: {
@@ -495,13 +573,13 @@ describe("terminalLinkAtColumn", () => {
     });
     // The head of the wrapped line scrolled above the viewport.
     const headCut = [row("ple.com/missing", true), row("head", true)];
-    expect(terminalLinkAtPosition(headCut, 0, 4)).toBeNull();
+    expect(terminalLinkAtPositionWithRange(headCut, 0, 4)).toBeNull();
     // The bottom row soft-wraps on below the viewport.
     const tailCut = [row("https://t3.codes", false, true)];
-    expect(terminalLinkAtPosition(tailCut, 0, 8)).toBeNull();
+    expect(terminalLinkAtPositionWithRange(tailCut, 0, 8)).toBeNull();
     // A partial bottom row is provably complete and still resolves.
     const complete = [row("https://t3.codes", false), row("", false)];
-    expect(terminalLinkAtPosition(complete, 0, 8)).toBe("https://t3.codes");
+    expect(terminalLinkAtPositionWithRange(complete, 0, 8)?.text).toBe("https://t3.codes");
     // A wide grapheme earlier in the row must not break truncation detection:
     // the soft-wrap flag decides, not string-length-versus-cell-count.
     const wideFull: GhosttyRow = {
@@ -514,7 +592,7 @@ describe("terminalLinkAtColumn", () => {
       isWrapContinuation: false,
       wrapsToNext: true,
     };
-    expect(terminalLinkAtPosition([wideFull], 0, 8)).toBeNull();
+    expect(terminalLinkAtPositionWithRange([wideFull], 0, 8)).toBeNull();
     // Unwritten trailing cells prove the bottom row is complete.
     const unwrittenTail: GhosttyRow = {
       cells: [
@@ -526,7 +604,7 @@ describe("terminalLinkAtColumn", () => {
       isWrapContinuation: false,
       wrapsToNext: false,
     };
-    expect(terminalLinkAtPosition([unwrittenTail], 0, 8)).toBe("https://t3.codes");
+    expect(terminalLinkAtPositionWithRange([unwrittenTail], 0, 8)?.text).toBe("https://t3.codes");
   });
 });
 
@@ -555,6 +633,20 @@ describe("isTerminalCopyShortcut", () => {
   it("uses the produced character instead of the physical key position", () => {
     expect(isTerminalCopyShortcut(event({ key: "C", metaKey: true }), "MacIntel")).toBe(true);
     expect(isTerminalCopyShortcut(event({ key: "j", metaKey: true }), "MacIntel")).toBe(false);
+  });
+
+  it("supports the conventional Ctrl+Insert copy shortcut", () => {
+    expect(isTerminalCopyShortcut(event({ key: "Insert", ctrlKey: true }), "Linux x86_64")).toBe(
+      true,
+    );
+    expect(isTerminalCopyShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
+    expect(
+      isTerminalCopyShortcut(
+        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
+        "Linux x86_64",
+      ),
+    ).toBe(false);
+    expect(isTerminalCopyShortcut(event({ key: "Insert", ctrlKey: true }), "MacIntel")).toBe(false);
   });
 });
 
@@ -873,19 +965,6 @@ describe("terminalWheelArrowData", () => {
     expect(terminalWheelArrowData(3, false)).toBe("\u001b[B\u001b[B\u001b[B");
     expect(terminalWheelArrowData(-1, true)).toBe("\u001bOA");
     expect(terminalWheelArrowData(0, true)).toBe("");
-  });
-});
-
-describe("isTerminalLinkPointerGesture", () => {
-  it("uses Command on macOS and Control elsewhere", () => {
-    expect(isTerminalLinkPointerGesture({ ctrlKey: false, metaKey: true }, "MacIntel")).toBe(true);
-    expect(isTerminalLinkPointerGesture({ ctrlKey: true, metaKey: false }, "MacIntel")).toBe(false);
-    expect(isTerminalLinkPointerGesture({ ctrlKey: true, metaKey: false }, "Linux x86_64")).toBe(
-      true,
-    );
-    expect(isTerminalLinkPointerGesture({ ctrlKey: false, metaKey: true }, "Linux x86_64")).toBe(
-      false,
-    );
   });
 });
 

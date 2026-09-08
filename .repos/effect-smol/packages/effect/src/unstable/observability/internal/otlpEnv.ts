@@ -11,7 +11,7 @@ const ExporterList = Config.Array(Schema.String).pipe(
   })
 )
 
-const HeadersRecord = Config.Record(Schema.String, Schema.String)
+const HeadersRecord = Config.Record(Schema.String, Schema.StringFromUriComponent)
 
 export const headers = (signal: Signal) =>
   Config.schema(HeadersRecord, `OTEL_EXPORTER_OTLP_${signal}_HEADERS`).pipe(

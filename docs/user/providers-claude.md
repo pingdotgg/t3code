@@ -37,6 +37,10 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
+Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
+thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
+T3 Code uses the Claude configuration on the connected server.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between
@@ -48,6 +52,14 @@ You can also send `/compact` in an existing conversation. Web and desktop offer
 **Compact context** from the context meter and may suggest it when you return to
 a large older thread. See [commands and skills](./composer.md#commands-and-skills)
 for using composer commands.
+
+## Usage limits
+
+If your Claude subscription runs out of usage mid-turn, the thread shows which
+limit was reached and the remaining wait when Claude provides a reset time.
+Claude Code holds the turn until that window reopens, so it can keep showing as
+working. Wait for the reset, or stop the turn and continue later. The warning's
+timestamp shows when the displayed wait started.
 
 ## Skills
 

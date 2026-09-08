@@ -143,9 +143,7 @@ function OverlayContent(props: { readonly progress: GitActionProgress }) {
   }
 
   const bgClass =
-    progress.phase === "error"
-      ? "border-adaptive-red-200-800 bg-adaptive-red-50-950-a80"
-      : "bg-card border-border";
+    progress.phase === "error" ? "border-danger-border bg-danger" : "bg-card border-border";
 
   return (
     <Animated.View
@@ -169,11 +167,11 @@ function OverlayIcon(props: { readonly phase: GitActionProgress["phase"] }) {
       );
     case "error":
       return (
-        <View className="h-6 w-6 items-center justify-center rounded-full bg-red-500">
+        <View className="h-6 w-6 items-center justify-center rounded-full bg-danger">
           <SymbolView
             name="exclamationmark.triangle"
             size={12}
-            tintColor="white"
+            tintColorClassName="accent-danger-foreground"
             type="monochrome"
           />
         </View>

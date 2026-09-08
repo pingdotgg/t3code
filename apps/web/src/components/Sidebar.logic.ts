@@ -1,9 +1,14 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
+import {
+  isAtomCommandInterrupted,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type { AsyncResult } from "effect/unstable/reactivity";
+import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
-  activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
   resolveSettledThreadTimestamp,
   sortThreads,
@@ -12,11 +17,10 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
-import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 
-export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
+const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
 // nearby thread usually reuses an already-hot subscription. Each prewarmed
@@ -24,10 +28,10 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // activities, growing as agents work) for as long as the row stays visible,
 // so this limit is a direct renderer-heap and server-load multiplier — keep
 // it small; cold opens still render instantly from the cached snapshot.
-export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
+const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 // A small buffer keeps the next few rows warm without leasing every row that
 // content-visibility leaves mounted below the scroll viewport.
-export const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
+const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
 
 export function useSidebarRowSubscriptionLease(isActive: boolean): {
   readonly leaseLiveStatus: boolean;
@@ -77,11 +81,273 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   return key !== null && retained.current?.key === key ? retained.current.value : null;
 }
 
-// The list already reaches its destination through sortable transforms while
-// the pointer is down. dnd-kit's default also animates the committed DOM order
-// after release, replaying the same movement across every affected row.
-export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
+// Sidebar.motion handles ordinary section changes. Sortable transforms own
+// dragging; replaying their committed DOM order would animate the drop twice.
+export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
+
+// Rows and section markers share one sortable list. The separators resolve
+// the lifecycle action; Sidebar.drag previews the resulting layout. Pinned
+// and active threads keep the dragged position; settled threads use time
+// order. Snoozed rows can leave the shelf, but dropping into it is not
+// supported because snoozing requires a wake time.
+
+export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
+
+/** Sortable ids: thread rows use their scoped key; structural items use a
+    colon-free prefix: scoped thread keys always contain a colon. */
+const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
+
+export type SidebarListMarker =
+  /** The top boundary is also a landing target when there are no pins. */
+  | "pinned-header"
+  /** Stand-in rows so an empty section has somewhere for the gap to open. */
+  | "active-placeholder"
+  | "settled-placeholder"
+  /** The boundary between pinned and active rows. */
+  | "pinned-divider"
+  | "snoozed-header"
+  | "settled-header";
+
+export function sidebarMarkerId(marker: SidebarListMarker): string {
+  return `${SIDEBAR_MARKER_PREFIX}${marker}`;
+}
+
+export type SidebarListItem =
+  | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+
+export function sidebarListItemId(item: SidebarListItem): string {
+  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+}
+
+/** The section a slot belongs to, read off the markers around it: from
+    the top down, everything before the pinned divider is pinned, then the
+    inbox until the snoozed header, the shelf until the settled header,
+    then settled. */
+function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
+  let section: SidebarSection = "pinned";
+  for (let i = 0; i < index && i < items.length; i += 1) {
+    const item = items[i]!;
+    if (item.kind !== "marker") continue;
+    if (item.marker === "pinned-divider") section = "active";
+    else if (item.marker === "snoozed-header") section = "snoozed";
+    else if (item.marker === "settled-header") section = "settled";
+  }
+  return section;
+}
+
+/** Resolve the destination section and manual order from an arrayMove across
+ * the separators. The snoozed shelf is never a destination. */
+export type SidebarDropTarget = {
+  readonly section: "pinned" | "active" | "settled";
+  readonly pinnedOrder: readonly string[];
+  readonly activeOrder: readonly string[];
+};
+
+export function resolveSidebarDropTarget(
+  items: readonly SidebarListItem[],
+  activeKey: string,
+  overId: string,
+): SidebarDropTarget | null {
+  const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
+  const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
+  if (activeIndex === -1 || overIndex === -1 || items[activeIndex]?.kind !== "thread") return null;
+  const moved = items.filter((_, index) => index !== activeIndex);
+  moved.splice(overIndex, 0, items[activeIndex]!);
+  const section = sectionAtSidebarSlot(moved, overIndex);
+  if (section === "snoozed") return null;
+  const pinnedOrder: string[] = [];
+  const activeOrder: string[] = [];
+  let currentSection: SidebarSection = "pinned";
+  for (const item of moved) {
+    if (item.kind === "marker") {
+      if (item.marker === "pinned-divider") currentSection = "active";
+      else if (item.marker === "snoozed-header" || item.marker === "settled-header") break;
+    } else if (currentSection === "pinned") pinnedOrder.push(item.key);
+    else activeOrder.push(item.key);
+  }
+  return { section, pinnedOrder, activeOrder };
+}
+
+export type SidebarThreadDropPlan =
+  | { readonly kind: "none" }
+  /** Within the pinned block: the existing key writes. */
+  | {
+      readonly kind: "reorder-pinned";
+      readonly order: readonly string[];
+      readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+    }
+  /** From another section into the pinned block. Fresh pins take `orderKey`
+      on the pin command. `extraAssignments` land afterward, including the
+      moved row when it was already pinned beneath a snooze. */
+  | {
+      readonly kind: "pin";
+      readonly order: readonly string[];
+      readonly orderKey: string | undefined;
+      readonly extraAssignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+    }
+  | {
+      readonly kind: "move-active";
+      readonly order: readonly string[];
+      readonly assignments: ReadonlyArray<{ readonly id: string; readonly orderKey: string }>;
+      readonly unpin: boolean;
+      readonly unsettle: boolean;
+      readonly unsnooze: boolean;
+    }
+  | { readonly kind: "settle" };
+
+/** What dropping in `to` does to a thread lifted from `from`, for the badge
+    on the lifted row. Null while reordering inside one section and for the
+    snoozed shelf, which cannot be a drop target. */
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+
+export function resolveSidebarDropVerb(
+  from: SidebarSection,
+  to: SidebarSection | null,
+): SidebarDropVerb | null {
+  if (to === null || to === from || to === "snoozed") return null;
+  if (to === "pinned") return "pin";
+  if (to === "settled") return "settle";
+  if (from === "pinned") return "unpin";
+  if (from === "settled") return "unsettle";
+  return "wake";
+}
+
+export function planSidebarThreadDrop(input: {
+  readonly activeKey: string;
+  readonly activeSection: SidebarSection;
+  /** Snoozed threads can retain pinning and settlement beneath the shelf. */
+  readonly activePinned?: boolean;
+  readonly activeSettled?: boolean;
+  readonly supportsSettlement?: boolean;
+  readonly target: SidebarDropTarget;
+  /** All pinned keys in displayed order before the drop. */
+  readonly pinnedOrder: readonly string[];
+  readonly pinnedKeysById: ReadonlyMap<string, string | null | undefined>;
+  readonly reorderableKeys?: ReadonlySet<string>;
+  readonly activeOrder: readonly string[];
+  readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
+  readonly activeReorderableKeys?: ReadonlySet<string>;
+}): SidebarThreadDropPlan {
+  const {
+    activeKey,
+    activeSection,
+    activePinned = activeSection === "pinned",
+    activeSettled = activeSection === "settled",
+    target,
+    pinnedOrder,
+    pinnedKeysById,
+    reorderableKeys,
+    activeOrder,
+    activeKeysById,
+    activeReorderableKeys,
+  } = input;
+  if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
+    return { kind: "none" };
+  }
+  switch (target.section) {
+    case "active": {
+      const order = target.activeOrder;
+      if (
+        activeSection === "active" &&
+        order.length === activeOrder.length &&
+        order.every((key, index) => key === activeOrder[index])
+      ) {
+        return { kind: "none" };
+      }
+      const assignments = planPinnedReorder({
+        orderedIds: order,
+        keysById: activeKeysById,
+        movedId: activeKey,
+      });
+      if (activeReorderableKeys && assignments.some(({ id }) => !activeReorderableKeys.has(id))) {
+        return { kind: "none" };
+      }
+      return {
+        kind: "move-active",
+        order,
+        assignments,
+        unpin: activePinned,
+        unsettle: activeSettled,
+        unsnooze: activeSection === "snoozed",
+      };
+    }
+    case "settled":
+      return activeSection === "settled" ? { kind: "none" } : { kind: "settle" };
+    case "pinned": {
+      const order = target.pinnedOrder;
+      // Dropped back where it started: nothing to write.
+      if (
+        activeSection === "pinned" &&
+        order.length === pinnedOrder.length &&
+        order.every((key, index) => key === pinnedOrder[index])
+      ) {
+        return { kind: "none" };
+      }
+      const assignments = planPinnedReorder({
+        orderedIds: order,
+        keysById: pinnedKeysById,
+        movedId: activeKey,
+      });
+      if (reorderableKeys && assignments.some(({ id }) => !reorderableKeys.has(id))) {
+        return { kind: "none" };
+      }
+      if (activeSection === "pinned") {
+        return assignments.length === 0
+          ? { kind: "none" }
+          : { kind: "reorder-pinned", order, assignments };
+      }
+      return {
+        kind: "pin",
+        order,
+        orderKey: assignments.find((assignment) => assignment.id === activeKey)?.orderKey,
+        extraAssignments: activePinned
+          ? assignments
+          : assignments.filter((assignment) => assignment.id !== activeKey),
+      };
+    }
+  }
+}
+
+/** Project a drop's lifecycle fields before sorting its destination. Reusing
+    the server's re-entry rules keeps the preview in place when events arrive. */
+export function applySidebarThreadDrop<
+  T extends Pick<
+    SidebarThreadSummary,
+    | "pinnedAt"
+    | "pinOrderKey"
+    | "activeOrderKey"
+    | "snoozedAt"
+    | "snoozedUntil"
+    | "settledAt"
+    | "settledOverride"
+    | "unsettledAt"
+  >,
+>(thread: T, section: "pinned" | "active" | "settled", now: string, orderKey?: string): T {
+  const wasSettled = thread.settledOverride === "settled";
+  const awake = { ...thread, snoozedAt: null, snoozedUntil: null };
+  if (section === "settled") {
+    return {
+      ...awake,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+      settledOverride: "settled",
+      settledAt: wasSettled ? (thread.settledAt ?? now) : now,
+      unsettledAt: null,
+    };
+  }
+  const resumed = wasSettled
+    ? { ...awake, settledOverride: "active" as const, settledAt: null, unsettledAt: now }
+    : awake;
+  return {
+    ...resumed,
+    pinnedAt: section === "pinned" ? (thread.pinnedAt ?? now) : null,
+    pinOrderKey: section === "pinned" ? (orderKey ?? thread.pinOrderKey) : null,
+    ...(section === "active" && orderKey !== undefined ? { activeOrderKey: orderKey } : {}),
+  };
+}
 
 type SidebarProject = {
   id: string;
@@ -109,6 +375,36 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+/**
+ * Shared-worktree checks must exclude only successful deletions, never the
+ * whole batch. A null result skips an entry that the caller can no longer find.
+ */
+export async function deleteSelectedThreadEntries<
+  TEntry extends { readonly threadKey: string },
+>(input: {
+  entries: readonly TEntry[];
+  delete: (
+    entry: TEntry,
+    deletedThreadKeys: ReadonlySet<string>,
+  ) => Promise<AtomCommandResult<unknown, unknown> | null>;
+}) {
+  const deletedThreadKeys = new Set<string>();
+  let firstFailure: AsyncResult.Failure<unknown, unknown> | null = null;
+
+  for (const entry of input.entries) {
+    const result = await input.delete(entry, deletedThreadKeys);
+    if (result === null) continue;
+    if (result._tag === "Failure") {
+      if (isAtomCommandInterrupted(result)) break;
+      firstFailure ??= result;
+      continue;
+    }
+    deletedThreadKeys.add(entry.threadKey);
+  }
+
+  return { deletedThreadKeys, firstFailure };
+}
 
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
@@ -407,17 +703,6 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
-export function getVisibleSidebarThreadIds<TThreadId>(
-  renderedProjects: readonly {
-    shouldShowThreadPanel?: boolean;
-    renderedThreadIds: readonly TThreadId[];
-  }[],
-): TThreadId[] {
-  return renderedProjects.flatMap((renderedProject) =>
-    renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
-  );
-}
-
 export function getSidebarThreadIdsToPrewarm<TThreadId>(
   visibleThreadIds: readonly TThreadId[],
   limit = SIDEBAR_THREAD_PREWARM_LIMIT,
@@ -450,28 +735,6 @@ export function resolveAdjacentThreadId<T>(input: {
   }
 
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
-}
-
-export function shouldNavigateAfterProjectRemoval(input: {
-  routeTarget: ThreadRouteTarget | null;
-  projectThreads: readonly {
-    environmentId: string;
-    id: string;
-  }[];
-  projectDraftId: string | null;
-}): boolean {
-  const { projectDraftId, projectThreads, routeTarget } = input;
-  if (routeTarget?.kind === "draft") {
-    return projectDraftId === routeTarget.draftId;
-  }
-  if (routeTarget?.kind !== "server") {
-    return false;
-  }
-  return projectThreads.some(
-    (thread) =>
-      thread.environmentId === routeTarget.threadRef.environmentId &&
-      thread.id === routeTarget.threadRef.threadId,
-  );
 }
 
 export function isContextMenuPointerDown(input: {
@@ -578,13 +841,6 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
-/** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
-    poison the whole ordering, so it sinks to the epoch instead. */
-export function parseTimestampMs(isoDate: string): number {
-  const parsed = Date.parse(isoDate);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
 /** First VALID timestamp wins: `a ?? b` falls through on null, but a present-
     yet-malformed string must also fall through to the next candidate rather
     than sink the row to the epoch. */
@@ -601,7 +857,7 @@ export function firstValidTimestampMs(
 
 /** String twin of firstValidTimestampMs for callers that need the ISO string
     (display labels, tick anchors) rather than epoch ms. */
-export function firstValidTimestamp(
+function firstValidTimestamp(
   ...candidates: ReadonlyArray<string | null | undefined>
 ): string | null {
   for (const candidate of candidates) {
@@ -611,34 +867,11 @@ export function firstValidTimestamp(
   return null;
 }
 
-// Sidebar sort: static order, newest anchor on top. Activity NEVER reorders
-// the list — a row holds its position between lifecycle transitions, so the
-// screen only moves when a thread enters or leaves the active list. The
-// anchor is creation time until an un-settle re-anchors it (see
-// activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
-// top instead of sinking back to its creation-order slot. Status (including
-// pending approval) is carried by each card's edge strip, not by position.
-export function sortThreadsForSidebar<
-  T extends {
-    readonly id: string;
-    readonly createdAt: string;
-    readonly unsettledAt?: string | null | undefined;
-  },
->(threads: readonly T[]): T[] {
-  return [...threads].toSorted(
-    (left, right) =>
-      activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left) ||
-      left.id.localeCompare(right.id),
-  );
-}
+export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
 // Pinned-reorder key math and the keyed sort live in client-runtime
 // (state/thread-sort) so web and mobile compute identical pinned orders.
-export {
-  generateSpreadPinOrderKeys,
-  pinOrderKeyBetween,
-  planPinnedReorder,
-} from "@t3tools/client-runtime/state/thread-sort";
+export { pinOrderKeyBetween, planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
 /**
@@ -836,54 +1069,6 @@ export function resolveProjectStatusIndicator(
   }
 
   return highestPriorityStatus;
-}
-
-export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input: {
-  threads: readonly T[];
-  activeThreadId: T["id"] | undefined;
-  isThreadListExpanded: boolean;
-  previewLimit: number;
-}): {
-  hasHiddenThreads: boolean;
-  visibleThreads: T[];
-  hiddenThreads: T[];
-} {
-  const { activeThreadId, isThreadListExpanded, previewLimit, threads } = input;
-  const hasHiddenThreads = threads.length > previewLimit;
-
-  if (!hasHiddenThreads || isThreadListExpanded) {
-    return {
-      hasHiddenThreads,
-      hiddenThreads: [],
-      visibleThreads: [...threads],
-    };
-  }
-
-  const previewThreads = threads.slice(0, previewLimit);
-  if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
-    return {
-      hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
-      visibleThreads: previewThreads,
-    };
-  }
-
-  const activeThread = threads.find((thread) => thread.id === activeThreadId);
-  if (!activeThread) {
-    return {
-      hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
-      visibleThreads: previewThreads,
-    };
-  }
-
-  const visibleThreadIds = new Set([...previewThreads, activeThread].map((thread) => thread.id));
-
-  return {
-    hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
-    visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
-  };
 }
 
 export function getFallbackThreadIdAfterDelete<

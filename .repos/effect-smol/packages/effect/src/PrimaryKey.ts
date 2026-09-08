@@ -41,7 +41,7 @@ export const symbol = "~effect/interfaces/PrimaryKey"
  *
  * **Example** (Implementing a primary key)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { PrimaryKey } from "effect"
  *
  * class ProductId implements PrimaryKey.PrimaryKey {
@@ -53,7 +53,7 @@ export const symbol = "~effect/interfaces/PrimaryKey"
  * }
  *
  * const productId = new ProductId("electronics", 42)
- * console.log(PrimaryKey.value(productId)) // "electronics-42"
+ * PrimaryKey.value(productId) // => "electronics-42"
  * ```
  *
  * @category models
@@ -81,7 +81,7 @@ export interface PrimaryKey {
  * @see {@link PrimaryKey} for the protocol being checked
  * @see {@link value} for extracting the string value after narrowing
  *
- * @category models
+ * @category guards
  * @since 4.0.0
  */
 export const isPrimaryKey = (u: unknown): u is PrimaryKey => hasProperty(u, symbol)
@@ -96,7 +96,7 @@ export const isPrimaryKey = (u: unknown): u is PrimaryKey => hasProperty(u, symb
  *
  * **Example** (Reading primary key values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { PrimaryKey } from "effect"
  *
  * class OrderId implements PrimaryKey.PrimaryKey {
@@ -108,16 +108,16 @@ export const isPrimaryKey = (u: unknown): u is PrimaryKey => hasProperty(u, symb
  * }
  *
  * const orderId = new OrderId(1640995200000, 1)
- * console.log(PrimaryKey.value(orderId)) // "order_1640995200000_1"
+ * PrimaryKey.value(orderId) // => "order_1640995200000_1"
  *
  * // Can also be used with simple string-based implementations
  * const simpleKey = {
  *   [PrimaryKey.symbol]: () => "simple-key-123"
  * }
- * console.log(PrimaryKey.value(simpleKey)) // "simple-key-123"
+ * PrimaryKey.value(simpleKey) // => "simple-key-123"
  * ```
  *
- * @category accessors
+ * @category getters
  * @since 2.0.0
  */
 export const value = (self: PrimaryKey): string => self[symbol]()

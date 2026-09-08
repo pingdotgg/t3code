@@ -16,7 +16,7 @@ import {
   buildCursorCapabilitiesFromConfigOptions,
   checkCursorProviderStatus,
   discoverCursorModelsViaAcp,
-  getCursorFallbackModels,
+  makeCursorModelDiscovery,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
@@ -455,15 +455,23 @@ describe("Cursor skills", () => {
       "please /review this",
     );
   });
-});
 
-describe("getCursorFallbackModels", () => {
-  it("does not publish any built-in cursor models before ACP discovery", () => {
-    expect(
-      getCursorFallbackModels({
-        customModels: ["internal/cursor-model"],
-      }).map((model) => model.slug),
-    ).toEqual(["internal/cursor-model"]);
+  it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
+    const names = new Set(["2spec", "20k", "100M", "1e6"]);
+    // Repeated presence checks must not carry a global-regex cursor.
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(rewriteCursorSkillMentions("use $2spec here", names)).toBe("use /2spec here");
+    expect(rewriteCursorSkillMentions("use $2spec here", new Set())).toBe("use $2spec here");
+    for (const text of [
+      "pay $20 tomorrow",
+      "budget $20k here",
+      "cost $100M total",
+      "limit $1e6 here",
+    ]) {
+      expect(hasCursorSkillMention(text)).toBe(false);
+      expect(rewriteCursorSkillMentions(text, names)).toBe(text);
+    }
   });
 });
 
@@ -620,6 +628,42 @@ describe("checkCursorProviderStatus", () => {
 });
 
 describe("discoverCursorModelsViaAcp", () => {
+  it("reuses successful discovery until the CLI version or account changes", async () => {
+    await runNode(
+      Effect.gen(function* () {
+        const { requestLogPath, wrapperPath } = yield* makeProviderStatusEnvFixture();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        };
+        const discover = yield* makeCursorModelDiscovery(settings, {
+          ...process.env,
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        });
+        const about = {
+          version: "2026.08.11",
+          auth: { status: "authenticated" as const, label: "first@example.test" },
+        };
+        const first = yield* discover(about);
+        expect(first.length).toBeGreaterThan(0);
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        expect(yield* discover(about)).toEqual(first);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toBe("");
+        yield* discover({ ...about, version: "2026.08.12" });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        yield* discover({
+          version: "2026.08.12",
+          auth: { ...about.auth, label: "second@example.test" },
+        });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+      }),
+    );
+  });
+
   it("keeps the ACP probe runtime alive long enough to discover models", async () => {
     const wrapperPath = await runNode(makeMockAgentWrapper());
 

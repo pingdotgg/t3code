@@ -44,6 +44,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpMethod from "effect/unstable/http/HttpMethod";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
@@ -51,7 +52,7 @@ export interface ManagedRelayDpopProofInput {
   readonly accessToken?: string;
 }
 
-export class ManagedRelayDpopKeyLoadError extends Schema.TaggedErrorClass<ManagedRelayDpopKeyLoadError>()(
+export class ManagedRelayDpopKeyLoadError extends Schema.TaggedError<ManagedRelayDpopKeyLoadError>()(
   "ManagedRelayDpopKeyLoadError",
   {
     keyStore: Schema.Literals(["expo-secure-store", "indexed-db"]),
@@ -63,7 +64,7 @@ export class ManagedRelayDpopKeyLoadError extends Schema.TaggedErrorClass<Manage
   }
 }
 
-export class ManagedRelayDpopProofCreationError extends Schema.TaggedErrorClass<ManagedRelayDpopProofCreationError>()(
+export class ManagedRelayDpopProofCreationError extends Schema.TaggedError<ManagedRelayDpopProofCreationError>()(
   "ManagedRelayDpopProofCreationError",
   {
     method: Schema.String,
@@ -114,7 +115,7 @@ export const ManagedRelayRequestActivity = Schema.Literals([
 ]);
 export type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
 
-export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<ManagedRelayRequestTimeoutError>()(
+export class ManagedRelayRequestTimeoutError extends Schema.TaggedError<ManagedRelayRequestTimeoutError>()(
   "ManagedRelayRequestTimeoutError",
   {
     activity: ManagedRelayRequestActivity,
@@ -126,11 +127,11 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<Man
   },
 ) {
   override get message(): string {
-    return `${this.activity} timed out.`;
+    return `${this.activity} timed out. ${NETWORK_BLOCKING_HINT}`;
   }
 }
 
-export class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<ManagedRelayUrlInvalidError>()(
+export class ManagedRelayUrlInvalidError extends Schema.TaggedError<ManagedRelayUrlInvalidError>()(
   "ManagedRelayUrlInvalidError",
   {
     relayUrl: Schema.String,
@@ -141,21 +142,23 @@ export class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<Managed
   }
 }
 
-export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<ManagedRelayRequestFailedError>()(
+export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRelayRequestFailedError>()(
   "ManagedRelayRequestFailedError",
   {
     action: ManagedRelayRequestAction,
+    transportFailed: Schema.optionalKey(Schema.Boolean),
     cause: Schema.Defect(),
     relayError: Schema.optional(RelayProtectedError),
     traceId: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Could not ${this.action}.`;
+    const message = `Could not ${this.action}.`;
+    return this.transportFailed ? `${message} ${NETWORK_BLOCKING_HINT}` : message;
   }
 }
 
-export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorClass<ManagedRelayAccessTokenScopesUnexpectedError>()(
+export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedError<ManagedRelayAccessTokenScopesUnexpectedError>()(
   "ManagedRelayAccessTokenScopesUnexpectedError",
   {
     requestedScopes: Schema.Array(RelayDpopAccessTokenScope),
@@ -167,7 +170,7 @@ export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedE
   }
 }
 
-export class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<ManagedRelayTokenProofCreationError>()(
+export class ManagedRelayTokenProofCreationError extends Schema.TaggedError<ManagedRelayTokenProofCreationError>()(
   "ManagedRelayTokenProofCreationError",
   {
     method: Schema.String,
@@ -180,7 +183,7 @@ export class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass
   }
 }
 
-export class ManagedRelayRequestProofCreationError extends Schema.TaggedErrorClass<ManagedRelayRequestProofCreationError>()(
+export class ManagedRelayRequestProofCreationError extends Schema.TaggedError<ManagedRelayRequestProofCreationError>()(
   "ManagedRelayRequestProofCreationError",
   {
     method: Schema.String,
@@ -307,6 +310,8 @@ function relayRequestError(action: ManagedRelayRequestAction) {
   return (cause: RelayHttpRequestError): ManagedRelayClientError =>
     new ManagedRelayRequestFailedError({
       action,
+      transportFailed:
+        HttpClientError.isHttpClientError(cause) && cause.reason._tag === "TransportError",
       cause,
       ...(isRelayProtectedError(cause) ? { relayError: cause, traceId: cause.traceId } : {}),
     });
@@ -424,6 +429,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
   });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("ManagedRelayClient.make")(function* (
   options: ManagedRelayClientLayerOptions,
 ) {

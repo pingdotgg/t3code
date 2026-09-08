@@ -162,33 +162,71 @@ const mergeProviderModels = (
     : mergedModels;
 };
 
+/**
+ * Antigravity's health check only initializes the agent, so after a server
+ * restart it reports the account as unchecked. The saved Google login still
+ * works, and the previous snapshot proves it. Carry that account state until
+ * a session, refresh, or sign-out reports something new. A confirmed missing
+ * installation, sign-out, disabled instance, or a changed sign-in method is
+ * never overridden.
+ */
+const carrySavedAntigravityAccount = (
+  previousProvider: ServerProvider,
+  nextProvider: ServerProvider,
+): Pick<ServerProvider, "auth" | "status"> | undefined => {
+  const antigravity = ProviderDriverKind.make("antigravity");
+  if (
+    nextProvider.driver !== antigravity ||
+    previousProvider.driver !== antigravity ||
+    !nextProvider.enabled ||
+    nextProvider.auth.status !== "unknown" ||
+    previousProvider.auth.status !== "authenticated" ||
+    (nextProvider.auth.type !== undefined &&
+      nextProvider.auth.type !== previousProvider.auth.type) ||
+    (!nextProvider.installed && nextProvider.status !== "warning")
+  ) {
+    return undefined;
+  }
+  // The pending boot probe (`installed: false`, warning) and a failed probe
+  // keep their own status; only a passed health check reads as ready.
+  const status =
+    nextProvider.installed && nextProvider.status === "warning" ? "ready" : nextProvider.status;
+  return { auth: previousProvider.auth, status };
+};
+
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
-): ServerProvider =>
-  !previousProvider
-    ? nextProvider
-    : {
-        ...nextProvider,
-        models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
-        ...(nextProvider.workspaceSnapshots !== undefined
-          ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-          : previousProvider.workspaceSnapshots !== undefined
-            ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
-            : {}),
-        ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
-          ? {
-              slashCommands:
-                nextProvider.slashCommands.length === 0
-                  ? previousProvider.slashCommands
-                  : nextProvider.slashCommands,
-              skills:
-                nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
-            }
-          : {}),
-      };
+): ServerProvider => {
+  if (!previousProvider) {
+    return nextProvider;
+  }
+  const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
+  // "Google account access is not checked yet" describes the probe, not the
+  // account; it must not outlive the state it explained.
+  const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
+  return {
+    ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
+    ...savedAccount,
+    models: mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models),
+    ...(nextProvider.workspaceSnapshots !== undefined
+      ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
+      : previousProvider.workspaceSnapshots !== undefined
+        ? { workspaceSnapshots: previousProvider.workspaceSnapshots }
+        : {}),
+    ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
+      ? {
+          slashCommands:
+            nextProvider.slashCommands.length === 0
+              ? previousProvider.slashCommands
+              : nextProvider.slashCommands,
+          skills: nextProvider.skills.length === 0 ? previousProvider.skills : nextProvider.skills,
+        }
+      : {}),
+  };
+};
 
-export const haveProvidersChanged = (
+const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
 ): boolean => !Equal.equals(previousProviders, nextProviders);
@@ -532,14 +570,19 @@ export const ProviderRegistryLive = Layer.effect(
 
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
       "getProviderMaintenanceCapabilitiesForInstance",
-    )(function* (instanceId: ProviderInstanceId, provider: ProviderDriverKind) {
-      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      return (
-        instance?.snapshot.maintenanceCapabilities ??
-        makeManualProviderMaintenanceCapabilities(provider)
-      );
+    )(function* (
+      instanceId: ProviderInstanceId,
+      provider: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
+    ) {
+      // Read the instance registry, not `liveSubsRef`: the latter trails
+      // reconciliation, and an update must never run a retired instance's
+      // command against a freshly configured executable.
+      const instance = yield* instanceRegistry.getInstance(instanceId);
+      if (!instance || instance.driverKind !== provider) {
+        return makeManualProviderMaintenanceCapabilities(provider);
+      }
+      return yield* instance.snapshot.resolveMaintenance(options);
     });
 
     /**

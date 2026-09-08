@@ -159,9 +159,30 @@ deploys:
   TypeScript class, move the file; as long as the logical ID stays
   the same, alchemy still recognizes it.
 - **Rename = replace** — change the logical ID and alchemy treats
-  it as a new resource (and deletes the old one on the next deploy).
+  it as a new resource (and deletes the old one on the next deploy)
+  — unless you declare the rename with
+  [`renamedFrom`](/infrastructure-as-code/renaming).
 
 Logical IDs only need to be unique **within a stack**.
+
+## Renaming a resource
+
+Changing a logical ID normally plans a **replacement**: a new
+resource is created under the new ID and the old one — including
+its physical resource, data, and attachments — is deleted. When you
+actually just renamed the resource, declare the rename with
+`Alchemy.renamedFrom` and alchemy migrates the state row instead:
+
+```diff lang="typescript"
+-const bucket = yield* Cloudflare.R2.Bucket("Bucket");
++const bucket = yield* Cloudflare.R2.Bucket("Assets").pipe(
++  Alchemy.renamedFrom("Bucket"),
++);
+```
+
+The instance ID and physical name are preserved; nothing is created
+or deleted in the cloud. See
+[Renaming Resources](/infrastructure-as-code/renaming).
 
 ## Physical name
 
