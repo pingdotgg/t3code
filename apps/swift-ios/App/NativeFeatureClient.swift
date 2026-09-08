@@ -6489,11 +6489,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             snapshot.thread,
             environmentID: route.environmentID
         )
-        let loadedMessageIDs = Set(currentDetail.messages.map(\.id))
-        let mergedMessages = (
-            olderMessages.filter { !loadedMessageIDs.contains($0.id) }
-                + currentDetail.messages
-        ).sorted { $0.createdAt < $1.createdAt }
+        let mergedMessages = NativeTranscriptOrder.prependHistory(
+            olderMessages, to: currentDetail.messages
+        )
 
         activeRawThread = mergedThread
         activeThreadPage = featurePage(snapshot.page)

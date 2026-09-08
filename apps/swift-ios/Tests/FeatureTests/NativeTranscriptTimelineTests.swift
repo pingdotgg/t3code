@@ -55,7 +55,7 @@ struct NativeTranscriptTimelineTests {
         #expect(timeline.messages[0].activeWorkLabel == nil)
     }
 
-    @Test func textAndOtherCallsCloseRowsAndLateCompletionAppends() {
+    @Test func textClosesGroupsButDistinctCallsAndLateCompletionShareTheNextGroup() {
         var timeline = NativeTranscriptTimeline()
         timeline.append(text("text1", at: 1))
         timeline.append(activity("startA", at: 2))
@@ -63,14 +63,15 @@ struct NativeTranscriptTimelineTests {
         let prefix = timeline.messages
         timeline.append(activity("updateA", at: 4))
         timeline.append(activity("startB", call: "b", at: 5))
-        let earlier = timeline.messages
         timeline.append(activity("lateA", at: 6, kind: "tool.completed"))
         #expect(Array(timeline.messages.prefix(3)) == prefix)
-        #expect(Array(timeline.messages.prefix(4)) == Array(earlier.prefix(4)))
         #expect(timeline.messages.map(\.id) == [
-            "text1", "work-log-startA", "text2", "work-log-updateA", "work-log-startB", "work-log-lateA",
+            "text1", "work-log-startA", "text2", "work-log-updateA",
         ])
-        #expect(timeline.messages.allSatisfy { $0.activeWorkLabel == nil })
+        #expect(timeline.messages.last?.activeWorkLabel == "startB")
+        #expect(timeline.messages.last?.toolName == "2 tool calls")
+        #expect(timeline.messages.last?.text.contains("startB") == true)
+        #expect(timeline.messages.last?.text.contains("lateA") == true)
         #expect(timeline.messages.last?.createdAt == Date(timeIntervalSince1970: 6))
     }
 
@@ -90,13 +91,13 @@ struct NativeTranscriptTimelineTests {
         #expect(snapshot.messages == live.messages)
     }
 
-    @Test func missingCallIdentityAndDifferentTurnsNeverCoalesce() {
+    @Test func missingCallIdentityStillGroupsButDifferentTurnsSeparate() {
         var timeline = NativeTranscriptTimeline()
         timeline.append(activity("no-id-1", call: nil, at: 1))
         timeline.append(activity("no-id-2", call: nil, at: 2))
         timeline.append(activity("a1", at: 3))
         timeline.append(activity("a2", at: 4, turn: "other"))
-        #expect(timeline.messages.count == 4)
+        #expect(timeline.messages.count == 2)
     }
 
     @Test func noticesSeparateCallsAndInactiveSnapshotHasNoLiveLabels() {
@@ -113,7 +114,7 @@ struct NativeTranscriptTimelineTests {
         let first = activity("first", at: 1, sequence: 10)
         let second = activity("second", call: "b", at: 1, sequence: 11)
         let snapshot = NativeTranscriptTimeline(messages: [message], activities: [second, first], sessionIsLive: true)
-        #expect(snapshot.messages.map(\.id) == ["text", "work-log-first", "work-log-second"])
+        #expect(snapshot.messages.map(\.id) == ["text", "work-log-first"])
         var live = NativeTranscriptTimeline()
         live.append(first)
         live.append(message)
@@ -131,6 +132,56 @@ struct NativeTranscriptTimelineTests {
         batch.formUnion(.activity(tool))
         batch.formUnion(.message(message))
         #expect(batch.ordered == [.message(message), .activity(tool), .message(message)])
+    }
+
+    @Test func backwardsTimestampsKeepMaximumAgeAndNeverCrossText() {
+        var timeline = NativeTranscriptTimeline()
+        timeline.append(activity("first", at: 10))
+        timeline.append(activity("backwards", call: "b", at: 5))
+        #expect(timeline.messages.count == 1)
+        #expect(timeline.messages[0].createdAt == Date(timeIntervalSince1970: 10))
+        timeline.append(text("boundary", at: 11))
+        timeline.append(activity("late", at: 4))
+        #expect(timeline.messages.map(\.id) == ["work-log-first", "boundary", "work-log-late"])
+        #expect(timeline.messages.last?.createdAt == Date(timeIntervalSince1970: 4))
+    }
+
+    @Test func olderPageRebuildKeepsLoadedGroupsAndReplayIsIdempotent() {
+        let boundary = text("boundary", at: 3)
+        let old = activity("old", at: 1)
+        let recent = [activity("first", at: 4), activity("second", call: "b", at: 5)]
+        let loaded = NativeTranscriptTimeline(messages: [boundary], activities: recent, sessionIsLive: true)
+        var paged = NativeTranscriptTimeline(messages: [text("older", at: 0), boundary],
+            activities: [old] + recent, sessionIsLive: true)
+        #expect(Array(paged.messages.suffix(2)) == loaded.messages)
+        for item in [old] + recent { paged.append(item) }
+        #expect(Array(paged.messages.suffix(2)) == loaded.messages)
+    }
+
+    @Test func relativeToolAgeAdvancesAtUnitBoundariesAndClampsFutureEvents() {
+        let date = Date(timeIntervalSince1970: 100)
+        for (seconds, expected) in [(-20.0, "just now"), (0, "just now"), (9, "just now"),
+                                    (20, "20s ago"), (60, "1m ago"), (120, "2m ago"),
+                                    (3600, "1h ago"), (86400, "1d ago")] {
+            #expect(NativeToolRelativeAge.text(since: date, now: date.addingTimeInterval(seconds)) == expected)
+            #expect(NativeToolRelativeAge.nextChange(since: date, now: date.addingTimeInterval(seconds))!
+                > date.addingTimeInterval(seconds))
+        }
+        #expect(NativeToolRelativeAge.nextChange(since: date, now: date.addingTimeInterval(120))
+            == date.addingTimeInterval(180))
+    }
+
+    @Test func historyAndLocalFeedbackNeverResortObservedToolBoundaries() {
+        let current = [text("first-tool", at: 10), text("boundary", at: 11), text("late-tool", at: 4)]
+        let paged = NativeTranscriptOrder.prependHistory([text("older", at: 0), current[0]], to: current)
+        #expect(paged.map(\.id) == ["older", "first-tool", "boundary", "late-tool"])
+        let withFeedback = NativeTranscriptOrder.insertingFeedback([text("feedback", at: 8)], into: paged)
+        #expect(withFeedback.filter { $0.id != "feedback" } == paged)
+    }
+
+    @Test func unknownTimestampHasNoInventedAgeOrClockTick() {
+        #expect(NativeToolRelativeAge.text(since: .distantPast, now: .now) == "—")
+        #expect(NativeToolRelativeAge.nextChange(since: .distantPast, now: .now) == nil)
     }
 
     @Test func receiptGateScopesSelectionAndLimitsOnlySameSecondPublication() {

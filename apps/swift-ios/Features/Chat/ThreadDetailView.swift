@@ -824,10 +824,7 @@ public struct ThreadDetailView: View {
 
     private func timelineMessages(_ messages: [FeatureMessage]) -> [FeatureMessage] {
         guard !feedbackMessages.isEmpty else { return messages }
-        return (messages + feedbackMessages).enumerated().sorted {
-            $0.element.createdAt != $1.element.createdAt
-                ? $0.element.createdAt < $1.element.createdAt : $0.offset < $1.offset
-        }.map(\.element)
+        return NativeTranscriptOrder.insertingFeedback(feedbackMessages, into: messages)
     }
 
     private var markdownImageContext: MarkdownImageContext? {
@@ -2619,9 +2616,82 @@ private struct FeatureActivityTimestamp: View {
     }
 }
 
+/// One sleeping task services only mounted, foreground tool age labels. Each label
+/// is observed separately, so a clock tick cannot invalidate the transcript.
+@MainActor
+@Observable
+private final class FeatureToolAgeLabel {
+    let id = UUID()
+    var date = Date.now
+    var text = "just now"
+}
+
+@MainActor
+private final class FeatureToolAgeClock {
+    static let shared = FeatureToolAgeClock()
+    private var labels: [UUID: FeatureToolAgeLabel] = [:]
+    private var task: Task<Void, Never>?
+
+    func show(_ label: FeatureToolAgeLabel, date: Date) {
+        label.date = date
+        labels[label.id] = label
+        schedule()
+    }
+
+    func hide(_ label: FeatureToolAgeLabel) {
+        labels[label.id] = nil
+        schedule()
+    }
+
+    private func schedule() {
+        task?.cancel()
+        task = nil
+        let now = Date.now
+        for label in labels.values {
+            let text = NativeToolRelativeAge.text(since: label.date, now: now)
+            if label.text != text { label.text = text }
+        }
+        guard let next = labels.values.compactMap({
+            NativeToolRelativeAge.nextChange(since: $0.date, now: now)
+        }).min() else { return }
+        task = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(max(0.05, next.timeIntervalSinceNow)))
+            } catch { return }
+            self?.schedule()
+        }
+    }
+}
+
+private struct FeatureToolRelativeTimestamp: View {
+    let date: Date
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    @State private var label = FeatureToolAgeLabel()
+
+    var body: some View {
+        Text(label.text)
+            .font(T3Typography.supporting.monospacedDigit())
+            .foregroundStyle(T3Colors.textSecondary)
+            .fixedSize()
+            .onAppear { updateClock() }
+            .onChange(of: date) { updateClock() }
+            .onChange(of: scenePhase) { updateClock() }
+            .onDisappear { FeatureToolAgeClock.shared.hide(label) }
+    }
+
+    private func updateClock() {
+        if scenePhase == .active {
+            FeatureToolAgeClock.shared.show(label, date: date)
+        } else {
+            FeatureToolAgeClock.shared.hide(label)
+        }
+    }
+}
+
 private struct FeatureWorkLogView: View {
     let message: FeatureMessage
     let imageContext: MarkdownImageContext?
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isExpanded = false
 
     var body: some View {
@@ -2631,26 +2701,7 @@ private struct FeatureWorkLogView: View {
                 transaction.disablesAnimations = true
                 withTransaction(transaction) { isExpanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            FeatureToolActivityIcon(presentation: message.toolPresentation, context: imageContext)
-                            Text(message.toolName ?? "Tool output")
-                            if let source = message.toolPresentation?.sourceName {
-                                Text(source).lineLimit(1)
-                            }
-                        }
-                        if let activeWorkLabel = message.activeWorkLabel {
-                            Text(activeWorkLabel)
-                                .lineLimit(1)
-                                .foregroundStyle(T3Colors.statusRunning)
-                        }
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.semibold))
-                    FeatureActivityTimestamp(date: message.createdAt)
-                }
+                workLogHeader
                 .font(T3Typography.tool.weight(.medium))
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(minHeight: T3Metrics.minimumTapTarget)
@@ -2683,13 +2734,66 @@ private struct FeatureWorkLogView: View {
                 }
             }
         }
-        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("message-\(message.id)")
         .transaction { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
     }
+
+    @ViewBuilder
+    private var workLogHeader: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                toolSummary
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    disclosureAndAge
+                }
+            }
+        } else {
+            HStack(spacing: 8) {
+                toolSummary
+                Spacer(minLength: 8)
+                disclosureAndAge
+            }
+        }
+    }
+
+    private var toolSummary: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                if !dynamicTypeSize.isAccessibilitySize {
+                    FeatureToolActivityIcon(presentation: message.toolPresentation, context: imageContext)
+                }
+                Text(message.toolName ?? "Tool output")
+                if !dynamicTypeSize.isAccessibilitySize, let source = message.toolPresentation?.sourceName {
+                    Text(source)
+                }
+            }
+            if dynamicTypeSize.isAccessibilitySize, let source = message.toolPresentation?.sourceName {
+                Text(source)
+            }
+            if let activeWorkLabel = message.activeWorkLabel, activeWorkLabel != message.toolName {
+                Text(activeWorkLabel)
+                    .foregroundStyle(T3Colors.statusRunning)
+            }
+        }
+        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+        .multilineTextAlignment(.leading)
+    }
+
+    private var disclosureAndAge: some View {
+        HStack(spacing: 8) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.caption.weight(.semibold))
+            FeatureToolRelativeTimestamp(date: message.createdAt)
+        }
+    }
+
 }
 
 enum FeatureWorkLogMedia {
