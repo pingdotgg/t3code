@@ -1698,6 +1698,15 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         let path = request.url?.path ?? ""
+        if path == "/.well-known/t3/environment" {
+            let id = host == "one.example" ? "one" : "two"
+            return (try JSONEncoder.t3.encode(multiEnvironmentDescriptor(
+                environmentID: id, label: id == "one" ? "Left Book" : "Steam Box", pullRequestsAvailable: true
+            )), multiEnvironmentResponse(request))
+        }
+        if path == "/oauth/token" {
+            return (Data(#"{"access_token":"paired-token","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":3600,"scope":"read write"}"#.utf8), multiEnvironmentResponse(request))
+        }
         if path == "/api/orchestration/shell" {
             shellReadCounts[host, default: 0] += 1
             if let gate = nextShellGates.removeValue(forKey: host), let data = shellData[host] {
@@ -2809,6 +2818,41 @@ private actor PassiveLiveConnection: WebSocketConnection {
 @Suite("Native incremental bootstrap")
 @MainActor
 struct NativeIncrementalBootstrapTests {
+    @Test("Pairing resets the previous environment's hydration and archive lifetime", .timeLimit(.minutes(1)), arguments: [false, true])
+    func pairingReplacesHydrationLifetime(previousHydrated: Bool) async throws {
+        let server = PassiveLiveServer()
+        let receipts = PassiveLiveReceipts()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            webSocketConnector: server, fallbackPollingInitialDelay: .seconds(60),
+            aggregatePublishSleep: {}, aggregateRefreshReceipt: { receipts.record($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let held = PassiveRequestGate()
+        if !previousHydrated { await fixture.transport.holdNextShell(host: "one.example", gate: held) }
+        let seed = try await fixture.client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: fixture.client.events())
+        defer { recorder.stop() }
+        do {
+            if previousHydrated { try await receipts.waitForArchive("one") }
+            else { try await held.waitUntilEnteredCancellable() }
+            await server.waitForSubscriptions(host: "two.example", count: 1)
+            try await fixture.client.pair(endpoint: "https://two.example", token: "fixture-bootstrap")
+            await server.waitForSubscriptions(host: "two.example", count: 2)
+            let shell = multiEnvironmentShell(projectID: "project-two", threadID: "thread-two", title: "New active hydration", snapshotSequence: 20)
+            await fixture.transport.setShell(shell, host: "two.example")
+            try await server.upsert(shell.threads[0], sequence: 20, host: "two.example")
+            _ = try await recorder.wait { $0.threads.contains { $0.title == "New active hydration" } }
+            try await receipts.waitForArchive("two")
+            if !previousHydrated { #expect(await held.isHeld) }
+        } catch {
+            await held.release()
+            await fixture.client.disconnect()
+            throw error
+        }
+        await held.release()
+        await fixture.client.disconnect()
+    }
+
     @Test("Foreground restores bootstrap before a client has been adopted", .timeLimit(.minutes(1)))
     func foregroundRestartsUnadoptedClient() async throws {
         let fixture = try await NativeMultiEnvironmentTests.makeFixture(

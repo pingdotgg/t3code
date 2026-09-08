@@ -1119,6 +1119,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func clearEnvironmentState(preserveEnvironmentSnapshots: Bool = false) {
+        activeHydrationTask?.cancel()
+        activeHydrationTask = nil
+        activeHydrationID = nil
+        activeHydrationPending = false
+        activeHTTPAuthorityRevision &+= 1
+        activeHasHydrated = false
+        activeStreamIsAuthoritative = false
         environmentGeneration &+= 1
         cancelAcceptedCommandRefreshes()
         resetDetailRefresh()
