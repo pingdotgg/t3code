@@ -6,7 +6,7 @@
     "deploy": "node -- scripts/deploy.ts",
     "destroy": "alchemy destroy",
     "test": "vp test run",
-    "typecheck": "tsgo --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@clerk/backend": "catalog:",
