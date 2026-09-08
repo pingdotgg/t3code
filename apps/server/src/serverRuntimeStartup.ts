@@ -631,17 +631,20 @@ export const reconcileProviderSessions = Effect.gen(function* () {
                 },
                 createdAt,
               });
-            }),
-          { concurrency: 1, discard: true },
-        ).pipe(Effect.exit);
-        if (Exit.isFailure(submittedStartCleanup)) {
-          if (Cause.hasInterrupts(submittedStartCleanup.cause)) {
-            return yield* Effect.failCause(submittedStartCleanup.cause);
-          }
-          yield* Effect.logWarning(
-            "failed to clear an acknowledged turn start during orphan reconciliation",
-            { threadId: thread.id, cause: submittedStartCleanup.cause },
-          );
+            }).pipe(
+              Effect.as(true),
+              Effect.catchCause((cause) =>
+                Cause.hasInterrupts(cause)
+                  ? Effect.failCause(cause)
+                  : Effect.logWarning(
+                      "failed to clear an acknowledged turn start during orphan reconciliation",
+                      { threadId: thread.id, messageId: submitted.messageId, cause },
+                    ).pipe(Effect.as(false)),
+              ),
+            ),
+          { concurrency: 1 },
+        );
+        if (submittedStartCleanup.some((cleared) => !cleared)) {
           return;
         }
 

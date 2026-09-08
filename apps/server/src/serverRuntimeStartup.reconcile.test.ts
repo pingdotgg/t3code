@@ -645,11 +645,15 @@ it.effect("clears acknowledged starts when orphan reconciliation abandons the se
   );
 });
 
-it.effect("keeps an orphaned acknowledged start retryable when cleanup cannot persist", () => {
-  const messageId = MessageId.make("message-cleanup-fails");
+it.effect("clears later orphaned starts while keeping a failed cleanup retryable", () => {
+  const failedMessageId = MessageId.make("message-cleanup-fails");
+  const clearedMessageId = MessageId.make("message-cleanup-succeeds");
   const thread = {
     ...makeThread("thread-cleanup-fails", "starting"),
-    submittedTurnStarts: [{ messageId, turnId: TurnId.make("turn-cleanup-fails") }],
+    submittedTurnStarts: [
+      { messageId: failedMessageId, turnId: TurnId.make("turn-cleanup-fails") },
+      { messageId: clearedMessageId, turnId: TurnId.make("turn-cleanup-succeeds") },
+    ],
   };
   const dispatched: OrchestrationCommand[] = [];
 
@@ -666,7 +670,11 @@ it.effect("keeps an orphaned acknowledged start retryable when cleanup cannot pe
     dispatch: (command) =>
       Effect.sync(() => dispatched.push(command)).pipe(
         Effect.flatMap(() =>
-          command.type === "thread.activity.append"
+          command.type === "thread.activity.append" &&
+          command.activity.payload !== null &&
+          typeof command.activity.payload === "object" &&
+          "requestId" in command.activity.payload &&
+          command.activity.payload.requestId === failedMessageId
             ? Effect.fail(
                 new OrchestrationCommandInvariantError({
                   commandType: command.type,
@@ -680,8 +688,18 @@ it.effect("keeps an orphaned acknowledged start retryable when cleanup cannot pe
     Effect.tap(() =>
       Effect.sync(() => {
         assert.deepStrictEqual(
-          dispatched.map((command) => command.type),
-          ["thread.activity.append"],
+          dispatched.map((command) =>
+            command.type === "thread.activity.append" &&
+            command.activity.payload !== null &&
+            typeof command.activity.payload === "object" &&
+            "requestId" in command.activity.payload
+              ? { type: command.type, requestId: command.activity.payload.requestId }
+              : { type: command.type },
+          ),
+          [
+            { type: "thread.activity.append", requestId: failedMessageId },
+            { type: "thread.activity.append", requestId: clearedMessageId },
+          ],
         );
       }),
     ),
