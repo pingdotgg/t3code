@@ -66,8 +66,8 @@ afterEach(() => {
 });
 
 describe("sidebar pull gesture lifecycle", () => {
-  it("returns native scrolling when a pull reverses past its starting point", () => {
-    const { root, surface } = mount();
+  it("cancels a reversed pull and leaves a fresh upward gesture to the browser", () => {
+    const { root, surface, viewport } = mount();
     touch(surface, "touchstart", 50, 100);
     expect(touch(surface, "touchmove", 50, 160).defaultPrevented).toBe(true);
     expect(root.dataset.pulling).toBe("true");
@@ -75,6 +75,11 @@ describe("sidebar pull gesture lifecycle", () => {
     expect(root.dataset.pulling).toBe("false");
     expect(root.properties.get("--sidebar-pull-offset")).toBe("0px");
     expect(touch(surface, "touchmove", 50, 180).defaultPrevented).toBe(false);
+    expect(viewport.scrollTop).toBe(0);
+    touch(surface, "touchend", 50, 180);
+    touch(surface, "touchstart", 50, 100);
+    expect(touch(surface, "touchmove", 50, 80).defaultPrevented).toBe(false);
+    expect(viewport.scrollTop).toBe(0);
   });
 
   it("releases an active pull when the gesture becomes horizontal", () => {
