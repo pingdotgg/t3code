@@ -39,6 +39,8 @@ export interface DeviceStreamEvents {
    * the canvas.
    */
   readonly onMjpegFallback: (url: string) => void;
+  /** Whether touches and keys can currently reach the device. */
+  readonly onInputConnected: (connected: boolean, detail?: string) => void;
 }
 
 export interface DeviceStreamTarget {
@@ -465,7 +467,10 @@ export function createDeviceStreamClient(
     const ws = new WebSocket(wsUrl(`/helper/ws?device=${device}`));
     ws.binaryType = "arraybuffer";
     socket = ws;
-    ws.onopen = () => ws.send(taggedJson(IOS_MSG_HARDWARE_KEYBOARD, { enabled: false }));
+    ws.onopen = () => {
+      ws.send(taggedJson(IOS_MSG_HARDWARE_KEYBOARD, { enabled: false }));
+      events.onInputConnected(true);
+    };
     ws.onmessage = (event) => {
       if (!(event.data instanceof ArrayBuffer)) return;
       const bytes = new Uint8Array(event.data);
@@ -482,6 +487,12 @@ export function createDeviceStreamClient(
     };
     ws.onclose = (event) => {
       if (socket === ws) socket = null;
+      if (!stopped) {
+        events.onInputConnected(
+          false,
+          event.reason || (event.code === 1006 ? "input socket refused" : `closed ${event.code}`),
+        );
+      }
       if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
       scheduleRetry(connectIosInput);
     };
@@ -494,7 +505,10 @@ export function createDeviceStreamClient(
     const ws = new WebSocket(wsUrl(`/ws?device=${device}&frame-meta=1`));
     ws.binaryType = "arraybuffer";
     socket = ws;
-    ws.onopen = () => setStatus("connecting");
+    ws.onopen = () => {
+      setStatus("connecting");
+      events.onInputConnected(true);
+    };
     ws.onmessage = (event) => {
       if (!(event.data instanceof ArrayBuffer)) return;
       const packet = parseSemuPacket(event.data);
@@ -522,6 +536,7 @@ export function createDeviceStreamClient(
     ws.onclose = (event) => {
       if (socket === ws) socket = null;
       closeDecoder();
+      if (!stopped) events.onInputConnected(false, event.reason || `closed ${event.code}`);
       if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
       if (!stopped) {
         setStatus("connecting", event.reason || undefined);

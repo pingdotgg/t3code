@@ -15,6 +15,8 @@ import {
 export interface DeviceStreamHandle {
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
+  /** False while the input socket is down; controls should disable. */
+  readonly inputConnected: boolean;
 }
 
 /**
@@ -39,6 +41,9 @@ export function DeviceStreamView(props: {
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
   const [mjpegUrl, setMjpegUrl] = useState<string | null>(null);
   const [mjpegGeneration, setMjpegGeneration] = useState(0);
+  const [inputState, setInputState] = useState<{ connected: boolean; detail?: string }>({
+    connected: false,
+  });
   const { onHandle, onScreen } = props;
 
   useEffect(() => {
@@ -68,12 +73,21 @@ export function DeviceStreamView(props: {
           setMjpegUrl(url);
           setMjpegGeneration((generation) => generation + 1);
         },
+        onInputConnected: (connected, detail) => {
+          setInputState({ connected, ...(detail ? { detail } : {}) });
+          onHandle?.({
+            pressButton: client.pressButton,
+            rotate: client.rotate,
+            inputConnected: connected,
+          });
+        },
       },
     );
     clientRef.current = client;
     setMjpegUrl(null);
+    setInputState({ connected: false });
     client.start();
-    onHandle?.({ pressButton: client.pressButton, rotate: client.rotate });
+    onHandle?.({ pressButton: client.pressButton, rotate: client.rotate, inputConnected: false });
     return () => {
       client.stop();
       clientRef.current = null;
@@ -194,6 +208,13 @@ export function DeviceStreamView(props: {
           />
         ) : null}
       </div>
+      {status === "streaming" && !inputState.connected ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
+          <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
+            Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
+          </span>
+        </div>
+      ) : null}
       {status !== "streaming" ? (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 text-sm text-muted-foreground">
           {status === "connecting" ? <Spinner /> : null}
