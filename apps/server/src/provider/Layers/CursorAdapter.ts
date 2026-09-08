@@ -101,6 +101,10 @@ export interface CursorAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  readonly onAvailableCommands?: (
+    cwd: string,
+    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  ) => Effect.Effect<void>;
   /**
    * Selections are honored when `modelSelection.instanceId` matches this value.
    * Defaults to the legacy built-in instance id (`cursor`).
@@ -798,6 +802,11 @@ export function makeCursorAdapter(
             Stream.mapEffect(acp.getEvents(), (event) =>
               Effect.gen(function* () {
                 switch (event._tag) {
+                  case "AvailableCommandsUpdated":
+                    yield* (
+                      options?.onAvailableCommands?.(cwd, event.availableCommands) ?? Effect.void
+                    );
+                    return;
                   case "EventStreamBarrier":
                     yield* Deferred.succeed(event.acknowledge, undefined);
                     return;
@@ -983,6 +992,7 @@ export function makeCursorAdapter(
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           const rawPrompt = input.input?.trim() ?? "";
+          let nativeSlashCommand = false;
           if (rawPrompt) {
             let cursorSkillNames = ctx.cursorSkillNames;
             if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
@@ -1003,6 +1013,7 @@ export function makeCursorAdapter(
             const prompt = cursorSkillNames
               ? rewriteCursorSkillMentions(rawPrompt, cursorSkillNames)
               : rawPrompt;
+            nativeSlashCommand = /^\/\S/u.test(prompt);
             promptParts.push({ type: "text", text: prompt });
           }
           if (input.attachments && input.attachments.length > 0) {
@@ -1050,15 +1061,20 @@ export function makeCursorAdapter(
             });
           }
 
-          // ACP has no system-message field; keep runtime context separate from the user's text.
+          // Cursor joins text blocks before parsing slash commands. Extra context
+          // would become command arguments or prevent native command matching.
           const result = yield* ctx.acp
             .prompt({
               prompt: [
                 ...promptParts,
-                {
-                  type: "text",
-                  text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
-                },
+                ...(nativeSlashCommand
+                  ? []
+                  : [
+                      {
+                        type: "text",
+                        text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                      } satisfies EffectAcpSchema.ContentBlock,
+                    ]),
               ],
             })
             .pipe(
