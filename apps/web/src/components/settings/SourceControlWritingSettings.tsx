@@ -61,7 +61,7 @@ export function SourceControlWritingSettingsSection() {
   const writingStyleMixed = useScopedSettingsMixed(["sourceControlWritingStyle"]);
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editingAllInstructions, setEditingAllInstructions] = useState(false);
-  const [allInstructions, setAllInstructions] = useState("");
+  const [allInstructions, setAllInstructions] = useState<string | null>(null);
   const style = settings.sourceControlWritingStyle;
   const defaults = DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
   const isSourceControlWritingStyleDirty =
@@ -153,7 +153,7 @@ export function SourceControlWritingSettingsSection() {
             {editingAllInstructions ? (
               <>
                 <Textarea
-                  value={allInstructions}
+                  value={allInstructions ?? ""}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
                   aria-label="Custom source control instructions for all selected environments"
@@ -162,7 +162,9 @@ export function SourceControlWritingSettingsSection() {
                 <Button
                   size="sm"
                   variant="outline"
+                  disabled={allInstructions === null}
                   onClick={() => {
+                    if (allInstructions === null) return;
                     updateSettings({
                       sourceControlWritingStyle: {
                         mode: "custom",
@@ -176,7 +178,14 @@ export function SourceControlWritingSettingsSection() {
                 </Button>
               </>
             ) : (
-              <Button size="sm" variant="outline" onClick={() => setEditingAllInstructions(true)}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setAllInstructions(null);
+                  setEditingAllInstructions(true);
+                }}
+              >
                 Write custom instructions for all
               </Button>
             )}
