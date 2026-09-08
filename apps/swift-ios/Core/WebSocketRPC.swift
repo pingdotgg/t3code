@@ -658,7 +658,6 @@ public actor WebSocketRPCClient {
         for id in Array(unary.keys) {
             await sendUnary(id)
         }
-        subscriptionByRequestID.removeAll()
         for id in Array(subscriptions.keys) {
             await sendSubscription(id)
         }
