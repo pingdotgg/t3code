@@ -1,24 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ProjectsSettings } from "../components/settings/ProjectsSettings";
+import { validateSettingsScopeSearch } from "../components/settings/settingsScope";
 
 export const Route = createFileRoute("/settings/projects")({
-  validateSearch: (search: Record<string, unknown>) => ({
-    project: typeof search.project === "string" ? search.project : undefined,
-    machine: typeof search.machine === "string" ? search.machine : undefined,
-  }),
+  validateSearch: validateSettingsScopeSearch,
   component: ProjectsRoute,
 });
 
 function ProjectsRoute() {
-  const { project, machine } = Route.useSearch();
+  const search = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
     <ProjectsSettings
-      projectKey={project ?? null}
-      machineId={machine ?? null}
-      onScopeChange={(project, machine) => {
+      value={search}
+      onScopeChange={(scope) => {
         void navigate({
-          search: { project: project ?? undefined, machine: machine ?? undefined },
+          search: scope,
           replace: true,
         });
       }}
