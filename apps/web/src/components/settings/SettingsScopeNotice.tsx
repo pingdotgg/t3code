@@ -5,7 +5,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { useEnvironments } from "../../state/environments";
 import type { SettingsScopeSearch } from "./settingsScope";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 /** Offer an explicit target change when a category has no settings at this scope. */
@@ -22,6 +22,7 @@ export function SettingsScopeNotice({
 }) {
   const { selectScope, search } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
+  const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
   const groups = useSettingsProjectGroups();
   const choices: { label: string; search: SettingsScopeSearch }[] =
@@ -79,7 +80,8 @@ export function SettingsScopeNotice({
                 variant="outline"
                 className="max-w-full break-all text-left"
                 onClick={() => {
-                  if (targetId) void navigate({ search: choice.search, hash: targetId });
+                  if (targetId)
+                    void navigate({ to: pathname, search: () => choice.search, hash: targetId });
                   else selectScope(choice.search);
                 }}
               >
