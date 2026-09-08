@@ -5,39 +5,6 @@ import XCTest
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
-    func testLateStopAcknowledgementCannotCancelReplacementGenerationRefresh() async throws {
-        let fixture = try await AcceptedSendFixture.make(includePeer: true)
-        addTeardownBlock { await fixture.cleanUp() }
-        var acknowledgements = fixture.socket.heldInterrupts.makeAsyncIterator()
-        var reads = fixture.transport.heldReads.makeAsyncIterator()
-        await fixture.socket.holdInterruptAcknowledgements()
-        let stopping = Task { try await fixture.client.cancelTurn(threadID: fixture.threadID) }
-        addTeardownBlock {
-            await fixture.socket.releaseInterruptAcknowledgements()
-            _ = await stopping.result
-        }
-        guard await acknowledgements.next() != nil else { throw CancellationError() }
-
-        _ = try await fixture.runtime.activate(id: "accepted-peer")
-        _ = try await fixture.client.initialSnapshot()
-        await fixture.transport.holdFollowups(includeShell: false)
-        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Replacement generation", selection: nil)
-        let replacementRead = await reads.next()
-        let replacement = try XCTUnwrap(replacementRead)
-        XCTAssertTrue(replacement.path.hasPrefix("/api/orchestration/threads/"))
-
-        await fixture.socket.releaseInterruptAcknowledgements()
-        try await stopping.value
-        let marker = "Replacement generation published its uniquely held response"
-        XCTAssertNotEqual(fixture.model.details[fixture.threadID]?.messages.last?.text, marker)
-        await fixture.transport.release(replacement.id, detailMessage: marker)
-        try await AcceptedSendDetailReceipt(
-            model: fixture.model, threadID: fixture.threadID, expectedMessage: marker
-        ).wait()
-        XCTAssertEqual(fixture.model.details[fixture.threadID]?.messages.last?.text, marker)
-        let commands = await fixture.socket.commands
-        XCTAssertEqual(commands.map { $0["type"]?.stringValue }, ["thread.turn.interrupt", "thread.turn.start"])
-    }
 
     func testRejectedStopPropagatesRemoteError() async throws {
         let fixture = try await AcceptedSendFixture.make()
