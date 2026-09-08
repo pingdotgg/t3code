@@ -1028,7 +1028,7 @@ final class NativeThreadCatchUpTests: XCTestCase {
     }
 
     func testShellCompletionRepairsMissingOrStreamingFinalWithoutClosingDetailStream() async throws {
-        for mode in ["missing", "streaming", "no-message-id", "no-message-id-streaming"] {
+        for mode in ["missing", "streaming", "no-message-id", "no-message-id-streaming", "no-message-id-completed"] {
             let fixture = try await CatchUpFixture.make()
             defer { fixture.cleanUp() }
             if mode == "streaming" || mode == "no-message-id-streaming" {
@@ -1039,7 +1039,7 @@ final class NativeThreadCatchUpTests: XCTestCase {
             var events = fixture.client.events().makeAsyncIterator()
             _ = try await fixture.client.loadThread(id: fixture.firstID)
             let detail = try await nextThreadRequest(&requests)
-            if mode == "no-message-id-streaming" {
+            if mode == "no-message-id-streaming" || mode == "no-message-id-completed" {
                 try await detail.completeTurnWithoutMessageID(sequence: 3)
             }
             try await detail.synchronize()
@@ -1446,6 +1446,34 @@ final class NativeThreadCatchUpTests: XCTestCase {
         XCTAssertTrue(detail.messages.contains { $0.text == "Fresh retry" })
         let reads = await fixture.http.threadRequests
         XCTAssertEqual(reads.count, 2)
+        await fixture.client.disconnect()
+    }
+
+    func testWarmReopenClearsAnInterruptedOlderPageLoadingState() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        await fixture.http.setPage(.init(beforeCursor: "older", hasMore: true, snapshotSequence: 2))
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let stream = try await nextThreadRequest(&requests)
+        try await stream.synchronize()
+        _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.holdThreadReads(true)
+        var reads = fixture.http.heldRequests.makeAsyncIterator()
+        let older = Task { try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID) }
+        let held = try await nextHeldRead(&reads)
+        fixture.client.releaseThread(id: fixture.firstID)
+        let restored = try await fixture.client.loadThread(id: fixture.firstID)
+        XCTAssertEqual(restored.page?.isLoading, false)
+        XCTAssertEqual(restored.page?.hasMore, true)
+        held.succeed()
+        _ = try await older.value
+        await fixture.http.holdThreadReads(false)
+        await fixture.http.setPage(.init(beforeCursor: nil, hasMore: false, snapshotSequence: 2))
+        _ = try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID)
+        let count = await fixture.http.threadRequests.count
+        XCTAssertEqual(count, 3, "Reopened history must allow another older-page request")
         await fixture.client.disconnect()
     }
 
@@ -2201,6 +2229,7 @@ private actor CatchUpHTTPTransport: HTTPTransport {
     private var activities: [OrchestrationActivity] = []
     private var completionResponse = false
     private var runningResponse = false
+    private var responsePage: OrchestrationThreadDetailPage?
     private var sequence = 2
     private var holdsThreadReads = false
     private let heldReadContinuation: AsyncStream<CatchUpHTTPRead>.Continuation
@@ -2278,6 +2307,8 @@ private actor CatchUpHTTPTransport: HTTPTransport {
         self.sequence = sequence
         completionResponse = !streaming
     }
+
+    func setPage(_ page: OrchestrationThreadDetailPage) { responsePage = page }
 
     func holdThreadReads(_ hold: Bool) { holdsThreadReads = hold }
 
@@ -2363,7 +2394,7 @@ private actor CatchUpHTTPTransport: HTTPTransport {
                 thread = try JSONValue.object(object).decode(OrchestrationThread.self)
             }
             value = try .encode(OrchestrationThreadDetailSnapshot(
-                snapshotSequence: snapshot.snapshotSequence, thread: thread, page: page ?? snapshot.page
+                snapshotSequence: snapshot.snapshotSequence, thread: thread, page: responsePage ?? page ?? snapshot.page
             ))
         }
         let response = (try JSONEncoder.t3.encode(value), HTTPURLResponse(
