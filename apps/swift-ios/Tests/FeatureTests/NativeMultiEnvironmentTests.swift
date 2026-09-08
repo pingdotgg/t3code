@@ -453,7 +453,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             host: "two.example"
         )
 
-        let snapshot = try await fixture.client.initialSnapshot()
+        let snapshot = try await fixture.hydratedSnapshot()
         let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
         XCTAssertTrue(thread.isRegeneratingTitle)
 
@@ -2299,6 +2299,8 @@ struct NativePassiveLiveShellTests {
         let live = multiEnvironmentShell(projectID: "project-two", threadID: "thread-two", title: "Live", snapshotSequence: 10)
         try await server.snapshot(live, host: "two.example")
         try await receipts.waitForShells("two", count: 1)
+        let initialReadCount = await fixture.transport.shellReadCount(host: "two.example")
+        let initialReceiptCount = receipts.httpCount("two")
         let held = PassiveRequestGate()
         let repaired = multiEnvironmentShell(projectID: "project-two", threadID: "thread-two", title: "HTTP repaired", snapshotSequence: 11)
         await fixture.transport.setShell(repaired, host: "two.example")
@@ -2307,15 +2309,15 @@ struct NativePassiveLiveShellTests {
         await held.waitUntilEntered()
         await server.waitForSubscriptions(host: "two.example", count: 2)
         let readCount = await fixture.transport.shellReadCount(host: "two.example")
-        #expect(readCount == 2)
+        #expect(readCount == initialReadCount + 1)
         let probe = ThreadTitleEventProbe(events: fixture.client.events(), threadID: threadID, title: "HTTP repaired")
         probe.start()
         await held.release()
-        try await receipts.waitForHTTP("two", count: 2)
+        try await receipts.waitForHTTP("two", count: initialReceiptCount + 1)
         await probe.waitUntilObserved()
         try await server.snapshot(repaired, host: "two.example")
         try await receipts.waitForShells("two", count: 2)
-        #expect(await fixture.transport.shellReadCount(host: "two.example") == 2)
+        #expect(await fixture.transport.shellReadCount(host: "two.example") == initialReadCount + 1)
         await fixture.client.disconnect()
     }
 
