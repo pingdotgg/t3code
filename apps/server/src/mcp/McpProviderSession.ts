@@ -20,7 +20,7 @@ export interface McpProviderSessionConfig {
 /** Provider env with the device variables applied over `base`, or `base` untouched. */
 export function withAgentDeviceEnvironment(
   base: NodeJS.ProcessEnv,
-  config: McpProviderSessionConfig | undefined,
+  config: Pick<McpProviderSessionConfig, "agentDeviceEnvironment"> | undefined,
 ): NodeJS.ProcessEnv {
   const extra = config?.agentDeviceEnvironment;
   if (!extra) return base;
