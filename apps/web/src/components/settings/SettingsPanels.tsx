@@ -71,6 +71,7 @@ import {
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -2098,6 +2099,9 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {!isDeviceScope ? (
+        <ProjectDefaultsSettings environmentId={environmentId} category="general" />
+      ) : null}
       {isDeviceScope || supportsAutoSettlement ? (
         <SettingsSection id="organization" title="Organization">
           <SettingsRow
@@ -2558,21 +2562,6 @@ export function GeneralSettingsPanel() {
 
       {!isDeviceScope ? (
         <SettingsSection id="projects-and-threads" title="Projects & threads">
-          <SettingsRow
-            serverScoped
-            {...searchableSetting("new-threads")}
-            description="Choose the default model and workspace for all projects or a specific project."
-            control={
-              <Button
-                render={<Link to="/settings/projects" search={(previous) => previous} />}
-                size="sm"
-                variant="outline"
-              >
-                Project settings
-              </Button>
-            }
-          />
-
           <SettingsRow
             serverScoped
             settingKeys={["newWorktreesStartFromOrigin"]}

@@ -1,5 +1,4 @@
 import {
-  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
   type ModelSelection,
@@ -9,9 +8,8 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
-import { Trash2Icon } from "lucide-react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -28,29 +26,27 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
-import { PROJECT_GROUPING_MODE_LABELS } from "./ProjectSettingsPanel";
+import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { ProjectDefaultActionsSettings } from "./ProjectDefaultActionsSettings";
 import { searchableSetting } from "./settingsSearch";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
-  SettingsPageContainer,
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
 
-/** Defaults are written only to the machines selected on the projects settings page. */
+/** Project defaults use the same environment target across every settings category. */
 export function ProjectDefaultsSettings({
   environmentId,
+  category,
 }: {
   environmentId: EnvironmentId | null;
+  category: Exclude<ProjectSettingsCategory, "overview">;
 }) {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clientSettings = useClientSettings();
-  const updateClientSettings = useUpdateClientSettings();
   const navigate = useNavigate();
   const updateSettings = useAtomCommand(
     serverEnvironment.updateSettings,
@@ -84,8 +80,12 @@ export function ProjectDefaultsSettings({
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
   const mixedModel = targets.some(
     (target) =>
-      JSON.stringify(target.serverConfig?.settings.defaultModelSelection) !==
-      JSON.stringify(storedSelection),
+      JSON.stringify(
+        resolveDefaultProviderModelSelection(
+          target.serverConfig?.providers ?? [],
+          target.serverConfig?.settings.defaultModelSelection ?? null,
+        ),
+      ) !== JSON.stringify(selection),
   );
   const mixedWorkspace = targets.some(
     (target) =>
@@ -120,7 +120,7 @@ export function ProjectDefaultsSettings({
         entry.driverKind !== sourceEntry?.driverKind ||
         !options?.some((option) => option.slug === model && !option.isUnavailable)
       ) {
-        return `This model is unavailable on ${target.label}. Select that machine to choose its default separately.`;
+        return `This model is unavailable on ${target.label}. Select that environment to choose its default separately.`;
       }
     }
     return null;
@@ -147,8 +147,8 @@ export function ProjectDefaultsSettings({
       if (failedTargets.length > 0) {
         toastManager.add({
           type: "error",
-          title: "Project defaults not saved on every machine",
-          description: `Could not update ${failedTargets.map((target) => target.label).join(", ")}. Other machines may have saved the change.`,
+          title: "Project defaults not saved on every environment",
+          description: `Could not update ${failedTargets.map((target) => target.label).join(", ")}. Other environments may have saved the change.`,
         });
       }
     } finally {
@@ -158,165 +158,159 @@ export function ProjectDefaultsSettings({
   }
 
   const setModel = (value: ModelSelection | null) => void save({ defaultModelSelection: value });
+  if (category === "actions")
+    return <ProjectDefaultActionsSettings environmentId={environmentId} />;
   return (
-    <SettingsPageContainer>
-      <SettingsSection
-        id={searchableSetting("project-defaults").id}
-        title="Project defaults"
-        hideTitle
-      >
-        <SettingsRow
-          title="Name"
-          aria-disabled
-          description="Select a project to change its name."
-          control={
-            <Input
-              size="sm"
-              className="w-full sm:w-64"
-              aria-label="Project name"
-              placeholder="Select a project"
-              disabled
-            />
-          }
-        />
-        <SettingsRow
-          title="Project icon"
-          aria-disabled
-          description="Select a project to change its icon."
-          control={
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" disabled>
-                Choose icon
-              </Button>
-              <Button size="sm" variant="outline" disabled>
-                Choose file
-              </Button>
-            </div>
-          }
-        />
-        {scoped.length > targets.length || targets.length === 0 ? (
-          <p role="status" className="px-4 py-3 text-sm text-muted-foreground">
-            {targets.length === 0
-              ? "Connect a machine to change its project defaults."
-              : "Changes apply to connected machines only. Offline machines keep their current defaults."}
-          </p>
-        ) : null}
-        <SettingsRow
-          title="Model"
-          description="Default model for new threads. Projects can override it."
-          status={
-            targets.length === 0
-              ? undefined
-              : mixedModel
-                ? "Differs by machine"
-                : storedSelection === null
-                  ? "Automatic"
-                  : undefined
-          }
-          resetAction={
-            storedSelection !== null || mixedModel ? (
-              <SettingResetButton
-                label="default model"
-                disabled={disabled("defaultModelSelection")}
-                onClick={() => setModel(null)}
-              />
-            ) : null
-          }
-          control={
-            selection && activeEntry ? (
-              <fieldset
-                disabled={disabled("defaultModelSelection")}
-                className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 disabled:opacity-50"
-              >
-                <ProviderModelPicker
-                  activeInstanceId={selection.instanceId}
-                  model={selection.model}
-                  lockedProvider={null}
-                  instanceEntries={entries}
-                  modelOptionsByInstance={modelOptions}
+    <SettingsSection
+      id={
+        category === "general"
+          ? "project-defaults"
+          : category === "integrations"
+            ? "browser-access"
+            : "automatic-pull-defaults"
+      }
+      title={
+        category === "general"
+          ? "New threads"
+          : category === "integrations"
+            ? "Browser"
+            : "Project defaults"
+      }
+    >
+      {category === "general" ? (
+        <>
+          <SettingsRow
+            serverScoped
+            mixed={mixedModel}
+            id="default-model"
+            title="Model"
+            description="Default model for new threads. Projects can override it."
+            status={
+              targets.length === 0
+                ? undefined
+                : mixedModel
+                  ? "Mixed"
+                  : storedSelection === null
+                    ? "Automatic"
+                    : undefined
+            }
+            resetAction={
+              targets.some(
+                (target) => target.serverConfig?.settings.defaultModelSelection != null,
+              ) ? (
+                <SettingResetButton
+                  label="default model"
                   disabled={disabled("defaultModelSelection")}
-                  triggerVariant="outline"
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  getModelDisabledReason={modelDisabledReason}
-                  onOpenProviderSetup={(instanceId) => {
-                    if (representative)
-                      void navigate({
-                        to: "/settings/providers",
-                        search: { environmentId: representative.environmentId, instanceId },
-                      });
-                  }}
-                  onInstanceModelChange={(instanceId, model) =>
-                    setModel(createModelSelection(instanceId, model))
-                  }
+                  onClick={() => setModel(null)}
                 />
-                {!mixedModel ? (
-                  <TraitsPicker
-                    provider={activeEntry.driverKind}
-                    models={activeEntry.models}
+              ) : null
+            }
+            control={
+              selection && activeEntry ? (
+                <fieldset
+                  disabled={disabled("defaultModelSelection")}
+                  className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 disabled:opacity-50"
+                >
+                  <ProviderModelPicker
+                    activeInstanceId={selection.instanceId}
                     model={selection.model}
-                    prompt=""
-                    onPromptChange={() => {}}
-                    modelOptions={selection.options ?? []}
-                    allowPromptInjectedEffort={false}
-                    planModeEnabled={settings.planModeEnabled}
+                    lockedProvider={null}
+                    instanceEntries={entries}
+                    modelOptionsByInstance={modelOptions}
+                    disabled={disabled("defaultModelSelection")}
                     triggerVariant="outline"
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(options) =>
-                      setModel(createModelSelection(selection.instanceId, selection.model, options))
+                    getModelDisabledReason={modelDisabledReason}
+                    onOpenProviderSetup={(instanceId) => {
+                      if (representative)
+                        void navigate({
+                          to: "/settings/providers",
+                          search: { environmentId: representative.environmentId, instanceId },
+                        });
+                    }}
+                    onInstanceModelChange={(instanceId, model) =>
+                      setModel(createModelSelection(instanceId, model))
                     }
                   />
-                ) : null}
-              </fieldset>
-            ) : (
-              <span className="text-sm text-muted-foreground">No providers available</span>
-            )
-          }
-        />
-        <SettingsRow
-          id={searchableSetting("new-threads").id}
-          title="Workspace"
-          description="Where new threads start, unless overridden by the project or t3.json."
-          resetAction={
-            mixedWorkspace ||
-            serverSettings.defaultThreadEnvMode !== DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode ? (
-              <SettingResetButton
-                label="default workspace"
+                  {!mixedModel ? (
+                    <TraitsPicker
+                      provider={activeEntry.driverKind}
+                      models={activeEntry.models}
+                      model={selection.model}
+                      prompt=""
+                      onPromptChange={() => {}}
+                      modelOptions={selection.options ?? []}
+                      allowPromptInjectedEffort={false}
+                      planModeEnabled={settings.planModeEnabled}
+                      triggerVariant="outline"
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      onModelOptionsChange={(options) =>
+                        setModel(
+                          createModelSelection(selection.instanceId, selection.model, options),
+                        )
+                      }
+                    />
+                  ) : null}
+                </fieldset>
+              ) : (
+                <span className="text-sm text-muted-foreground">No providers available</span>
+              )
+            }
+          />
+          <SettingsRow
+            serverScoped
+            id={searchableSetting("new-threads").id}
+            title="Workspace"
+            description="Where new threads start, unless overridden by the project or t3.json."
+            resetAction={
+              mixedWorkspace ||
+              serverSettings.defaultThreadEnvMode !==
+                DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode ? (
+                <SettingResetButton
+                  label="default workspace"
+                  disabled={disabled("defaultThreadEnvMode")}
+                  onClick={() =>
+                    void save({
+                      defaultThreadEnvMode: DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
                 disabled={disabled("defaultThreadEnvMode")}
-                onClick={() =>
-                  void save({ defaultThreadEnvMode: DEFAULT_SERVER_SETTINGS.defaultThreadEnvMode })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              disabled={disabled("defaultThreadEnvMode")}
-              value={mixedWorkspace ? "mixed" : serverSettings.defaultThreadEnvMode}
-              onValueChange={(value) => {
-                if (value === "local" || value === "worktree")
-                  void save({ defaultThreadEnvMode: value });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Default workspace">
-                <SelectValue>
-                  {targets.length === 0
-                    ? "Unavailable"
-                    : mixedWorkspace
-                      ? "Differs by machine"
-                      : resolveEnvModeLabel(serverSettings.defaultThreadEnvMode)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-                <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
+                value={mixedWorkspace ? "mixed" : serverSettings.defaultThreadEnvMode}
+                onValueChange={(value) => {
+                  if (value === "local" || value === "worktree")
+                    void save({ defaultThreadEnvMode: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Default workspace">
+                  <SelectValue>
+                    {targets.length === 0
+                      ? "Unavailable"
+                      : mixedWorkspace
+                        ? "Mixed"
+                        : resolveEnvModeLabel(serverSettings.defaultThreadEnvMode)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
+                  <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </>
+      ) : category === "source-control" ? (
         <SettingsRow
+          serverScoped
+          mixed={mixedAutoPull}
+          id="automatic-pull"
           title="Automatically pull"
           description="Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
-          status={mixedAutoPull ? "Differs by machine" : undefined}
+          status={mixedAutoPull ? "Mixed" : undefined}
           resetAction={
             serverSettings.defaultAutoPull || mixedAutoPull ? (
               <SettingResetButton
@@ -336,7 +330,9 @@ export function ProjectDefaultsSettings({
             />
           }
         />
+      ) : (
         <SettingsRow
+          serverScoped
           id={searchableSetting("agent-browser-access").id}
           title="Agent browser access"
           description="Allow agents to use the shared browser. Projects can override it."
@@ -375,7 +371,7 @@ export function ProjectDefaultsSettings({
                   {targets.length === 0
                     ? "Unavailable"
                     : mixedBrowser
-                      ? "Differs by machine"
+                      ? "Mixed"
                       : serverSettings.enableAgentBrowserAccess
                         ? "Enabled"
                         : "Disabled"}
@@ -388,87 +384,7 @@ export function ProjectDefaultsSettings({
             </Select>
           }
         />
-      </SettingsSection>
-      <SettingsSection title="Checkout">
-        <SettingsRow
-          title="Checkout"
-          aria-disabled
-          description="Select a project to choose one of its checkouts."
-          control={
-            <Select disabled>
-              <SelectTrigger size="sm" aria-label="Checkout">
-                <SelectValue placeholder="Select a project" />
-              </SelectTrigger>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Project grouping"
-          description="Default grouping across all machines in this client. Individual checkout overrides are preserved."
-          resetAction={
-            clientSettings.sidebarProjectGroupingMode !==
-            DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingMode ? (
-              <SettingResetButton
-                label="default project grouping"
-                onClick={() =>
-                  void updateClientSettings({
-                    sidebarProjectGroupingMode: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingMode,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={clientSettings.sidebarProjectGroupingMode}
-              onValueChange={(value) => {
-                if (value === "repository" || value === "repository_path" || value === "separate")
-                  void updateClientSettings({ sidebarProjectGroupingMode: value });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Default project grouping">
-                <SelectValue>
-                  {PROJECT_GROUPING_MODE_LABELS[clientSettings.sidebarProjectGroupingMode]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="repository">
-                  {PROJECT_GROUPING_MODE_LABELS.repository}
-                </SelectItem>
-                <SelectItem value="repository_path">
-                  {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                </SelectItem>
-                <SelectItem value="separate">{PROJECT_GROUPING_MODE_LABELS.separate}</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          title="Remove checkout"
-          aria-disabled
-          description="Select a project to remove one of its checkouts."
-          control={
-            <Button size="sm" variant="destructive-outline" disabled>
-              <Trash2Icon className="size-3.5" />
-              Remove checkout
-            </Button>
-          }
-        />
-      </SettingsSection>
-      <ProjectDefaultActionsSettings environmentId={environmentId} />
-      <SettingsSection title="Danger">
-        <SettingsRow
-          title="Remove project"
-          aria-disabled
-          description="Select a project to remove its entries and threads. Files on disk are not touched."
-          control={
-            <Button size="sm" variant="destructive-outline" disabled>
-              <Trash2Icon />
-              Remove project
-            </Button>
-          }
-        />
-      </SettingsSection>
-    </SettingsPageContainer>
+      )}
+    </SettingsSection>
   );
 }

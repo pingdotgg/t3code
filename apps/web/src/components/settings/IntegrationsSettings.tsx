@@ -572,12 +572,16 @@ function AgentBrowserAccessSetting() {
       control={
         <Button
           render={
-            <Link to="/settings/projects" search={{ project: undefined, machine: undefined }} />
+            <Link
+              to="/settings/integrations"
+              search={{ scope: "all" }}
+              hash="agent-browser-access"
+            />
           }
           size="sm"
           variant="outline"
         >
-          Project settings
+          Environment defaults
         </Button>
       }
     />

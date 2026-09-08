@@ -2,9 +2,13 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   filterAvailableSettingsSearchItems,
+  getSettingsSearchTargetScope,
+  isSettingsOverviewVisible,
+  isSettingsSearchScopeAvailable,
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
+  settingsPageSections,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -143,7 +147,7 @@ describe("searchSettings", () => {
   it("hides settings whose controls are unavailable", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
-      hasPrimaryEnvironment: false,
+      hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
@@ -171,7 +175,7 @@ describe("searchSettings", () => {
   it("shows automatic settlement settings when the server supports them", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
-      hasPrimaryEnvironment: false,
+      hasEnvironment: false,
       hasProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
@@ -255,5 +259,170 @@ describe("searchSettings", () => {
       to: "/settings/integrations",
       targetId: "browser-profiles",
     });
+  });
+
+  it.each([
+    ["default model", "default-model", "/settings/general"],
+    ["new threads", "new-threads", "/settings/general"],
+    ["agent browser access", "agent-browser-access", "/settings/integrations"],
+    ["automatically pull", "automatic-pull", "/settings/source-control"],
+    ["actions", "project-actions", "/settings/actions"],
+    ["import scripts", "import-scripts", "/settings/actions"],
+    ["project overview", "project-overview", "/settings/projects"],
+  ])("routes %s to its owning category", (query, id, to) => {
+    expect(searchSettings(query)[0]).toMatchObject({ id, to });
+  });
+
+  it("keeps environment settings discoverable without a primary environment", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: true,
+    });
+    expect(searchSettings("writing style", available)[0]?.id).toBe("source-control-writing-style");
+    expect(searchSettings("auto-settle", available)).toHaveLength(3);
+  });
+});
+
+describe("settings search targets", () => {
+  it("identifies the owning scope without changing the requested target", () => {
+    const setting = getSettingsSearchTargetScope("time-format")!;
+    expect(setting).toEqual({ title: "Time format", scope: "device" });
+    expect(isSettingsSearchScopeAvailable(setting.scope, "project")).toBe(false);
+    expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(true);
+    expect(getSettingsSearchTargetScope("appearance")).toMatchObject({ scope: "device" });
+    expect(getSettingsSearchTargetScope("missing-setting")).toBeNull();
+  });
+
+  it.each(["all", "environment", "project", "checkout"] as const)(
+    "makes browser access editable at the %s scope",
+    (kind) => {
+      const setting = getSettingsSearchTargetScope("agent-browser-access")!;
+      expect(isSettingsSearchScopeAvailable(setting.scope, kind)).toBe(true);
+      expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(false);
+      expect(isSettingsSearchScopeAvailable(setting.scope, "unavailable")).toBe(false);
+    },
+  );
+
+  it("requires a checkout for imports and an environment for provider models", () => {
+    const scripts = getSettingsSearchTargetScope("import-scripts")!;
+    expect(isSettingsSearchScopeAvailable(scripts.scope, "project")).toBe(false);
+    expect(isSettingsSearchScopeAvailable(scripts.scope, "checkout")).toBe(true);
+    const model = getSettingsSearchTargetScope("text-generation-model")!;
+    expect(isSettingsSearchScopeAvailable(model.scope, "all")).toBe(false);
+    expect(isSettingsSearchScopeAvailable(model.scope, "environment")).toBe(true);
+  });
+
+  it("separates the server-owned legacy streaming control from device legacy preferences", () => {
+    const streaming = getSettingsSearchTargetScope("legacy-token-streaming")!;
+    expect(streaming.scope).toBe("environment-defaults");
+    expect(isSettingsSearchScopeAvailable(streaming.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(streaming.scope, "all")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(streaming.scope, "device")).toBe(false);
+    expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(false);
+    for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "legacy-sidebar"]) {
+      const setting = getSettingsSearchTargetScope(id)!;
+      expect(setting.scope).toBe("device");
+      expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(true);
+      expect(isSettingsSearchScopeAvailable(setting.scope, "environment")).toBe(false);
+    }
+  });
+});
+
+describe("settings sidebar scope", () => {
+  it("uses the route's device default when no scope is selected", () => {
+    for (const path of [
+      "/settings/general",
+      "/settings/appearance",
+      "/settings/integrations",
+      "/settings/source-control",
+      "/settings/actions",
+    ] as const) {
+      expect(settingsPageSections(path, {})).toEqual(
+        settingsPageSections(path, { scope: "device" }),
+      );
+    }
+    expect(
+      settingsPageSections("/settings/general", {}).map((section) => section.targetId),
+    ).toEqual(["organization", "behavior", "confirmations", "about", "legacy-features"]);
+    expect(
+      settingsPageSections("/settings/general", { scope: "all" }).map(
+        (section) => section.targetId,
+      ),
+    ).toEqual([
+      "project-defaults",
+      "organization",
+      "behavior",
+      "projects-and-threads",
+      "text-generation",
+      "legacy-features",
+    ]);
+  });
+
+  it("shows Overview only for project and checkout targets", () => {
+    expect(isSettingsOverviewVisible({})).toBe(false);
+    expect(isSettingsOverviewVisible({ scope: "device", project: "old" })).toBe(false);
+    expect(isSettingsOverviewVisible({ machine: "remote" })).toBe(false);
+    expect(isSettingsOverviewVisible({ project: "project" })).toBe(true);
+    expect(isSettingsOverviewVisible({ project: "project", checkout: "checkout" })).toBe(true);
+  });
+
+  it("limits project General and Source Control links to their overrides", () => {
+    const target = { project: "project" };
+    expect(
+      settingsPageSections("/settings/general", target).map((section) => section.targetId),
+    ).toEqual(["project-defaults"]);
+    expect(
+      settingsPageSections("/settings/source-control", target).map((section) => section.targetId),
+    ).toEqual(["automatic-pull-defaults"]);
+    expect(settingsPageSections("/settings/appearance", target)).toEqual([]);
+  });
+
+  it("does not link to device-only sections from environment settings", () => {
+    const sections = settingsPageSections(
+      "/settings/general",
+      { machine: "remote" },
+      { hasThreadAutoSettlement: false },
+    );
+    expect(sections.map((section) => section.targetId)).toEqual([
+      "project-defaults",
+      "behavior",
+      "projects-and-threads",
+      "text-generation",
+      "diagnostics",
+      "legacy-features",
+    ]);
+    const deviceSections = settingsPageSections("/settings/general", { scope: "device" });
+    expect(deviceSections.map((section) => section.targetId)).toEqual([
+      "organization",
+      "behavior",
+      "confirmations",
+      "about",
+      "legacy-features",
+    ]);
+  });
+
+  it("retains connection-management links independently of the target", () => {
+    expect(settingsPageSections("/settings/connections", { scope: "device" })).toEqual(
+      settingsPageSections("/settings/connections", { project: "project" }),
+    );
+    expect(settingsPageSections("/settings/general", { checkout: "orphaned" })).toEqual([]);
+    expect(
+      settingsPageSections(
+        "/settings/general",
+        { machine: "offline" },
+        { hasConnectedEnvironment: false },
+      ),
+    ).toEqual([]);
+    expect(
+      settingsPageSections(
+        "/settings/connections",
+        { machine: "offline" },
+        { hasConnectedEnvironment: false },
+      ),
+    ).not.toEqual([]);
   });
 });

@@ -28,14 +28,12 @@ import {
 } from "@t3tools/contracts";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
-import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
 import {
   projectScriptsInheritDefaults,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useNavigate } from "@tanstack/react-router";
-import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
 import { ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -100,7 +98,6 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -113,8 +110,16 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  projectBooleanOverrideTargets,
+  projectGroupTitleNeedsUpdate,
+} from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+import { ProjectSettingSource, type ProjectSettingSourceEntry } from "./ProjectSettingSource";
+import {
+  resolveProjectBooleanSource,
+  resolveProjectWorkspaceSource,
+} from "./ProjectSettingSource.logic";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -132,17 +137,26 @@ function memberKey(member: { environmentId: string; id: string }): string {
   return `${member.environmentId}:${member.id}`;
 }
 
+export type ProjectSettingsCategory =
+  | "overview"
+  | "general"
+  | "integrations"
+  | "source-control"
+  | "actions";
+
 export function ProjectSettingsPanel({
   projectKey,
   environmentId = null,
   checkoutKey = null,
+  category = "overview",
 }: {
   projectKey: string;
   environmentId?: EnvironmentId | null;
   checkoutKey?: string | null;
+  category?: ProjectSettingsCategory;
 }) {
   const groups = useSettingsProjectGroups();
-  const navigate = useNavigate();
+  const navigate = useNavigate({ from: "/settings" });
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
   const members = useMemo(
@@ -189,12 +203,11 @@ export function ProjectSettingsPanel({
     );
     if (successor) {
       void navigate({
-        to: "/settings/projects",
-        search: {
+        search: () => ({
           project: successor.projectKey,
           machine: environmentId ?? undefined,
           checkout: checkoutKey ?? undefined,
-        },
+        }),
         replace: true,
         hashScrollIntoView: false,
       });
@@ -224,9 +237,10 @@ export function ProjectSettingsPanel({
   };
   return (
     <ProjectDetail
-      key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
+      key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}:${category}`}
       group={scopedGroup}
       hasOtherMembers={members.length < selected.memberProjects.length}
+      category={category}
     />
   );
 }
@@ -374,11 +388,13 @@ export function useProjectScriptSettings(
 function ProjectDetail({
   group,
   hasOtherMembers,
+  category,
 }: {
   group: SidebarProjectSnapshot;
   hasOtherMembers: boolean;
+  category: ProjectSettingsCategory;
 }) {
-  const navigate = useNavigate();
+  const navigate = useNavigate({ from: "/settings" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const environmentById = useMemo(
@@ -403,21 +419,6 @@ function ProjectDetail({
   const updateServerSettings = useAtomCommand(serverEnvironment.updateSettings, "project setting");
   const [savingBrowserAccess, setSavingBrowserAccess] = useState(false);
   const savingBrowserAccessRef = useRef(false);
-  const browserOverrides = group.memberProjects.map(
-    (member) =>
-      environmentById.get(member.environmentId)?.serverConfig?.settings
-        .projectAgentBrowserAccessOverrides[member.id],
-  );
-  const browserOverride = projectSettings.projectAgentBrowserAccessOverrides[representative.id];
-  const browserMixed = group.memberProjects.some((member, index) => {
-    const settings = environmentById.get(member.environmentId)?.serverConfig?.settings;
-    if (!settings || !environmentById.get(representative.environmentId)?.serverConfig) return false;
-    return (
-      browserOverrides[index] !== browserOverride ||
-      (browserOverrides[index] ?? settings.enableAgentBrowserAccess) !==
-        (browserOverride ?? projectSettings.enableAgentBrowserAccess)
-    );
-  });
   const setBooleanOverride = async (
     key: "projectAgentBrowserAccessOverrides" | "projectAutoPullOverrides",
     enabled: boolean | undefined,
@@ -426,8 +427,8 @@ function ProjectDetail({
     savingBrowserAccessRef.current = true;
     setSavingBrowserAccess(true);
     try {
-      const environmentIds = new Set(group.memberProjects.map((member) => member.environmentId));
-      for (const environmentId of environmentIds) {
+      const targets = projectBooleanOverrideTargets(group.memberProjects, enabled);
+      for (const { environmentId } of targets) {
         const environment = environmentById.get(environmentId);
         if (!environment?.serverConfig || environment.connection.phase !== "connected") {
           toastManager.add({
@@ -445,12 +446,7 @@ function ProjectDetail({
         );
         if (result._tag === "Failure") return;
       }
-      for (const environmentId of environmentIds) {
-        const overrides = Object.fromEntries(
-          group.memberProjects
-            .filter((member) => member.environmentId === environmentId)
-            .map((member) => [member.id, enabled ?? null]),
-        );
+      for (const { environmentId, overrides } of targets) {
         const result = await updateServerSettings({
           environmentId,
           input: { patch: { [key]: overrides } },
@@ -524,6 +520,18 @@ function ProjectDetail({
       }>,
       failureTitle: string,
     ): Promise<AtomCommandResult<void, unknown>> => {
+      const unavailable = group.memberProjects.find((member) => {
+        const environment = environmentById.get(member.environmentId);
+        return environment?.connection.phase !== "connected" || !environment.serverConfig;
+      });
+      if (unavailable) {
+        const error = new Error(
+          `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
+        );
+        const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
+        reportFailure(failureTitle, result);
+        return result;
+      }
       for (const member of group.memberProjects) {
         const result = mapAtomCommandResult(
           await updateProject({
@@ -546,7 +554,7 @@ function ProjectDetail({
       }
       return AsyncResult.success(undefined);
     },
-    [group.memberProjects, reportFailure, updateProject],
+    [environmentById, group.memberProjects, reportFailure, updateProject],
   );
 
   const renameGroup = useCallback(
@@ -579,16 +587,15 @@ function ProjectDetail({
   const mixedModel = group.memberProjects.some((member) => {
     const config = environmentById.get(member.environmentId)?.serverConfig;
     return (
-      !Equal.equals(member.defaultModelSelection, storedSelection) ||
-      (config !== null &&
-        config !== undefined &&
-        environmentById.get(representative.environmentId)?.serverConfig != null &&
-        JSON.stringify(
-          resolveDefaultProviderModelSelection(
-            config.providers,
-            member.defaultModelSelection ?? config.settings.defaultModelSelection,
-          ),
-        ) !== JSON.stringify(resolvedSelection))
+      config !== null &&
+      config !== undefined &&
+      environmentById.get(representative.environmentId)?.serverConfig != null &&
+      JSON.stringify(
+        resolveDefaultProviderModelSelection(
+          config.providers,
+          member.defaultModelSelection ?? config.settings.defaultModelSelection,
+        ),
+      ) !== JSON.stringify(resolvedSelection)
     );
   });
   const resolvedInstanceId = resolvedSelection?.instanceId ?? null;
@@ -634,6 +641,9 @@ function ProjectDetail({
         if (
           !entry?.enabled ||
           !entry.isAvailable ||
+          entry.driverKind !==
+            instanceEntries.find((candidate) => candidate.instanceId === selection.instanceId)
+              ?.driverKind ||
           !options?.some((model) => model.slug === selection.model && !model.isUnavailable)
         ) {
           toastManager.add({
@@ -650,9 +660,6 @@ function ProjectDetail({
 
   // ----- new-thread workspace mode -----
   const storedEnvMode = representative.defaultThreadEnvMode ?? null;
-  const mixedWorkspace = group.memberProjects.some(
-    (member) => member.defaultThreadEnvMode !== storedEnvMode,
-  );
   const setDefaultThreadEnvMode = useCallback(
     (mode: ThreadEnvMode | null) =>
       void updateAllMembers(
@@ -662,22 +669,6 @@ function ProjectDetail({
     [updateAllMembers],
   );
 
-  const autoPull = resolveProjectAutoPull(
-    projectSettings,
-    representative.id,
-    representative.autoPull,
-  );
-  const autoPullOverridden = group.memberProjects.some(
-    (member) =>
-      member.autoPull ||
-      environmentById.get(member.environmentId)?.serverConfig?.settings.projectAutoPullOverrides[
-        member.id
-      ] !== undefined,
-  );
-  const mixedAutoPull = group.memberProjects.some((member) => {
-    const settings = environmentById.get(member.environmentId)?.serverConfig?.settings;
-    return settings && resolveProjectAutoPull(settings, member.id, member.autoPull) !== autoPull;
-  });
   const setAutoPull = (enabled: boolean | undefined) =>
     setBooleanOverride("projectAutoPullOverrides", enabled);
 
@@ -703,11 +694,7 @@ function ProjectDetail({
 
   // ----- checkout selection and scripts -----
   const hasMultipleCheckouts = group.memberProjects.length > 1;
-  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState<string | null>(null);
-  const selectedCheckoutMatch = group.memberProjects.find(
-    (member) => member.physicalProjectKey === selectedCheckoutKey,
-  );
-  const selectedCheckout = selectedCheckoutMatch ?? representative;
+  const selectedCheckout = representative;
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -720,22 +707,29 @@ function ProjectDetail({
     saving: isSavingScripts,
     persist: persistScripts,
     submit: submitScript,
-  } = useProjectScriptSettings([
-    {
-      environmentId: selectedCheckout.environmentId,
-      settings: scriptSettings,
-      keybindings,
-      project: selectedCheckout,
-    },
-  ]);
+  } = useProjectScriptSettings(
+    hasMultipleCheckouts || category !== "actions"
+      ? []
+      : [
+          {
+            environmentId: selectedCheckout.environmentId,
+            settings: scriptSettings,
+            keybindings,
+            project: selectedCheckout,
+          },
+        ],
+  );
   const t3File = useT3ProjectFileState(
     selectedCheckout.environmentId,
-    selectedCheckout.workspaceRoot,
+    !hasMultipleCheckouts && (category === "general" || category === "actions")
+      ? selectedCheckout.workspaceRoot
+      : null,
   );
   // What the "Default" option resolves to while no override is set: the
-  // repo's t3.json value when present, otherwise the global setting.
+  // repo's t3.json value when present, otherwise the environment setting.
   const inheritedEnvMode = t3File.file?.defaultThreadEnvMode ?? scriptSettings.defaultThreadEnvMode;
-  const inheritedEnvModeSource = t3File.file?.defaultThreadEnvMode != null ? "t3.json" : "global";
+  const inheritedEnvModeSource =
+    t3File.file?.defaultThreadEnvMode != null ? "t3.json" : "environment";
   const importableScripts = useMemo(
     () =>
       t3File.scripts.filter(
@@ -782,17 +776,23 @@ function ProjectDetail({
 
   // ----- checkouts -----
   const updateGroupingPreference = useCallback(
-    (member: SidebarProjectGroupMember, selection: SidebarProjectGroupingMode | "inherit") => {
-      const overrideKey = deriveProjectGroupingOverrideKey(member);
+    (selection: SidebarProjectGroupingMode | "inherit") => {
       const nextOverrides = { ...projectGroupingSettings.sidebarProjectGroupingOverrides };
-      if (selection === "inherit") {
-        delete nextOverrides[overrideKey];
-      } else {
-        nextOverrides[overrideKey] = selection;
+      for (const member of group.memberProjects) {
+        const overrideKey = deriveProjectGroupingOverrideKey(member);
+        if (selection === "inherit") {
+          delete nextOverrides[overrideKey];
+        } else {
+          nextOverrides[overrideKey] = selection;
+        }
       }
       updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
     },
-    [projectGroupingSettings.sidebarProjectGroupingOverrides, updateClientSettings],
+    [
+      group.memberProjects,
+      projectGroupingSettings.sidebarProjectGroupingOverrides,
+      updateClientSettings,
+    ],
   );
 
   const removeMembers = useCallback(
@@ -884,10 +884,14 @@ function ProjectDetail({
     ],
   );
 
-  const selectedCheckoutGrouping =
-    projectGroupingSettings.sidebarProjectGroupingOverrides?.[
-      deriveProjectGroupingOverrideKey(selectedCheckout)
-    ] ?? "inherit";
+  const checkoutGroupingValues = group.memberProjects.map(
+    (member) =>
+      projectGroupingSettings.sidebarProjectGroupingOverrides[
+        deriveProjectGroupingOverrideKey(member)
+      ] ?? "inherit",
+  );
+  const selectedCheckoutGrouping = checkoutGroupingValues[0]!;
+  const mixedGrouping = checkoutGroupingValues.some((value) => value !== selectedCheckoutGrouping);
   const checkoutLabel = (member: SidebarProjectGroupMember) => {
     const label = member.environmentLabel ?? "This machine";
     return group.memberProjects.some(
@@ -899,544 +903,649 @@ function ProjectDetail({
       : label;
   };
   const selectedCheckoutLabel = checkoutLabel(selectedCheckout);
+  const booleanSources = (
+    overrideKey: "projectAgentBrowserAccessOverrides" | "projectAutoPullOverrides",
+    defaultKey: "enableAgentBrowserAccess" | "defaultAutoPull",
+  ): ProjectSettingSourceEntry[] =>
+    group.memberProjects.map((member) => {
+      const settings = environmentById.get(member.environmentId)?.serverConfig?.settings;
+      const resolved = resolveProjectBooleanSource(
+        settings?.[overrideKey][member.id],
+        settings?.[defaultKey],
+        overrideKey === "projectAutoPullOverrides" && member.autoPull,
+      );
+      return {
+        key: member.physicalProjectKey,
+        label: `${member.environmentLabel ?? "Environment"} · ${member.workspaceRoot}`,
+        value: resolved.value === undefined ? "Unavailable" : resolved.value ? "On" : "Off",
+        source:
+          settings === undefined
+            ? "Unavailable"
+            : resolved.overridden
+              ? "Project override"
+              : `From ${member.environmentLabel ?? "environment"}`,
+        overridden: resolved.overridden,
+        defaultValue: settings === undefined ? "Unavailable" : settings[defaultKey] ? "On" : "Off",
+      };
+    });
+  const browserSources = booleanSources(
+    "projectAgentBrowserAccessOverrides",
+    "enableAgentBrowserAccess",
+  );
+  const browserMixed = browserSources.some((entry) => entry.value !== browserSources[0]!.value);
+  const browserOverridden = browserSources.some((entry) => entry.overridden);
+  const autoPullSources = booleanSources("projectAutoPullOverrides", "defaultAutoPull");
+  const mixedAutoPull = autoPullSources.some((entry) => entry.value !== autoPullSources[0]!.value);
+  const autoPullOverridden = autoPullSources.some((entry) => entry.overridden);
+  const modelSources = group.memberProjects.map((member): ProjectSettingSourceEntry => {
+    const config = environmentById.get(member.environmentId)?.serverConfig;
+    const selection = config
+      ? resolveDefaultProviderModelSelection(
+          config.providers,
+          member.defaultModelSelection ?? config.settings.defaultModelSelection,
+        )
+      : null;
+    return {
+      key: member.physicalProjectKey,
+      label: `${member.environmentLabel ?? "Environment"} · ${member.workspaceRoot}`,
+      value: selection
+        ? [
+            selection.instanceId,
+            selection.model,
+            ...(selection.options ?? []).map((option) => `${option.id}: ${option.value}`),
+          ].join(" · ")
+        : "Unavailable",
+      source:
+        config === undefined || config === null
+          ? "Unavailable"
+          : member.defaultModelSelection != null
+            ? "Project override"
+            : `From ${member.environmentLabel ?? "environment"}`,
+      overridden: member.defaultModelSelection != null,
+    };
+  });
+  const workspaceSources = group.memberProjects.map((member): ProjectSettingSourceEntry => {
+    const settings = environmentById.get(member.environmentId)?.serverConfig?.settings;
+    const resolved = resolveProjectWorkspaceSource({
+      override: member.defaultThreadEnvMode ?? null,
+      environmentDefault: settings?.defaultThreadEnvMode,
+      repositoryDefault: hasMultipleCheckouts ? null : (t3File.file?.defaultThreadEnvMode ?? null),
+      repositoryResolved: !hasMultipleCheckouts && t3File.status !== "loading",
+    });
+    return {
+      key: member.physicalProjectKey,
+      label: `${member.environmentLabel ?? "Environment"} · ${member.workspaceRoot}`,
+      value:
+        resolved.value === undefined
+          ? hasMultipleCheckouts
+            ? "Open checkout to resolve repository default"
+            : "Loading workspace default…"
+          : resolveEnvModeLabel(resolved.value),
+      source:
+        resolved.source === "Environment default"
+          ? `From ${member.environmentLabel ?? "environment"}`
+          : resolved.source,
+      overridden: resolved.overridden,
+      ...(settings ? { defaultValue: resolveEnvModeLabel(settings.defaultThreadEnvMode) } : {}),
+    };
+  });
+  const mixedWorkspace = workspaceSources.some(
+    (entry) => entry.value !== workspaceSources[0]!.value,
+  );
+  const chooseCheckout = (member: SidebarProjectGroupMember) => {
+    void navigate({
+      search: () => ({
+        project: group.projectKey,
+        machine: member.environmentId,
+        checkout: member.physicalProjectKey,
+      }),
+    });
+  };
+  const checkoutChoices = (
+    <SettingsSection title="Checkouts">
+      {group.memberProjects.map((member) => (
+        <SettingsRow
+          key={member.physicalProjectKey}
+          title={member.environmentLabel ?? "Environment"}
+          description={member.workspaceRoot}
+          control={
+            <Button size="sm" variant="outline" onClick={() => chooseCheckout(member)}>
+              Select checkout
+            </Button>
+          }
+        />
+      ))}
+    </SettingsSection>
+  );
 
   return (
     <>
       <SettingsPageContainer className="gap-6">
-        <SettingsSection title="Project" hideTitle>
-          <SettingsRow
-            title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
-            control={
-              <Input
-                key={`${group.projectKey}:${group.displayName}`}
-                size="sm"
-                className="w-full sm:w-64"
-                aria-label="Project name"
-                defaultValue={group.displayName}
-                onChange={() => {
-                  projectNameEditedRef.current = true;
-                }}
-                onBlur={(event) => {
-                  const wasEdited = projectNameEditedRef.current;
-                  projectNameEditedRef.current = false;
-                  void renameGroup(event.currentTarget.value, wasEdited);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-              />
-            }
-          />
-          <SettingsRow
-            title="Project icon"
-            description={
-              projectIcon?.kind === "lucide"
-                ? `${projectIcon.name} · ${projectIcon.color}`
-                : projectIcon?.kind === "emoji"
-                  ? projectIcon.emoji
-                  : (faviconPath ?? "Automatic")
-            }
-            resetAction={
-              faviconPath !== null || projectIcon !== null ? (
-                <SettingResetButton
-                  label="project icon"
-                  disabled={isSavingFavicon}
-                  onClick={() => void setProjectIcon({ faviconPath: null, projectIcon: null })}
-                />
-              ) : null
-            }
-            control={
-              <div className="flex items-center gap-2">
-                <ProjectFavicon project={representative} className="size-6" />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  aria-label="Choose a project icon"
-                  disabled={isSavingFavicon}
-                  onClick={() => setIconPickerOpen(true)}
-                >
-                  Choose icon
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  type="button"
-                  aria-label="Choose a project icon file"
-                  disabled={isSavingFavicon}
-                  onClick={() => setFaviconPickerOpen(true)}
-                >
-                  Choose file
-                </Button>
-              </div>
-            }
-          />
-          <SettingsRow
-            title="Default merge method"
-            description="Pull requests in this project start with this method. It overrides the last method selected."
-            resetAction={
-              projectMergeMethod !== undefined ? (
-                <SettingResetButton
-                  label="project merge method"
-                  onClick={() => setProjectMergeMethod(null)}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={projectMergeMethod ?? "inherit"}
-                onValueChange={(value) =>
-                  setProjectMergeMethod(
-                    value === "inherit" ? null : (value as PullRequestMergeMethod),
-                  )
-                }
-              >
-                <SelectTrigger aria-label="Default pull request merge method">
-                  <SelectValue>
-                    {projectMergeMethod === undefined
-                      ? "Last selected"
-                      : PULL_REQUEST_MERGE_METHOD_LABELS[projectMergeMethod]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Last selected</SelectItem>
-                  <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
-                  <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
-                  <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
-                </SelectPopup>
-              </Select>
-            }
-          />
-          <SettingsRow
-            title="Model"
-            status={
-              mixedModel
-                ? "Mixed defaults or overrides. Choosing a model updates all selected checkouts."
-                : storedSelection === null
-                  ? "Inherited"
-                  : "Overridden"
-            }
-            description={
-              storedSelection === null
-                ? "Inherited from machine defaults. New threads use the default model."
-                : "Overridden for this project. Reset to use the default model."
-            }
-            resetAction={
-              group.memberProjects.some((member) => member.defaultModelSelection !== null) ? (
-                <SettingResetButton
-                  label="project default model"
-                  tooltip="Reset to inherited model"
-                  onClick={() => setDefaultModel(null)}
-                />
-              ) : null
-            }
-            control={
-              resolvedSelection && activeEntry ? (
-                <div className="flex flex-wrap items-center justify-end gap-1.5">
-                  <ProviderModelPicker
-                    activeInstanceId={resolvedSelection.instanceId}
-                    model={resolvedSelection.model}
-                    lockedProvider={null}
-                    instanceEntries={instanceEntries}
-                    modelOptionsByInstance={modelOptionsByInstance}
-                    triggerVariant="outline"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onOpenProviderSetup={(instanceId) => {
-                      void navigate({
-                        to: "/settings/providers",
-                        search: { environmentId: representative.environmentId, instanceId },
-                      });
-                    }}
-                    onInstanceModelChange={(instanceId, model) => {
-                      setDefaultModel(createModelSelection(instanceId, model));
-                    }}
-                  />
-                  <TraitsPicker
-                    provider={activeEntry.driverKind as ProviderDriverKind}
-                    models={activeEntry.models}
-                    model={resolvedSelection.model}
-                    prompt=""
-                    onPromptChange={() => {}}
-                    modelOptions={resolvedSelection.options ?? []}
-                    allowPromptInjectedEffort={false}
-                    planModeEnabled={projectSettings.planModeEnabled}
-                    triggerVariant="outline"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(nextOptions) => {
-                      setDefaultModel(
-                        createModelSelection(
-                          resolvedSelection.instanceId,
-                          resolvedSelection.model,
-                          nextOptions,
-                        ),
-                      );
-                    }}
-                  />
-                </div>
-              ) : (
-                <span className="text-sm text-muted-foreground">No providers available</span>
-              )
-            }
-          />
-          <SettingsRow
-            title="Workspace"
-            status={
-              mixedWorkspace
-                ? "Mixed overrides. Choosing a workspace updates all selected checkouts."
-                : storedEnvMode === null
-                  ? "Inherited"
-                  : "Overridden"
-            }
-            description={
-              storedEnvMode === null
-                ? "Inherited from t3.json or machine defaults."
-                : "Overridden for this project. Reset to inherit its workspace default."
-            }
-            resetAction={
-              group.memberProjects.some((member) => member.defaultThreadEnvMode !== null) ? (
-                <SettingResetButton
-                  label="project workspace default"
-                  tooltip="Reset to inherited workspace"
-                  onClick={() => setDefaultThreadEnvMode(null)}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={storedEnvMode ?? "inherit"}
-                onValueChange={(value) => {
-                  if (value === "worktree" || value === "local") {
-                    setDefaultThreadEnvMode(value);
-                  } else if (value === "inherit") {
-                    setDefaultThreadEnvMode(null);
-                  }
-                }}
-              >
-                <SelectTrigger size="sm" aria-label="New-thread workspace">
-                  <SelectValue>
-                    {storedEnvMode === null
-                      ? group.memberProjects.length > 1
-                        ? "Default (per checkout)"
-                        : `Default (${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`
-                      : resolveEnvModeLabel(storedEnvMode)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">
-                    {group.memberProjects.length > 1
-                      ? "Default (each checkout's t3.json or global setting)"
-                      : `Default (${inheritedEnvModeSource}: ${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`}
-                  </SelectItem>
-                  <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
-                  <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-                </SelectPopup>
-              </Select>
-            }
-          />
-          <SettingsRow
-            title="Automatically pull"
-            description="Keeps the default branch current in the background when the checkout has no local changes or commits."
-            status={
-              mixedAutoPull
-                ? "Mixed"
-                : autoPullOverridden
-                  ? "Overridden"
-                  : `Inherited (${autoPull ? "on" : "off"})`
-            }
-            resetAction={
-              autoPullOverridden ? (
-                <SettingResetButton
-                  label="automatic pull"
-                  tooltip="Reset to inherited automatic pull setting"
-                  disabled={savingBrowserAccess}
-                  onClick={() => void setAutoPull(undefined)}
-                />
-              ) : null
-            }
-            control={
-              <Switch
-                checked={autoPull}
-                disabled={savingBrowserAccess}
-                aria-label="Automatically pull the default branch"
-                onCheckedChange={(enabled) => void setAutoPull(enabled)}
-              />
-            }
-          />
-          <SettingsRow
-            title="Agent browser access"
-            description={
-              browserMixed
-                ? "Mixed defaults or overrides across selected checkouts."
-                : browserOverride === undefined
-                  ? "Inherited from machine defaults. Controls agent access to the preview browser."
-                  : "Overridden for this project. Applies when the agent session next starts."
-            }
-            resetAction={
-              browserOverrides.some((value) => value !== undefined) ? (
-                <SettingResetButton
-                  label="project browser access"
-                  tooltip="Reset to inherited browser access"
-                  disabled={savingBrowserAccess}
-                  onClick={() => void setBrowserAccess(undefined)}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={
-                  browserMixed
-                    ? "mixed"
-                    : browserOverride === undefined
-                      ? "inherit"
-                      : browserOverride
-                        ? "enabled"
-                        : "disabled"
-                }
-                disabled={savingBrowserAccess}
-                onValueChange={(value) => {
-                  if (value === "inherit") void setBrowserAccess(undefined);
-                  else if (value === "enabled" || value === "disabled")
-                    void setBrowserAccess(value === "enabled");
-                }}
-              >
-                <SelectTrigger size="sm" aria-label="Project agent browser access">
-                  <SelectValue>
-                    {browserMixed
-                      ? "Mixed"
-                      : browserOverride === undefined
-                        ? `Inherit (${projectSettings.enableAgentBrowserAccess ? "on" : "off"})`
-                        : browserOverride
-                          ? "On"
-                          : "Off"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit defaults</SelectItem>
-                  <SelectItem value="enabled">On</SelectItem>
-                  <SelectItem value="disabled">Off</SelectItem>
-                </SelectPopup>
-              </Select>
-            }
-          />
-        </SettingsSection>
-
-        <SettingsSection title="Checkout">
-          {hasMultipleCheckouts ? (
+        {category === "overview" ? (
+          <SettingsSection id="project-overview" title="Project" hideTitle>
             <SettingsRow
-              title="Checkout"
-              description="Actions and grouping belong to this checkout."
+              title="Name"
+              description="The shared name for this project group in the sidebar and thread lists."
+              control={
+                <Input
+                  key={`${group.projectKey}:${group.displayName}`}
+                  size="sm"
+                  className="w-full sm:w-64"
+                  aria-label="Project name"
+                  defaultValue={group.displayName}
+                  onChange={() => {
+                    projectNameEditedRef.current = true;
+                  }}
+                  onBlur={(event) => {
+                    const wasEdited = projectNameEditedRef.current;
+                    projectNameEditedRef.current = false;
+                    void renameGroup(event.currentTarget.value, wasEdited);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+                  }}
+                />
+              }
+            />
+            <SettingsRow
+              title="Project icon"
+              description={
+                projectIcon?.kind === "lucide"
+                  ? `${projectIcon.name} · ${projectIcon.color}`
+                  : projectIcon?.kind === "emoji"
+                    ? projectIcon.emoji
+                    : (faviconPath ?? "Automatic")
+              }
+              resetAction={
+                group.memberProjects.some(
+                  (member) => member.faviconPath != null || member.projectIcon != null,
+                ) ? (
+                  <SettingResetButton
+                    label="project icon"
+                    disabled={isSavingFavicon}
+                    onClick={() => void setProjectIcon({ faviconPath: null, projectIcon: null })}
+                  />
+                ) : null
+              }
+              control={
+                <div className="flex items-center gap-2">
+                  <ProjectFavicon
+                    environmentId={representative.environmentId}
+                    cwd={representative.workspaceRoot}
+                    projectName={representative.title}
+                    faviconPath={faviconPath}
+                    projectIcon={projectIcon}
+                    className="size-6"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    aria-label="Choose a project icon"
+                    disabled={isSavingFavicon}
+                    onClick={() => setIconPickerOpen(true)}
+                  >
+                    Choose icon
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    aria-label="Choose a project icon file"
+                    disabled={isSavingFavicon}
+                    onClick={() => setFaviconPickerOpen(true)}
+                  >
+                    Choose file
+                  </Button>
+                </div>
+              }
+            />
+          </SettingsSection>
+        ) : null}
+        {category === "general" ? (
+          <SettingsSection id="project-defaults" title="New threads">
+            <SettingsRow
+              id="default-model"
+              title="Model"
+              status={<ProjectSettingSource entries={modelSources} />}
+              description="Default model for new threads. Changes override every selected checkout."
+              resetAction={
+                group.memberProjects.some((member) => member.defaultModelSelection != null) ? (
+                  <SettingResetButton
+                    label="project default model"
+                    tooltip="Reset to inherited model"
+                    onClick={() => setDefaultModel(null)}
+                  />
+                ) : null
+              }
+              control={
+                resolvedSelection && activeEntry ? (
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
+                    <ProviderModelPicker
+                      activeInstanceId={resolvedSelection.instanceId}
+                      model={resolvedSelection.model}
+                      lockedProvider={null}
+                      instanceEntries={instanceEntries}
+                      modelOptionsByInstance={modelOptionsByInstance}
+                      triggerVariant="outline"
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      {...(mixedModel ? { triggerLabel: "Mixed values" } : {})}
+                      onOpenProviderSetup={(instanceId) => {
+                        void navigate({
+                          to: "/settings/providers",
+                          search: { machine: representative.environmentId, instanceId },
+                        });
+                      }}
+                      onInstanceModelChange={(instanceId, model) => {
+                        setDefaultModel(createModelSelection(instanceId, model));
+                      }}
+                    />
+                    {!mixedModel ? (
+                      <TraitsPicker
+                        provider={activeEntry.driverKind as ProviderDriverKind}
+                        models={activeEntry.models}
+                        model={resolvedSelection.model}
+                        prompt=""
+                        onPromptChange={() => {}}
+                        modelOptions={resolvedSelection.options ?? []}
+                        allowPromptInjectedEffort={false}
+                        planModeEnabled={projectSettings.planModeEnabled}
+                        triggerVariant="outline"
+                        triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                        onModelOptionsChange={(nextOptions) => {
+                          setDefaultModel(
+                            createModelSelection(
+                              resolvedSelection.instanceId,
+                              resolvedSelection.model,
+                              nextOptions,
+                            ),
+                          );
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                ) : (
+                  <span className="text-sm text-muted-foreground">No providers available</span>
+                )
+              }
+            />
+            <SettingsRow
+              id="new-threads"
+              title="Workspace"
+              status={<ProjectSettingSource entries={workspaceSources} />}
+              description="Where new threads start. Inherits from each checkout's t3.json, then its environment."
+              resetAction={
+                group.memberProjects.some((member) => member.defaultThreadEnvMode != null) ? (
+                  <SettingResetButton
+                    label="project workspace default"
+                    tooltip="Reset to inherited workspace"
+                    onClick={() => setDefaultThreadEnvMode(null)}
+                  />
+                ) : null
+              }
               control={
                 <Select
-                  value={selectedCheckout.physicalProjectKey}
+                  value={mixedWorkspace ? "mixed" : (storedEnvMode ?? "inherit")}
                   onValueChange={(value) => {
-                    if (value) setSelectedCheckoutKey(value);
+                    if (value === "worktree" || value === "local") {
+                      setDefaultThreadEnvMode(value);
+                    } else if (value === "inherit") {
+                      setDefaultThreadEnvMode(null);
+                    }
                   }}
                 >
-                  <SelectTrigger size="sm" aria-label="Checkout">
-                    <SelectValue className="max-w-96 truncate">{selectedCheckoutLabel}</SelectValue>
+                  <SelectTrigger size="sm" aria-label="New-thread workspace">
+                    <SelectValue>
+                      {mixedWorkspace
+                        ? "Mixed values"
+                        : storedEnvMode === null
+                          ? group.memberProjects.length > 1
+                            ? "Inherited per checkout"
+                            : workspaceSources[0]!.value
+                          : resolveEnvModeLabel(storedEnvMode)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
-                    {group.memberProjects.map((member) => (
-                      <SelectItem key={member.physicalProjectKey} value={member.physicalProjectKey}>
-                        <span className="max-w-96 whitespace-normal break-all">
-                          {checkoutLabel(member)}
-                        </span>
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="inherit">
+                      {group.memberProjects.length > 1
+                        ? "Inherit each checkout's default"
+                        : t3File.status === "loading"
+                          ? "Inherit checkout default"
+                          : `Default (${inheritedEnvModeSource}: ${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`}
+                    </SelectItem>
+                    <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+                    <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
                   </SelectPopup>
                 </Select>
               }
             />
-          ) : null}
-          <SettingsRow
-            title="Project grouping"
-            description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."
-            resetAction={
-              selectedCheckoutGrouping !== "inherit" ? (
-                <SettingResetButton
-                  label="project grouping"
-                  tooltip="Reset to inherited project grouping"
-                  onClick={() => updateGroupingPreference(selectedCheckout, "inherit")}
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={selectedCheckoutGrouping}
-                onValueChange={(value) => {
-                  if (
-                    value === "inherit" ||
-                    value === "repository" ||
-                    value === "repository_path" ||
-                    value === "separate"
-                  ) {
-                    updateGroupingPreference(selectedCheckout, value);
-                  }
-                }}
-              >
-                <SelectTrigger size="sm" aria-label={`Grouping rule for ${selectedCheckoutLabel}`}>
-                  <SelectValue>
-                    {selectedCheckoutGrouping === "inherit"
-                      ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                      : PROJECT_GROUPING_MODE_LABELS[selectedCheckoutGrouping]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="inherit">
-                    Use global default
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository">
-                    {PROJECT_GROUPING_MODE_LABELS.repository}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository_path">
-                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="separate">
-                    {PROJECT_GROUPING_MODE_LABELS.separate}
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-            }
-          />
-          {group.memberProjects.length > 1 ? (
+          </SettingsSection>
+        ) : null}
+        {category === "source-control" ? (
+          <SettingsSection id="automatic-pull-defaults" title="Version control">
             <SettingsRow
-              title="Remove checkout"
-              description="Removes this checkout and its threads from the project group. Files on disk are not touched."
+              id="automatic-pull"
+              title="Automatically pull"
+              description="Keeps the default branch current in the background when the checkout has no local changes or commits."
+              status={<ProjectSettingSource entries={autoPullSources} />}
+              resetAction={
+                autoPullOverridden ? (
+                  <SettingResetButton
+                    label="automatic pull"
+                    tooltip="Reset to inherited automatic pull setting"
+                    disabled={savingBrowserAccess}
+                    onClick={() => void setAutoPull(undefined)}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={mixedAutoPull ? "mixed" : autoPullSources[0]!.value}
+                  disabled={savingBrowserAccess}
+                  onValueChange={(value) => {
+                    if (value === "inherit") void setAutoPull(undefined);
+                    else if (value === "On" || value === "Off") void setAutoPull(value === "On");
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Automatically pull the default branch">
+                    <SelectValue>
+                      {mixedAutoPull ? "Mixed values" : autoPullSources[0]!.value}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="inherit">Inherit environment defaults</SelectItem>
+                    <SelectItem value="On">On</SelectItem>
+                    <SelectItem value="Off">Off</SelectItem>
+                  </SelectPopup>
+                </Select>
+              }
+            />
+            <SettingsRow
+              title="Default merge method"
+              description="Pull requests in this project start with this method. It overrides the last method selected."
+              resetAction={
+                projectMergeMethod !== undefined ? (
+                  <SettingResetButton
+                    label="project merge method"
+                    onClick={() => setProjectMergeMethod(null)}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={projectMergeMethod ?? "inherit"}
+                  onValueChange={(value) =>
+                    setProjectMergeMethod(
+                      value === "inherit" ? null : (value as PullRequestMergeMethod),
+                    )
+                  }
+                >
+                  <SelectTrigger aria-label="Default pull request merge method">
+                    <SelectValue>
+                      {projectMergeMethod === undefined
+                        ? "Last selected"
+                        : PULL_REQUEST_MERGE_METHOD_LABELS[projectMergeMethod]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="inherit">Last selected</SelectItem>
+                    <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
+                    <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
+                    <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </SettingsSection>
+        ) : null}
+        {category === "integrations" ? (
+          <SettingsSection id="browser-access" title="Browser">
+            <SettingsRow
+              id="agent-browser-access"
+              title="Agent browser access"
+              description="Controls agent access to the preview browser. Applies when the agent session next starts."
+              status={<ProjectSettingSource entries={browserSources} />}
+              resetAction={
+                browserOverridden ? (
+                  <SettingResetButton
+                    label="project browser access"
+                    tooltip="Reset to inherited browser access"
+                    disabled={savingBrowserAccess}
+                    onClick={() => void setBrowserAccess(undefined)}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={browserMixed ? "mixed" : browserSources[0]!.value}
+                  disabled={savingBrowserAccess}
+                  onValueChange={(value) => {
+                    if (value === "inherit") void setBrowserAccess(undefined);
+                    else if (value === "On" || value === "Off")
+                      void setBrowserAccess(value === "On");
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Project agent browser access">
+                    <SelectValue>
+                      {browserMixed ? "Mixed values" : browserSources[0]!.value}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="inherit">Inherit defaults</SelectItem>
+                    <SelectItem value="On">On</SelectItem>
+                    <SelectItem value="Off">Off</SelectItem>
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </SettingsSection>
+        ) : null}
+
+        {category === "overview" ? (
+          <SettingsSection title="Sidebar">
+            <SettingsRow
+              title="Project grouping"
+              description="How the selected checkouts join project groups in this client's sidebar. Changing this can move you to a different group."
+              resetAction={
+                checkoutGroupingValues.some((value) => value !== "inherit") ? (
+                  <SettingResetButton
+                    label="project grouping"
+                    tooltip="Reset to inherited project grouping"
+                    onClick={() => updateGroupingPreference("inherit")}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={mixedGrouping ? "mixed" : selectedCheckoutGrouping}
+                  onValueChange={(value) => {
+                    if (
+                      value === "inherit" ||
+                      value === "repository" ||
+                      value === "repository_path" ||
+                      value === "separate"
+                    ) {
+                      updateGroupingPreference(value);
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label="Grouping rule for selected checkouts">
+                    <SelectValue>
+                      {mixedGrouping
+                        ? "Mixed rules"
+                        : selectedCheckoutGrouping === "inherit"
+                          ? `Default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                          : PROJECT_GROUPING_MODE_LABELS[selectedCheckoutGrouping]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="inherit">
+                      Use this client's default
+                    </SelectItem>
+                    <SelectItem hideIndicator value="repository">
+                      {PROJECT_GROUPING_MODE_LABELS.repository}
+                    </SelectItem>
+                    <SelectItem hideIndicator value="repository_path">
+                      {PROJECT_GROUPING_MODE_LABELS.repository_path}
+                    </SelectItem>
+                    <SelectItem hideIndicator value="separate">
+                      {PROJECT_GROUPING_MODE_LABELS.separate}
+                    </SelectItem>
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </SettingsSection>
+        ) : null}
+        {hasMultipleCheckouts && (category === "overview" || category === "actions") ? (
+          <>
+            {category === "actions" ? (
+              <p id="project-actions" className="text-sm text-muted-foreground">
+                Select a checkout to edit its actions. This changes the scope at the top of
+                Settings. Projects using the same action share its shortcut on that environment.
+              </p>
+            ) : null}
+            {checkoutChoices}
+          </>
+        ) : null}
+        {category === "actions" && !hasMultipleCheckouts ? (
+          <SettingsSection id="project-actions" title="Actions" hideTitle>
+            <div className="flex min-h-8 flex-col items-start gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4">
+              <div className="min-w-0">
+                <h3 className="text-base font-semibold text-foreground">Actions</h3>
+                <p className="text-pretty text-sm text-muted-foreground">
+                  {scriptsInherited
+                    ? `Inherited from ${selectedCheckout.environmentLabel ?? "environment"} defaults.`
+                    : `Overridden for ${selectedCheckoutLabel}.`}
+                </p>
+              </div>
+              <div className="flex w-full flex-wrap gap-1.5 sm:w-auto sm:shrink-0 sm:justify-end">
+                {!scriptsInherited ? (
+                  <SettingResetButton
+                    label="project actions"
+                    tooltip="Reset to inherited actions"
+                    disabled={isSavingScripts}
+                    onClick={() => void persistScripts(() => null)}
+                  />
+                ) : null}
+                {importableScripts.length > 0 ? (
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          id="import-scripts"
+                          size="xs"
+                          variant="ghost"
+                          disabled={isSavingScripts}
+                          type="button"
+                        />
+                      }
+                    >
+                      Import scripts
+                      <ChevronDownIcon className="size-3.5" />
+                    </MenuTrigger>
+                    <MenuPopup align="end" className="w-72">
+                      <MenuGroup>
+                        <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
+                        <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
+                          Add actions declared by this checkout without editing them first.
+                        </p>
+                      </MenuGroup>
+                      <MenuSeparator />
+                      {importableScripts.map((fileScript) => (
+                        <MenuItem
+                          key={`${fileScript.name} ${fileScript.command}`}
+                          onClick={() => void importFileScript(fileScript)}
+                        >
+                          <ScriptIcon
+                            icon={fileScript.icon ?? "play"}
+                            className="size-4 shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium">{fileScript.name}</div>
+                            <div className="truncate font-mono text-muted-foreground">
+                              {fileScript.command}
+                            </div>
+                          </div>
+                        </MenuItem>
+                      ))}
+                    </MenuPopup>
+                  </Menu>
+                ) : null}
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={isSavingScripts}
+                  onClick={() =>
+                    setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
+                  }
+                >
+                  <PlusIcon className="size-3.5" />
+                  Add action
+                </Button>
+              </div>
+            </div>
+            <ProjectActionsList
+              scripts={scripts}
+              keybindings={keybindings}
+              disabled={isSavingScripts}
+              onEdit={(script) => setEditorRequest(editorRequestForScript(script, keybindings))}
+            />
+            {t3File.status === "invalid" ? (
+              <SettingsRow
+                title="t3.json is invalid"
+                description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
+                className="text-warning"
+              />
+            ) : null}
+          </SettingsSection>
+        ) : null}
+
+        {category === "overview" ? (
+          <SettingsSection title="Danger">
+            <SettingsRow
+              title={
+                hasOtherMembers
+                  ? "Remove checkout"
+                  : group.memberProjects.length > 1
+                    ? "Remove this project everywhere"
+                    : "Remove project"
+              }
+              description={
+                hasOtherMembers
+                  ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
+                  : group.memberProjects.length > 1
+                    ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
+                    : "Deletes the project entry and its threads. Files on disk are not touched."
+              }
               control={
                 <Button
                   size="sm"
                   variant="destructive-outline"
-                  onClick={() => void removeMembers([selectedCheckout])}
+                  onClick={() => void removeMembers(group.memberProjects)}
                 >
-                  <Trash2Icon className="size-3.5" />
-                  Remove checkout
+                  <Trash2Icon />
+                  {hasOtherMembers
+                    ? "Remove checkout"
+                    : group.memberProjects.length > 1
+                      ? "Remove all entries"
+                      : "Remove project"}
                 </Button>
               }
             />
-          ) : null}
-          <div className="flex min-h-8 flex-col items-start gap-3 px-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4">
-            <div className="min-w-0">
-              <h3 className="text-base font-semibold text-foreground">Actions</h3>
-              <p className="text-pretty text-sm text-muted-foreground">
-                {scriptsInherited
-                  ? "Inherited from machine defaults."
-                  : `Overridden for ${selectedCheckoutLabel}.`}
-              </p>
-            </div>
-            <div className="flex w-full flex-wrap gap-1.5 sm:w-auto sm:shrink-0 sm:justify-end">
-              {!scriptsInherited ? (
-                <SettingResetButton
-                  label="project actions"
-                  tooltip="Reset to inherited actions"
-                  disabled={isSavingScripts}
-                  onClick={() => void persistScripts(() => null)}
-                />
-              ) : null}
-              {importableScripts.length > 0 ? (
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <Button size="xs" variant="ghost" disabled={isSavingScripts} type="button" />
-                    }
-                  >
-                    Import scripts
-                    <ChevronDownIcon className="size-3.5" />
-                  </MenuTrigger>
-                  <MenuPopup align="end" className="w-72">
-                    <MenuGroup>
-                      <MenuGroupLabel>Import from t3.json</MenuGroupLabel>
-                      <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
-                        Add actions declared by this checkout without editing them first.
-                      </p>
-                    </MenuGroup>
-                    <MenuSeparator />
-                    {importableScripts.map((fileScript) => (
-                      <MenuItem
-                        key={`${fileScript.name} ${fileScript.command}`}
-                        onClick={() => void importFileScript(fileScript)}
-                      >
-                        <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4 shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">{fileScript.name}</div>
-                          <div className="truncate font-mono text-muted-foreground">
-                            {fileScript.command}
-                          </div>
-                        </div>
-                      </MenuItem>
-                    ))}
-                  </MenuPopup>
-                </Menu>
-              ) : null}
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={isSavingScripts}
-                onClick={() =>
-                  setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })
-                }
-              >
-                <PlusIcon className="size-3.5" />
-                Add action
-              </Button>
-            </div>
-          </div>
-          <ProjectActionsList
-            scripts={scripts}
-            keybindings={keybindings}
-            disabled={isSavingScripts}
-            onEdit={(script) => setEditorRequest(editorRequestForScript(script, keybindings))}
-          />
-          {t3File.status === "invalid" ? (
-            <SettingsRow
-              title="t3.json is invalid"
-              description="A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values."
-              className="text-warning"
-            />
-          ) : null}
-        </SettingsSection>
-
-        <SettingsSection title="Danger">
-          <SettingsRow
-            title={
-              hasOtherMembers
-                ? "Remove checkout"
-                : group.memberProjects.length > 1
-                  ? "Remove this project everywhere"
-                  : "Remove project"
-            }
-            description={
-              hasOtherMembers
-                ? "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched."
-                : group.memberProjects.length > 1
-                  ? `Deletes all ${group.memberProjects.length} checkout entries and their threads on every machine. Files on disk are not touched.`
-                  : "Deletes the project entry and its threads. Files on disk are not touched."
-            }
-            control={
-              <Button
-                size="sm"
-                variant="destructive-outline"
-                onClick={() => void removeMembers(group.memberProjects)}
-              >
-                <Trash2Icon />
-                {hasOtherMembers
-                  ? "Remove checkout"
-                  : group.memberProjects.length > 1
-                    ? "Remove all entries"
-                    : "Remove project"}
-              </Button>
-            }
-          />
-        </SettingsSection>
+          </SettingsSection>
+        ) : null}
       </SettingsPageContainer>
 
-      <ProjectScriptEditorDialog
-        request={editorRequest}
-        scripts={scripts}
-        onSubmit={submitScript}
-        onDelete={deleteScript}
-        onClose={() => setEditorRequest(null)}
-      />
+      {category === "actions" && !hasMultipleCheckouts ? (
+        <ProjectScriptEditorDialog
+          request={editorRequest}
+          scripts={scripts}
+          onSubmit={submitScript}
+          onDelete={deleteScript}
+          onClose={() => setEditorRequest(null)}
+        />
+      ) : null}
       <ProjectFaviconPickerDialog
         key={`${representative.environmentId}:${representative.workspaceRoot}:${faviconPickerOpen}`}
         cwd={representative.workspaceRoot}

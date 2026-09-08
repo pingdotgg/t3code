@@ -321,7 +321,8 @@ export function ProjectScriptEditorDialog({
                   onKeyDown={captureKeybinding}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Press a shortcut. Use <code>Backspace</code> to clear.
+                  Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
+                  environment-wide. Projects using the same action share its shortcut.
                 </p>
               </div>
               <div className="space-y-1.5">

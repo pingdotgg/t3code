@@ -25,11 +25,16 @@ import { useSettingsProjectGroups } from "../components/settings/useSettingsProj
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SettingsRowScopeProvider } from "../components/settings/settingsLayout";
-import { Link } from "@tanstack/react-router";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
+import { ProjectsSettings } from "../components/settings/ProjectsSettings";
+import type { ProjectSettingsCategory } from "../components/settings/ProjectSettingsPanel";
+import {
+  getSettingsSearchTargetScope,
+  isSettingsSearchScopeAvailable,
+} from "../components/settings/settingsSearch";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -98,6 +103,25 @@ function SettingsTargetBar() {
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, search, connectedEnvironments } = useSettingsScope();
+  const hash = useLocation({ select: (location) => location.hash });
+  const searchTarget = getSettingsSearchTargetScope(hash);
+  if (
+    scope.kind !== "unavailable" &&
+    searchTarget &&
+    !isSettingsSearchScopeAvailable(searchTarget.scope, scope.kind)
+  ) {
+    const target =
+      searchTarget.scope === "environment-defaults" ||
+      searchTarget.scope === "project-defaults" ||
+      searchTarget.scope === "connections"
+        ? "all"
+        : searchTarget.scope;
+    return (
+      <SettingsScopeNotice target={target} targetId={hash}>
+        {`${searchTarget.title} is not available for the selected target. Choose its owning scope to continue.`}
+      </SettingsScopeNotice>
+    );
+  }
   if (pathname === "/settings/snap-shot" && scope.kind !== "device") {
     return (
       <SettingsScopeNotice target="device">
@@ -105,26 +129,35 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
       </SettingsScopeNotice>
     );
   }
+  const projectCategory: ProjectSettingsCategory | null =
+    pathname === "/settings/general"
+      ? "general"
+      : pathname === "/settings/integrations"
+        ? "integrations"
+        : pathname === "/settings/source-control"
+          ? "source-control"
+          : pathname === "/settings/actions"
+            ? "actions"
+            : pathname === "/settings/projects"
+              ? "overview"
+              : null;
   // Keep the project editor mounted while a grouping change replaces its URL key.
   if (pathname === "/settings/projects" || pathname === "/settings/connections") return children;
+  if (search.project && scope.kind !== "all" && scope.kind !== "device" && projectCategory)
+    return <ProjectsSettings category={projectCategory} />;
   if (scope.kind === "unavailable")
     return <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>;
   if (pathname === "/settings/archived" && scope.kind !== "device") return children;
   if (scope.kind === "project" || scope.kind === "checkout") {
-    return (
-      <div className="p-8 text-sm text-muted-foreground">
-        Project overrides are available in{" "}
-        <Link className="text-primary underline" to="/settings/projects" search={search}>
-          Project settings
-        </Link>
-        .
-      </div>
+    return pathname === "/settings/appearance" ? (
+      <SettingsScopeNotice target="device">Appearance is saved on this device.</SettingsScopeNotice>
+    ) : (
+      <SettingsScopeNotice target="environment">
+        Choose an environment to manage these settings. They cannot be overridden by a project.
+      </SettingsScopeNotice>
     );
   }
-  if (
-    ["/settings/appearance", "/settings/integrations"].includes(pathname) &&
-    scope.kind !== "device"
-  ) {
+  if (pathname === "/settings/appearance" && scope.kind !== "device") {
     return (
       <SettingsScopeNotice target="device">
         These preferences belong to this device, not an environment or project.
@@ -142,7 +175,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     );
   }
   if (
-    ["/settings/source-control", "/settings/archived"].includes(pathname) &&
+    ["/settings/source-control", "/settings/archived", "/settings/actions"].includes(pathname) &&
     scope.kind === "device"
   ) {
     return (

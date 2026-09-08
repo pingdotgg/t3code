@@ -50,17 +50,7 @@ export function ProjectDefaultActionsSettings({
   );
 
   return (
-    <SettingsSection title="Actions">
-      <SettingsRow
-        title="Import scripts"
-        aria-disabled
-        description="Select a project to import actions from its checkout's t3.json."
-        control={
-          <Button size="xs" variant="ghost" disabled>
-            Import scripts
-          </Button>
-        }
-      />
+    <SettingsSection id="project-actions" title="Actions">
       <SettingsRow
         title="Default actions"
         description="Available in every inheriting checkout. Commands run in that checkout or its worktree."
@@ -89,8 +79,8 @@ export function ProjectDefaultActionsSettings({
       />
       {mixed ? (
         <SettingsRow
-          title="Different actions across machines"
-          description="Select a machine to edit its actions. Adding an action applies to all selected connected machines."
+          title="Different actions across environments"
+          description="Select an environment to edit its actions. Adding an action applies to all selected connected environments."
         />
       ) : (
         <ProjectActionsList

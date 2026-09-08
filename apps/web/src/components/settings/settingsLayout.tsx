@@ -267,6 +267,7 @@ export function SettingsRow({
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
+  mixed: mixedOverride,
   children,
   className,
   ...rowProps
@@ -278,6 +279,7 @@ export function SettingsRow({
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
+  mixed?: boolean;
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
@@ -286,7 +288,8 @@ export function SettingsRow({
   const filterByScope = useContext(SettingsRowScopeContext);
   const [editingMixed, setEditingMixed] = useState(false);
   const mixed =
-    context !== null && scopedSettingsAreMixed(context.connectedEnvironments, settingKeys);
+    mixedOverride ??
+    (context !== null && scopedSettingsAreMixed(context.connectedEnvironments, settingKeys));
   const unavailable =
     serverScoped &&
     !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable);
