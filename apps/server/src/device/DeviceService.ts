@@ -633,13 +633,7 @@ export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
 
   const screenshot: DeviceService["Service"]["screenshot"] = Effect.fn("DeviceService.screenshot")(
     function* (input) {
-      const host = yield* resolveHost(input.hostId);
-      const ready = yield* readiness(host.id);
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      const device = findDevice(state, host.id, input.deviceId);
-      if (!device) {
-        return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
-      }
+      const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
       const url = `${ready.hub.origin}${vendorPrefix(device.platform)}/api/screenshot?device=${encodeURIComponent(device.id)}`;
       const png = yield* httpClient.execute(HttpClientRequest.post(url)).pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -666,7 +660,8 @@ export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
     const host = yield* resolveHost(hostId);
     const ready = yield* readiness(host.id);
     const { state } = yield* SynchronizedRef.get(stateRef);
-    const device = findDevice(state, host.id, deviceId);
+    const device =
+      findDevice(state, host.id, deviceId) ?? findDevice(yield* refresh(ready), host.id, deviceId);
     if (!device) return yield* new DeviceNotFoundError({ hostId: host.id, deviceId });
     return { ready, device };
   });
@@ -717,7 +712,7 @@ export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
   });
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   return yield* makeWithHost(yield* LocalDeviceHost.make());
 }).pipe(Effect.withSpan("DeviceService.make"));
 

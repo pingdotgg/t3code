@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { AvccDemuxer, avcCodecString, parseSemuPacket, scanAccessUnit } from "./deviceStream";
+import {
+  createDeviceStreamClient,
+  AvccDemuxer,
+  avcCodecString,
+  parseSemuPacket,
+  scanAccessUnit,
+} from "./deviceStream";
 
 const envelope = (tag: number, payload: number[]) => {
   const length = 1 + payload.length;
@@ -64,5 +70,110 @@ describe("serve-emu frames", () => {
     expect(scanned.isKey).toBe(true);
     expect(scanned.sps && avcCodecString(scanned.sps)).toBe("avc1.64001f");
     expect(scanAccessUnit(new Uint8Array([0, 0, 1, 0x41, 0x00])).isKey).toBe(false);
+  });
+});
+
+describe("iOS input startup", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const setup = () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    class FakeSocket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
+      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      send = vi.fn();
+      close = vi.fn();
+      constructor() {
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url, init: RequestInit) => {
+        const signal = init.signal!;
+        signals.push(signal);
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                signal.addEventListener("abort", () => controller.error(new Error("aborted")));
+              },
+            }),
+          ),
+        );
+      }),
+    );
+    const client = createDeviceStreamClient(
+      {
+        platform: "ios",
+        deviceId: "test-device",
+        access: {
+          httpBase: "http://test/api/device-hub",
+          wsBase: "ws://test/api/device-hub",
+          credentials: true,
+          query: {},
+        },
+      },
+      { getContext: () => null } as unknown as HTMLCanvasElement,
+      {
+        onStatus: vi.fn(),
+        onScreen: vi.fn(),
+        onUnauthorized: vi.fn(),
+        onMjpegFallback: vi.fn(),
+        onInputConnected: vi.fn(),
+      },
+    );
+    return { client, sockets, signals };
+  };
+
+  it("connects input when the MJPEG prime never produces a frame", async () => {
+    const { client, sockets, signals } = setup();
+    client.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(sockets).toHaveLength(1);
+    client.stop();
+  });
+
+  it("aborts priming immediately when hidden without opening a socket later", async () => {
+    const { client, sockets, signals } = setup();
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    client.stop();
+    expect(signals[0]?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sockets).toHaveLength(0);
+  });
+
+  it("maps displayed landscape touches to raw iOS coordinates once", async () => {
+    const { client, sockets } = setup();
+    client.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    const socket = sockets[0]!;
+    const json = new TextEncoder().encode(
+      JSON.stringify({ width: 400, height: 800, orientation: "landscape_left" }),
+    );
+    const packet = new Uint8Array(1 + json.length);
+    packet[0] = 0x82;
+    packet.set(json, 1);
+    socket.onmessage?.({ data: packet.buffer });
+    client.sendTouch("begin", 0.2, 0.7);
+    const sent = socket.send.mock.calls[0]![0] as Uint8Array;
+    expect(JSON.parse(new TextDecoder().decode(sent.subarray(1)))).toEqual({
+      type: "begin",
+      x: 1 - 0.7,
+      y: 0.2,
+    });
+    client.stop();
   });
 });

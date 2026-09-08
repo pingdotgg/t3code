@@ -167,6 +167,25 @@ const androidSdk = Effect.gen(function* () {
   return { root: null, adb: false, emulator: false, avdmanager: false };
 });
 
+const deviceHostEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  sdkRoot: string | null,
+  hostPlatform: NodeJS.Platform,
+  path: Path.Path,
+): NodeJS.ProcessEnv => {
+  return sdkRoot
+    ? {
+        ...environment,
+        ANDROID_HOME: sdkRoot,
+        PATH: [
+          path.join(sdkRoot, "platform-tools"),
+          path.join(sdkRoot, "emulator"),
+          environment.PATH ?? environment.Path ?? "",
+        ].join(hostPlatform === "win32" ? ";" : ":"),
+      }
+    : environment;
+};
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -178,7 +197,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcessEnvironment;
   const hostPlatform = yield* HostProcessPlatform;
   const sdk = yield* androidSdk;
-  const hostEnvironment = sdk.root ? { ...environment, ANDROID_HOME: sdk.root } : environment;
+  const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
   const restartDelayRef = yield* Ref.make(0);
@@ -444,11 +463,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       entryPath: agentTool.entryPath,
     });
     if (existing._tag === "Some") {
-      const alive = yield* httpClient
+      const alive = yield* HttpClient.withScope(httpClient)
         .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
         .pipe(
           Effect.timeout(Duration.seconds(2)),
-          Effect.map((response) => response.status === 200),
+          Effect.flatMap((response) =>
+            response.arrayBuffer.pipe(Effect.as(response.status === 200)),
+          ),
+          Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
       if (alive) return toEndpoint(existing.value);
@@ -675,4 +697,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 });
 
 /** Exposed for tests. */
-export const __testing = { AgentDeviceDaemonFile, androidSdk, platformReason };
+export const __testing = {
+  AgentDeviceDaemonFile,
+  androidSdk,
+  platformReason,
+  deviceHostEnvironment,
+};

@@ -219,7 +219,7 @@ export function DeviceHubSetupStatus({
   );
 }
 
-export function DevicePlatformSetup(props: {
+function DevicePlatformSetup(props: {
   readonly state: DeviceServiceState;
   readonly checking: boolean;
   readonly disabled: boolean;

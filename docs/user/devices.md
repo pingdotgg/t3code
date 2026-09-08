@@ -44,8 +44,8 @@ back from the device after a change.
 
 ## Agents and devices
 
-When an agent opens a device, the panel opens in every client connected to the
-thread. Agents drive the device through the `agent-device` command line. T3
+When an agent opens a device, the panel opens in web and desktop clients connected
+to the thread. Mobile clients show device activity in the thread timeline. Agents drive the device through the `agent-device` command line. T3
 Code installs and starts it only after **Agent device access** is enabled. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it

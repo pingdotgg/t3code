@@ -4,18 +4,20 @@
  * The hub binds loopback and is never reachable directly: serve-sim exposes a
  * shell-exec route and serve-emu's action routes are unauthenticated, so the
  * only way to a device stream is through this route, which requires an
- * environment session with the orchestration read scope. Reusing the T3
+ * environment session with read scope (operate scope for input and tuning). Reusing the T3
  * origin is also what makes remote connections work unchanged — Tailscale and
  * T3 Connect already carry `/api/*` and WebSocket upgrades for the app itself.
  *
  * Only the routes the Device panel needs are forwarded. Anything under the
  * hub's dashboard, exec, or WebRTC surface is rejected here.
  */
-import { AuthOrchestrationReadScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  type AuthEnvironmentScope,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
-import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientRequest,
@@ -83,24 +85,25 @@ const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
  * bearer and DPoP clients. The upgrade authenticator already implements that
  * fallback order, so it is used for plain requests as well.
  */
-const authenticate = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-      failEnvironmentAuthInvalid(
-        EnvironmentAuth.serverAuthCredentialReason(error),
-        EnvironmentAuth.serverAuthDpopFailureReason(error),
+const authenticate = (requiredScope: AuthEnvironmentScope) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+    const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentAuthInvalid(
+          EnvironmentAuth.serverAuthCredentialReason(error),
+          EnvironmentAuth.serverAuthDpopFailureReason(error),
+        ),
       ),
-    ),
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      failEnvironmentInternal("internal_error", error),
-    ),
-  );
-  if (!session.scopes.includes(AuthOrchestrationReadScope)) {
-    return yield* failEnvironmentScopeRequired(AuthOrchestrationReadScope);
-  }
-});
+      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+        failEnvironmentInternal("internal_error", error),
+      ),
+    );
+    if (!session.scopes.includes(requiredScope)) {
+      return yield* failEnvironmentScopeRequired(requiredScope);
+    }
+  });
 
 const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
   const headers: Record<string, string> = {};
@@ -143,8 +146,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   upstreamUrl: string,
   hubOrigin: string,
 ) {
-  const httpClient = yield* HttpClient.HttpClient;
-  const scope = yield* Scope.make();
+  const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const method = request.method;
   const upstreamRequest = HttpClientRequest.make(method)(upstreamUrl).pipe(
     HttpClientRequest.setHeaders(forwardHeaders(request, hubOrigin)),
@@ -152,7 +154,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
       ? (self) => self
       : HttpClientRequest.bodyStream(request.stream),
   );
-  const response = yield* httpClient.execute(upstreamRequest).pipe(Scope.provide(scope));
+  const response = yield* httpClient.execute(upstreamRequest);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
     if (name === "content-encoding" || name === "transfer-encoding" || name === "connection") {
@@ -162,14 +164,11 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  return HttpServerResponse.stream(
-    response.stream.pipe(Stream.ensuring(Scope.close(scope, undefined as never))),
-    {
-      status: response.status,
-      headers,
-      ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
-    },
-  );
+  return HttpServerResponse.stream(response.stream, {
+    status: response.status,
+    headers,
+    ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
+  });
 });
 
 const handler = Effect.gen(function* () {
@@ -190,7 +189,10 @@ const handler = Effect.gen(function* () {
   if (!upgrade && !readOnly && !MUTABLE_PATHS.some((pattern) => pattern.test(hubPath))) {
     return HttpServerResponse.text("Method Not Allowed", { status: 405 });
   }
-  yield* authenticate;
+  const controlsDevice =
+    (upgrade && hubPath !== "/api/devices/ws") ||
+    (!readOnly && /\/api\/stream-(mode|settings)$/.test(hubPath));
+  yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
   const devices = yield* DeviceService;
   const ready = yield* devices.currentReadiness();
   if (!ready) {

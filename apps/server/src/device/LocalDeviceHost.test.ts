@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 
 import { __testing } from "./LocalDeviceHost.ts";
@@ -57,3 +58,18 @@ describe("Android SDK availability", () => {
     }),
   );
 });
+
+it.effect("puts detected Android tools on the helper PATH without losing existing commands", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const environment = __testing.deviceHostEnvironment(
+      { PATH: "/usr/bin", HOME: "/test/home" },
+      "/sdk",
+      "darwin",
+      path,
+    );
+    expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
+    expect(environment.ANDROID_HOME).toBe("/sdk");
+    expect(environment.HOME).toBe("/test/home");
+  }).pipe(Effect.provide(NodePath.layer)),
+);

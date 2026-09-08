@@ -221,11 +221,8 @@ export function DeviceStreamView(props: {
   const pointerActive = useRef(false);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    let x = (event.clientX - rect.left) / rect.width;
-    let y = (event.clientY - rect.top) / rect.height;
-    if (rotation === -90) [x, y] = [1 - y, x];
-    else if (rotation === 90) [x, y] = [y, 1 - x];
-    else if (rotation === 180) [x, y] = [1 - x, 1 - y];
+    const x = (event.clientX - rect.left) / rect.width;
+    const y = (event.clientY - rect.top) / rect.height;
     return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   };
 
@@ -278,7 +275,7 @@ export function DeviceStreamView(props: {
           className={cn("absolute", mjpegUrl && "hidden")}
           style={mediaStyle}
         />
-        {mjpegUrl ? (
+        {props.visible && access && mjpegUrl ? (
           <img
             key={mjpegGeneration}
             src={mjpegUrl}

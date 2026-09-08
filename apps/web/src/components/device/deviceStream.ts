@@ -285,7 +285,8 @@ export function createDeviceStreamClient(
   let stopped = true;
   let socket: WebSocket | null = null;
   let controller: AbortController | null = null;
-  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  const retryTimers = new Map<"video" | "input", ReturnType<typeof setTimeout>>();
+  let primeController: AbortController | null = null;
   let videoDecoder: VideoDecoder | null = null;
   let timestamp = 0;
   let awaitingKeyframe = true;
@@ -405,12 +406,15 @@ export function createDeviceStreamClient(
     }
   };
 
-  const scheduleRetry = (run: () => void) => {
-    if (stopped || retryTimer) return;
-    retryTimer = setTimeout(() => {
-      retryTimer = null;
-      run();
-    }, RETRY_DELAY_MS);
+  const scheduleRetry = (channel: "video" | "input", run: () => void) => {
+    if (stopped || retryTimers.has(channel)) return;
+    retryTimers.set(
+      channel,
+      setTimeout(() => {
+        retryTimers.delete(channel);
+        run();
+      }, RETRY_DELAY_MS),
+    );
   };
 
   const handleUnauthorized = () => {
@@ -467,7 +471,7 @@ export function createDeviceStreamClient(
       if (stopped) return;
       setStatus("connecting", (cause as Error).message);
     }
-    if (!stopped) scheduleRetry(() => void readIosVideo());
+    if (!stopped) scheduleRetry("video", () => void readIosVideo());
   };
 
   /**
@@ -477,6 +481,8 @@ export function createDeviceStreamClient(
    */
   const primeIosHelper = async () => {
     const controller = new AbortController();
+    primeController = controller;
+    const timeout = setTimeout(() => controller.abort(), 2_000);
     try {
       const response = await fetch(httpUrl(`/helper/${device}/stream.mjpeg`), {
         signal: controller.signal,
@@ -487,7 +493,9 @@ export function createDeviceStreamClient(
     } catch {
       // A failed prime just means the socket may take a retry to come up.
     } finally {
+      clearTimeout(timeout);
       controller.abort();
+      if (primeController === controller) primeController = null;
     }
   };
 
@@ -526,7 +534,7 @@ export function createDeviceStreamClient(
         );
       }
       if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
-      scheduleRetry(() => void connectIosInput());
+      scheduleRetry("input", () => void connectIosInput());
     };
     ws.onerror = () => ws.close();
   };
@@ -578,7 +586,7 @@ export function createDeviceStreamClient(
       if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
       if (!stopped) {
         setStatus("connecting", event.reason || undefined);
-        scheduleRetry(connectAndroid);
+        scheduleRetry("input", connectAndroid);
       }
     };
     ws.onerror = () => ws.close();
@@ -604,8 +612,10 @@ export function createDeviceStreamClient(
     if (stopped) return;
     stopped = true;
     mjpeg = false;
-    if (retryTimer) clearTimeout(retryTimer);
-    retryTimer = null;
+    for (const timer of retryTimers.values()) clearTimeout(timer);
+    retryTimers.clear();
+    primeController?.abort();
+    primeController = null;
     controller?.abort();
     controller = null;
     socket?.close();
@@ -623,9 +633,9 @@ export function createDeviceStreamClient(
     if (platform !== "ios" || !screen || screen.width > screen.height) return { x, y };
     switch (screen.orientation) {
       case "landscape_left":
-        return { x: y, y: 1 - x };
-      case "landscape_right":
         return { x: 1 - y, y: x };
+      case "landscape_right":
+        return { x: y, y: 1 - x };
       case "portrait_upside_down":
         return { x: 1 - x, y: 1 - y };
       default:

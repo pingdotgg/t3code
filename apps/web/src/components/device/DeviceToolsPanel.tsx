@@ -116,7 +116,7 @@ export function DeviceToolsPanel(props: {
   const [detail, setDetail] = useState<DeviceDetail | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [foreground, setForeground] = useState<DeviceForegroundInfo | null>(null);
+  const [foreground, setForeground] = useState<DeviceForegroundInfo | null | undefined>(undefined);
   const isIos = device.platform === "ios";
 
   const target = useMemo(
@@ -164,7 +164,7 @@ export function DeviceToolsPanel(props: {
   );
 
   const settings = detail?.settings;
-  const foregroundApp = foreground ?? detail?.foregroundApp ?? null;
+  const foregroundApp = foreground === undefined ? (detail?.foregroundApp ?? null) : foreground;
   const disabled = pending || detail === null;
 
   return (

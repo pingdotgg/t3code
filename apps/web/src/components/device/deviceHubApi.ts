@@ -193,7 +193,12 @@ export function subscribeDeviceForeground(
     target,
     hubUrl(target, "/appstate", { device: target.deviceId }),
     (data) => {
-      if (!isRecord(data) || typeof data.bundleId !== "string") return;
+      if (!isRecord(data)) return;
+      if (data.bundleId === null || data.bundleId === "") {
+        onChange(null);
+        return;
+      }
+      if (typeof data.bundleId !== "string") return;
       onChange({
         id: data.bundleId,
         ...(typeof data.pid === "number" ? { pid: data.pid } : {}),

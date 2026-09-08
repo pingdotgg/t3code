@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DeviceId,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
   type DeviceServiceState,
@@ -126,6 +127,12 @@ const fixture = Effect.fn("fixture")(function* (onBoot: Effect.Effect<void> = Ef
       HttpClient.make((request) =>
         Effect.gen(function* () {
           requests.push(request.url);
+          if (request.url.includes("/api/screenshot")) {
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(new Uint8Array([137, 80, 78, 71])),
+            );
+          }
           if (request.url.endsWith("/boot")) {
             yield* onBoot;
             booted = true;
@@ -254,3 +261,17 @@ it.effect("publishes boot progress and does not restore sessions after support i
     expect(state.bootingDevices).toEqual([]);
   }).pipe(Effect.scoped),
 );
+
+describe("device discovery after server restart", () => {
+  it.effect("captures an explicit device before any client lists devices", () =>
+    Effect.gen(function* () {
+      const { service, settings, requests } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+      expect((yield* service.state).devices).toEqual([]);
+      const capture = yield* service.screenshot({ deviceId: DeviceId.make("Pixel_API_35") });
+      expect(capture.device.id).toBe("Pixel_API_35");
+      expect(Array.from(capture.png)).toEqual([137, 80, 78, 71]);
+      expect(requests.some((url) => url.endsWith("/api/devices"))).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+});
