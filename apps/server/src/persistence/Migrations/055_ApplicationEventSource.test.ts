@@ -8,11 +8,11 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("053_ApplicationEventSource", (it) => {
+layer("055_ApplicationEventSource", (it) => {
   it.effect("moves V2 events and current project state behind one global sequence", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 52 });
+      yield* runMigrations({ toMigrationInclusive: 54 });
 
       yield* sql`
         INSERT INTO orchestration_v2_events (
@@ -84,7 +84,7 @@ layer("053_ApplicationEventSource", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 53 });
+      yield* runMigrations({ toMigrationInclusive: 55 });
 
       const events = yield* sql<{
         readonly sequence: number;

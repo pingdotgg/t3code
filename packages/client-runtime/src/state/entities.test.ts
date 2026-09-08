@@ -70,6 +70,26 @@ describe("V2 client presentation", () => {
     expect(shell.source).toBe(v2ThreadShell);
   });
 
+  it("preserves active ordering and both pull-request sources", () => {
+    const linkedPullRequest = {
+      projectId: v2ThreadShell.projectId,
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+    };
+    const branchPullRequest = { ...linkedPullRequest, number: 43 };
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      activeOrderKey: "m",
+      linkedPullRequest,
+      branchPullRequest,
+    });
+
+    expect(shell.activeOrderKey).toBe("m");
+    expect(shell.linkedPullRequest).toEqual(linkedPullRequest);
+    expect(shell.branchPullRequest).toEqual(branchPullRequest);
+  });
+
   it("presents provider errors carried by failed thread shells", () => {
     const runId = RunId.make("run-failed");
     const shell = presentThreadShell(environmentId, {

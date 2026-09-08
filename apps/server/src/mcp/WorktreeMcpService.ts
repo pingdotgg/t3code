@@ -391,6 +391,7 @@ const make = Effect.gen(function* () {
               projectCwd,
               worktreePath,
               project: {
+                id: project.id,
                 workspaceRoot: project.workspaceRoot,
                 scripts: project.scripts,
               },

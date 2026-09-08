@@ -143,8 +143,8 @@ describe("runtime diagnostics in the v2 work log", () => {
         startedAt: DateTime.formatIso(now),
         completedAt: null,
       },
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
     });
     const diagnostic = rows.find((row) => row.id === baseItem.id);
 

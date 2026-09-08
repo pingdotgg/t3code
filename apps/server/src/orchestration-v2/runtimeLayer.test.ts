@@ -36,7 +36,9 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { OrchestrationEventStore } from "../persistence/Services/OrchestrationEventStore.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -126,7 +128,11 @@ const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
   subscribeChanges: Effect.never,
 });
 
-const TestLayer = Layer.merge(OrchestrationV2LayerLive, OrchestrationV2EventSinkLayerLive).pipe(
+const TestLayer = Layer.mergeAll(
+  OrchestrationV2LayerLive,
+  OrchestrationV2EventSinkLayerLive,
+  ProjectionProjectRepositoryLive,
+).pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(CheckpointStoreTestLayer),
@@ -494,6 +500,149 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
         .pipe(Effect.result);
       assert.equal(duplicate._tag, "Failure");
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).messages.length, 1);
+    }),
+  );
+
+  it.effect("dismisses message-capable questions directly and while settling", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+
+      const seedQuestion = Effect.fn("runtimeLayerTest.seedQuestion")(function* (name: string) {
+        const threadId = ThreadId.make(`${name}-thread`);
+        const requestId = RuntimeRequestId.make(`${name}-request`);
+        const nodeId = NodeId.make(`${name}-node`);
+        const itemId = TurnItemId.make(`${name}-item`);
+        const now = yield* DateTime.now;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${name}-create`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId: ProjectId.make(`${name}-project`),
+          title: "Dismissible question",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* eventSink.write({
+          commandId: CommandId.make(`${name}-seed`),
+          events: [
+            {
+              id: EventId.make(`${name}-node-event`),
+              type: "node.updated",
+              threadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: nodeId,
+                threadId,
+                runId: null,
+                parentNodeId: null,
+                rootNodeId: nodeId,
+                kind: "user_input_request",
+                status: "waiting",
+                countsForRun: false,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                runtimeRequestId: requestId,
+                checkpointScopeId: null,
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`${name}-request-event`),
+              type: "runtime-request.updated",
+              threadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: requestId,
+                nodeId,
+                providerTurnId: null,
+                nativeRequestRef: null,
+                kind: "user_input",
+                status: "pending",
+                responseCapability: { type: "message" },
+                createdAt: now,
+                resolvedAt: null,
+              },
+            },
+            {
+              id: EventId.make(`${name}-item-event`),
+              type: "turn-item.updated",
+              threadId,
+              nodeId,
+              occurredAt: now,
+              payload: {
+                id: itemId,
+                type: "user_input_request",
+                threadId,
+                runId: null,
+                nodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 0,
+                status: "waiting",
+                title: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+                requestId,
+                responseMode: "message",
+                questions: [{ id: "choice", header: "Choice", question: "Continue?", options: [] }],
+              },
+            },
+          ],
+        });
+        return { threadId, requestId, nodeId, itemId };
+      });
+
+      const dismissed = yield* seedQuestion("runtime-dismiss-question");
+      yield* orchestrator.dispatch({
+        type: "thread.user-input.dismiss",
+        commandId: CommandId.make("runtime-dismiss-question-command"),
+        threadId: dismissed.threadId,
+        requestId: dismissed.requestId,
+      });
+      const dismissedProjection = yield* orchestrator.getThreadProjection(dismissed.threadId);
+      assert.equal(dismissedProjection.runtimeRequests[0]?.status, "resolved");
+      assert.equal(dismissedProjection.runtimeRequests[0]?.decision, "cancel");
+      assert.equal(
+        dismissedProjection.nodes.find((node) => node.id === dismissed.nodeId)?.status,
+        "cancelled",
+      );
+      assert.equal(
+        dismissedProjection.turnItems.find((item) => item.id === dismissed.itemId)?.status,
+        "cancelled",
+      );
+      assert.lengthOf(dismissedProjection.messages, 0);
+
+      const settled = yield* seedQuestion("runtime-settle-question");
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-settle-question-command"),
+        threadId: settled.threadId,
+      });
+      const settledProjection = yield* orchestrator.getThreadProjection(settled.threadId);
+      assert.equal(settledProjection.thread.settledOverride, "settled");
+      assert.equal(settledProjection.runtimeRequests[0]?.status, "resolved");
+      assert.equal(settledProjection.runtimeRequests[0]?.decision, "cancel");
+      assert.equal(
+        settledProjection.nodes.find((node) => node.id === settled.nodeId)?.status,
+        "cancelled",
+      );
+      assert.equal(
+        settledProjection.turnItems.find((item) => item.id === settled.itemId)?.status,
+        "cancelled",
+      );
     }),
   );
 
@@ -872,14 +1021,29 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
+      const projects = yield* ProjectionProjectRepository;
       const threadId = ThreadId.make("runtime-layer-lifecycle-thread");
+      const projectId = ProjectId.make("runtime-layer-lifecycle-project");
+      const project = {
+        projectId,
+        title: "Lifecycle project",
+        workspaceRoot: "/workspace/project",
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        autoPull: false,
+        scripts: [],
+        createdAt: "2026-09-07T00:00:00.000Z",
+        updatedAt: "2026-09-07T00:00:00.000Z",
+        deletedAt: null,
+      } as const;
+      yield* projects.upsert(project);
       const create = {
         type: "thread.create" as const,
         createdBy: "user" as const,
         creationSource: "web" as const,
         commandId: CommandId.make("runtime-layer-lifecycle-create"),
         threadId,
-        projectId: ProjectId.make("runtime-layer-lifecycle-project"),
+        projectId,
         title: "Lifecycle thread",
         modelSelection,
         runtimeMode: "full-access" as const,
@@ -915,6 +1079,74 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       const projectionAfterStaleWorkspaceUpdate = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.branch, "feature/v2");
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.worktreePath, "/tmp/t3-v2-worktree");
+      const pullRequestSnapshot = yield* orchestrator.getShellSnapshot();
+      const pullRequest = {
+        projectId,
+        repository: "owner/repository",
+        number: 24,
+        url: "https://github.com/owner/repository/pull/24",
+      };
+      yield* projects.upsert({
+        ...project,
+        workspaceRoot: "/workspace/moved",
+        updatedAt: "2026-09-07T00:01:00.000Z",
+      });
+      const staleProjectWorkspace = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("runtime-layer-lifecycle-pr-sync-stale-project-workspace"),
+          threadId,
+          projectId,
+          snapshotSequence: pullRequestSnapshot.snapshotSequence,
+          expected: {
+            workspaceRoot: "/workspace/project",
+            branch: "feature/v2",
+            worktreePath: "/tmp/t3-v2-worktree",
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: pullRequest,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleProjectWorkspace, OrchestratorDispatchError);
+      yield* projects.upsert(project);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.sync",
+        commandId: CommandId.make("runtime-layer-lifecycle-pr-sync"),
+        threadId,
+        projectId,
+        snapshotSequence: pullRequestSnapshot.snapshotSequence,
+        expected: {
+          workspaceRoot: "/workspace/project",
+          branch: "feature/v2",
+          worktreePath: "/tmp/t3-v2-worktree",
+          linkedPullRequest: null,
+          branchPullRequest: null,
+        },
+        branchPullRequest: pullRequest,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.branchPullRequest,
+        pullRequest,
+      );
+      const stalePullRequestSync = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("runtime-layer-lifecycle-pr-sync-stale"),
+          threadId,
+          projectId,
+          snapshotSequence: pullRequestSnapshot.snapshotSequence,
+          expected: {
+            workspaceRoot: "/workspace/project",
+            branch: "feature/v2",
+            worktreePath: "/tmp/t3-v2-worktree",
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: null,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(stalePullRequestSync, OrchestratorDispatchError);
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("runtime-layer-lifecycle-runtime"),
@@ -933,6 +1165,13 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         modelSelection: { ...modelSelection, model: "gpt-5.5" },
       });
+      yield* orchestrator.dispatch({
+        type: "thread.active.reorder",
+        commandId: CommandId.make("runtime-layer-lifecycle-active-order"),
+        threadId,
+        orderKey: "a0",
+      });
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).thread.activeOrderKey, "a0");
 
       // Automatic settlement (#8600): a stale snapshot loses to any change
       // made after it, and a fresh one settles like a user settle would.
@@ -956,6 +1195,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(autoSettledProjection.thread.settledOverride, "settled");
+      assert.isNull(autoSettledProjection.thread.activeOrderKey);
       yield* orchestrator.dispatch({
         type: "thread.unsettle",
         commandId: CommandId.make("runtime-layer-lifecycle-auto-unsettle"),
