@@ -811,7 +811,7 @@ export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
 export type OrchestrationV2CheckpointRollbackRequest =
   typeof OrchestrationV2CheckpointRollbackRequest.Type;
 
-export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedErrorClass<OrchestrationV2CheckpointUnavailableError>()(
+export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedError<OrchestrationV2CheckpointUnavailableError>()(
   "OrchestrationV2CheckpointUnavailableError",
   {
     threadId: ThreadId,
@@ -2596,7 +2596,7 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
 ]);
 export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStreamItem.Type;
 
-export class OrchestrationV2DispatchCommandError extends Schema.TaggedErrorClass<OrchestrationV2DispatchCommandError>()(
+export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<OrchestrationV2DispatchCommandError>()(
   "OrchestrationV2DispatchCommandError",
   {
     commandId: CommandId,
@@ -2607,7 +2607,7 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedErrorClass
   },
 ) {}
 
-export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedErrorClass<OrchestrationV2GetThreadProjectionError>()(
+export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<OrchestrationV2GetThreadProjectionError>()(
   "OrchestrationV2GetThreadProjectionError",
   {
     threadId: ThreadId,
@@ -2616,7 +2616,7 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedErrorC
   },
 ) {}
 
-export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedErrorClass<OrchestrationV2GetShellSnapshotError>()(
+export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedError<OrchestrationV2GetShellSnapshotError>()(
   "OrchestrationV2GetShellSnapshotError",
   {
     message: Schema.String,
@@ -2624,7 +2624,7 @@ export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedErrorClas
   },
 ) {}
 
-export class OrchestrationV2ThreadLaunchError extends Schema.TaggedErrorClass<OrchestrationV2ThreadLaunchError>()(
+export class OrchestrationV2ThreadLaunchError extends Schema.TaggedError<OrchestrationV2ThreadLaunchError>()(
   "OrchestrationV2ThreadLaunchError",
   {
     commandId: CommandId,
@@ -2670,7 +2670,7 @@ const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "read-failed": "Script read failed.",
 } as const;
 
-export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass<OrchestrationGetWorkflowScriptError>()(
+export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<OrchestrationGetWorkflowScriptError>()(
   "OrchestrationGetWorkflowScriptError",
   {
     reason: Schema.Literals([

@@ -27,7 +27,7 @@ export interface ProviderSwitchPlanV2 {
   readonly transition: ProviderSessionTransition;
 }
 
-export class ProviderSwitchPlanError extends Schema.TaggedErrorClass<ProviderSwitchPlanError>()(
+export class ProviderSwitchPlanError extends Schema.TaggedError<ProviderSwitchPlanError>()(
   "ProviderSwitchPlanError",
   {
     threadId: ThreadId,

@@ -6,7 +6,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-class ReplayFixtureGitCommandError extends Schema.TaggedErrorClass<ReplayFixtureGitCommandError>()(
+class ReplayFixtureGitCommandError extends Schema.TaggedError<ReplayFixtureGitCommandError>()(
   "ReplayFixtureGitCommandError",
   {
     command: Schema.String,

@@ -31,7 +31,7 @@ import { IdAllocatorV2 } from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 
-export class ProviderEventNormalizeError extends Schema.TaggedErrorClass<ProviderEventNormalizeError>()(
+export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
   "ProviderEventNormalizeError",
   {
     providerSessionId: ProviderSessionId,
@@ -45,7 +45,7 @@ export class ProviderEventNormalizeError extends Schema.TaggedErrorClass<Provide
   }
 }
 
-export class ProviderEventPublishError extends Schema.TaggedErrorClass<ProviderEventPublishError>()(
+export class ProviderEventPublishError extends Schema.TaggedError<ProviderEventPublishError>()(
   "ProviderEventPublishError",
   {
     providerSessionId: ProviderSessionId,

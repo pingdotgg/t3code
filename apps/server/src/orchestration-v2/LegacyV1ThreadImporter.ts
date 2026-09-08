@@ -81,7 +81,7 @@ export interface LegacyV1ImportSummary {
   readonly importedMessageCount: number;
 }
 
-export class LegacyV1ThreadImportError extends Schema.TaggedErrorClass<LegacyV1ThreadImportError>()(
+export class LegacyV1ThreadImportError extends Schema.TaggedError<LegacyV1ThreadImportError>()(
   "LegacyV1ThreadImportError",
   {
     operation: Schema.String,
