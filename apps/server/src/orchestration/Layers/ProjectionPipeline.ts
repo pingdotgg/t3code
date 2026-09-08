@@ -1411,11 +1411,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId,
           });
-          const adoptableTurnStart =
-            yield* projectionTurnRepository.getAdoptableTurnStartByThreadId({
-              threadId: event.payload.threadId,
-              turnId,
-            });
+          // Assign a durable message only after its acknowledgement names this turn.
+          // Runtime lifecycle checks may inspect a pending candidate without adopting it.
+          const adoptableTurnStart = yield* projectionTurnRepository.getSubmittedTurnStartByTurnId({
+            threadId: event.payload.threadId,
+            turnId,
+          });
           const pendingTurnStart =
             Option.isSome(existingTurn) && existingTurn.value.pendingMessageId !== null
               ? Option.none()
