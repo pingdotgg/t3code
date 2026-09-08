@@ -7,16 +7,8 @@ import { CircleCheckIcon } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { CaptureShortcutConfig } from "./CaptureShortcutConfig";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
-import { WizardSteps } from "../ui/wizard-steps";
+import { Dialog, DialogDescription } from "../ui/dialog";
+import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } from "../ui/wizard";
 import {
   captureSetupAccessReady,
   captureSetupBackend,
@@ -335,21 +327,19 @@ export function SnapShotSetupDialog({
         if (!open && !busy) void onClose(false);
       }}
     >
-      <DialogPopup className="max-w-xl" showCloseButton={!busy}>
-        <DialogHeader>
-          <DialogTitle>
-            {desktop ? `Set up snapshots for ${desktop}` : "Set up snapshots"}
-          </DialogTitle>
+      <WizardPopup showCloseButton={!busy}>
+        <WizardHeader title={desktop ? `Set up snapshots for ${desktop}` : "Set up snapshots"}>
           <WizardSteps
-            steps={SETUP_STEPS.map((item, index) => ({ ...item, disabled: index > stepIndex }))}
-            currentStep={step}
-            disabled={busy}
-            onStepSelect={(next) => {
-              if (next !== step) changeStep(next);
+            steps={SETUP_STEPS.map((item) => item.label)}
+            currentStep={stepIndex}
+            isStepDisabled={(index) => busy || index > stepIndex}
+            onStepChange={(index) => {
+              const next = SETUP_STEPS[index];
+              if (next && next.id !== step) changeStep(next.id);
             }}
           />
-        </DialogHeader>
-        <DialogPanel>
+        </WizardHeader>
+        <WizardPanel>
           <div className="space-y-4 text-sm">
             <div className="space-y-2" aria-live="polite">
               <h3 className="flex items-center gap-2 font-medium">{title}</h3>
@@ -479,8 +469,8 @@ export function SnapShotSetupDialog({
               </details>
             ) : null}
           </div>
-        </DialogPanel>
-        <DialogFooter variant="bare">
+        </WizardPanel>
+        <WizardFooter>
           {step !== "access" ? (
             <Button variant="ghost" disabled={busy} onClick={() => changeStep("access")}>
               Back
@@ -566,8 +556,8 @@ export function SnapShotSetupDialog({
               {busy ? "Saving…" : shortcutChanged ? "Save and finish" : "Done"}
             </Button>
           ) : null}
-        </DialogFooter>
-      </DialogPopup>
+        </WizardFooter>
+      </WizardPopup>
     </Dialog>
   );
 }
