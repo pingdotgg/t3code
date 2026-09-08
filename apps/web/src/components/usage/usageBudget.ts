@@ -1,6 +1,6 @@
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
-export const DAILY_USAGE_BUDGET = {
+const DAILY_USAGE_BUDGET = {
   claudeUsd: { warn: 500, approval: 1_000, pause: 2_000 },
   apiEquivalentUsd: { warn: 1_000, approval: 1_500, pause: 2_000 },
 } as const;
