@@ -80,13 +80,6 @@ export const ProviderAdapterRegistryLive = Layer.effect(
   makeProviderAdapterRegistry(),
 );
 
-// Exposed for tests that want to build a facade over a pre-assembled
-// `ProviderInstanceRegistry` without pulling in the whole boot graph.
-export { makeProviderAdapterRegistry };
-
-// Re-export for consumers that need the accessor shape. The service tag
-// itself lives in `Services/ProviderAdapterRegistry.ts`.
-export { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 // Re-export for consumers (including tests) that construct a
 // `ProviderInstanceId` before calling `getByInstance`.
 export { ProviderInstanceId };

@@ -104,7 +104,7 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
  * user and project one. Absent on almost every machine, which is why a missing
  * file is the normal case rather than an error.
  */
-export function claudeManagedSettingsPath(
+function claudeManagedSettingsPath(
   path: Path.Path,
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,

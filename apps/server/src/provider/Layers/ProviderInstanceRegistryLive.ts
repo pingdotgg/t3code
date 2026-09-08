@@ -33,7 +33,6 @@
  * @module provider/Layers/ProviderInstanceRegistryLive
  */
 import {
-  defaultInstanceIdForDriver,
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
   type ProviderInstanceConfig,
@@ -430,5 +429,3 @@ export const ProviderInstanceRegistryMutableLayer = <R>(input: {
       ),
     ),
   ) as Layer.Layer<ProviderInstanceRegistry | ProviderInstanceRegistryMutator, never, R>;
-
-export { defaultInstanceIdForDriver };

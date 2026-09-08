@@ -438,9 +438,9 @@ export function openCodeQuestionId(
  * puts in the prompt.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-export const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
+const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
 
-export function isOpenCodeNativeFilePart(input: {
+function isOpenCodeNativeFilePart(input: {
   readonly mimeType: string;
   readonly sizeBytes: number;
 }): boolean {

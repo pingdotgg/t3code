@@ -1,4 +1,4 @@
-export const ANTIGRAVITY_RELEASE_VERSION = "agy_acp_server_1.1.1";
+const ANTIGRAVITY_RELEASE_VERSION = "agy_acp_server_1.1.1";
 
 export interface AntigravityReleaseAsset {
   readonly version: string;

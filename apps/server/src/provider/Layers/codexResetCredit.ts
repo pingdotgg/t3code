@@ -45,6 +45,7 @@ export class CodexResetCreditCoordinator extends Context.Service<
   }
 >()("t3/provider/Layers/codexResetCredit/CodexResetCreditCoordinator") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const statesRef = yield* Ref.make<ReadonlyMap<string, AccountRedemptionState>>(new Map());

@@ -181,7 +181,7 @@ const AUDIO_MIME_TYPES = new Set([
   "audio/x-wav",
   "audio/webm",
 ]);
-export const ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const ANTIGRAVITY_MAX_AUDIO_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const TEXT_MIME_TYPES = new Set([
   "application/json",
   "application/ld+json",
