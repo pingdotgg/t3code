@@ -21,6 +21,7 @@ import {
 } from "../ui/combobox";
 import { selectTriggerVariants } from "../ui/select";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
+import { settingsScopeEnvironmentLabel } from "./SettingsScopePicker.logic";
 
 interface ScopeOption {
   label: string;
@@ -51,18 +52,18 @@ export function SettingsScopePicker({
   const [query, setQuery] = useState("");
   const resolved = resolveSettingsScope(value, groups, environments);
   const selectedEnvironment =
-    resolved.kind === "environment"
-      ? environments.find((environment) => environment.environmentId === value.machine)
+    resolved.kind === "environment" || resolved.kind === "checkout" || resolved.kind === "project"
+      ? environments.find((environment) => environment.environmentId === resolved.environmentId)
       : undefined;
+  const selectedEnvironmentLabel = selectedEnvironment
+    ? settingsScopeEnvironmentLabel(selectedEnvironment, environments)
+    : undefined;
   const triggerLabel =
-    selectedEnvironment?.displayUrl &&
-    environments.some(
-      (environment) =>
-        environment.environmentId !== selectedEnvironment.environmentId &&
-        environment.label === selectedEnvironment.label,
-    )
-      ? `${resolved.label} · ${selectedEnvironment.displayUrl}`
-      : resolved.label;
+    selectedEnvironmentLabel && resolved.kind === "checkout"
+      ? `${resolved.group.displayName} / ${selectedEnvironmentLabel} · ${resolved.checkout.workspaceRoot}`
+      : selectedEnvironmentLabel && resolved.kind === "project"
+        ? `${resolved.group.displayName} / ${selectedEnvironmentLabel}`
+        : (selectedEnvironmentLabel ?? resolved.label);
   const optionGroups = useMemo(() => {
     const environmentById = new Map<string, EnvironmentPresentation>(
       environments.map((environment) => [environment.environmentId, environment]),
@@ -90,7 +91,7 @@ export function SettingsScopePicker({
         label: "Environments",
         items: environments.map((environment): ScopeOption => ({
           label: environment.label,
-          searchLabel: `${environment.label} ${environment.displayUrl ?? ""} environment defaults`,
+          searchLabel: `${environment.label} ${environment.displayUrl ?? environment.environmentId} environment defaults`,
           detail:
             [
               environments.some(
@@ -98,7 +99,7 @@ export function SettingsScopePicker({
                   other.environmentId !== environment.environmentId &&
                   other.label === environment.label,
               )
-                ? environment.displayUrl
+                ? (environment.displayUrl ?? environment.environmentId)
                 : null,
               environment.connection.phase === "connected" ? null : "Offline",
             ]
@@ -142,8 +143,8 @@ export function SettingsScopePicker({
             group.memberProjects.some((member) => member.environmentId === value.machine)
           ) {
             items.push({
-              label: `All checkouts on ${environment.label}`,
-              searchLabel: `${group.displayName} all checkouts ${environment.label}`,
+              label: `All checkouts on ${settingsScopeEnvironmentLabel(environment, environments)}`,
+              searchLabel: `${group.displayName} all checkouts ${settingsScopeEnvironmentLabel(environment, environments)}`,
               scope: { project: group.projectKey, machine: environment.environmentId },
               icon: <FolderIcon aria-hidden className="size-3.5" />,
               indented: true,
@@ -152,8 +153,9 @@ export function SettingsScopePicker({
         }
         for (const member of group.memberProjects) {
           const environment = environmentById.get(member.environmentId);
-          const environmentLabel =
-            environment?.label ?? member.environmentLabel ?? "Unavailable environment";
+          const environmentLabel = environment
+            ? settingsScopeEnvironmentLabel(environment, environments)
+            : (member.environmentLabel ?? "Unavailable environment");
           items.push({
             label: environmentLabel,
             searchLabel: `${group.displayName} ${environmentLabel} ${member.workspaceRoot}`,
@@ -212,7 +214,7 @@ export function SettingsScopePicker({
     >
       <ComboboxTrigger
         aria-label="Settings scope"
-        title={resolved.kind === "checkout" ? resolved.checkout.workspaceRoot : resolved.label}
+        title={triggerLabel}
         className={cn(selectTriggerVariants({ size: "compact" }), "w-auto min-w-0 max-w-full")}
       >
         <span className="flex min-w-0 items-center gap-1.5">
@@ -236,12 +238,15 @@ export function SettingsScopePicker({
                   <ComboboxItem
                     key={optionKey(item.scope)}
                     value={item}
+                    title={item.searchLabel}
                     className={item.indented ? "ps-5" : undefined}
                     contentClassName="flex min-w-0 items-center gap-2"
                   >
                     {item.icon}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate">{item.label}</span>
+                      <span className={item.indented ? "block break-words" : "block truncate"}>
+                        {item.label}
+                      </span>
                       {item.detail ? (
                         <span className="block truncate text-xs text-muted-foreground">
                           {item.detail}

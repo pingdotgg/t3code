@@ -28,14 +28,14 @@ export function ProjectsSettings({
           />
         </WorkspacePageContainer>
       </div>
-      {value.project && scope.kind !== "all" && scope.kind !== "device" ? (
+      {scope.kind === "unavailable" ? (
+        <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>
+      ) : scope.kind === "project" || scope.kind === "checkout" ? (
         <ProjectSettingsPanel
-          projectKey={value.project}
+          projectKey={scope.group.projectKey}
           environmentId={value.machine ? EnvironmentId.make(value.machine) : null}
           checkoutKey={value.checkout ?? null}
         />
-      ) : scope.kind === "unavailable" ? (
-        <p className="p-8 text-sm text-muted-foreground">{scope.message}</p>
       ) : scope.kind === "device" ? (
         <p className="p-8 text-sm text-muted-foreground">
           Select an environment or project to configure project settings.
