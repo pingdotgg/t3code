@@ -776,6 +776,9 @@ it.effect("HTTP tool discovery only advertises monitors to monitoring credential
             }),
           ),
         ),
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-discovery-test-" }),
+        ),
         Layer.provideMerge(NodeHttpServer.layerTest),
         Layer.provideMerge(NodeServices.layer),
       ),

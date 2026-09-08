@@ -2781,6 +2781,7 @@ const usageLimitLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(MonitorSession.layer),
     Layer.provideMerge(NodeServices.layer),
   ),
 );

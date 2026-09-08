@@ -18,6 +18,8 @@ const scope = {
 };
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
+  clientCapabilities: {},
+  clientInfo: { name: "monitor-test", version: "1.0.0" },
   protocolVersion: "2025-06-18",
   initializePayload: {
     protocolVersion: "2025-06-18",
@@ -104,8 +106,9 @@ it.effect("MCP tools reject other sessions, missing capability, and a closed run
             ...scope,
             capabilities: new Set(["preview"] as const),
           }),
-        )).isError,
-      ).toBe(true);
+          Effect.flip,
+        ))._tag,
+      ).toBe("InvalidParams");
       expect(subscribed).toBe(false);
     }).pipe(Effect.scoped);
     expect((yield* call).isError).toBe(true);

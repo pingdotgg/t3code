@@ -4,7 +4,7 @@ import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 
-export class MonitorUnavailableError extends Schema.TaggedErrorClass<MonitorUnavailableError>()(
+export class MonitorUnavailableError extends Schema.TaggedError<MonitorUnavailableError>()(
   "MonitorUnavailableError",
   { sessionId: Schema.String },
 ) {
@@ -13,7 +13,7 @@ export class MonitorUnavailableError extends Schema.TaggedErrorClass<MonitorUnav
   }
 }
 
-export class MonitorCapabilityError extends Schema.TaggedErrorClass<MonitorCapabilityError>()(
+export class MonitorCapabilityError extends Schema.TaggedError<MonitorCapabilityError>()(
   "MonitorCapabilityError",
   {},
 ) {
@@ -22,7 +22,7 @@ export class MonitorCapabilityError extends Schema.TaggedErrorClass<MonitorCapab
   }
 }
 
-export class MonitorStoppedError extends Schema.TaggedErrorClass<MonitorStoppedError>()(
+export class MonitorStoppedError extends Schema.TaggedError<MonitorStoppedError>()(
   "MonitorStoppedError",
   {},
 ) {
@@ -31,7 +31,7 @@ export class MonitorStoppedError extends Schema.TaggedErrorClass<MonitorStoppedE
   }
 }
 
-export class MonitorProcessMissingError extends Schema.TaggedErrorClass<MonitorProcessMissingError>()(
+export class MonitorProcessMissingError extends Schema.TaggedError<MonitorProcessMissingError>()(
   "MonitorProcessMissingError",
   { processId: Schema.String },
 ) {
@@ -40,7 +40,7 @@ export class MonitorProcessMissingError extends Schema.TaggedErrorClass<MonitorP
   }
 }
 
-export class MonitorStartError extends Schema.TaggedErrorClass<MonitorStartError>()(
+export class MonitorStartError extends Schema.TaggedError<MonitorStartError>()(
   "MonitorStartError",
   { cause: Schema.Defect() },
 ) {
