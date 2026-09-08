@@ -8,8 +8,8 @@ import {
 } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSettingsScope, validateSettingsScopeSearch } from "./settingsScope";
-import { retainSettingsScope } from "./settingsScopeNavigation";
+import { resolveSettingsScope } from "./settingsScope";
+import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
 
 const checkoutSearch = {
   project: "repository:t3code",
@@ -22,15 +22,7 @@ function createSettingsRouter(initialEntry = "/settings/general?scope=device") {
   const settings = createRoute({
     getParentRoute: () => root,
     path: "settings",
-    validateSearch: (raw: Record<string, unknown>) =>
-      validateSettingsScopeSearch(
-        typeof raw.environmentId === "string" &&
-          raw.machine === undefined &&
-          raw.scope === undefined &&
-          raw.project === undefined
-          ? { ...raw, machine: raw.environmentId }
-          : raw,
-      ),
+    validateSearch: validateSettingsRouteSearch,
     search: { middlewares: [retainSettingsScope] },
     beforeLoad: ({ location }) => {
       if (location.pathname === "/settings") {

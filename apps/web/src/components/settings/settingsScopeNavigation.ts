@@ -1,6 +1,18 @@
 import type { SearchMiddleware } from "@tanstack/react-router";
 
-import type { SettingsScopeSearch } from "./settingsScope";
+import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
+
+/** Accept legacy provider links without replacing an explicit settings scope. */
+export function validateSettingsRouteSearch(raw: Record<string, unknown>) {
+  return validateSettingsScopeSearch(
+    typeof raw.environmentId === "string" &&
+      raw.machine === undefined &&
+      raw.scope === undefined &&
+      raw.project === undefined
+      ? { ...raw, machine: raw.environmentId }
+      : raw,
+  );
+}
 
 const SCOPE_KEYS = [
   "scope",

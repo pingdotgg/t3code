@@ -23,11 +23,13 @@ import {
 import { SettingsScopePicker } from "../components/settings/SettingsScopePicker";
 import { useSettingsProjectGroups } from "../components/settings/useSettingsProjectGroups";
 import { useEnvironments } from "../state/environments";
-import { validateSettingsScopeSearch } from "../components/settings/settingsScope";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import { SettingsRowScopeProvider } from "../components/settings/settingsLayout";
 import { Link } from "@tanstack/react-router";
-import { retainSettingsScope } from "../components/settings/settingsScopeNavigation";
+import {
+  retainSettingsScope,
+  validateSettingsRouteSearch,
+} from "../components/settings/settingsScopeNavigation";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -248,15 +250,7 @@ function SettingsRouteLayout() {
 }
 
 export const Route = createFileRoute("/settings")({
-  validateSearch: (raw: Record<string, unknown>) =>
-    validateSettingsScopeSearch(
-      typeof raw.environmentId === "string" &&
-        raw.machine === undefined &&
-        raw.scope === undefined &&
-        raw.project === undefined
-        ? { ...raw, machine: raw.environmentId }
-        : raw,
-    ),
+  validateSearch: validateSettingsRouteSearch,
   search: { middlewares: [retainSettingsScope] },
   beforeLoad: async ({ context, location }) => {
     if (
