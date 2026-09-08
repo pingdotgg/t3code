@@ -1831,10 +1831,15 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const threadId = asThreadId("thread-steer-reconnect-before-acceptance");
       const firstUserMessageEvent = promiseWithResolvers<unknown>();
       const reconnectEvent = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
       const steerStarted = promiseWithResolvers<void>();
       const steerRelease = promiseWithResolvers<void>();
       runtimeMock.state.autoPromptEcho = false;
-      runtimeMock.state.subscribedEvents = [firstUserMessageEvent.promise, reconnectEvent.promise];
+      runtimeMock.state.subscribedEvents = [
+        firstUserMessageEvent.promise,
+        reconnectEvent.promise,
+        idleEvent.promise,
+      ];
       runtimeMock.state.promptAsyncImplementation = async () => {
         if (runtimeMock.state.promptCalls.length === 2) {
           steerStarted.resolve(undefined);
@@ -1900,6 +1905,18 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* Fiber.join(steerFiber);
       yield* advanceTestClock(250);
 
+      NodeAssert.equal(completedFiber.pollUnsafe(), undefined);
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "running");
+      NodeAssert.equal(session?.activeTurnId, activeTurn.turnId);
+      idleEvent.resolve({
+        id: "evt-idle-after-recovered-steer",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
       const completed = Option.getOrUndefined(
         yield* Fiber.join(completedFiber).pipe(Effect.timeout("1 second")),
       );
@@ -1911,6 +1928,92 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       const abortCallsAfterCompletion = runtimeMock.state.abortCalls.length;
       yield* adapter.interruptTurn(threadId, activeTurn.turnId);
       NodeAssert.equal(runtimeMock.state.abortCalls.length, abortCallsAfterCompletion);
+    }),
+  );
+
+  it.effect("keeps a recovered prompt running until OpenCode finishes its delegated work", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-delayed-busy-with-subagent");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const enqueue = makeOpenCodeEventQueue();
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        const prompt = runtimeMock.state.promptCalls.at(-1) as { messageID: string };
+        runtimeMock.state.messages.push({
+          info: { id: prompt.messageID, role: "user" },
+          parts: [],
+        });
+      };
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Delegate the investigation",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      // The prompt is persisted before OpenCode starts its session loop.
+      // Its status map remains empty until the delayed busy event arrives.
+      yield* advanceTestClock(1_000);
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "busy" } } });
+      enqueue({
+        type: "session.created",
+        properties: { info: { id: "ses_child", parentID: sessionID, title: "Investigate" } },
+      });
+      enqueue({
+        type: "session.status",
+        properties: { sessionID: "ses_child", status: { type: "busy" } },
+      });
+      enqueue({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: "part-task",
+            sessionID,
+            messageID: "msg-assistant",
+            type: "tool",
+            callID: "call-task",
+            tool: "task",
+            state: { status: "pending", input: {}, raw: "" },
+          },
+        },
+      });
+      enqueue({
+        type: "session.status",
+        properties: { sessionID: "ses_child", status: { type: "idle" } },
+      });
+      enqueue({ type: "session.compacted", properties: { sessionID } });
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.equal(
+        events.some((event) => event.type === "turn.completed"),
+        false,
+      );
+      NodeAssert.equal(events.find((event) => event.type === "item.started")?.turnId, turn.turnId);
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.status, "running");
+      NodeAssert.equal(session?.activeTurnId, turn.turnId);
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+      NodeAssert.equal(Option.getOrThrow(yield* Fiber.join(completedFiber)).turnId, turn.turnId);
+      yield* adapter.stopSession(threadId);
     }),
   );
 
@@ -1977,6 +2080,68 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(session?.activeTurnId, undefined);
       NodeAssert.equal(turn.turnId !== undefined, true);
 
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("reconciles an idle event received during the final admission status request", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-idle-during-admission-status");
+      const sessionID = "ses_idle_during_admission_status";
+      const enqueue = makeOpenCodeEventQueue();
+      const statusRequests = Array.from({ length: 5 }, () => promiseWithResolvers<void>());
+      const finalStatus = promiseWithResolvers<unknown>();
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionID);
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      let statusRequestIndex = 0;
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        const index = statusRequestIndex++;
+        statusRequests[index]?.resolve(undefined);
+        return index === 4 ? finalStatus.promise : { data: {} };
+      };
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Run without a prompt echo",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      for (const [index, delay] of [250, 500, 1_000, 2_000].entries()) {
+        yield* Effect.promise(() => statusRequests[index]!.promise);
+        yield* advanceTestClock(delay);
+      }
+      yield* Effect.promise(() => statusRequests[4]!.promise);
+      const processedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === threadId && event.type === "thread.state.changed",
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "busy" } } });
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+      enqueue({ type: "session.compacted", properties: { sessionID } });
+      yield* Fiber.join(processedFiber);
+      finalStatus.resolve({ data: {} });
+      yield* advanceTestClock(2_000);
+
+      const completed = Option.getOrThrow(yield* Fiber.join(completedFiber));
+      NodeAssert.equal(completed.turnId, turn.turnId);
+      NodeAssert.ok(completed.type === "turn.completed");
+      NodeAssert.equal(completed.payload.state, "completed");
+      NodeAssert.equal(runtimeMock.state.abortCalls.includes(sessionID), false);
       yield* adapter.stopSession(threadId);
     }),
   );

@@ -221,7 +221,6 @@ interface OpenCodePromptAdmission {
   idleObservedAfterMessage: boolean;
   messageObserved: boolean;
   busyObserved: boolean;
-  idleStatusConfirmations: number;
   accepted: boolean;
   cancelled: boolean;
   readonly acceptance: Deferred.Deferred<void>;
@@ -1391,6 +1390,18 @@ export function makeOpenCodeAdapter(
             }
           }
 
+          if (
+            promptAdmission.messageObserved &&
+            promptAdmission.idleDuringAdmission === undefined &&
+            promptAdmission.priorIdle === undefined
+          ) {
+            // A persisted prompt proves admission, not completion. OpenCode can
+            // still report idle before its session loop starts processing it.
+            context.promptAdmission = undefined;
+            context.awaitingBusyAfterInterruption = false;
+            return;
+          }
+
           const statusResponse = yield* runOpenCodeSdk("session.status", (signal) =>
             context.client.session.status(undefined, { signal }),
           ).pipe(Effect.timeout("1 second"), Effect.option);
@@ -1414,7 +1425,6 @@ export function makeOpenCodeAdapter(
           const isBusy = status?.type === "busy" || status?.type === "retry";
           if (isBusy) {
             promptAdmission.busyObserved = true;
-            promptAdmission.idleStatusConfirmations = 0;
             context.awaitingBusyAfterInterruption = false;
             context.promptAdmission = undefined;
             return;
@@ -1429,39 +1439,6 @@ export function makeOpenCodeAdapter(
             context.promptAdmission = undefined;
             context.awaitingBusyAfterInterruption = false;
             yield* scheduleIdleReconciliation(context, promptAdmission.turnId, idle.raw);
-            return;
-          }
-          if (isIdle && promptAdmission.messageObserved) {
-            promptAdmission.idleStatusConfirmations += 1;
-            if (promptAdmission.idleStatusConfirmations >= 2) {
-              context.promptAdmission = undefined;
-              context.awaitingBusyAfterInterruption = false;
-              yield* completeOpenCodeTurn(
-                context,
-                promptAdmission.turnId,
-                promptAdmission.generation,
-                {
-                  type: "session.status.recovered",
-                  status: statusData,
-                },
-              );
-              return;
-            }
-          } else if (!isIdle) {
-            promptAdmission.idleStatusConfirmations = 0;
-          }
-          if (
-            isIdle &&
-            promptAdmission.messageObserved &&
-            promptAdmission.recoveryRaw !== undefined
-          ) {
-            context.promptAdmission = undefined;
-            context.awaitingBusyAfterInterruption = false;
-            yield* scheduleIdleReconciliation(
-              context,
-              promptAdmission.turnId,
-              promptAdmission.recoveryRaw,
-            );
             return;
           }
 
@@ -3153,7 +3130,6 @@ export function makeOpenCodeAdapter(
             idleObservedAfterMessage: false,
             messageObserved: false,
             busyObserved: false,
-            idleStatusConfirmations: 0,
             accepted: false,
             cancelled: false,
             acceptance: Deferred.makeUnsafe<void>(),
