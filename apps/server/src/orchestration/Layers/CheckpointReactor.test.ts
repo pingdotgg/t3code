@@ -1746,6 +1746,13 @@ describe("CheckpointReactor", () => {
           createdAt,
         });
         yield* harness.engine.dispatch({
+          type: "thread.turn.start.acknowledge",
+          commandId: CommandId.make(`cmd-unsupported-rewind-ack-${turnCount}`),
+          threadId,
+          messageId: MessageId.make(`message-unsupported-rewind-${turnCount}`),
+          turnId: asTurnId(`turn-unsupported-rewind-${turnCount}`),
+        });
+        yield* harness.engine.dispatch({
           type: "thread.turn.diff.complete",
           commandId: CommandId.make(`cmd-unsupported-rewind-diff-${turnCount}`),
           threadId,

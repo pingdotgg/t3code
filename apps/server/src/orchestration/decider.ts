@@ -101,11 +101,20 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
 function hasQueuedTurnStartForThread(
   thread: Pick<
     OrchestrationThread,
-    "messages" | "latestTurn" | "session" | "pendingTurnStartMessageId" | "submittedTurnStarts"
+    | "messages"
+    | "latestTurn"
+    | "session"
+    | "pendingTurnStartMessageId"
+    | "submittedTurnStarts"
+    | "turnStartSubmissionRendezvous"
   >,
   now: string,
 ): boolean {
-  if (thread.pendingTurnStartMessageId != null || (thread.submittedTurnStarts?.length ?? 0) > 0)
+  if (
+    thread.pendingTurnStartMessageId != null ||
+    (thread.submittedTurnStarts?.length ?? 0) > 0 ||
+    (thread.turnStartSubmissionRendezvous?.requests.length ?? 0) > 0
+  )
     return true;
   let latestUserMessageAt: string | null = null;
   let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
@@ -1464,7 +1473,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.session?.status === "running" ||
         thread.latestTurn?.state === "running" ||
         thread.pendingTurnStartMessageId != null ||
-        (thread.submittedTurnStarts?.length ?? 0) > 0
+        (thread.submittedTurnStarts?.length ?? 0) > 0 ||
+        (thread.turnStartSubmissionRendezvous?.requests.length ?? 0) > 0
       ) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({

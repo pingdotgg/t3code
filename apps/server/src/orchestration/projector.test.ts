@@ -6,11 +6,13 @@ import {
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
+import { decideOrchestrationCommand } from "./decider.ts";
 
 function makeEvent(input: {
   sequence: number;
@@ -833,8 +835,7 @@ describe("orchestration projector", () => {
       expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
       expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
       expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
-        awaitingMessageIds: ["request-b"],
-        observedTurnIds: ["turn-b"],
+        requests: [{ messageId: "request-b", observedTurnIds: ["turn-b"] }],
       });
       model = yield* projectEvent(
         model,
@@ -939,77 +940,117 @@ describe("orchestration projector", () => {
             occurredAt: now,
             commandId: `shared-provider-turn-${sequence}`,
           });
-        let model = yield* projectEvent(
-          createEmptyReadModel(now),
-          event(1, "thread.created", {
-            threadId,
-            projectId: "project-1",
-            title: "Shared provider turn",
-            modelSelection: { instanceId: "claude", model: "test" },
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            createdAt: now,
-            updatedAt: now,
-          }),
+        type Step = "request-a" | "request-b" | "ack-a" | "ack-b" | "running" | "terminal";
+        const permutations = (steps: readonly Step[]): Step[][] =>
+          steps.length === 0
+            ? [[]]
+            : steps.flatMap((step, index) =>
+                permutations(steps.filter((_, candidateIndex) => candidateIndex !== index)).map(
+                  (tail) => [step, ...tail],
+                ),
+              );
+        const orders = permutations([
+          "request-a",
+          "request-b",
+          "ack-a",
+          "ack-b",
+          "running",
+          "terminal",
+        ]).filter(
+          (order) =>
+            order.indexOf("request-a") < order.indexOf("ack-a") &&
+            order.indexOf("request-b") < order.indexOf("ack-b") &&
+            order.indexOf("running") < order.indexOf("terminal") &&
+            order.indexOf("request-a") < order.indexOf("terminal") &&
+            order.indexOf("request-b") < order.indexOf("terminal"),
         );
-        for (const [sequence, messageId] of [
-          [2, "request-a"],
-          [3, "request-b"],
-        ] as const) {
-          model = yield* projectEvent(
-            model,
-            event(sequence, "thread.turn-start-requested", {
+        expect(orders).toHaveLength(66);
+
+        for (const [caseIndex, order] of orders.entries()) {
+          let sequence = 1;
+          let model = yield* projectEvent(
+            createEmptyReadModel(now),
+            event(sequence, "thread.created", {
               threadId,
-              messageId,
-              expectsTurnStartAcknowledgement: true,
+              projectId: "project-1",
+              title: "Shared provider turn",
+              modelSelection: { instanceId: "claude", model: "test" },
               runtimeMode: "full-access",
               interactionMode: "default",
+              branch: null,
+              worktreePath: null,
               createdAt: now,
+              updatedAt: now,
             }),
           );
-        }
-        model = yield* projectEvent(
-          model,
-          event(4, "thread.meta-updated", {
-            threadId,
-            turnStartAcknowledged: { messageId: "request-a", turnId: providerTurnId },
-            updatedAt: now,
-          }),
-        );
-        for (const [sequence, status, activeTurnId] of [
-          [5, "running", providerTurnId],
-          [6, "ready", null],
-        ] as const) {
-          model = yield* projectEvent(
-            model,
-            event(sequence, "thread.session-set", {
-              threadId,
-              session: {
-                threadId,
-                status,
-                providerName: "claude",
-                runtimeMode: "full-access",
-                activeTurnId,
-                lastError: null,
-                updatedAt: now,
-              },
-            }),
-          );
-        }
-        model = yield* projectEvent(
-          model,
-          event(7, "thread.meta-updated", {
-            threadId,
-            turnStartAcknowledged: { messageId: "request-b", turnId: providerTurnId },
-            updatedAt: now,
-          }),
-        );
+          for (const [stepIndex, step] of order.entries()) {
+            sequence += 1;
+            if (step === "request-a" || step === "request-b") {
+              const messageId = step === "request-a" ? "request-a" : "request-b";
+              model = yield* projectEvent(
+                model,
+                event(sequence, "thread.turn-start-requested", {
+                  threadId,
+                  messageId,
+                  expectsTurnStartAcknowledgement: true,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: now,
+                }),
+              );
+            } else if (step === "ack-a" || step === "ack-b") {
+              const messageId = step === "ack-a" ? "request-a" : "request-b";
+              model = yield* projectEvent(
+                model,
+                event(sequence, "thread.meta-updated", {
+                  threadId,
+                  turnStartAcknowledged: { messageId, turnId: providerTurnId },
+                  updatedAt: now,
+                }),
+              );
+            } else {
+              const running = step === "running";
+              model = yield* projectEvent(
+                model,
+                event(sequence, "thread.session-set", {
+                  threadId,
+                  session: {
+                    threadId,
+                    status: running ? "running" : "ready",
+                    providerName: "claude",
+                    runtimeMode: "full-access",
+                    activeTurnId: running ? providerTurnId : null,
+                    lastError: null,
+                    updatedAt: now,
+                  },
+                }),
+              );
+            }
 
-        expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
-        expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
-        expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+            const revert = decideOrchestrationCommand({
+              command: {
+                type: "thread.checkpoint.revert",
+                commandId: CommandId.make(`shared-turn-revert-${caseIndex}-${sequence}`),
+                threadId: ThreadId.make(threadId),
+                turnCount: 0,
+                createdAt: now,
+              },
+              readModel: model,
+            }).pipe(Effect.provide(NodeServices.layer));
+            if (stepIndex < order.length - 1) {
+              const error = yield* revert.pipe(Effect.flip);
+              expect(error._tag).toBe("OrchestrationCommandInvariantError");
+            } else {
+              const result = yield* revert;
+              const events = Array.isArray(result) ? result : [result];
+              expect(events[0]?.type).toBe("thread.checkpoint-revert-requested");
+            }
+          }
+
+          expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+          expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+          expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+        }
       }),
   );
 

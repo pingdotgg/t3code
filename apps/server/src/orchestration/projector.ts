@@ -530,20 +530,26 @@ export function projectEvent(
           if (!thread) return nextBase;
           const acknowledgement = payload.turnStartAcknowledged;
           const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+          const acknowledgedRequest =
+            acknowledgement === undefined
+              ? undefined
+              : rendezvous?.requests.find(
+                  (request) => request.messageId === acknowledgement.messageId,
+                );
           const acknowledgedTurnAlreadyRunning =
             acknowledgement !== undefined &&
             thread.session?.status === "running" &&
             thread.session.activeTurnId === acknowledgement.turnId;
           const acknowledgedTurnAlreadyObserved =
             acknowledgement !== undefined &&
-            (rendezvous?.observedTurnIds ?? []).includes(acknowledgement.turnId);
+            (acknowledgedRequest?.observedTurnIds ?? []).includes(acknowledgement.turnId);
           const acknowledgementAlreadyAdopted =
             acknowledgedTurnAlreadyRunning || acknowledgedTurnAlreadyObserved;
-          const remainingAwaitingMessageIds =
+          const remainingRequests =
             acknowledgement === undefined
-              ? (rendezvous?.awaitingMessageIds ?? [])
-              : (rendezvous?.awaitingMessageIds ?? []).filter(
-                  (messageId) => messageId !== acknowledgement.messageId,
+              ? (rendezvous?.requests ?? [])
+              : (rendezvous?.requests ?? []).filter(
+                  (request) => request.messageId !== acknowledgement.messageId,
                 );
           return {
             ...nextBase,
@@ -584,13 +590,10 @@ export function projectEvent(
                           acknowledgement,
                         ],
                     turnStartSubmissionRendezvous:
-                      remainingAwaitingMessageIds.length === 0
+                      remainingRequests.length === 0
                         ? null
                         : {
-                            awaitingMessageIds: remainingAwaitingMessageIds,
-                            observedTurnIds: (rendezvous?.observedTurnIds ?? []).filter(
-                              (turnId) => turnId !== acknowledgement.turnId,
-                            ),
+                            requests: remainingRequests,
                           },
                   }
                 : {}),
@@ -653,21 +656,15 @@ export function projectEvent(
               ...(payload.expectsTurnStartAcknowledgement === true
                 ? {
                     turnStartSubmissionRendezvous: {
-                      awaitingMessageIds: [
-                        ...(thread.turnStartSubmissionRendezvous?.awaitingMessageIds ?? []).filter(
-                          (messageId) => messageId !== payload.messageId,
+                      requests: [
+                        ...(thread.turnStartSubmissionRendezvous?.requests ?? []).filter(
+                          (request) => request.messageId !== payload.messageId,
                         ),
-                        payload.messageId,
+                        {
+                          messageId: payload.messageId,
+                          observedTurnIds: activeTurnId === null ? [] : [activeTurnId],
+                        },
                       ],
-                      observedTurnIds:
-                        activeTurnId === null
-                          ? (thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [])
-                          : [
-                              ...(
-                                thread.turnStartSubmissionRendezvous?.observedTurnIds ?? []
-                              ).filter((turnId) => turnId !== activeTurnId),
-                              activeTurnId,
-                            ],
                     },
                   }
                 : {}),
@@ -803,16 +800,16 @@ export function projectEvent(
                   )
                 : (thread.submittedTurnStarts ?? []),
             turnStartSubmissionRendezvous:
-              activeTurnId === null ||
-              rendezvous === null ||
-              rendezvous.awaitingMessageIds.length === 0
+              activeTurnId === null || rendezvous === null || rendezvous.requests.length === 0
                 ? rendezvous
                 : {
-                    awaitingMessageIds: rendezvous.awaitingMessageIds,
-                    observedTurnIds: [
-                      ...rendezvous.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
-                      activeTurnId,
-                    ],
+                    requests: rendezvous.requests.map((request) => ({
+                      ...request,
+                      observedTurnIds: [
+                        ...request.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
+                        activeTurnId,
+                      ],
+                    })),
                   },
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
@@ -1047,18 +1044,18 @@ export function projectEvent(
             : (thread.pendingTurnStartMessageId ?? null);
           const clearedRequestId = turnStartRequestIdClearedByActivity(payload.activity);
           const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
-          const awaitingMessageIds =
+          const remainingRequests =
             clearedRequestId === null
-              ? (rendezvous?.awaitingMessageIds ?? [])
-              : (rendezvous?.awaitingMessageIds ?? []).filter(
-                  (messageId) => messageId !== clearedRequestId,
+              ? (rendezvous?.requests ?? [])
+              : (rendezvous?.requests ?? []).filter(
+                  (request) => request.messageId !== clearedRequestId,
                 );
           const turnStartSubmissionRendezvous =
             rendezvous === null
               ? null
-              : awaitingMessageIds.length === 0
+              : remainingRequests.length === 0
                 ? null
-                : { ...rendezvous, awaitingMessageIds };
+                : { requests: remainingRequests };
           const revertFailed = payload.activity.kind === "checkpoint.revert.failed";
           const pendingCheckpointRevertCount = revertFailed
             ? Math.max(0, (thread.pendingCheckpointRevertCount ?? 1) - 1)

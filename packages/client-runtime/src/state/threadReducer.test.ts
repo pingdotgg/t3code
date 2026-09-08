@@ -766,6 +766,26 @@ describe("applyThreadDetailEvent", () => {
           occurredAt: "2026-04-01T05:45:01.000Z",
           aggregateKind: "thread",
           aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "running",
+              providerName: "claude",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: "2026-04-01T05:45:01.000Z",
+            },
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 9,
+          occurredAt: "2026-04-01T05:45:02.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
           type: "thread.meta-updated",
           payload: {
             threadId: baseThread.id,
@@ -773,13 +793,10 @@ describe("applyThreadDetailEvent", () => {
             updatedAt: baseThread.updatedAt,
           },
         },
-        ...[
-          [9, "running", turnId],
-          [10, "ready", null],
-        ].map(([sequence, status, activeTurnId]): OrchestrationEvent => ({
+        {
           ...baseEventFields,
-          sequence: sequence as number,
-          occurredAt: "2026-04-01T05:45:02.000Z",
+          sequence: 10,
+          occurredAt: "2026-04-01T05:45:02.500Z",
           aggregateKind: "thread",
           aggregateId: baseThread.id,
           type: "thread.session-set",
@@ -787,15 +804,15 @@ describe("applyThreadDetailEvent", () => {
             threadId: baseThread.id,
             session: {
               threadId: baseThread.id,
-              status: status as "running" | "ready",
+              status: "ready",
               providerName: "claude",
               runtimeMode: "full-access",
-              activeTurnId: activeTurnId as TurnId | null,
+              activeTurnId: null,
               lastError: null,
-              updatedAt: "2026-04-01T05:45:02.000Z",
+              updatedAt: "2026-04-01T05:45:02.500Z",
             },
           },
-        })),
+        },
         {
           ...baseEventFields,
           sequence: 11,

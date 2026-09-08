@@ -674,8 +674,12 @@ export const OrchestrationThread = Schema.Struct({
   turnStartSubmissionRendezvous: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        awaitingMessageIds: Schema.Array(MessageId),
-        observedTurnIds: Schema.Array(TurnId),
+        requests: Schema.Array(
+          Schema.Struct({
+            messageId: MessageId,
+            observedTurnIds: Schema.Array(TurnId),
+          }),
+        ),
       }),
     ),
   ),

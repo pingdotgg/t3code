@@ -250,20 +250,24 @@ export function applyThreadDetailEvent(
     case "thread.meta-updated": {
       const acknowledgement = event.payload.turnStartAcknowledged;
       const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+      const acknowledgedRequest =
+        acknowledgement === undefined
+          ? undefined
+          : rendezvous?.requests.find((request) => request.messageId === acknowledgement.messageId);
       const acknowledgedTurnAlreadyRunning =
         acknowledgement !== undefined &&
         thread.session?.status === "running" &&
         thread.session.activeTurnId === acknowledgement.turnId;
       const acknowledgedTurnAlreadyObserved =
         acknowledgement !== undefined &&
-        (rendezvous?.observedTurnIds ?? []).includes(acknowledgement.turnId);
+        (acknowledgedRequest?.observedTurnIds ?? []).includes(acknowledgement.turnId);
       const acknowledgementAlreadyAdopted =
         acknowledgedTurnAlreadyRunning || acknowledgedTurnAlreadyObserved;
-      const remainingAwaitingMessageIds =
+      const remainingRequests =
         acknowledgement === undefined
-          ? (rendezvous?.awaitingMessageIds ?? [])
-          : (rendezvous?.awaitingMessageIds ?? []).filter(
-              (messageId) => messageId !== acknowledgement.messageId,
+          ? (rendezvous?.requests ?? [])
+          : (rendezvous?.requests ?? []).filter(
+              (request) => request.messageId !== acknowledgement.messageId,
             );
       return {
         kind: "updated",
@@ -307,13 +311,10 @@ export function applyThreadDetailEvent(
                       acknowledgement,
                     ],
                 turnStartSubmissionRendezvous:
-                  remainingAwaitingMessageIds.length === 0
+                  remainingRequests.length === 0
                     ? null
                     : {
-                        awaitingMessageIds: remainingAwaitingMessageIds,
-                        observedTurnIds: (rendezvous?.observedTurnIds ?? []).filter(
-                          (turnId) => turnId !== acknowledgement.turnId,
-                        ),
+                        requests: remainingRequests,
                       },
               }
             : {}),
@@ -359,21 +360,15 @@ export function applyThreadDetailEvent(
           ...(event.payload.expectsTurnStartAcknowledgement === true
             ? {
                 turnStartSubmissionRendezvous: {
-                  awaitingMessageIds: [
-                    ...(thread.turnStartSubmissionRendezvous?.awaitingMessageIds ?? []).filter(
-                      (messageId) => messageId !== event.payload.messageId,
+                  requests: [
+                    ...(thread.turnStartSubmissionRendezvous?.requests ?? []).filter(
+                      (request) => request.messageId !== event.payload.messageId,
                     ),
-                    event.payload.messageId,
+                    {
+                      messageId: event.payload.messageId,
+                      observedTurnIds: activeTurnId === null ? [] : [activeTurnId],
+                    },
                   ],
-                  observedTurnIds:
-                    activeTurnId === null
-                      ? (thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [])
-                      : [
-                          ...(thread.turnStartSubmissionRendezvous?.observedTurnIds ?? []).filter(
-                            (turnId) => turnId !== activeTurnId,
-                          ),
-                          activeTurnId,
-                        ],
                 },
               }
             : {}),
@@ -564,16 +559,16 @@ export function applyThreadDetailEvent(
               ? (thread.submittedTurnStarts ?? []).filter((entry) => entry.turnId !== activeTurnId)
               : (thread.submittedTurnStarts ?? []),
           turnStartSubmissionRendezvous:
-            activeTurnId === null ||
-            rendezvous === null ||
-            rendezvous.awaitingMessageIds.length === 0
+            activeTurnId === null || rendezvous === null || rendezvous.requests.length === 0
               ? rendezvous
               : {
-                  awaitingMessageIds: rendezvous.awaitingMessageIds,
-                  observedTurnIds: [
-                    ...rendezvous.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
-                    activeTurnId,
-                  ],
+                  requests: rendezvous.requests.map((request) => ({
+                    ...request,
+                    observedTurnIds: [
+                      ...request.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
+                      activeTurnId,
+                    ],
+                  })),
                 },
           latestTurn,
           updatedAt: event.occurredAt,
@@ -739,18 +734,18 @@ export function applyThreadDetailEvent(
         : (thread.pendingTurnStartMessageId ?? null);
       const clearedRequestId = turnStartRequestIdClearedByActivity(activity);
       const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
-      const awaitingMessageIds =
+      const remainingRequests =
         clearedRequestId === null
-          ? (rendezvous?.awaitingMessageIds ?? [])
-          : (rendezvous?.awaitingMessageIds ?? []).filter(
-              (messageId) => messageId !== clearedRequestId,
+          ? (rendezvous?.requests ?? [])
+          : (rendezvous?.requests ?? []).filter(
+              (request) => request.messageId !== clearedRequestId,
             );
       const turnStartSubmissionRendezvous =
         rendezvous === null
           ? null
-          : awaitingMessageIds.length === 0
+          : remainingRequests.length === 0
             ? null
-            : { ...rendezvous, awaitingMessageIds };
+            : { requests: remainingRequests };
       // Live streams append in order: an unseen id sorting at/after the tail
       // of a known-sorted array appends without re-filtering and re-sorting
       // the whole history on every event. The id set moves forward to the new
