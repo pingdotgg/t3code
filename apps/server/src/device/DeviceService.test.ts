@@ -21,7 +21,6 @@ import { type DeviceService, makeWithHosts, stateStream } from "./DeviceService.
 const baseState: DeviceServiceState = {
   hosts: [],
   hostStatus: "idle",
-  hostStatuses: {},
   devices: [],
   sessions: [],
   onboardingCompleted: false,

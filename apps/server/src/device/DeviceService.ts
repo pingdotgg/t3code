@@ -198,6 +198,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
   const initialHosts = yield* Effect.forEach(hosts.values(), (host) => host.summary);
+  let publishedHosts = new Map(hosts);
   const stateRef = yield* SynchronizedRef.make<ServiceState>({
     state: {
       hosts: initialHosts,
@@ -830,15 +831,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     setHostStatus,
     refreshHosts: Effect.gen(function* () {
       const summaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
+      const unchanged = (id: DeviceHostId) =>
+        hosts.has(id) && hosts.get(id) === publishedHosts.get(id);
       yield* publish((state) => ({
         ...state,
         hosts: summaries,
         hostStatuses: Object.fromEntries(
-          Object.entries(state.hostStatuses).filter(([id]) => hosts.has(id)),
+          Object.entries(state.hostStatuses).filter(([id]) => unchanged(id)),
         ),
-        devices: state.devices.filter((device) => hosts.has(device.hostId)),
-        sessions: state.sessions.filter((session) => hosts.has(session.hostId)),
+        devices: state.devices.filter((device) => unchanged(device.hostId)),
+        sessions: state.sessions.filter((session) => unchanged(session.hostId)),
       }));
+      publishedHosts = new Map(hosts);
     }),
   };
 });
