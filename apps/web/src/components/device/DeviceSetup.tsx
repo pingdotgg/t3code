@@ -3,14 +3,8 @@ import { Check, CircleAlert } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
-import {
-  DialogClose,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "~/components/ui/dialog";
-import { WizardPanel, WizardSteps } from "~/components/ui/wizard";
+import { DialogClose } from "~/components/ui/dialog";
+import { WizardHeader, WizardPanel, WizardSteps, WizardFooter } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
 import { deviceEnvironment } from "~/state/device";
@@ -81,23 +75,22 @@ export function DeviceSetup(props: {
   };
 
   return (
-    <div className="flex min-h-0 flex-col overflow-y-auto text-sm">
-      <DialogHeader>
-        <DialogTitle>Set up devices</DialogTitle>
-        <DialogDescription>
-          Review what runs on this environment before using simulators and emulators.
-        </DialogDescription>
+    <>
+      <WizardHeader
+        title="Set up devices"
+        description="Review what runs on this environment before using simulators and emulators."
+      >
         <WizardSteps
           steps={["Device hub", "Simulators", "Agent access"]}
           currentStep={step}
           onStepChange={setStep}
           isStepDisabled={(requested) => busy || pending !== null || requested > step}
         />
-      </DialogHeader>
+      </WizardHeader>
 
       <WizardPanel>
         {step === 0 ? (
-          <section className="space-y-3">
+          <section className="space-y-3 text-sm">
             <h3 className="font-medium">Enable the device hub</h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{deviceHubDescription}</p>
@@ -121,7 +114,7 @@ export function DeviceSetup(props: {
         ) : null}
 
         {step === 1 ? (
-          <section className="space-y-3">
+          <section className="space-y-3 text-sm">
             <h3 className="font-medium">Check simulator support</h3>
             <DevicePlatformSetup
               state={props.state}
@@ -138,7 +131,7 @@ export function DeviceSetup(props: {
         ) : null}
 
         {step === 2 ? (
-          <section className="space-y-3">
+          <section className="space-y-3 text-sm">
             <h3 className="font-medium">Allow agent control</h3>
             <div className="flex items-start justify-between gap-4">
               <p className="text-muted-foreground">{agentDeviceDescription}</p>
@@ -164,7 +157,7 @@ export function DeviceSetup(props: {
         ) : null}
       </WizardPanel>
 
-      <DialogFooter variant="bare">
+      <WizardFooter>
         {step === 0 ? (
           <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
         ) : (
@@ -191,8 +184,8 @@ export function DeviceSetup(props: {
             {pending === "complete" ? "Saving…" : "Done"}
           </Button>
         )}
-      </DialogFooter>
-    </div>
+      </WizardFooter>
+    </>
   );
 }
 

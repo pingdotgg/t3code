@@ -19,7 +19,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
-import { Dialog, DialogPopup } from "~/components/ui/dialog";
+import { Dialog } from "~/components/ui/dialog";
+import { WizardPopup } from "~/components/ui/wizard";
 import {
   Select,
   SelectGroup,
@@ -146,9 +147,9 @@ export function DevicePanel(props: {
           if (!isOpen) props.onDismissSetup();
         }}
       >
-        <DialogPopup className="max-w-xl overflow-hidden">
+        <WizardPopup>
           <DeviceSetup environmentId={environmentId} state={state} />
-        </DialogPopup>
+        </WizardPopup>
       </Dialog>
     );
   }
