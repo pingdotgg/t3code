@@ -1,9 +1,86 @@
 import Foundation
+import Observation
 import XCTest
 @testable import T3Code
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
+    func testAcceptedSendCompletesOutboxBeforeOptionalReadsFinish() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        let completed = expectation(description: "Accepted send completes without snapshot reads")
+        let sending = Task {
+            let sent = await fixture.model.sendMessage(threadID: fixture.threadID, text: "Accepted now", selection: nil)
+            completed.fulfill()
+            return sent
+        }
+        _ = await reads.next()
+        await fulfillment(of: [completed], timeout: 2)
+        let queued = try await fixture.outbox.submissions()
+        XCTAssertTrue(queued.isEmpty, "Acknowledgement must retire the outbox while optional reads are held.")
+        XCTAssertFalse(fixture.model.isPerformingAction)
+
+        await fixture.transport.failFollowups()
+        let sent = await sending.value
+        XCTAssertTrue(sent, "Optional read failures cannot turn acceptance into a failed send.")
+        XCTAssertNil(fixture.model.errorMessage)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(fixture.model.details[fixture.threadID]?.messages.last?.state, .complete)
+        await fixture.client.disconnect()
+    }
+
+    func testAcceptedSendRefreshesCoalesceAndCancelWhenThreadCloses() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        var cancellations = fixture.transport.cancellations.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "First", selection: nil)
+        let firstRead = await reads.next()
+        let first = try XCTUnwrap(firstRead)
+        XCTAssertTrue(first.path.hasPrefix("/api/orchestration/threads/"))
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Second", selection: nil)
+        let heldCount = await fixture.transport.heldCount
+        XCTAssertEqual(heldCount, 1, "A second acceptance must coalesce behind the current read.")
+
+        await fixture.transport.release(first.id)
+        let shellRead = await reads.next()
+        let shell = try XCTUnwrap(shellRead)
+        XCTAssertEqual(shell.path, "/api/orchestration/shell")
+        await fixture.transport.release(shell.id)
+        let trailingRead = await reads.next()
+        let trailing = try XCTUnwrap(trailingRead)
+        XCTAssertTrue(trailing.path.hasPrefix("/api/orchestration/threads/"))
+        fixture.client.releaseThread(id: fixture.threadID)
+        let cancelledID = await cancellations.next()
+        XCTAssertEqual(cancelledID, trailing.id)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 2, "Read reconciliation must never redispatch a command.")
+        await fixture.transport.failFollowups()
+        await fixture.client.disconnect()
+    }
+
+    func testDisconnectCancelsAcceptedSendRefreshWithoutAnotherCommand() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        var cancellations = fixture.transport.cancellations.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Accepted before disconnect", selection: nil)
+        let heldRead = await reads.next()
+        let held = try XCTUnwrap(heldRead)
+        await fixture.client.disconnect()
+        let cancelledID = await cancellations.next()
+        XCTAssertEqual(cancelledID, held.id)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 1)
+        let pending = await fixture.transport.heldCount
+        XCTAssertEqual(pending, 0)
+    }
+
     func testSavedSettingsSurviveAConnectionRepublish() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-native-settings-republish-\(UUID().uuidString)")
@@ -33,28 +110,21 @@ final class NativeRetryIdentityTests: XCTestCase {
         let settingsStore = UserDefaults(suiteName: settingsSuite)!
         defer { settingsStore.removePersistentDomain(forName: settingsSuite) }
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settingsStore)
-        let initial = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
         var updated = initial.settings
         updated.textSize = FeatureTextSizeAdjustment(steps: 2)
         updated.codeSize = FeatureTextSizeAdjustment(steps: -1)
         try await client.saveSettings(updated)
-        var events = client.events().makeAsyncIterator()
-
         await connection.failReceive()
-
-        var receivedRepublish = false
-        while let event = await events.next() {
-            guard case let .snapshot(snapshot) = event,
-                  snapshot.connection.state == .reconnecting else {
-                continue
-            }
-            XCTAssertEqual(snapshot.settings.textSize.steps, 2)
-            XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
-            receivedRepublish = true
-            break
+        let snapshot = try await recorder.wait {
+            $0.connection.state == .reconnecting && $0.settings.textSize.steps == 2
         }
-        XCTAssertTrue(receivedRepublish)
+        XCTAssertEqual(snapshot.settings.textSize.steps, 2)
+        XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
         await client.disconnect()
     }
 
@@ -89,7 +159,10 @@ final class NativeRetryIdentityTests: XCTestCase {
                 suiteName: "t3-native-concurrent-retry-\(UUID().uuidString)"
             )!
         )
-        _ = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        _ = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
         await transport.rejectShellReads()
 
@@ -151,7 +224,10 @@ final class NativeRetryIdentityTests: XCTestCase {
             suiteName: "t3-native-retry-\(UUID().uuidString)"
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
-        let initial = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         XCTAssertEqual(initial.threads.first?.runtimeMode, .approvalRequired)
         XCTAssertEqual(initial.threads.first?.interactionMode, .standard)
         await connection.waitUntilConnected()
@@ -260,7 +336,10 @@ final class NativeRetryIdentityTests: XCTestCase {
             suiteName: "t3-native-partial-\(UUID().uuidString)"
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
-        _ = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        _ = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
 
         let identity = FeatureSubmissionIdentity(
@@ -828,4 +907,218 @@ private func retryDispatchCommand(from request: URLRequest) throws -> JSONValue 
         throw URLError(.cannotDecodeContentData)
     }
     return try JSONDecoder.t3.decode(JSONValue.self, from: body)
+}
+
+@MainActor
+private struct AcceptedSendFixture {
+    let modelTask: Task<Void, Never>
+    let directory: URL
+    let threadID: String
+    let settingsName: String
+    let client: NativeFeatureClient
+    let model: FeatureRootModel
+    let outbox: FeatureOutboxStore
+    let transport: AcceptedSendHTTPTransport
+    let socket: AcceptedSendSocket
+
+    static func make() async throws -> Self {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-accepted-send-\(UUID().uuidString)")
+        let environment = Environment(
+            id: "accepted-send", label: "Accepted send",
+            httpBaseURL: URL(string: "https://accepted-send.example")!,
+            webSocketBaseURL: URL(string: "wss://accepted-send.example")!
+        )
+        let store = EnvironmentStore(fileURL: directory.appendingPathComponent("environments.json"))
+        try await store.save([environment])
+        try await store.setActiveEnvironment(id: environment.id)
+        let transport = AcceptedSendHTTPTransport()
+        let socket = AcceptedSendSocket()
+        let runtime = EnvironmentRuntime(
+            environmentStore: store,
+            credentialStore: InMemoryCredentialStore(credentials: [environment.id: EnvironmentCredential(accessToken: "fixture-token")]),
+            httpTransport: transport,
+            webSocketConnector: AcceptedSendConnector(socket: socket)
+        )
+        let settingsName = "t3-accepted-send-\(UUID().uuidString)"
+        let client = NativeFeatureClient(
+            runtime: runtime, settingsStore: UserDefaults(suiteName: settingsName)!,
+            fallbackPollingInitialDelay: .seconds(3600), aggregateRefreshInterval: .seconds(3600),
+            aggregateIdleRefreshInterval: .seconds(3600)
+        )
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let model = FeatureRootModel(client: client, outboxStore: outbox)
+        let modelTask = Task { await model.start() }
+        do {
+            try await AcceptedSendRootReadiness(model: model).wait()
+            let threadID = try XCTUnwrap(model.snapshot.threads.first?.id)
+            _ = await model.detail(for: threadID)
+            return Self(modelTask: modelTask, directory: directory, threadID: threadID,
+                        settingsName: settingsName, client: client, model: model,
+                        outbox: outbox, transport: transport, socket: socket)
+        } catch {
+            modelTask.cancel()
+            await client.disconnect()
+            await modelTask.value
+            UserDefaults.standard.removePersistentDomain(forName: settingsName)
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    func cleanUp() async {
+        modelTask.cancel()
+        await client.disconnect()
+        await modelTask.value
+        UserDefaults.standard.removePersistentDomain(forName: settingsName)
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+@MainActor
+private final class AcceptedSendRootReadiness {
+    private let model: FeatureRootModel
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    init(model: FeatureRootModel) { self.model = model }
+
+    func wait() async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
+                self.continuation = continuation
+                observe()
+            }
+        } onCancel: {
+            Task { @MainActor in self.finish(CancellationError()) }
+        }
+    }
+
+    private func observe() {
+        guard continuation != nil else { return }
+        let ready = withObservationTracking {
+            !model.isLoading
+                && model.snapshot.projects.contains { $0.id == FeatureScopedID.project(environmentID: "accepted-send", wireID: "project-1") }
+                && model.snapshot.threads.contains { $0.id == FeatureScopedID.thread(environmentID: "accepted-send", wireID: "thread-existing") }
+                && model.snapshot.environments.first(where: { $0.id == "accepted-send" })?.connectionState == .connected
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observe() }
+        }
+        if ready { finish(nil) }
+    }
+
+    private func finish(_ error: Error?) {
+        guard let pending = continuation else { return }
+        continuation = nil
+        if let error { pending.resume(throwing: error) } else { pending.resume() }
+    }
+}
+
+private actor AcceptedSendHTTPTransport: HTTPTransport {
+    struct HeldRead: Sendable {
+        let id: UUID
+        let path: String
+    }
+    nonisolated let heldReads: AsyncStream<HeldRead>
+    nonisolated let cancellations: AsyncStream<UUID>
+    private let reads: AsyncStream<HeldRead>.Continuation
+    private let cancelled: AsyncStream<UUID>.Continuation
+    private var holds = false
+    private var fails = false
+    private var pending: [UUID: CheckedContinuation<Void, Error>] = [:]
+
+    init() {
+        (heldReads, reads) = AsyncStream.makeStream()
+        (cancellations, cancelled) = AsyncStream.makeStream()
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let path = request.url?.path ?? ""
+        if path == "/api/auth/websocket-ticket" {
+            return (Data(#"{"ticket":"fixture-ticket","expiresAt":"2026-09-07T12:05:00Z"}"#.utf8), retryHTTPResponse(request))
+        }
+        guard path == "/api/orchestration/shell" || path.hasPrefix("/api/orchestration/threads/") else {
+            throw URLError(.unsupportedURL)
+        }
+        if fails { throw URLError(.networkConnectionLost) }
+        if holds {
+            let id = UUID()
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
+                    pending[id] = continuation
+                    reads.yield(HeldRead(id: id, path: path))
+                }
+            } onCancel: {
+                Task { await self.cancel(id) }
+            }
+        }
+        let data = if path == "/api/orchestration/shell" {
+            try JSONEncoder.t3.encode(retryShellSnapshot())
+        } else {
+            try JSONEncoder.t3.encode(retryEmptyThreadDetail(id: request.url!.lastPathComponent))
+        }
+        return (data, retryHTTPResponse(request))
+    }
+
+    var heldCount: Int { pending.count }
+
+    func holdFollowups() { holds = true }
+
+    func release(_ id: UUID) { pending.removeValue(forKey: id)?.resume() }
+
+    func failFollowups() {
+        fails = true
+        holds = false
+        let waiting = pending.values
+        pending.removeAll()
+        waiting.forEach { $0.resume(throwing: URLError(.networkConnectionLost)) }
+    }
+
+    private func cancel(_ id: UUID) {
+        guard let continuation = pending.removeValue(forKey: id) else { return }
+        continuation.resume(throwing: CancellationError())
+        cancelled.yield(id)
+    }
+}
+
+private struct AcceptedSendConnector: WebSocketConnecting {
+    let socket: AcceptedSendSocket
+    func connect(to _: URL) -> any WebSocketConnection { socket }
+}
+
+private actor AcceptedSendSocket: WebSocketConnection {
+    private(set) var commands: [JSONValue] = []
+    private var queued: [Data] = []
+    private var receiver: CheckedContinuation<Data, Error>?
+
+    func send(_ data: Data) throws {
+        let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        let tag = request["tag"]?.stringValue
+        if tag == RPCMethod.serverGetConfig.rawValue || tag == RPCMethod.subscribeServerConfig.rawValue,
+           let response = try retryConfigResponse(for: request) {
+            enqueue(response)
+        } else if tag == RPCMethod.dispatchCommand.rawValue, let payload = request["payload"] {
+            commands.append(payload)
+            enqueue(try JSONEncoder.t3.encode(JSONValue.object([
+                "_tag": .string("Exit"), "requestId": request["id"]!,
+                "exit": .object(["_tag": .string("Success"), "value": .object(["sequence": .number(2)])])
+            ])))
+        }
+    }
+
+    func receive() async throws -> Data {
+        if !queued.isEmpty { return queued.removeFirst() }
+        return try await withCheckedThrowingContinuation { receiver = $0 }
+    }
+
+    func close() {
+        receiver?.resume(throwing: CancellationError())
+        receiver = nil
+    }
+
+    private func enqueue(_ data: Data) {
+        if let receiver { self.receiver = nil; receiver.resume(returning: data) }
+        else { queued.append(data) }
+    }
 }
