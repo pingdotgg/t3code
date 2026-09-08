@@ -840,6 +840,17 @@ public actor WebSocketRPCClient {
             await disconnected(expectedConnectionID: expectedConnectionID)
             return false
         }
+        let sendTimeout = keepaliveInterval
+        let sendDeadline = Task { [weak self] in
+            do {
+                try await Task.sleep(for: sendTimeout)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.disconnected(expectedConnectionID: expectedConnectionID)
+        }
+        defer { sendDeadline.cancel() }
         do {
             awaitingKeepaliveResponse = true
             try await sendControl("Ping", requestID: nil)
