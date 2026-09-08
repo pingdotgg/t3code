@@ -48,6 +48,7 @@ export function AndroidScreenHeader(props: {
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
   readonly embedded?: boolean;
+  readonly hideBottomBorder?: boolean;
 }) {
   const insets = useSafeAreaInsets();
 
@@ -56,6 +57,7 @@ export function AndroidScreenHeader(props: {
       className="border-b border-header-border bg-header px-3 pb-2.5"
       style={{
         paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
+        borderBottomWidth: props.hideBottomBorder ? 0 : undefined,
       }}
     >
       <View className="min-h-12 flex-row items-center gap-2">

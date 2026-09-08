@@ -10,6 +10,8 @@ themes or defaults.
 On Android 12 or newer, choose the **Material You** theme in Appearance to use colors from
 your wallpaper. Selecting another theme replaces those colors. Like other themes, Material You
 can be selected separately for light and dark appearances.
+Android also offers **Material You Layout**, which changes shapes and spacing independently
+of the selected theme.
 
 ## Motion
 

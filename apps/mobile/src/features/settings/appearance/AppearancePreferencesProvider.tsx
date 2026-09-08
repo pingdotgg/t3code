@@ -10,7 +10,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
-import { AppState, Appearance, useColorScheme } from "react-native";
+import { AppState, Appearance, Platform, useColorScheme } from "react-native";
 
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -51,6 +51,9 @@ interface AppearancePreferencesContextValue {
   readonly themeIds: MobileThemeIds;
   readonly themeMode: MobileThemeMode;
   readonly themeAppearance: MobileThemeAppearance;
+  readonly materialYouStyleLayoutEnabled: boolean;
+  readonly materialYouStyleLayoutActive: boolean;
+  readonly setMaterialYouStyleLayoutEnabled: (value: boolean) => void;
   readonly systemColorsAvailable: boolean;
   readonly systemColorsActive: boolean;
   readonly themeVariables: MobileThemeVariables;
@@ -94,6 +97,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [resolvedThemeIds.dark, resolvedThemeIds.light],
   );
   const themeId = themeIds[themeAppearance];
+  const materialYouStyleLayoutEnabled = storedPreferences?.materialYouStyleLayoutEnabled ?? false;
+  const materialYouStyleLayoutActive = Platform.OS === "android" && materialYouStyleLayoutEnabled;
   const systemColorsActive = themeId === "material-you" && isSystemColorsAvailable;
   const [systemColorPalettes, setSystemColorPalettes] = useState(readSystemColorPalettes);
   useEffect(() => {
@@ -242,6 +247,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [runtimeState, syncThemeRuntime, updateThemePreferences],
   );
 
+  const setMaterialYouStyleLayoutEnabled = useCallback(
+    (value: boolean) => {
+      updatePreferences({ materialYouStyleLayoutEnabled: value });
+    },
+    [updatePreferences],
+  );
+
   const setBaseFontSize = useCallback(
     (value: number) => {
       const current = appliedRuntimeStateRef.current ?? runtimeState;
@@ -281,6 +293,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeAppearance,
       systemColorsAvailable: isSystemColorsAvailable,
       systemColorsActive,
+      materialYouStyleLayoutEnabled,
+      materialYouStyleLayoutActive,
+      setMaterialYouStyleLayoutEnabled,
       themeVariables,
       themeVariablesByAppearance,
       systemColorPalettes,
@@ -300,6 +315,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeMode,
       themeAppearance,
       systemColorsActive,
+      materialYouStyleLayoutEnabled,
+      materialYouStyleLayoutActive,
+      setMaterialYouStyleLayoutEnabled,
       themeVariables,
       themeVariablesByAppearance,
       systemColorPalettes,

@@ -1,5 +1,5 @@
 import { memo, useId } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 import { ScopedTheme, ScopedVariables } from "uniwind";
 
@@ -18,6 +18,9 @@ import {
 import { getMobileUniwindThemeName } from "../../../../lib/mobileThemeRuntime";
 import { cn } from "../../../../lib/cn";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
+
+import { SettingsSection } from "../../components/SettingsSection";
+import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
 const APPEARANCE_MODES: ReadonlyArray<{
   readonly id: MobileThemeMode;
@@ -290,11 +293,25 @@ export function ThemeAppearanceSection() {
     setThemeMode,
     themeIds,
     themeMode,
+    materialYouStyleLayoutEnabled,
+    setMaterialYouStyleLayoutEnabled,
     systemColorsAvailable,
   } = useAppearancePreferences();
 
   return (
     <View className="gap-6">
+      {Platform.OS === "android" ? (
+        <SettingsSection card title="Android">
+          <SettingsSwitchRow
+            disabled={!isReady}
+            icon="square.grid.2x2"
+            label="Material You Layout"
+            onValueChange={setMaterialYouStyleLayoutEnabled}
+            subtitle="Use Material You surfaces, shapes, and component styling."
+            value={materialYouStyleLayoutEnabled}
+          />
+        </SettingsSection>
+      ) : null}
       <View className="gap-2">
         <SectionLabel>Color scheme</SectionLabel>
         <View accessibilityRole="radiogroup" className="flex-row gap-2">
