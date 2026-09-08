@@ -2,6 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
+  RelayMobileRegistrationScope,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -47,6 +48,54 @@ function clerkToken(subject: string, nonce: string): string {
 }
 
 describe("ManagedRelayClient", () => {
+  it.effect.each([false, true])(
+    "keeps global reads compatible and signs the filtered request (legacy=%s)",
+    (legacy) => {
+      const requests: URL[] = [];
+      const excludedEnvironmentIds = [EnvironmentId.make("local-1"), EnvironmentId.make("local-2")];
+      const fetchFn = ((input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/client/dpop-token") {
+          return Promise.resolve(
+            Response.json({
+              access_token: "relay-token",
+              token_type: "DPoP",
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              expires_in: 1_800,
+              scope: RelayMobileRegistrationScope,
+            }),
+          );
+        }
+        requests.push(url);
+        expect(new Headers(init?.headers).get("dpop")).toBe(`proof:${url}`);
+        return Promise.resolve(
+          Response.json({
+            aggregate: null,
+            ...(legacy
+              ? {}
+              : { excludedEnvironmentIds: url.searchParams.getAll("excludedEnvironmentIds") }),
+          }),
+        );
+      }) satisfies typeof globalThis.fetch;
+      return Effect.gen(function* () {
+        const client = yield* ManagedRelay.ManagedRelayClient;
+        const input = { clerkToken: clerkToken("user", "session") };
+        const global = yield* client.getAgentActivitySnapshot(input);
+        const filtered = yield* client.getAgentActivitySnapshot({
+          ...input,
+          excludedEnvironmentIds,
+        });
+        expect(requests[0]?.search).toBe("");
+        expect(requests[1]?.searchParams.getAll("excludedEnvironmentIds")).toEqual(
+          excludedEnvironmentIds,
+        );
+        expect(global.excludedEnvironmentIds).toEqual(legacy ? undefined : []);
+        expect(filtered.excludedEnvironmentIds).toEqual(
+          legacy ? undefined : excludedEnvironmentIds,
+        );
+      }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+    },
+  );
   it.effect("owns tracing at service and implementation boundaries", () => {
     const spanNames: Array<string> = [];
     const tracer = Tracer.make({

@@ -919,6 +919,8 @@ export const RelayRegisterLiveActivityEndpoint = HttpApiEndpoint.post(
 
 export const RelayAgentActivitySnapshotResponse = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
+  // Absent on older relays, which may ignore an unknown query parameter.
+  excludedEnvironmentIds: Schema.optional(Schema.Array(EnvironmentId)),
 });
 export type RelayAgentActivitySnapshotResponse = typeof RelayAgentActivitySnapshotResponse.Type;
 
@@ -929,6 +931,9 @@ export const RelayAgentActivitySnapshotEndpoint = HttpApiEndpoint.get(
   "getAgentActivitySnapshot",
   "/v1/mobile/agent-activity",
   {
+    query: {
+      excludedEnvironmentIds: Schema.optional(Schema.ArrayEnsure(EnvironmentId)),
+    },
     headers: RelayDpopRequestHeaders,
     success: RelayAgentActivitySnapshotResponse,
     error: RelayAuthAndInternalErrors,

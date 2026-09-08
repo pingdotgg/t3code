@@ -299,6 +299,9 @@ export class ManagedRelayClient extends Context.Service<
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
     readonly getAgentActivitySnapshot: (input: {
       readonly clerkToken: string;
+      readonly excludedEnvironmentIds?: ReadonlyArray<
+        RelayClientEnvironmentRecord["environmentId"]
+      >;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, ManagedRelayClientError>;
     readonly resetTokenCache: Effect.Effect<void>;
   }
@@ -471,9 +474,11 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
       method: RelayUnregisterDeviceEndpoint.method,
       url: urlBuilder.mobile.unregisterDevice({ params: { deviceId } }),
     }),
-    getAgentActivitySnapshot: (): DpopProofTarget => ({
+    getAgentActivitySnapshot: (
+      excludedEnvironmentIds?: ReadonlyArray<RelayClientEnvironmentRecord["environmentId"]>,
+    ): DpopProofTarget => ({
       method: RelayAgentActivitySnapshotEndpoint.method,
-      url: urlBuilder.mobile.getAgentActivitySnapshot(),
+      url: urlBuilder.mobile.getAgentActivitySnapshot({ query: { excludedEnvironmentIds } }),
     }),
     registerLiveActivity: (): DpopProofTarget => ({
       method: RelayRegisterLiveActivityEndpoint.method,
@@ -893,12 +898,13 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
         return yield* mobileRegistrationRequest(
           {
             clerkToken: input.clerkToken,
-            target: dpopProofTargets.getAgentActivitySnapshot(),
+            target: dpopProofTargets.getAgentActivitySnapshot(input.excludedEnvironmentIds),
           },
           (authorization) =>
             client.mobile
               .getAgentActivitySnapshot({
                 headers: dpopHeaders(authorization),
+                query: { excludedEnvironmentIds: input.excludedEnvironmentIds },
               })
               .pipe(
                 Effect.mapError(relayRequestError("read relay agent activity snapshot")),
