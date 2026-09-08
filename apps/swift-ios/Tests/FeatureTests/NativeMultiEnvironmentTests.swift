@@ -2397,7 +2397,9 @@ struct NativePassiveLiveShellTests {
         let nextWorker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
         try await fixture.client.removeEnvironment(id: "two")
         await nextWorker.value
-        await server.waitForInterrupts(host: "two.example", count: 2)
+        // Successful removal closes the transport before cancelling the worker.
+        // There is no live socket on which to deliver another Interrupt frame.
+        #expect(await server.latestConnectionIsClosed(host: "two.example"))
         #expect(nextWorker.isCancelled)
         #expect(fixture.client.aggregateRefreshWorkers["two"] == nil)
         let snapshot = try await fixture.client.backgroundSnapshot()
@@ -2762,10 +2764,15 @@ private actor PassiveLiveServer: WebSocketConnecting {
 
     func subscriptionCount(host: String) -> Int { subscriptions[host, default: []].count }
 
+    func latestConnectionIsClosed(host: String) async -> Bool {
+        await subscriptions[host]?.last?.connection.isClosed ?? false
+    }
+
     func closeLatest(host: String) async { await subscriptions[host]?.last?.connection.close() }
 }
 
 private actor PassiveLiveConnection: WebSocketConnection {
+    var isClosed: Bool { closed }
     private let host: String
     private let server: PassiveLiveServer
     private var responses: [Data] = []
