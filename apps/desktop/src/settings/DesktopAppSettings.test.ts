@@ -26,6 +26,7 @@ const DesktopSettingsPatch = Schema.Struct({
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
+  preferredLanInterfaceName: Schema.optionalKey(Schema.NullOr(Schema.String)),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
@@ -109,6 +110,7 @@ describe("DesktopSettings", () => {
         mainWindowBounds: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
+        preferredLanInterfaceName: null,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         updateChannel: "nightly",
@@ -127,6 +129,7 @@ describe("DesktopSettings", () => {
         yield* writeSettingsPatch({
           linuxPasswordStore: "gnome-libsecret",
           serverExposureMode: "network-accessible",
+          preferredLanInterfaceName: null,
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
@@ -138,6 +141,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
+          preferredLanInterfaceName: null,
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
@@ -245,6 +249,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
+          preferredLanInterfaceName: null,
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
           updateChannel: "latest",
@@ -265,6 +270,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
+          preferredLanInterfaceName: null,
         });
 
         const loaded = yield* settings.load;
@@ -301,6 +307,7 @@ describe("DesktopSettings", () => {
             mainWindowBounds: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
+            preferredLanInterfaceName: null,
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
             updateChannel: "nightly",
@@ -341,6 +348,7 @@ describe("DesktopSettings", () => {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
           serverExposureMode: "local-only",
+          preferredLanInterfaceName: null,
           updateChannel: "latest",
         });
 
@@ -349,6 +357,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
+          preferredLanInterfaceName: null,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           updateChannel: "nightly",
@@ -368,6 +377,7 @@ describe("DesktopSettings", () => {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
           serverExposureMode: "local-only",
+          preferredLanInterfaceName: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
         });
@@ -377,6 +387,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
+          preferredLanInterfaceName: null,
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
           updateChannel: "latest",
@@ -404,6 +415,7 @@ describe("DesktopSettings", () => {
           mainWindowBounds: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
+          preferredLanInterfaceName: null,
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,
           updateChannel: "latest",

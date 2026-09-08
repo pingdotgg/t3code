@@ -1850,6 +1850,7 @@ export function ConnectionsSettings() {
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
+  const [isUpdatingLanInterface, setIsUpdatingLanInterface] = useState(false);
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
@@ -2452,6 +2453,48 @@ export function ConnectionsSettings() {
       setDefaultAdvertisedEndpointKey(endpointDefaultPreferenceKey(endpoint));
     },
     [setDefaultAdvertisedEndpointKey],
+  );
+  const desktopLanInterfaces = useMemo(
+    () =>
+      desktopAdvertisedEndpoints.flatMap((endpoint) =>
+        endpoint.interfaceName !== undefined
+          ? [
+              {
+                name: endpoint.interfaceName,
+                label: endpoint.label,
+                address: endpoint.httpBaseUrl,
+              },
+            ]
+          : [],
+      ),
+    [desktopAdvertisedEndpoints],
+  );
+  const preferredLanInterfaceName = desktopServerExposureState?.preferredLanInterfaceName ?? null;
+  const isPreferredLanInterfaceMissing =
+    preferredLanInterfaceName !== null &&
+    !desktopLanInterfaces.some((candidate) => candidate.name === preferredLanInterfaceName);
+  const handlePreferredLanInterfaceChange = useCallback(
+    async (value: string) => {
+      if (!desktopBridge) return;
+      setIsUpdatingLanInterface(true);
+      try {
+        await desktopBridge.setPreferredLanInterfaceName(value === "auto" ? null : value);
+        refreshDesktopNetworkAccessState();
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to update the network interface.";
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not set the network interface",
+            description: message,
+          }),
+        );
+      } finally {
+        setIsUpdatingLanInterface(false);
+      }
+    },
+    [desktopBridge],
   );
   const handleSavedBackendHostChange = useCallback((value: string) => {
     const parsedPairingUrl = parsePairingUrlFields(value);
@@ -3099,6 +3142,64 @@ export function ConnectionsSettings() {
       control={renderNetworkAccessToggle()}
     />
   );
+  const renderPreferredLanInterfaceRow = () => {
+    if (!desktopBridge || desktopLanInterfaces.length < 2) {
+      return null;
+    }
+    const selectValue = preferredLanInterfaceName ?? "auto";
+    const automaticCandidate = desktopLanInterfaces.find(
+      (candidate) => candidate.name === desktopServerExposureState?.advertisedHost,
+    );
+    const automaticLabel =
+      desktopServerExposureState?.advertisedHost === null || automaticCandidate === undefined
+        ? "Automatic"
+        : `Automatic (${automaticCandidate.name})`;
+    return (
+      <SettingsRow
+        title={searchableSetting("lan-interface").title}
+        description={
+          isPreferredLanInterfaceMissing ? (
+            <span className="block">
+              <span className="text-warning">
+                Interface {preferredLanInterfaceName} is no longer detected. Using automatic
+                selection until it comes back.
+              </span>
+            </span>
+          ) : (
+            "Interface whose address pairing links and the QR code use when several networks are available."
+          )
+        }
+        control={
+          <Select
+            value={selectValue}
+            onValueChange={(value) => {
+              if (typeof value !== "string") return;
+              void handlePreferredLanInterfaceChange(value);
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-64"
+              aria-label="Local network interface"
+              disabled={isUpdatingLanInterface}
+            >
+              <SelectValue>{selectValue === "auto" ? automaticLabel : selectValue}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="auto">
+                {automaticLabel}
+              </SelectItem>
+              {desktopLanInterfaces.map((candidate) => (
+                <SelectItem hideIndicator key={candidate.name} value={candidate.name}>
+                  {candidate.name} — {candidate.address}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+    );
+  };
   const renderDisabledNetworkAccessRow = () => (
     <SettingsRow
       title={searchableSetting("network-access").title}
@@ -3199,6 +3300,7 @@ export function ConnectionsSettings() {
             {desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
+                {renderPreferredLanInterfaceRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
                 {renderWslRow()}
