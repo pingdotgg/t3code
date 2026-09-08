@@ -57,6 +57,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { GitButlerDiscoveryRow } from "./GitButlerDiscoveryRow";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
   PolicyTooltip,
@@ -95,6 +96,10 @@ type BackgroundActivityOverridePatch = Partial<{
     | undefined;
 }>;
 
+function optionLabel(value: Option.Option<string>): string | null {
+  return Option.getOrNull(value);
+}
+
 function durationToSeconds(duration: Duration.Duration): number {
   return Math.round(Duration.toMillis(duration) / 1_000);
 }
@@ -127,10 +132,6 @@ function backgroundActivityOverrideSettings(
       overrides: nextOverrides as BackgroundActivitySettings["overrides"],
     },
   };
-}
-
-function optionLabel(value: Option.Option<string>): string | null {
-  return Option.getOrNull(value);
 }
 
 function isProviderDiscoveryItem(
@@ -519,7 +520,10 @@ export function SourceControlSettingsPanel() {
   );
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasVersionControlSystems = result.versionControlSystems.length > 0;
-  const hasDiscoveryItems = hasVersionControlSystems || result.sourceControlProviders.length > 0;
+  const hasDiscoveryItems =
+    hasVersionControlSystems ||
+    result.sourceControlProviders.length > 0 ||
+    result.gitButler !== undefined;
   const isInitialScanPending = discovery.isPending && discovery.data === null;
   const handleScan = () => {
     discovery.refresh();
@@ -589,6 +593,12 @@ export function SourceControlSettingsPanel() {
               {result.sourceControlProviders.map((item) => (
                 <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
               ))}
+            </SettingsSection>
+          ) : null}
+
+          {result.gitButler ? (
+            <SettingsSection title="Workspace Management">
+              <GitButlerDiscoveryRow item={result.gitButler} />
             </SettingsSection>
           ) : null}
         </>

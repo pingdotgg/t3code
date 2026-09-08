@@ -447,6 +447,7 @@ it.effect("reports implemented tools separately from locally available executabl
         { kind: "jj", implemented: false, status: "missing" },
       ],
     );
+    assert.strictEqual(result.gitButler?.status, "missing");
     assert.deepStrictEqual(
       result.sourceControlProviders.map((item) => ({
         kind: item.kind,
@@ -490,6 +491,63 @@ it.effect("reports implemented tools separately from locally available executabl
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
     assert.ok(bitbucket);
     assert.strictEqual(bitbucket.executable, undefined);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("reports compatible, incompatible, and malformed GitButler versions", () => {
+  const versions = ["but 0.22.3\n", "but 0.21.9\n", "development build\n"];
+  const processMock = {
+    run: (input: VcsProcess.VcsProcessInput) => {
+      if (input.command === "but") {
+        return Effect.succeed(processOutput(versions.shift() ?? ""));
+      }
+      return Effect.fail(
+        new VcsProcessSpawnError({
+          operation: input.operation,
+          command: input.command,
+          cwd: input.cwd,
+          cause: new Error(`${input.command} not found`),
+        }),
+      );
+    },
+  } satisfies Partial<VcsProcess.VcsProcess["Service"]>;
+  const testLayer = SourceControlDiscovery.layer.pipe(
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-gitbutler-discovery-",
+      }),
+    ),
+    Layer.provide(Layer.mock(VcsProcess.VcsProcess)(processMock)),
+    Layer.provide(
+      sourceControlProviderRegistryTestLayer({
+        process: processMock,
+        bitbucket: {
+          probeAuth: Effect.succeed({
+            status: "unauthenticated",
+            account: Option.none(),
+            host: Option.some("bitbucket.org"),
+            detail: Option.none(),
+          }),
+        },
+      }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+  return Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+
+    const compatible = yield* discovery.discover;
+    assert.strictEqual(compatible.gitButler?.status, "available");
+    assert.deepStrictEqual(compatible.gitButler?.version, Option.some("0.22.3"));
+
+    const incompatible = yield* discovery.discover;
+    assert.strictEqual(incompatible.gitButler?.status, "incompatible");
+    assert.deepStrictEqual(incompatible.gitButler?.version, Option.some("0.21.9"));
+
+    const malformed = yield* discovery.discover;
+    assert.strictEqual(malformed.gitButler?.status, "incompatible");
+    assert.deepStrictEqual(malformed.gitButler?.version, Option.none());
   }).pipe(Effect.provide(testLayer));
 });
 

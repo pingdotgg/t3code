@@ -111,6 +111,14 @@ export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRe
 export const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
 export type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;
 
+export const GitButlerDiscoveryStatus = Schema.Literals([
+  "available",
+  "missing",
+  "incompatible",
+  "error",
+]);
+export type GitButlerDiscoveryStatus = typeof GitButlerDiscoveryStatus.Type;
+
 export const SourceControlProviderAuthStatus = Schema.Literals([
   "authenticated",
   "unauthenticated",
@@ -149,9 +157,22 @@ export const SourceControlProviderDiscoveryItem = Schema.Struct({
 });
 export type SourceControlProviderDiscoveryItem = typeof SourceControlProviderDiscoveryItem.Type;
 
+export const GitButlerDiscoveryItem = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  executable: TrimmedNonEmptyString,
+  status: GitButlerDiscoveryStatus,
+  version: Schema.Option(TrimmedNonEmptyString),
+  minimumVersion: TrimmedNonEmptyString,
+  installHint: TrimmedNonEmptyString,
+  detail: Schema.Option(TrimmedNonEmptyString),
+});
+export type GitButlerDiscoveryItem = typeof GitButlerDiscoveryItem.Type;
+
 export const SourceControlDiscoveryResult = Schema.Struct({
   versionControlSystems: Schema.Array(VcsDiscoveryItem),
   sourceControlProviders: Schema.Array(SourceControlProviderDiscoveryItem),
+  /** Optional so clients remain compatible with servers from before GitButler discovery. */
+  gitButler: Schema.optional(GitButlerDiscoveryItem),
 });
 export type SourceControlDiscoveryResult = typeof SourceControlDiscoveryResult.Type;
 

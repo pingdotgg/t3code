@@ -9,6 +9,10 @@ Install Git and configure authentication on the machine running your T3 Code ser
 environment, do this on the remote machine. After signing in, open **Settings → Source Control**
 and choose **Rescan**.
 
+GitButler is optional. Install GitButler CLI 0.22.3 or newer on the machine running T3 Code and
+ensure `but` is on that server's `PATH`. Settings reports whether that server has a compatible
+version. It does not set up repositories or change GitButler workspaces during discovery.
+
 ### GitHub
 
 Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
