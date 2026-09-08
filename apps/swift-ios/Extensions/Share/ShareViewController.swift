@@ -45,10 +45,12 @@ final class T3ShareViewController: UIViewController {
 }
 
 struct T3ShareExtensionView: View {
+    @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     enum Phase: Equatable {
         case ready
         case saving
-        case saved(imageCount: Int)
+        case saved(attachmentCount: Int)
         case failed(message: String)
     }
 
@@ -60,47 +62,42 @@ struct T3ShareExtensionView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Button("Cancel", action: cancel)
-                    .foregroundStyle(.secondary)
-                    .disabled(isSaving)
-                Spacer()
-                Text("T3 Code")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.primary)
-                Spacer()
-                Color.clear.frame(width: 52, height: 1)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 15)
+            header
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 15)
 
             Divider()
 
-            VStack(spacing: 14) {
-                Image(systemName: phaseSymbol)
-                    .font(.system(size: 32, weight: .medium))
-                    .foregroundStyle(phaseTint)
-                    .accessibilityHidden(true)
-                Text(title)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
-                Text(message)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
+            ScrollView {
+                VStack(spacing: 14) {
+                    Image(systemName: phaseSymbol)
+                        .font(.title.weight(.medium))
+                        .foregroundStyle(phaseTint)
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(.title2.bold())
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
+                    Text(message)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.horizontal, 28)
-            .padding(.vertical, 24)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
 
             Button(action: primaryAction) {
                 Text(primaryTitle)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.headline)
                     .foregroundStyle(Color(uiColor: .systemBackground))
                     .frame(maxWidth: .infinity)
-                    .frame(height: 50)
+                    .frame(minHeight: 50)
+                    .padding(.vertical, 2)
                     .background(Color(uiColor: .label), in: RoundedRectangle(cornerRadius: 13))
             }
             .buttonStyle(.plain)
@@ -110,6 +107,37 @@ struct T3ShareExtensionView: View {
             .padding(.bottom, 18)
         }
         .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+    }
+
+    @ViewBuilder
+    private var header: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 8) {
+                headerTitle
+                cancelButton
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ZStack {
+                headerTitle
+                HStack {
+                    cancelButton
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var headerTitle: some View {
+        Text("T3 Code")
+            .font(.headline)
+            .foregroundStyle(.primary)
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel", action: cancel)
+            .foregroundStyle(.secondary)
+            .disabled(isSaving)
     }
 
     private var isSaving: Bool {
@@ -131,10 +159,10 @@ struct T3ShareExtensionView: View {
             "Text, links, and up to eight files will be waiting in the native composer."
         case .saving:
             "Keeping a durable copy so nothing gets lost."
-        case let .saved(imageCount):
-            imageCount == 0
+        case let .saved(attachmentCount):
+            attachmentCount == 0
                 ? "Open T3 Code to choose a project and send it."
-                : "Saved \(imageCount) image\(imageCount == 1 ? "" : "s"). Open T3 Code to choose a project."
+                : "Saved \(attachmentCount) attachment\(attachmentCount == 1 ? "" : "s"). Open T3 Code to choose a project."
         case let .failed(message):
             message
         }
@@ -173,7 +201,7 @@ struct T3ShareExtensionView: View {
             Task {
                 do {
                     let envelope = try await save()
-                    phase = .saved(imageCount: envelope.images.count + envelope.files.count)
+                    phase = .saved(attachmentCount: envelope.images.count + envelope.files.count)
                 } catch {
                     phase = .failed(
                         message: (error as? LocalizedError)?.errorDescription
