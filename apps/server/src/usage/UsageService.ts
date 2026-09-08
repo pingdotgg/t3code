@@ -53,6 +53,7 @@ import {
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
+  decodeScanCacheRetainSince,
   dedupeWithinFile,
   encodeScanCache,
   pruneScanCache,
@@ -147,10 +148,10 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
-  // Oldest window start any scan asked for. Survives restarts without being
-  // stored: an entry older than the bounded retention can only be in the
-  // loaded cache because an all-time scan put it there, so the oldest loaded
-  // entry is the horizon.
+  // Oldest window start an all-time scan asked for, persisted with the cache
+  // as an explicit marker. Bounded scans never set it: a horizon inferred from
+  // whatever entries happen to be cached would pin itself to the oldest one
+  // and stop age pruning altogether.
   let retentionHorizonMs = Number.POSITIVE_INFINITY;
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
@@ -295,10 +296,8 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       );
       if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document)) {
-        fileCache.set(path, entry);
-        retentionHorizonMs = Math.min(retentionHorizonMs, entry.mtimeMs);
-      }
+      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      retentionHorizonMs = decodeScanCacheRetainSince(document) ?? Number.POSITIVE_INFINITY;
     }),
   );
 
@@ -306,7 +305,9 @@ export const make = Effect.gen(function* () {
     if (!cacheDirty) return;
     // Cleared only after the write lands, so a failed persist is retried on
     // the next scan instead of leaving disk permanently stale.
-    yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
+    yield* encodeScanCacheFile(
+      encodeScanCache(fileCache, { retainSinceMs: retentionHorizonMs }),
+    ).pipe(
       Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
       Effect.map(() => {
         cacheDirty = false;
@@ -542,15 +543,18 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    retentionHorizonMs = Math.min(retentionHorizonMs, windowStartMs);
+    const boundedRetentionMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    // Only a scan reaching past the bounded retention moves the horizon, and
+    // the marker must reach disk even when no file changed.
+    if (windowStartMs < boundedRetentionMs && windowStartMs < retentionHorizonMs) {
+      retentionHorizonMs = windowStartMs;
+      cacheDirty = true;
+    }
     const pruned = pruneScanCache(fileCache, {
       livePaths,
       walkedRoots,
       windowStartMs,
-      retentionCutoffMs: Math.min(
-        startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-        retentionHorizonMs,
-      ),
+      retentionCutoffMs: Math.min(boundedRetentionMs, retentionHorizonMs),
     });
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
+  decodeScanCacheRetainSince,
   dedupeWithinFile,
   encodeScanCache,
   pruneScanCache,
@@ -53,6 +54,25 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
   }
   return cache;
 }
+
+describe("all-time retention marker", () => {
+  it("is carried only when an all-time scan recorded it", () => {
+    const cache = cacheWith([["/a.jsonl", 100, [record()]]]);
+
+    expect(decodeScanCacheRetainSince(encodeScanCache(cache))).toBeNull();
+    expect(decodeScanCacheRetainSince(encodeScanCache(cache, { retainSinceMs: 1_500 }))).toBe(
+      1_500,
+    );
+    // An unset horizon is +Infinity in memory and must not be written as one.
+    expect(
+      decodeScanCacheRetainSince(
+        encodeScanCache(cache, { retainSinceMs: Number.POSITIVE_INFINITY }),
+      ),
+    ).toBeNull();
+    // Old cached entries are not a marker; only the explicit field is.
+    expect(decodeScanCacheRetainSince({ ...encodeScanCache(cache), version: 1 })).toBeNull();
+  });
+});
 
 describe("scan cache round trip", () => {
   it("restores records unchanged", () => {

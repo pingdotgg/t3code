@@ -23,7 +23,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { decodeScanCache } from "./usageScanCache.ts";
+import { decodeScanCache, encodeScanCache, type ScanCache } from "./usageScanCache.ts";
 import * as UsageService from "./UsageService.ts";
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
@@ -41,9 +41,9 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
 }
 
 /** The scan cache file is JSON of a shape `usageScanCache` narrows by hand. */
-const decodeJsonDocument = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>),
-);
+const JsonDocument = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
+const decodeJsonDocument = Schema.decodeUnknownSync(JsonDocument);
+const encodeJsonDocument = Schema.encodeSync(JsonDocument);
 
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -201,6 +201,44 @@ describe("UsageService", () => {
         assert.isTrue(decodeScanCache(decodeJsonDocument(afterRestart)).has(transcript));
       }).pipe(
         Effect.provide(serviceLayers({ prefix: "usage-service-all-time-test", home, settings })),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("still ages out old entries after a restart when no all-time scan ever ran", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const nowMs = yield* Clock.currentTimeMillis;
+      // A cache left behind by bounded scans only: an entry that has since
+      // aged past the retention, and no all-time marker.
+      const aged: ScanCache = new Map([
+        [
+          transcript,
+          {
+            size: 1,
+            mtimeMs: nowMs - 200 * 24 * 60 * 60 * 1000,
+            provider: "claude",
+            records: [],
+            tailRecords: [],
+            position: { resumeOffset: 1, guardLength: 1, guardHash: 0, codexState: null },
+          },
+        ],
+      ]);
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cachePath = NodePath.join(config.stateDir, "usage-scan-cache.json");
+        yield* fileSystem.writeFileString(cachePath, encodeJsonDocument(encodeScanCache(aged)));
+
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        const persisted = yield* fileSystem.readFileString(cachePath);
+        assert.isFalse(decodeScanCache(decodeJsonDocument(persisted)).has(transcript));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-bounded-prune-test", home, settings }),
+        ),
       );
     }).pipe(Effect.scoped),
   );
