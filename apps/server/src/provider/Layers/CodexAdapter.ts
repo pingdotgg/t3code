@@ -2231,6 +2231,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
+  const adapterScope = yield* Scope.Scope;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
@@ -2436,8 +2437,30 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               return;
             }
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+
+            // A runtime that reported its own exit is gone, but startup
+            // reconciliation and the session reaper keep reading the thread as
+            // live until it leaves this map. Teardown is forked because it
+            // interrupts this fiber and closes the scope it runs in.
+            if (runtimeEvents.some((runtimeEvent) => runtimeEvent.type === "session.exited")) {
+              const exited = sessions.get(input.threadId);
+              if (exited?.scope === sessionScope) {
+                sessions.delete(input.threadId);
+                yield* stopSessionInternal(exited).pipe(Effect.forkIn(adapterScope));
+              }
+            }
           }),
         ).pipe(Effect.forkIn(sessionScope));
+
+        const session: CodexAdapterSessionContext = {
+          threadId: input.threadId,
+          scope: sessionScope,
+          runtime,
+          eventFiber,
+          turnTokenUsage,
+          stopped: false,
+        };
+        sessions.set(input.threadId, session);
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(
@@ -2449,23 +2472,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 cause,
               }),
           ),
-          Effect.onError(() =>
-            runtime.close.pipe(
-              Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
-              Effect.andThen(Fiber.interrupt(eventFiber)),
-              Effect.ignore,
-            ),
-          ),
+          Effect.onError(() => stopSessionInternal(session)),
         );
 
-        sessions.set(input.threadId, {
-          threadId: input.threadId,
-          scope: sessionScope,
-          runtime,
-          eventFiber,
-          turnTokenUsage,
-          stopped: false,
-        });
         sessionScopeTransferred = true;
 
         return started;
@@ -2667,7 +2676,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       return;
     }
     session.stopped = true;
-    sessions.delete(session.threadId);
+    if (sessions.get(session.threadId) === session) {
+      sessions.delete(session.threadId);
+    }
     yield* session.runtime.close.pipe(Effect.ignore);
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
