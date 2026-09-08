@@ -183,7 +183,6 @@ import {
   useThreadPreviewState,
 } from "../previewStateStore";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
-import { BrowserSettingsReadError } from "../browser/openFileInPreview";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { useInstalledBrowserEngines } from "./preview/useInstalledBrowserEngines";
 import { closePreviewSession } from "./preview/closePreviewSession";
@@ -4093,15 +4092,13 @@ export default function ChatView(props: ChatViewProps) {
       }).then((result) => {
         if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
         const error = squashAtomCommandFailure(result);
-        if (error instanceof BrowserSettingsReadError) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Unable to open browser",
-              description: error.message,
-            }),
-          );
-        }
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open browser",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       });
     },
     [activeThreadRef, openPreview],

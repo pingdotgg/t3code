@@ -235,6 +235,14 @@ export function PreviewView({
         openPreview: open,
         engine: nextEngine,
         ...(url === "" ? {} : { url }),
+      }).then((result) => {
+        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Unable to open browser",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
       });
     },
     [open, threadRef, url],

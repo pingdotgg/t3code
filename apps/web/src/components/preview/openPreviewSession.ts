@@ -29,32 +29,37 @@ interface OpenPreviewSessionInput<E> {
   viewport?: PreviewViewportSetting;
   /** Overrides the configured default profile. */
   profileId?: string;
-  /** Opens a window in this engine on the server host instead of the docked view. */
+  /** Renders the tab from a headless page in this engine on the server host. */
   engine?: PreviewBrowserEngine;
+}
+
+// Resolved once per open: a tab opened before client settings hydrate would
+// otherwise be born at the schema defaults and never corrected.
+async function dockedOpenFields(input: OpenPreviewSessionInput<unknown>) {
+  const defaults = await resolveBrowserDefaults().catch(
+    (cause: unknown) => new BrowserSettingsReadError({ cause }),
+  );
+  if (defaults instanceof BrowserSettingsReadError) return defaults;
+  return {
+    viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
+    profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+  };
 }
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
 ): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
-  // Resolved once: a tab opened before client settings hydrate would otherwise
-  // be born at the schema defaults and never corrected.
-  const defaults = await resolveBrowserDefaults().catch(
-    (cause: unknown) => new BrowserSettingsReadError({ cause }),
-  );
-  if (defaults instanceof BrowserSettingsReadError) {
-    return AsyncResult.failure(Cause.fail(defaults));
+  const target =
+    input.engine === undefined ? await dockedOpenFields(input) : { engine: input.engine };
+  if (target instanceof BrowserSettingsReadError) {
+    return AsyncResult.failure(Cause.fail(target));
   }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
-      ...(input.engine === undefined
-        ? {
-            viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
-            profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
-          }
-        : { engine: input.engine }),
+      ...target,
     },
   });
   if (result._tag === "Failure") {

@@ -753,7 +753,20 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
 
   const reloadView: PlaywrightPreviewHost["Service"]["reloadView"] = (tabId) => {
     const tab = viewTab(tabId);
-    return tab === undefined ? Effect.void : ignoreFailure(() => tab.page.reload());
+    if (tab === undefined) return Effect.void;
+    return Effect.promise(() =>
+      tab.page.reload().then(
+        () => undefined,
+        (cause: unknown) =>
+          reportView(tab, {
+            _tag: "LoadFailed",
+            url: tab.page.url(),
+            title: "",
+            code: -1,
+            description: errorDetail(cause),
+          }),
+      ),
+    );
   };
 
   const resizeView: PlaywrightPreviewHost["Service"]["resizeView"] = (tabId, viewport) => {
