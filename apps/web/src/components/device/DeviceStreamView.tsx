@@ -64,11 +64,14 @@ export function DeviceStreamView(props: {
           // A fresh ticket re-runs this effect through the access dependency.
           refreshDeviceHubAccess(props.environmentId);
         },
+        onMjpegFallback: (url) => {
+          setMjpegUrl(url);
+          setMjpegGeneration((generation) => generation + 1);
+        },
       },
     );
     clientRef.current = client;
-    setMjpegUrl(client.mjpegUrl);
-    setMjpegGeneration((generation) => generation + 1);
+    setMjpegUrl(null);
     client.start();
     onHandle?.({ pressButton: client.pressButton, rotate: client.rotate });
     return () => {

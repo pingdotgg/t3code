@@ -33,6 +33,12 @@ export interface DeviceStreamEvents {
   readonly onScreen: (screen: DeviceScreenSize) => void;
   /** The proxy rejected the credential; the owner should refresh access and reconnect. */
   readonly onUnauthorized: () => void;
+  /**
+   * H.264 cannot be decoded here (no WebCodecs, or the simulator's profile is
+   * unsupported); the owner should show this MJPEG URL in an `<img>` instead of
+   * the canvas.
+   */
+  readonly onMjpegFallback: (url: string) => void;
 }
 
 export interface DeviceStreamTarget {
@@ -189,8 +195,6 @@ export interface DeviceStreamClient {
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
-  /** MJPEG fallback source when WebCodecs is unavailable on iOS, else null. */
-  readonly mjpegUrl: string | null;
 }
 
 const HID_USAGE_BY_CODE: Readonly<Record<string, number>> = {
@@ -276,6 +280,18 @@ export function createDeviceStreamClient(
   let awaitingKeyframe = true;
   let screen: DeviceScreenSize | null = null;
   let firstFrame = false;
+  let configuring = false;
+  let mjpeg = false;
+
+  const mjpegUrl = () => httpUrl(`/helper/${device}/stream.mjpeg`);
+
+  const fallBackToMjpeg = () => {
+    if (stopped || mjpeg) return;
+    mjpeg = true;
+    closeDecoder();
+    events.onMjpegFallback(mjpegUrl());
+    setStatus("streaming");
+  };
 
   const setStatus = (status: DeviceStreamStatus, detail?: string) => {
     if (!stopped) events.onStatus(status, detail);
@@ -323,14 +339,22 @@ export function createDeviceStreamClient(
       },
     });
 
-  const configureDecoder = (config: VideoDecoderConfig) => {
+  /**
+   * Resolves false when this browser cannot decode the stream's profile
+   * (simulators encode High 5.1, which headless and some hardware decoders
+   * reject). iOS then falls back to MJPEG; Android has no MJPEG.
+   */
+  const configureDecoder = async (config: VideoDecoderConfig): Promise<boolean> => {
+    const full: VideoDecoderConfig = { ...config, optimizeForLatency: true };
+    const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
+    if (stopped) return false;
+    if (!support.supported) {
+      setStatus("error", `This browser cannot decode ${config.codec}.`);
+      return false;
+    }
     if (!videoDecoder || videoDecoder.state === "closed") videoDecoder = makeDecoder();
     try {
-      videoDecoder.configure({
-        ...config,
-        optimizeForLatency: true,
-        hardwareAcceleration: "prefer-hardware",
-      });
+      videoDecoder.configure(full);
       return true;
     } catch (cause) {
       setStatus("error", `Video decoder: ${(cause as Error).message}`);
@@ -408,13 +432,19 @@ export function createDeviceStreamClient(
                 })
                 .catch(() => {});
               break;
-            case "description":
+            case "description": {
               awaitingKeyframe = true;
-              configureDecoder({
+              const configured = await configureDecoder({
                 codec: avcCodecString(chunk.payload),
                 description: chunk.payload,
               });
+              if (!configured) {
+                await reader.cancel().catch(() => {});
+                fallBackToMjpeg();
+                return;
+              }
               break;
+            }
             case "keyframe":
             case "delta":
               decode(chunk.type === "keyframe", chunk.payload);
@@ -474,8 +504,14 @@ export function createDeviceStreamClient(
       const scanned = needsScan ? scanAccessUnit(packet.data) : null;
       const isKey = packet.isKey ?? scanned?.isKey ?? false;
       if (scanned?.sps && (!videoDecoder || videoDecoder.state !== "configured")) {
-        if (!configureDecoder({ codec: avcCodecString(scanned.sps) })) return;
-        awaitingKeyframe = true;
+        if (configuring) return;
+        configuring = true;
+        void configureDecoder({ codec: avcCodecString(scanned.sps) }).then((configured) => {
+          configuring = false;
+          awaitingKeyframe = true;
+          if (configured) requestKeyframe();
+        });
+        return;
       }
       if (!videoDecoder || videoDecoder.state !== "configured") {
         if (!isKey) requestKeyframe();
@@ -503,7 +539,7 @@ export function createDeviceStreamClient(
     if (platform === "ios") {
       connectIosInput();
       if (useWebCodecs) void readIosVideo();
-      else setStatus("streaming");
+      else fallBackToMjpeg();
     } else if (useWebCodecs) {
       connectAndroid();
     } else {
@@ -514,6 +550,7 @@ export function createDeviceStreamClient(
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    mjpeg = false;
     if (retryTimer) clearTimeout(retryTimer);
     retryTimer = null;
     controller?.abort();
@@ -546,8 +583,6 @@ export function createDeviceStreamClient(
   return {
     start,
     stop,
-    mjpegUrl:
-      platform === "ios" && !useWebCodecs ? httpUrl(`/helper/${device}/stream.mjpeg`) : null,
     sendTouch: (phase, x, y) => {
       if (platform === "ios") {
         send(taggedJson(IOS_MSG_TOUCH, { type: phase, ...rawPoint(x, y) }));
