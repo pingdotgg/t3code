@@ -26,9 +26,11 @@ public actor T3Client {
     private let api: EnvironmentAPI
     private let rpc: WebSocketRPCClient
     private let configSnapshotWaitTimeout: Duration
+    private let serverConfigRetryDelay: @Sendable (Int) async throws -> Void
     private var latestServerEnvironment: EnvironmentDescriptor?
     private var serverConfigCache: ServerConfigSnapshot?
     private var serverConfigGeneration: UInt64 = 0
+    private var serverConfigRetryAttempt = 0
     private var serverConfigTask: Task<Void, Never>?
     private var serverConfigWaiters: [UUID: CheckedContinuation<ServerConfigSnapshot, any Error>] = [:]
     private var serverConfigListeners: [UUID: AsyncThrowingStream<ServerConfigStreamEvent, any Error>.Continuation] = [:]
@@ -39,7 +41,11 @@ public actor T3Client {
         httpTransport: any HTTPTransport = URLSessionHTTPTransport(),
         webSocketConnector: any WebSocketConnecting = URLSessionWebSocketConnector(),
         managedAuthorization: (any ManagedEnvironmentAuthorizing)? = nil,
-        rpcConnectionWaitTimeout: Duration = .seconds(4)
+        rpcConnectionWaitTimeout: Duration = .seconds(4),
+        serverConfigRetryDelay: @escaping @Sendable (Int) async throws -> Void = { attempt in
+            let seconds = min(16, 1 << min(attempt, 4))
+            try await Task.sleep(for: .seconds(seconds))
+        }
     ) {
         self.environment = environment
         let api = EnvironmentAPI(
@@ -49,6 +55,7 @@ public actor T3Client {
         )
         self.api = api
         self.configSnapshotWaitTimeout = rpcConnectionWaitTimeout
+        self.serverConfigRetryDelay = serverConfigRetryDelay
         self.rpc = WebSocketRPCClient(
             connector: webSocketConnector,
             connectionWaitTimeout: rpcConnectionWaitTimeout
@@ -455,7 +462,10 @@ public actor T3Client {
                     guard !Task.isCancelled else { return }
                     await self.consumeServerConfig(event, generation: generation)
                 }
-                await self.finishServerConfigSubscription(generation: generation, error: RPCError.disconnected)
+                await self.retryServerConfigSubscription(
+                    generation: generation,
+                    error: RPCError.disconnected
+                )
             } catch {
                 await self.handleServerConfigSubscriptionFailure(error, generation: generation)
             }
@@ -464,6 +474,7 @@ public actor T3Client {
 
     private func consumeServerConfig(_ event: ServerConfigStreamEvent, generation: UInt64) {
         guard generation == serverConfigGeneration else { return }
+        serverConfigRetryAttempt = 0
         var emittedEvent = event
         switch event {
         case var .snapshot(config):
@@ -539,7 +550,11 @@ public actor T3Client {
     private func handleServerConfigSubscriptionFailure(_ error: any Error, generation: UInt64) async {
         guard generation == serverConfigGeneration else { return }
         guard isUnsupportedServerConfigSubscription(error) else {
-            finishServerConfigSubscription(generation: generation, error: error)
+            if isRetryableServerConfigSubscriptionError(error) {
+                await retryServerConfigSubscription(generation: generation, error: error)
+            } else {
+                finishServerConfigSubscription(generation: generation, error: error)
+            }
             return
         }
         do {
@@ -548,12 +563,37 @@ public actor T3Client {
                 as: ServerConfigSnapshot.self
             )
             guard generation == serverConfigGeneration else { return }
+            serverConfigRetryAttempt = 0
             cacheServerConfig(config)
             serverConfigListeners.values.forEach { $0.yield(.snapshot(config)) }
             serverConfigTask = nil
         } catch {
             finishServerConfigSubscription(generation: generation, error: error)
         }
+    }
+
+    func retryServerConfigSubscription(generation: UInt64, error: any Error) async {
+        guard generation == serverConfigGeneration, !Task.isCancelled else { return }
+        guard !serverConfigListeners.isEmpty || !serverConfigWaiters.isEmpty else {
+            serverConfigTask = nil
+            return
+        }
+        let attempt = serverConfigRetryAttempt
+        serverConfigRetryAttempt += 1
+        do {
+            try await serverConfigRetryDelay(attempt)
+        } catch {
+            guard generation == serverConfigGeneration else { return }
+            finishServerConfigSubscription(generation: generation, error: error)
+            return
+        }
+        guard generation == serverConfigGeneration else { return }
+        guard !serverConfigListeners.isEmpty || !serverConfigWaiters.isEmpty else {
+            serverConfigTask = nil
+            return
+        }
+        serverConfigTask = nil
+        startServerConfigSubscriptionIfNeeded()
     }
 
     private func isUnsupportedServerConfigSubscription(_ error: any Error) -> Bool {
@@ -566,9 +606,21 @@ public actor T3Client {
             || value.contains("unknown request") || value.contains("method not found")
     }
 
+    private func isRetryableServerConfigSubscriptionError(_ error: any Error) -> Bool {
+        if error is DecodingError { return false }
+        guard case let RPCError.remote(message) = error else { return true }
+        let value = message.lowercased()
+        return !value.contains("authentication")
+            && !value.contains("unauthenticated")
+            && !value.contains("unauthorized")
+            && !value.contains("forbidden")
+            && !value.contains("permission denied")
+    }
+
     private func finishServerConfigSubscription(generation: UInt64, error: any Error) {
         guard generation == serverConfigGeneration else { return }
         serverConfigTask = nil
+        serverConfigRetryAttempt = 0
         serverConfigCache = nil
         latestServerEnvironment = nil
         let waiters = serverConfigWaiters.values
@@ -581,6 +633,7 @@ public actor T3Client {
 
     private func stopServerConfigSubscription(error: any Error) {
         serverConfigGeneration &+= 1
+        serverConfigRetryAttempt = 0
         serverConfigTask?.cancel()
         serverConfigTask = nil
         serverConfigCache = nil
