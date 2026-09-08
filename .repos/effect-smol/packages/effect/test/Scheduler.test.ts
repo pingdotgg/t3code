@@ -19,6 +19,26 @@ describe("Scheduler", () => {
     assert.deepStrictEqual(exit, Exit.succeed(1))
   })
 
+  it("runSyncExit does not schedule timers after yielding", () => {
+    const setImmediate = vi.spyOn(globalThis, "setImmediate").mockImplementation(() => {
+      throw new Error("setImmediate is not supported")
+    })
+    const setTimeout = vi.spyOn(globalThis, "setTimeout").mockImplementation(() => {
+      throw new Error("setTimeout is not supported")
+    })
+
+    try {
+      const exit = Effect.runSyncExit(Effect.as(Effect.yieldNow, 1))
+
+      assert.deepStrictEqual(exit, Exit.succeed(1))
+      assert.strictEqual(setImmediate.mock.calls.length, 0)
+      assert.strictEqual(setTimeout.mock.calls.length, 0)
+    } finally {
+      setImmediate.mockRestore()
+      setTimeout.mockRestore()
+    }
+  })
+
   it.effect("MixedScheduler orders by priority (sync)", () =>
     Effect.sync(() => {
       const scheduler = new Scheduler.MixedScheduler("sync").makeDispatcher()

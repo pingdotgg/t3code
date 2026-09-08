@@ -812,10 +812,10 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
 
   it("revives Error", () => {
     assertDeclarationReviver({
-      schema: Schema.Error(),
+      schema: Schema.ErrorInstance(),
       id: "effect/schema/Error",
       payload: null,
-      reviver: Schema.ErrorReviver
+      reviver: Schema.ErrorInstanceReviver
     })
   })
 
@@ -843,6 +843,15 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
       id: "effect/schema/HashMap",
       payload: null,
       reviver: Schema.HashMapReviver
+    })
+  })
+
+  it("revives Graph", () => {
+    assertDeclarationReviver({
+      schema: Schema.Graph("directed", Schema.String, Schema.Number),
+      id: "effect/schema/Graph",
+      payload: "directed",
+      reviver: Schema.GraphReviver
     })
   })
 
@@ -1018,14 +1027,14 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
   })
 
   it("persists Error includeStack", () => {
-    assert.deepStrictEqual(Schema.Error({ includeStack: true }).ast.annotations?.representation, {
+    assert.deepStrictEqual(Schema.ErrorInstance({ includeStack: true }).ast.annotations?.representation, {
       id: "effect/schema/Error",
       payload: { includeStack: true }
     })
   })
 
   it("persists Error excludeCause", () => {
-    assert.deepStrictEqual(Schema.Error({ excludeCause: true }).ast.annotations?.representation, {
+    assert.deepStrictEqual(Schema.ErrorInstance({ excludeCause: true }).ast.annotations?.representation, {
       id: "effect/schema/Error",
       payload: { excludeCause: true }
     })
@@ -1033,7 +1042,7 @@ describe("SchemaRepresentation built-in declaration revivers", () => {
 
   it("omits disabled Error options", () => {
     assert.deepStrictEqual(
-      Schema.Error({ includeStack: false, excludeCause: false }).ast.annotations?.representation,
+      Schema.ErrorInstance({ includeStack: false, excludeCause: false }).ast.annotations?.representation,
       { id: "effect/schema/Error", payload: null }
     )
   })

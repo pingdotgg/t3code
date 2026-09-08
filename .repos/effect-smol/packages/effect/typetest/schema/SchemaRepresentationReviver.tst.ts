@@ -62,7 +62,7 @@ describe("SchemaRepresentation revivers", () => {
       (
         document: SchemaRepresentation.MultiDocument,
         options: { readonly revivers: ReadonlyArray<SchemaRepresentation.AnyReviver> }
-      ) => SchemaRepresentation.SchemaMultiDocument
+      ) => readonly [Schema.Top, ...Array<Schema.Top>]
     >()
 
     const document = SchemaRepresentation.fromJson({ representation: { _tag: "String", checks: [] }, references: {} })

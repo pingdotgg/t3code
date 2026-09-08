@@ -33,7 +33,7 @@ export const effectFunction = Effect.fn("effectFunction")(
   })
 )
 
-// Use Schema.TaggedErrorClass to define a custom error
-export class SomeError extends Schema.TaggedErrorClass<SomeError>()("SomeError", {
+// Use Schema.TaggedError to define a custom error
+export class SomeError extends Schema.TaggedError<SomeError>()("SomeError", {
   message: Schema.String
 }) {}

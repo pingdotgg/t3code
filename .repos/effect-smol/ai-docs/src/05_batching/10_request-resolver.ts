@@ -11,7 +11,7 @@ export class User extends Schema.Class<User>("User")({
   email: Schema.String
 }) {}
 
-export class UserNotFound extends Schema.TaggedErrorClass<UserNotFound>()("UserNotFound", {
+export class UserNotFound extends Schema.TaggedError<UserNotFound>()("UserNotFound", {
   id: Schema.Int
 }) {}
 

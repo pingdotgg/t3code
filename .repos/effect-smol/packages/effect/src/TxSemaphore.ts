@@ -34,7 +34,7 @@ const TypeId = "~effect/transactions/TxSemaphore"
  *
  * **Example** (Managing permits transactionally)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxSemaphore } from "effect"
  *
  * // Create a semaphore with 3 permits for managing concurrent database connections
@@ -43,14 +43,17 @@ const TypeId = "~effect/transactions/TxSemaphore"
  *
  *   // Acquire a permit before accessing the database
  *   yield* TxSemaphore.acquire(dbSemaphore)
- *   console.log("Database connection acquired")
+ *   const acquired = yield* TxSemaphore.available(dbSemaphore)
  *
  *   // Perform database operations...
  *
  *   // Release the permit when done
  *   yield* TxSemaphore.release(dbSemaphore)
- *   console.log("Database connection released")
+ *   const released = yield* TxSemaphore.available(dbSemaphore)
+ *   return [acquired, released] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [2, 3]
  * ```
  *
  * @see {@link make} for creating a transactional semaphore
@@ -98,8 +101,8 @@ const makeTxSemaphore = (permitsRef: TxRef.TxRef<number>, capacity: number): TxS
  *
  * **Example** (Creating a semaphore)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * // Create a semaphore for managing concurrent access to a resource pool
  * const program = Effect.gen(function*() {
@@ -109,12 +112,10 @@ const makeTxSemaphore = (permitsRef: TxRef.TxRef<number>, capacity: number): TxS
  *   // Check initial state
  *   const available = yield* TxSemaphore.available(connectionSemaphore)
  *   const capacity = yield* TxSemaphore.capacity(connectionSemaphore)
- *
- *   yield* Console.log(
- *     `Created semaphore with ${capacity} permits, ${available} available`
- *   )
- *   // Output: "Created semaphore with 3 permits, 3 available"
+ *   return [capacity, available] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [3, 3]
  * ```
  *
  * @see {@link available} for reading the current available permit count
@@ -142,15 +143,14 @@ export const make = (permits: number): Effect.Effect<TxSemaphore> =>
  *
  * **Example** (Checking available permits)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(5)
  *
  *   // Check available permits before acquiring
  *   const before = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`Available permits: ${before}`) // 5
  *
  *   // Acquire some permits
  *   yield* TxSemaphore.acquire(semaphore)
@@ -158,8 +158,10 @@ export const make = (permits: number): Effect.Effect<TxSemaphore> =>
  *
  *   // Check available permits after acquiring
  *   const after = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`Available permits: ${after}`) // 3
+ *   return [before, after] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [5, 3]
  * ```
  *
  * @see {@link capacity} for reading the fixed total permit count
@@ -178,20 +180,21 @@ export const available = (self: TxSemaphore): Effect.Effect<number> => TxRef.get
  *
  * **Example** (Checking semaphore capacity)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(10)
  *
  *   const capacity = yield* TxSemaphore.capacity(semaphore)
- *   yield* Console.log(`Semaphore capacity: ${capacity}`) // 10
  *
  *   // Capacity remains constant regardless of current permits
  *   yield* TxSemaphore.acquire(semaphore)
  *   const stillSame = yield* TxSemaphore.capacity(semaphore)
- *   yield* Console.log(`Capacity after acquire: ${stillSame}`) // 10
+ *   return [capacity, stillSame] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [10, 10]
  * ```
  *
  * @see {@link available} for reading the current available permit count
@@ -212,23 +215,20 @@ export const capacity = (self: TxSemaphore): Effect.Effect<number> => Effect.suc
  *
  * **Example** (Acquiring a permit)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(2)
  *
- *   yield* Console.log("Acquiring first permit...")
  *   yield* TxSemaphore.acquire(semaphore)
- *   yield* Console.log("First permit acquired")
  *
- *   yield* Console.log("Acquiring second permit...")
  *   yield* TxSemaphore.acquire(semaphore)
- *   yield* Console.log("Second permit acquired")
  *
- *   const available = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`Available permits: ${available}`) // 0
+ *   return yield* TxSemaphore.available(semaphore)
  * })
+ *
+ * await Effect.runPromise(program) // => 0
  * ```
  *
  * @see {@link tryAcquire} for a non-blocking single-permit attempt
@@ -267,19 +267,18 @@ export const acquire = (self: TxSemaphore): Effect.Effect<void> =>
  *
  * **Example** (Acquiring multiple permits)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(5)
  *
- *   yield* Console.log("Acquiring 3 permits...")
  *   yield* TxSemaphore.acquireN(semaphore, 3)
- *   yield* Console.log("3 permits acquired")
  *
- *   const available = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`Available permits: ${available}`) // 2
+ *   return yield* TxSemaphore.available(semaphore)
  * })
+ *
+ * await Effect.runPromise(program) // => 2
  * ```
  *
  * @see {@link tryAcquireN} for a non-blocking multi-permit attempt
@@ -313,20 +312,21 @@ export const acquireN = (self: TxSemaphore, n: number): Effect.Effect<void> => {
  *
  * **Example** (Trying to acquire a permit)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(1)
  *
  *   // First try should succeed
  *   const first = yield* TxSemaphore.tryAcquire(semaphore)
- *   yield* Console.log(`First try: ${first}`) // true
  *
  *   // Second try should fail (no permits left)
  *   const second = yield* TxSemaphore.tryAcquire(semaphore)
- *   yield* Console.log(`Second try: ${second}`) // false
+ *   return [first, second] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [true, false]
  * ```
  *
  * @see {@link acquire} for waiting until one permit is available
@@ -355,20 +355,21 @@ export const tryAcquire = (self: TxSemaphore): Effect.Effect<boolean> =>
  *
  * **Example** (Trying to acquire multiple permits)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(3)
  *
  *   // Try to acquire 2 permits (should succeed)
  *   const first = yield* TxSemaphore.tryAcquireN(semaphore, 2)
- *   yield* Console.log(`First try (2 permits): ${first}`) // true
  *
  *   // Try to acquire 2 more permits (should fail, only 1 left)
  *   const second = yield* TxSemaphore.tryAcquireN(semaphore, 2)
- *   yield* Console.log(`Second try (2 permits): ${second}`) // false
+ *   return [first, second] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [true, false]
  * ```
  *
  * @see {@link acquireN} for waiting until all requested permits are available
@@ -404,22 +405,23 @@ export const tryAcquireN = (self: TxSemaphore, n: number): Effect.Effect<boolean
  *
  * **Example** (Releasing a permit)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(2)
  *
  *   // Acquire a permit
  *   yield* TxSemaphore.acquire(semaphore)
- *   let available = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`After acquire: ${available}`) // 1
+ *   const afterAcquire = yield* TxSemaphore.available(semaphore)
  *
  *   // Release the permit
  *   yield* TxSemaphore.release(semaphore)
- *   available = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`After release: ${available}`) // 2
+ *   const afterRelease = yield* TxSemaphore.available(semaphore)
+ *   return [afterAcquire, afterRelease] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [1, 2]
  * ```
  *
  * @see {@link acquire} for manually acquiring one permit
@@ -448,22 +450,23 @@ export const release = (self: TxSemaphore): Effect.Effect<void> =>
  *
  * **Example** (Releasing multiple permits)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(5)
  *
  *   // Acquire 3 permits
  *   yield* TxSemaphore.acquireN(semaphore, 3)
- *   let available = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`After acquire: ${available}`) // 2
+ *   const afterAcquire = yield* TxSemaphore.available(semaphore)
  *
  *   // Release 2 permits
  *   yield* TxSemaphore.releaseN(semaphore, 2)
- *   available = yield* TxSemaphore.available(semaphore)
- *   yield* Console.log(`After release: ${available}`) // 4
+ *   const afterRelease = yield* TxSemaphore.available(semaphore)
+ *   return [afterAcquire, afterRelease] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [2, 4]
  * ```
  *
  * @see {@link acquireN} for manually acquiring multiple permits
@@ -499,26 +502,30 @@ export const releaseN = (self: TxSemaphore, n: number): Effect.Effect<void> => {
  *
  * **Example** (Running an effect with a permit)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(2)
+ *   const events: Array<string> = []
  *
  *   // Execute database operation with automatic permit management
  *   const result = yield* TxSemaphore.withPermit(
  *     semaphore,
  *     Effect.gen(function*() {
- *       yield* Console.log("Permit acquired, accessing database...")
- *       yield* Effect.sleep("100 millis") // Simulate database work
- *       yield* Console.log("Database operation complete")
+ *       events.push("permit acquired")
+ *       yield* Effect.yieldNow
+ *       events.push("operation complete")
  *       return "query result"
  *     })
  *   )
  *
- *   yield* Console.log(`Result: ${result}`)
  *   // Permit is automatically released here
+ *   const available = yield* TxSemaphore.available(semaphore)
+ *   return [events, result, available] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [["permit acquired", "operation complete"], "query result", 2]
  * ```
  *
  * @see {@link withPermits} for automatically acquiring and releasing multiple permits
@@ -570,26 +577,30 @@ export const withPermit: {
  *
  * **Example** (Running an effect with multiple permits)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(5)
+ *   const events: Array<string> = []
  *
  *   // Execute batch operation with 3 permits
  *   const results = yield* TxSemaphore.withPermits(
  *     semaphore,
  *     3,
  *     Effect.gen(function*() {
- *       yield* Console.log("3 permits acquired, processing batch...")
- *       yield* Effect.sleep("200 millis") // Simulate batch processing
+ *       events.push("3 permits acquired")
+ *       yield* Effect.yieldNow
  *       return ["result1", "result2", "result3"]
  *     })
  *   )
  *
- *   yield* Console.log(`Batch results: ${results.join(", ")}`)
  *   // All 3 permits are automatically released here
+ *   const available = yield* TxSemaphore.available(semaphore)
+ *   return [events, results, available] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [["3 permits acquired"], ["result1", "result2", "result3"], 5]
  * ```
  *
  * @see {@link withPermit} for automatically acquiring and releasing one permit
@@ -636,28 +647,32 @@ export const withPermits: {
  *
  * **Example** (Acquiring a scoped permit)
  *
- * ```ts
- * import { Console, Effect, TxSemaphore } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(3)
+ *   const events: Array<string> = []
  *
  *   yield* Effect.scoped(
  *     Effect.gen(function*() {
  *       // Acquire permit for the duration of this scope
  *       yield* TxSemaphore.withPermitScoped(semaphore)
- *       yield* Console.log("Permit acquired for scope")
+ *       events.push("permit acquired for scope")
  *
  *       // Do work within the scope
- *       yield* Effect.sleep("500 millis")
- *       yield* Console.log("Work completed")
+ *       yield* Effect.yieldNow
+ *       events.push("work completed")
  *
  *       // Permit will be automatically released when scope closes
  *     })
  *   )
  *
- *   yield* Console.log("Scope closed, permit released")
+ *   const available = yield* TxSemaphore.available(semaphore)
+ *   return [events, available] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [["permit acquired for scope", "work completed"], 3]
  * ```
  *
  * @see {@link withPermit} for acquiring one permit around a single effect
@@ -681,22 +696,25 @@ export const withPermitScoped = (self: TxSemaphore): Effect.Effect<void, never, 
  *
  * **Example** (Checking semaphore values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxSemaphore } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const semaphore = yield* TxSemaphore.make(5)
  *   const notSemaphore = { some: "object" }
  *
- *   console.log(TxSemaphore.isTxSemaphore(semaphore)) // true
- *   console.log(TxSemaphore.isTxSemaphore(notSemaphore)) // false
+ *   const semaphoreResult = TxSemaphore.isTxSemaphore(semaphore)
+ *   const objectResult = TxSemaphore.isTxSemaphore(notSemaphore)
  *
  *   // Useful for runtime type checking in generic functions
  *   if (TxSemaphore.isTxSemaphore(semaphore)) {
  *     const available = yield* TxSemaphore.available(semaphore)
- *     console.log(`Available permits: ${available}`)
+ *     return [semaphoreResult, objectResult, available] as const
  *   }
+ *   return [semaphoreResult, objectResult, 0] as const
  * })
+ *
+ * await Effect.runPromise(program) // => [true, false, 5]
  * ```
  *
  * @see {@link make} for creating a `TxSemaphore`

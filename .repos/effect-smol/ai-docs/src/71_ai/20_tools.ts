@@ -104,7 +104,7 @@ const OpenAiClientLayer = OpenAiClient.layerConfig({
   apiKey: Config.redacted("OPENAI_API_KEY")
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
-export class ProductAssistantError extends Schema.TaggedErrorClass<ProductAssistantError>()(
+export class ProductAssistantError extends Schema.TaggedError<ProductAssistantError>()(
   "ProductAssistantError",
   { reason: AiError.AiErrorReason }
 ) {}

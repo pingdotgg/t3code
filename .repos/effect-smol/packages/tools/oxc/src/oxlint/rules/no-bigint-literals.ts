@@ -1,4 +1,4 @@
-import type { CreateRule, Visitor } from "oxlint"
+import type { CreateRule, Visitor } from "@oxlint/plugins"
 
 const rule: CreateRule = {
   meta: {

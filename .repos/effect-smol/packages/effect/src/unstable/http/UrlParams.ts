@@ -25,6 +25,7 @@ import * as Schema from "../../Schema.ts"
 import * as SchemaIssue from "../../SchemaIssue.ts"
 import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import * as Tuple from "../../Tuple.ts"
+import type { JsonOptions } from "./HttpIncomingMessage.ts"
 
 const TypeId = "~effect/http/UrlParams"
 
@@ -464,9 +465,8 @@ export const toString = (input: Input): string => new URLSearchParams(fromInput(
  *
  * **Example** (Converting parameters to a record)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { UrlParams } from "effect/unstable/http"
- * import * as assert from "node:assert"
  *
  * const urlParams = UrlParams.fromInput({
  *   a: 1,
@@ -474,12 +474,7 @@ export const toString = (input: Input): string => new URLSearchParams(fromInput(
  *   c: "string",
  *   e: [1, 2, 3]
  * })
- * const result = UrlParams.toRecord(urlParams)
- *
- * assert.deepStrictEqual(
- *   result,
- *   { "a": "1", "b": "true", "c": "string", "e": ["1", "2", "3"] }
- * )
+ * UrlParams.toRecord(urlParams) // => { a: "1", b: "true", c: "string", e: ["1", "2", "3"] }
  * ```
  *
  * @category converting
@@ -522,7 +517,7 @@ export const toReadonlyRecord: (self: UrlParams) => ReadonlyRecord<string, strin
  * @category schemas
  * @since 4.0.0
  */
-export interface schemaJsonField extends Schema.decodeTo<Schema.UnknownFromJsonString, UrlParamsSchema> {}
+export interface schemaJsonField extends Schema.decodeTo<Schema.fromJsonString<Schema.Unknown>, UrlParamsSchema> {}
 
 /**
  * Extracts a JSON value from the first occurrence of the given `field` in the
@@ -530,7 +525,7 @@ export interface schemaJsonField extends Schema.decodeTo<Schema.UnknownFromJsonS
  *
  * **Example** (Decoding JSON parameter fields)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { UrlParams } from "effect/unstable/http"
  *
@@ -541,21 +536,20 @@ export interface schemaJsonField extends Schema.decodeTo<Schema.UnknownFromJsonS
  *   }))
  * )
  *
- * console.log(
- *   Schema.decodeSync(extractFoo)(UrlParams.fromInput({
- *     foo: JSON.stringify({ some: "bar", number: 42 }),
+ * const decoded = Schema.decodeSync(extractFoo)(UrlParams.fromInput({
+ *     foo: `{"some":"bar","number":42}`,
  *     baz: "qux"
  *   }))
- * )
+ * const result = [decoded.some, decoded.number] // => ["bar", 42]
  * ```
  *
  * @category schemas
  * @since 4.0.0
  */
-export const schemaJsonField = (field: string): schemaJsonField =>
+export const schemaJsonField = (field: string, options?: JsonOptions | undefined): schemaJsonField =>
   UrlParamsSchema.pipe(
     Schema.decodeTo(
-      Schema.UnknownFromJsonString,
+      Schema.fromJsonString(Schema.Unknown, options),
       SchemaTransformation.transformOrFail({
         decode: (params) =>
           Option.match(getFirst(params, field), {
@@ -592,7 +586,7 @@ export interface schemaRecord extends
  *
  * **Example** (Decoding URL parameters to a record)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { UrlParams } from "effect/unstable/http"
  *
@@ -603,12 +597,11 @@ export interface schemaRecord extends
  *   }))
  * )
  *
- * console.log(
- *   Schema.decodeSync(toStruct)(UrlParams.fromInput({
+ * const decoded = Schema.decodeSync(toStruct)(UrlParams.fromInput({
  *     some: "value",
  *     number: 42
  *   }))
- * )
+ * const result = [decoded.some, decoded.number] // => ["value", 42]
  * ```
  *
  * @category schemas

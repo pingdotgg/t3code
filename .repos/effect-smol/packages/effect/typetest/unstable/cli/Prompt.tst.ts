@@ -6,6 +6,20 @@ declare const stringEvents: Queue.Dequeue<string, never>
 declare const objectEvents: Queue.Dequeue<{ readonly tick: number }, never>
 
 describe("Prompt", () => {
+  describe("Theme", () => {
+    it("supports context and per-prompt customization", () => {
+      expect(Prompt.makeTheme({ prefix: "!", primaryColor: "primary" })).type.toBe<Prompt.Theme>()
+      expect(Prompt.text).type.toBeCallableWith({
+        message: "Name",
+        theme: { prefix: "!", errorColor: "error" }
+      })
+    })
+
+    it("does not expose the replaced prefix option", () => {
+      expect(Prompt.text).type.not.toBeCallableWith({ message: "Name", prefix: "!" })
+    })
+  })
+
   describe("custom", () => {
     it("without events, process receives Terminal.UserInput", () => {
       Prompt.custom(

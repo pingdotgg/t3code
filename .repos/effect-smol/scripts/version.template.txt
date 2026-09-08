@@ -1,2 +1,0 @@
-export const version: version = "VERSION"
-export type version = "VERSION"

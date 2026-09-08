@@ -1,4 +1,5 @@
 import { OpenRouterClient } from "@effect/ai-openrouter"
+import * as Errors from "@effect/ai-openrouter/internal/errors"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Layer, Redacted, type Schema } from "effect"
 import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
@@ -27,6 +28,84 @@ describe("OpenRouterClient", () => {
         error: {
           code: 400,
           message: "Bad request"
+        }
+      }
+    }))))
+
+  it.effect("surfaces the provider message on 401 AuthenticationError", () =>
+    Effect.gen(function*() {
+      const client = yield* OpenRouterClient.OpenRouterClient
+
+      const result = yield* client.createChatCompletion({
+        model: "openai/gpt-4o-mini",
+        messages: [{ role: "user", content: "hello" }]
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(result.reason._tag, "AuthenticationError")
+      if (result.reason._tag !== "AuthenticationError") {
+        return yield* Effect.die(new Error("Expected AuthenticationError"))
+      }
+      assert.strictEqual(result.reason.kind, "InvalidKey")
+      assert.strictEqual(
+        result.reason.description,
+        "No auth credentials found (POST https://openrouter.ai/api/v1/chat/completions) [code: 401] [requestId: req_openrouter]"
+      )
+      assert.include(result.reason.message, "No auth credentials found")
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 401,
+      body: {
+        error: {
+          code: 401,
+          message: "No auth credentials found"
+        }
+      },
+      headers: { "x-request-id": "req_openrouter" }
+    }))))
+
+  it("preserves and truncates a fallback HTTP response", () => {
+    const body = `${"a".repeat(200)}b`
+    const reason = Errors.mapStatusCodeToReason({
+      status: 400,
+      headers: {},
+      message: undefined,
+      metadata: { errorCode: null, errorType: null, requestId: null },
+      http: makeHttpContext("https://openrouter.ai/api/v1/chat/completions", body)
+    })
+
+    assert.strictEqual(reason._tag, "InvalidRequestError")
+    if (reason._tag !== "InvalidRequestError") {
+      throw new Error("Expected InvalidRequestError")
+    }
+    assert.strictEqual(
+      reason.description,
+      `HTTP 400 (POST https://openrouter.ai/api/v1/chat/completions) Response: ${"a".repeat(200)}...`
+    )
+  })
+
+  it.effect("surfaces the provider message on 403 AuthenticationError", () =>
+    Effect.gen(function*() {
+      const client = yield* OpenRouterClient.OpenRouterClient
+
+      const result = yield* client.createChatCompletion({
+        model: "openai/gpt-4o-mini",
+        messages: [{ role: "user", content: "hello" }]
+      }).pipe(Effect.flip)
+
+      assert.strictEqual(result.reason._tag, "AuthenticationError")
+      if (result.reason._tag !== "AuthenticationError") {
+        return yield* Effect.die(new Error("Expected AuthenticationError"))
+      }
+      assert.strictEqual(result.reason.kind, "InsufficientPermissions")
+      assert.include(result.reason.description ?? "", "Key does not have permission")
+      assert.include(result.reason.message, "Key does not have permission")
+    }).pipe(Effect.provide(makeTestLayer({
+      _tag: "Json",
+      status: 403,
+      body: {
+        error: {
+          code: 403,
+          message: "Key does not have permission"
         }
       }
     }))))
@@ -111,3 +190,14 @@ const makeResponse = (
     })
   )
 }
+
+const makeHttpContext = (url: string, body: string) => ({
+  request: {
+    method: "POST" as const,
+    url,
+    urlParams: [],
+    hash: undefined,
+    headers: {}
+  },
+  body
+})

@@ -1,1 +1,0 @@
-# `@effect/platform-browser`

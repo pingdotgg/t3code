@@ -87,10 +87,10 @@ Use the narrowest validation that still covers the change:
 | Tests-only changes               | `pnpm lint-fix`, targeted `pnpm test --run <test_file.ts>`, `pnpm check`           |
 | Type-level/API type changes      | Targeted `pnpm test-types <filename>`, plus `pnpm check` when source types changed |
 | JSDoc text/category/link changes | `pnpm lint`                                                                        |
-| JSDoc example changes            | `pnpm lint`; from the changed package directory, run `pnpm docgen`                 |
+| JSDoc example changes            | `pnpm lint`; root `pnpm doctest --run <files>`          |
 | Docs-only changes                | `pnpm lint-fix`; no tests required unless examples or code changed                 |
 
-Never run the whole test suite. A bare `pnpm test` runs every package in watch mode and will not
+Never run the whole test suite. A bare `pnpm test` or `pnpm doctest` runs every package in watch mode and will not
 exit; always pass `--run` and the specific test files covering your change. CI runs the full suite
 on push, so leave that to CI.
 
@@ -123,6 +123,7 @@ Read `.patterns/testing.md` before writing or changing tests.
 - Test files are located in `packages/*/test/`.
 - Main Effect library tests are in `packages/effect/test/`.
 - Use `it.effect` for Effect-returning tests.
+- `it.effect` and `it.live` already provide and close a `Scope` for each test; do not wrap test bodies in `Effect.scoped`.
 - Use regular `it` for pure synchronous tests.
 - Do not use `Effect.runSync` in tests.
 - Do not use `expect` from Vitest; use `assert` from `@effect/vitest`.
@@ -132,8 +133,14 @@ Read `.patterns/testing.md` before writing or changing tests.
 
 - For AI documentation, read `ai-docs/README.md` very carefully before writing examples.
 - AI documentation changes may include explanatory comments when useful.
-- For public JSDoc `@category` guidance, read `.patterns/jsdoc.md`.
-- When JSDoc examples are localized to a single package, run `pnpm docgen` from that package directory instead of the repository root.
+- For public JSDoc categories and example best practices, read `.patterns/jsdoc.md`.
+- Mark runnable TypeScript examples with `````ts import.meta.vitest``. Leave examples that register Vitest tests or suites
+  as plain `````ts`` fences because the doctest collector executes runnable snippets inside tests; invoke registration
+  APIs directly to show their intended top-level usage.
+- Prefer direct trailing value assertions such as `operation() // => Option.some(1)`. Keep bindings only for reuse or meaningful multi-step setup, separate later assertion blocks with a blank line, use dense expected arrays such as `[1, 2]`, and keep a call on one line when the complete line is at most 120 characters.
+- Assert semantic values rather than console formatting. Preserve `import.meta.vitest` on type-level examples without adding tautological runtime assertions.
+- Keep marked examples self-contained, deterministic, bounded, and free of external-service dependencies. Await asynchronous work.
+- Run `pnpm doctest --run <source files>` from the repository root to execute changed examples.
 
 ## Generated Files
 

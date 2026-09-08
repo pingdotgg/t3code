@@ -1,7 +1,14 @@
-# `@effect/sql-mssql`
+# @effect/sql-mssql
 
-An Effect SQL implementation using the mssql `tedious` library.
+An Effect SQL client for Microsoft SQL Server, built on the [`tedious`](https://tediousjs.github.io/tedious/) library.
+
+## Installation
+
+```sh
+npm install effect@rc @effect/sql-mssql@rc
+```
 
 ## Documentation
 
-- **API Reference**: [View the full documentation](https://effect-ts.github.io/effect/docs/sql-mssql).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/sql-mssql)

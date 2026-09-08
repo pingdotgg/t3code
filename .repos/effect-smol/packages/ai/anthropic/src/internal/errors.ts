@@ -8,6 +8,7 @@ import * as Redactable from "effect/Redactable"
 import * as Schema from "effect/Schema"
 import * as AiError from "effect/unstable/ai/AiError"
 import type * as Response from "effect/unstable/ai/Response"
+import type * as Sse from "effect/unstable/encoding/Sse"
 import type * as HttpClientError from "effect/unstable/http/HttpClientError"
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
@@ -50,6 +51,17 @@ export const mapSchemaError = dual<
     module: "AnthropicClient",
     method,
     reason: AiError.InvalidOutputError.fromSchemaError(error)
+  }))
+
+/** @internal */
+export const mapSseError = dual<
+  (method: string) => (error: Sse.SseError) => AiError.AiError,
+  (error: Sse.SseError, method: string) => AiError.AiError
+>(2, (error, method) =>
+  AiError.make({
+    module: "AnthropicClient",
+    method,
+    reason: new AiError.InvalidOutputError({ description: error.message })
   }))
 
 /** @internal */
@@ -248,43 +260,6 @@ export const buildHttpContext = (params: {
 // HTTP Status Code
 // =============================================================================
 
-const buildInvalidRequestDescription = (params: {
-  readonly status: number
-  readonly message: string | undefined
-  readonly method: string
-  readonly url: string
-  readonly errorType: string | null
-  readonly requestId: string | null
-  readonly body: string | undefined
-}): string => {
-  const parts: Array<string> = []
-
-  if (params.message) {
-    parts.push(params.message)
-  } else {
-    parts.push(`HTTP ${params.status}`)
-  }
-
-  parts.push(`(${params.method} ${params.url})`)
-
-  if (params.errorType) {
-    parts.push(`[type: ${params.errorType}]`)
-  }
-
-  if (params.requestId) {
-    parts.push(`[requestId: ${params.requestId}]`)
-  }
-
-  if (!params.message && params.body) {
-    const truncated = params.body.length > 200
-      ? params.body.slice(0, 200) + "..."
-      : params.body
-    parts.push(`Response: ${truncated}`)
-  }
-
-  return parts.join(" ")
-}
-
 /** @internal */
 export const mapStatusCodeToReason = ({ status, headers, message, metadata, http }: {
   readonly status: number
@@ -293,7 +268,7 @@ export const mapStatusCodeToReason = ({ status, headers, message, metadata, http
   readonly metadata: AnthropicErrorMetadata
   readonly http: typeof AiError.HttpContext.Type
 }): AiError.AiErrorReason => {
-  const invalidRequestDescription = buildInvalidRequestDescription({
+  const errorDescription = AiError.buildErrorDescription({
     status,
     message,
     method: http.request.method,
@@ -306,31 +281,33 @@ export const mapStatusCodeToReason = ({ status, headers, message, metadata, http
   switch (status) {
     case 400:
       return new AiError.InvalidRequestError({
-        description: invalidRequestDescription,
+        description: errorDescription,
         metadata: { anthropic: metadata },
         http
       })
     case 401:
       return new AiError.AuthenticationError({
         kind: "InvalidKey",
+        description: errorDescription,
         metadata: { anthropic: metadata },
         http
       })
     case 403:
       return new AiError.AuthenticationError({
         kind: "InsufficientPermissions",
+        description: errorDescription,
         metadata: { anthropic: metadata },
         http
       })
     case 404:
       return new AiError.InvalidRequestError({
-        description: invalidRequestDescription,
+        description: errorDescription,
         metadata: { anthropic: metadata },
         http
       })
     case 422:
       return new AiError.InvalidRequestError({
-        description: invalidRequestDescription,
+        description: errorDescription,
         metadata: { anthropic: metadata },
         http
       })

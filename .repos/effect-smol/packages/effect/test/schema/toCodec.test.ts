@@ -19,7 +19,7 @@ import { describe, it } from "vitest"
 import { assertTrue, deepStrictEqual, strictEqual, throws } from "../utils/assert.ts"
 
 const isDeno = "Deno" in globalThis
-const resolveIdentifierFallback = SchemaAST.resolveAt<string>("~identifier")
+const formatIssue = SchemaIssue.makeFormatterDefault()
 
 const FiniteFromDate = Schema.Date.pipe(Schema.decodeTo(
   Schema.Number,
@@ -42,61 +42,9 @@ describe("Serializers", () => {
       strictEqual(Schema.toCodecJson(Schema.MutableJson).ast, Schema.MutableJson.ast)
     })
 
-    describe("identifier preservation", () => {
-      it("annotates a new canonical encoding with the effective type-side identifier", () => {
-        const schema = Schema.Number.check(Schema.isGreaterThan(0)).annotate({ identifier: "Positive" })
-        const encoded = SchemaAST.getLastEncoding(Schema.toCodecJson(schema).ast)
-
-        strictEqual(resolveIdentifierFallback(encoded), "Positive")
-      })
-
-      it("annotates an existing canonical encoding", () => {
-        const schema = Schema.FiniteFromString.annotate({ identifier: "Finite" })
-        const encoded = SchemaAST.getLastEncoding(Schema.toCodecJson(schema).ast)
-
-        strictEqual(resolveIdentifierFallback(encoded), "Finite")
-      })
-
-      it("does not overwrite an encoded-side identifier", () => {
-        const schema = Schema.FiniteFromString.pipe(
-          Schema.annotateEncoded({ identifier: "EncodedFinite" }),
-          Schema.annotate({ identifier: "Finite" })
-        )
-        const encoded = SchemaAST.getLastEncoding(Schema.toCodecJson(schema).ast)
-
-        strictEqual(SchemaAST.resolveIdentifier(encoded), "EncodedFinite")
-        strictEqual(resolveIdentifierFallback(encoded), undefined)
-      })
-
-      it("preserves the AST when the fallback identifier is unchanged", () => {
-        const schema = Schema.FiniteFromString.pipe(
-          Schema.annotateEncoded({ "~identifier": "Finite" }),
-          Schema.annotate({ identifier: "Finite" })
-        )
-
-        strictEqual(Schema.toCodecJson(schema).ast, schema.ast)
-      })
-
-      it("overwrites a different fallback identifier", () => {
-        const schema = Schema.FiniteFromString.pipe(
-          Schema.annotateEncoded({ "~identifier": "Previous" }),
-          Schema.annotate({ identifier: "Finite" })
-        )
-        const encoded = SchemaAST.getLastEncoding(Schema.toCodecJson(schema).ast)
-
-        strictEqual(resolveIdentifierFallback(encoded), "Finite")
-      })
-
-      it("propagates identifiers recursively", () => {
-        class Person extends Schema.Class<Person>("Person")({ name: Schema.String }) {}
-        const ast = Schema.toCodecJson(Schema.Struct({ person: Person })).ast
-
-        strictEqual(ast._tag, "Objects")
-        if (ast._tag === "Objects") {
-          const encoded = SchemaAST.getLastEncoding(ast.propertySignatures[0].type)
-          strictEqual(resolveIdentifierFallback(encoded), "Person")
-        }
-      })
+    it("is idempotent", () => {
+      const once = Schema.toCodecJson(Schema.suspend(() => Schema.Struct({ value: Schema.Number })))
+      strictEqual(Schema.toCodecJson(once).ast, once.ast)
     })
 
     it("should reorder the types in the Union based on the encoded side", async () => {
@@ -135,9 +83,9 @@ describe("Serializers", () => {
 
           await asserts.encoding().fail(
             new URL("https://example.com"),
-            "Expected JSON value, got https://example.com/"
+            "Expected JSON value"
           )
-          await asserts.decoding().fail({}, "Expected <Declaration>, got {}")
+          await asserts.decoding().fail({}, "Expected <Declaration>")
         })
 
         describe("instanceOf with annotation", () => {
@@ -280,7 +228,7 @@ describe("Serializers", () => {
         const asserts = new TestSchema.Asserts(Schema.toCodecJson(schema))
 
         const encoding = asserts.encoding()
-        await encoding.fail({}, "Expected never, got {}")
+        await encoding.fail({}, "Expected never")
       })
 
       it("Any", async () => {
@@ -305,7 +253,7 @@ describe("Serializers", () => {
         await encoding.succeed(null)
         await encoding.succeed({ a: "a", b: 1, c: true })
         await encoding.succeed(["a", 1, true])
-        await encoding.fail({ a: 1n }, `Expected JSON value, got {"a":1n}`)
+        await encoding.fail({ a: 1n }, `Expected JSON value`)
 
         const decoding = asserts.decoding()
         await decoding.succeed("a")
@@ -314,7 +262,7 @@ describe("Serializers", () => {
         await decoding.succeed(null)
         await decoding.succeed({ a: "a", b: 1, c: true })
         await decoding.succeed(["a", 1, true])
-        await decoding.fail({ a: 1n }, `Expected JSON value, got {"a":1n}`)
+        await decoding.fail({ a: 1n }, `Expected JSON value`)
       })
 
       it("ObjectKeyword", async () => {
@@ -324,14 +272,14 @@ describe("Serializers", () => {
         const encoding = asserts.encoding()
         await encoding.succeed({ a: "a", b: 1, c: true })
         await encoding.succeed(["a", 1, true])
-        await encoding.fail("a", `Expected object | array | function, got "a"`)
-        await encoding.fail({ a: 1n }, `Expected JSON value, got 1n\n  at ["a"]`)
+        await encoding.fail("a", `Expected object | array | function`)
+        await encoding.fail({ a: 1n }, `Expected JSON value\n  at ["a"]`)
 
         const decoding = asserts.decoding()
         await decoding.succeed({ a: "a", b: 1, c: true })
         await decoding.succeed(["a", 1, true])
-        await decoding.fail("a", `Expected array | object, got "a"`)
-        await decoding.fail({ a: 1n }, `Expected JSON value, got 1n\n  at ["a"]`)
+        await decoding.fail("a", `Expected array | object`)
+        await decoding.fail({ a: 1n }, `Expected JSON value\n  at ["a"]`)
       })
 
       it("Undefined", async () => {
@@ -392,11 +340,11 @@ describe("Serializers", () => {
           strictEqual(ast._tag, "Objects")
           if (ast._tag === "Objects") {
             const type = ast.propertySignatures[0].type
-            assertTrue(type.context?.defaultValue !== undefined)
+            assertTrue(type.context?.constructorDefault !== undefined)
             const encoded = SchemaAST.getLastEncoding(type)
             strictEqual(encoded.context?.isOptional, true)
             strictEqual(encoded.context?.isMutable, true)
-            strictEqual(encoded.context?.defaultValue, undefined)
+            strictEqual(encoded.context?.constructorDefault, undefined)
             deepStrictEqual(encoded.context?.annotations, { description: "a" })
           }
         })
@@ -420,14 +368,29 @@ describe("Serializers", () => {
           await decoding.succeed("Infinity", Infinity)
           await decoding.succeed("-Infinity", -Infinity)
           await decoding.succeed("NaN", NaN)
-          await decoding.fail(Infinity, "Expected a finite number, got Infinity")
-          await decoding.fail(-Infinity, "Expected a finite number, got -Infinity")
-          await decoding.fail(NaN, "Expected a finite number, got NaN")
-          await decoding.fail(null, `Expected number | "Infinity" | "-Infinity" | "NaN", got null`)
-          await decoding.fail("a", `Expected "Infinity" | "-Infinity" | "NaN", got "a"`)
+          await decoding.fail(Infinity, "Expected a finite number")
+          await decoding.fail(-Infinity, "Expected a finite number")
+          await decoding.fail(NaN, "Expected a finite number")
+          await decoding.fail(null, `Expected number | "Infinity" | "-Infinity" | "NaN"`)
+          await decoding.fail("a", `Expected "Infinity" | "-Infinity" | "NaN"`)
         })
 
         describe("checks", () => {
+          it("runs source checks once per direction", () => {
+            let executions = 0
+            const codec = Schema.toCodecJson(Schema.Number.check(Schema.makeFilter<number>(() => {
+              executions++
+              return undefined
+            })))
+
+            Schema.decodeUnknownSync(codec)(1)
+            strictEqual(executions, 1)
+
+            executions = 0
+            Schema.encodeUnknownSync(codec)(1)
+            strictEqual(executions, 1)
+          })
+
           it("Finite", async () => {
             const schema = Schema.Finite
             const asserts = new TestSchema.Asserts(Schema.toCodecJson(schema))
@@ -436,22 +399,22 @@ describe("Serializers", () => {
             await encoding.succeed(1)
             await encoding.succeed(-1)
             await encoding.succeed(1.2)
-            await encoding.fail(Infinity, "Expected a finite number, got Infinity")
-            await encoding.fail(-Infinity, "Expected a finite number, got -Infinity")
-            await encoding.fail(NaN, "Expected a finite number, got NaN")
+            await encoding.fail(Infinity, "Expected a finite number")
+            await encoding.fail(-Infinity, "Expected a finite number")
+            await encoding.fail(NaN, "Expected a finite number")
 
             const decoding = asserts.decoding()
             await decoding.succeed(1)
             await decoding.succeed(-1)
             await decoding.succeed(1.2)
-            await decoding.fail("Infinity", `Expected number, got "Infinity"`)
-            await decoding.fail("-Infinity", `Expected number, got "-Infinity"`)
-            await decoding.fail("NaN", `Expected number, got "NaN"`)
-            await decoding.fail(Infinity, `Expected a finite number, got Infinity`)
-            await decoding.fail(-Infinity, `Expected a finite number, got -Infinity`)
-            await decoding.fail(NaN, `Expected a finite number, got NaN`)
-            await decoding.fail(null, `Expected number, got null`)
-            await decoding.fail("a", `Expected number, got "a"`)
+            await decoding.fail("Infinity", `Expected number`)
+            await decoding.fail("-Infinity", `Expected number`)
+            await decoding.fail("NaN", `Expected number`)
+            await decoding.fail(Infinity, `Expected a finite number`)
+            await decoding.fail(-Infinity, `Expected a finite number`)
+            await decoding.fail(NaN, `Expected a finite number`)
+            await decoding.fail(null, `Expected number`)
+            await decoding.fail("a", `Expected number`)
           })
 
           it("Int", async () => {
@@ -461,23 +424,23 @@ describe("Serializers", () => {
             const encoding = asserts.encoding()
             await encoding.succeed(1)
             await encoding.succeed(-1)
-            await encoding.fail(1.2, `Expected an integer, got 1.2`)
-            await encoding.fail(Infinity, "Expected an integer, got Infinity")
-            await encoding.fail(-Infinity, "Expected an integer, got -Infinity")
-            await encoding.fail(NaN, "Expected an integer, got NaN")
+            await encoding.fail(1.2, `Expected an integer`)
+            await encoding.fail(Infinity, "Expected an integer")
+            await encoding.fail(-Infinity, "Expected an integer")
+            await encoding.fail(NaN, "Expected an integer")
 
             const decoding = asserts.decoding()
             await decoding.succeed(1)
             await decoding.succeed(-1)
-            await decoding.fail(1.2, `Expected an integer, got 1.2`)
-            await decoding.fail("Infinity", `Expected number, got "Infinity"`)
-            await decoding.fail("-Infinity", `Expected number, got "-Infinity"`)
-            await decoding.fail("NaN", `Expected number, got "NaN"`)
-            await decoding.fail(Infinity, `Expected an integer, got Infinity`)
-            await decoding.fail(-Infinity, `Expected an integer, got -Infinity`)
-            await decoding.fail(NaN, `Expected an integer, got NaN`)
-            await decoding.fail(null, `Expected number, got null`)
-            await decoding.fail("a", `Expected number, got "a"`)
+            await decoding.fail(1.2, `Expected an integer`)
+            await decoding.fail("Infinity", `Expected number`)
+            await decoding.fail("-Infinity", `Expected number`)
+            await decoding.fail("NaN", `Expected number`)
+            await decoding.fail(Infinity, `Expected an integer`)
+            await decoding.fail(-Infinity, `Expected an integer`)
+            await decoding.fail(NaN, `Expected an integer`)
+            await decoding.fail(null, `Expected number`)
+            await decoding.fail("a", `Expected number`)
           })
 
           it("isGreaterThanOrEqualTo", async () => {
@@ -486,24 +449,24 @@ describe("Serializers", () => {
 
             const encoding = asserts.encoding()
             await encoding.succeed(1)
-            await encoding.fail(-1, `Expected a value greater than or equal to 1, got -1`)
+            await encoding.fail(-1, `Expected a value greater than or equal to 1`)
             await encoding.succeed(1.2)
             await encoding.succeed(Infinity, "Infinity")
-            await encoding.fail(-Infinity, "Expected a value greater than or equal to 1, got -Infinity")
-            await encoding.fail(NaN, "Expected a value greater than or equal to 1, got NaN")
+            await encoding.fail(-Infinity, "Expected a value greater than or equal to 1")
+            await encoding.fail(NaN, "Expected a value greater than or equal to 1")
 
             const decoding = asserts.decoding()
             await decoding.succeed(1)
-            await encoding.fail(-1, `Expected a value greater than or equal to 1, got -1`)
+            await encoding.fail(-1, `Expected a value greater than or equal to 1`)
             await decoding.succeed(1.2)
             await decoding.succeed("Infinity", Infinity)
-            await decoding.fail("-Infinity", `Expected a value greater than or equal to 1, got -Infinity`)
-            await decoding.fail("NaN", `Expected a value greater than or equal to 1, got NaN`)
-            await decoding.fail(Infinity, "Expected a finite number, got Infinity")
-            await decoding.fail(-Infinity, "Expected a finite number, got -Infinity")
-            await decoding.fail(NaN, "Expected a finite number, got NaN")
-            await decoding.fail(null, `Expected number | "Infinity" | "-Infinity" | "NaN", got null`)
-            await decoding.fail("a", `Expected "Infinity" | "-Infinity" | "NaN", got "a"`)
+            await decoding.fail("-Infinity", `Expected a value greater than or equal to 1`)
+            await decoding.fail("NaN", `Expected a value greater than or equal to 1`)
+            await decoding.fail(Infinity, "Expected a finite number")
+            await decoding.fail(-Infinity, "Expected a finite number")
+            await decoding.fail(NaN, "Expected a finite number")
+            await decoding.fail(null, `Expected number | "Infinity" | "-Infinity" | "NaN"`)
+            await decoding.fail("a", `Expected "Infinity" | "-Infinity" | "NaN"`)
           })
         })
       })
@@ -628,7 +591,7 @@ describe("Serializers", () => {
         const decoding = asserts.decoding()
         await decoding.fail(
           "-",
-          `Expected "a" | 1 | "2" | true, got "-"`
+          `Expected "a" | 1 | "2" | true`
         )
       })
 
@@ -999,8 +962,8 @@ describe("Serializers", () => {
         await decoding.succeed({ a: 0 }, new A({ a: 0 }))
       })
 
-      it("ErrorClass", async () => {
-        class E extends Schema.ErrorClass<E>("E")({
+      it("Error", async () => {
+        class E extends Schema.Error<E>("E")({
           a: Schema.Finite
         }) {}
         const asserts = new TestSchema.Asserts(Schema.toCodecJson(Schema.toType(E)))
@@ -1024,7 +987,7 @@ describe("Serializers", () => {
       })
 
       it("Error", async () => {
-        const schema = Schema.Error()
+        const schema = Schema.ErrorInstance()
         const asserts = new TestSchema.Asserts(Schema.toCodecJson(schema))
 
         const encoding = asserts.encoding()
@@ -1096,7 +1059,7 @@ describe("Serializers", () => {
       })
 
       it("Error with stack", async () => {
-        const schema = Schema.Error({ includeStack: true })
+        const schema = Schema.ErrorInstance({ includeStack: true })
         const asserts = new TestSchema.Asserts(Schema.toCodecJson(schema))
         const error = new Error("a")
         error.stack = "stack"
@@ -1120,7 +1083,7 @@ describe("Serializers", () => {
       })
 
       it("Error with excluded cause", async () => {
-        const schema = Schema.Error({ excludeCause: true })
+        const schema = Schema.ErrorInstance({ excludeCause: true })
         const asserts = new TestSchema.Asserts(Schema.toCodecJson(schema))
 
         const encoding = asserts.encoding()
@@ -1151,7 +1114,7 @@ describe("Serializers", () => {
         )
         await decoding.fail(
           "not a url",
-          `Invalid URL string: not a url`
+          "Expected a valid URL string"
         )
       })
 
@@ -1231,11 +1194,11 @@ describe("Serializers", () => {
         await decoding.succeed({ source: "a", flags: "i" }, new RegExp("a", "i"))
         await decoding.fail(
           { source: "(", flags: "" },
-          `SyntaxError: Invalid regular expression: /(/: Unterminated group`
+          "Expected valid RegExp source and flags"
         )
         await decoding.fail(
           { source: "a", flags: "x" },
-          `SyntaxError: Invalid flags supplied to RegExp constructor 'x'`
+          "Expected valid RegExp source and flags"
         )
       })
 
@@ -1250,7 +1213,7 @@ describe("Serializers", () => {
         await decoding.succeed("AQID", new Uint8Array([1, 2, 3]))
         await decoding.fail(
           "not a base64 string",
-          "Length must be a multiple of 4, but is 19"
+          "Expected a valid Base64 string"
         )
       })
 
@@ -1365,7 +1328,7 @@ describe("Serializers", () => {
           const encoding = asserts.encoding()
           await encoding.fail(
             Redacted.make("a", { label: "API key" }),
-            `Expected "password", got "API key"
+            `Expected "password"
   at ["label"]`
           )
         })
@@ -1488,7 +1451,7 @@ describe("Serializers", () => {
       })
 
       it("Error", async () => {
-        class E extends Schema.ErrorClass<E>("E")({
+        class E extends Schema.Error<E>("E")({
           a: FiniteFromDate
         }) {}
         const asserts = new TestSchema.Asserts(Schema.toCodecJson(E))
@@ -1662,7 +1625,7 @@ describe("Serializers", () => {
       const encoding = asserts.encoding()
       await encoding.succeed(failureResult, {
         issues: [
-          { path: ["a"], message: `Expected a value with a length of at least 1, got ""` },
+          { path: ["a"], message: `Expected a value with a length of at least 1` },
           { path: ["c", 0], message: "Missing key" },
           { path: ["Symbol(b)"], message: "Missing key" }
         ]
@@ -1671,7 +1634,7 @@ describe("Serializers", () => {
       const decoding = asserts.decoding()
       await decoding.succeed({
         issues: [
-          { path: ["a"], message: `Expected a value with a length of at least 1, got ""` },
+          { path: ["a"], message: `Expected a value with a length of at least 1` },
           { path: ["c", 0], message: "Missing key" },
           { path: ["Symbol(b)"], message: "Missing key" }
         ]
@@ -1694,11 +1657,11 @@ describe("Serializers", () => {
       strictEqual(ast._tag, "Objects")
       if (ast._tag === "Objects") {
         const type = ast.propertySignatures[0].type
-        assertTrue(type.context?.defaultValue !== undefined)
+        assertTrue(type.context?.constructorDefault !== undefined)
         const encoded = SchemaAST.getLastEncoding(type)
         strictEqual(encoded.context?.isOptional, true)
         strictEqual(encoded.context?.isMutable, true)
-        strictEqual(encoded.context?.defaultValue, undefined)
+        strictEqual(encoded.context?.constructorDefault, undefined)
         deepStrictEqual(encoded.context?.annotations, { description: "a" })
       }
     })
@@ -1724,11 +1687,11 @@ describe("Serializers", () => {
       strictEqual(ast._tag, "Objects")
       if (ast._tag === "Objects") {
         const type = ast.propertySignatures[0].type
-        assertTrue(type.context?.defaultValue !== undefined)
+        assertTrue(type.context?.constructorDefault !== undefined)
         const encoded = SchemaAST.getLastEncoding(type)
         strictEqual(encoded.context?.isOptional, true)
         strictEqual(encoded.context?.isMutable, true)
-        strictEqual(encoded.context?.defaultValue, undefined)
+        strictEqual(encoded.context?.constructorDefault, undefined)
         deepStrictEqual(encoded.context?.annotations, { description: "a" })
       }
     })
@@ -1783,6 +1746,11 @@ describe("Serializers", () => {
         const serializer = Schema.toCodecStringTree(Schema.Unknown)
         strictEqual(serializer.ast, Schema.toCodecStringTree(serializer).ast)
       })
+
+      it("Suspend", () => {
+        const serializer = Schema.toCodecStringTree(Schema.suspend(() => Schema.Array(Schema.Finite)))
+        strictEqual(serializer.ast, Schema.toCodecStringTree(serializer).ast)
+      })
     })
 
     describe("schemas without encoding", () => {
@@ -1814,16 +1782,16 @@ describe("Serializers", () => {
         await encoding.succeed("a")
         await encoding.succeed(["a"])
         await encoding.succeed({ a: "a" })
-        await encoding.fail(1, `Expected StringTree, got 1`)
-        await encoding.fail(true, `Expected StringTree, got true`)
-        await encoding.fail(null, `Expected StringTree, got null`)
-        await encoding.fail({ a: 1 }, `Expected StringTree, got {"a":1}`)
+        await encoding.fail(1, `Expected StringTree`)
+        await encoding.fail(true, `Expected StringTree`)
+        await encoding.fail(null, `Expected StringTree`)
+        await encoding.fail({ a: 1 }, `Expected StringTree`)
 
         const decoding = asserts.decoding()
         await decoding.succeed("a")
         await decoding.succeed(["a"])
         await decoding.succeed({ a: "a" })
-        await decoding.fail(undefined, `Expected JSON value, got undefined`)
+        await decoding.fail(undefined, `Expected JSON value`)
       })
 
       it("Unknown", async () => {
@@ -1832,17 +1800,17 @@ describe("Serializers", () => {
 
         const encoding = asserts.encoding()
         await encoding.succeed("a")
-        await encoding.fail(1, `Expected StringTree, got 1`)
+        await encoding.fail(1, `Expected StringTree`)
         await encoding.succeed({ a: "a" })
         await encoding.succeed(["a"])
-        await encoding.fail({ a: 1 }, `Expected StringTree, got {"a":1}`)
+        await encoding.fail({ a: 1 }, `Expected StringTree`)
 
         const decoding = asserts.decoding()
         await decoding.succeed("a")
-        await decoding.fail(1, `Expected StringTree, got 1`)
+        await decoding.fail(1, `Expected StringTree`)
         await decoding.succeed({ a: "a" })
         await decoding.succeed(["a"])
-        await decoding.fail({ a: 1 }, `Expected StringTree, got {"a":1}`)
+        await decoding.fail({ a: 1 }, `Expected StringTree`)
       })
 
       it("ObjectKeyword", async () => {
@@ -1850,18 +1818,18 @@ describe("Serializers", () => {
         const asserts = new TestSchema.Asserts(Schema.toCodecStringTree(schema))
 
         const encoding = asserts.encoding()
-        await encoding.fail("a", `Expected object | array | function, got "a"`)
-        await encoding.fail(1, `Expected object | array | function, got 1`)
+        await encoding.fail("a", `Expected object | array | function`)
+        await encoding.fail(1, `Expected object | array | function`)
         await encoding.succeed({ a: "a" })
         await encoding.succeed(["a"])
-        await encoding.fail({ a: 1 }, `Expected StringTree, got {"a":1}`)
+        await encoding.fail({ a: 1 }, `Expected StringTree`)
 
         const decoding = asserts.decoding()
-        await decoding.fail("a", `Expected object | array | function, got "a"`)
-        await decoding.fail(1, `Expected StringTree, got 1`)
+        await decoding.fail("a", `Expected object | array | function`)
+        await decoding.fail(1, `Expected StringTree`)
         await decoding.succeed({ a: "a" })
         await decoding.succeed(["a"])
-        await decoding.fail({ a: 1 }, `Expected StringTree, got {"a":1}`)
+        await decoding.fail({ a: 1 }, `Expected StringTree`)
       })
 
       it("Never", async () => {
@@ -1869,7 +1837,7 @@ describe("Serializers", () => {
         const asserts = new TestSchema.Asserts(Schema.toCodecStringTree(schema))
 
         const encoding = asserts.encoding()
-        await encoding.fail({}, "Expected never, got {}")
+        await encoding.fail({}, "Expected never")
       })
 
       it("Any should be an escape hatch", async () => {
@@ -1947,14 +1915,14 @@ describe("Serializers", () => {
           await decoding.succeed("Infinity", Infinity)
           await decoding.succeed("-Infinity", -Infinity)
           await decoding.succeed("NaN", NaN)
-          await decoding.fail(Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN", got Infinity`)
-          await decoding.fail(-Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN", got -Infinity`)
-          await decoding.fail(NaN, `Expected string | "Infinity" | "-Infinity" | "NaN", got NaN`)
-          await decoding.fail(null, `Expected string | "Infinity" | "-Infinity" | "NaN", got null`)
+          await decoding.fail(Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
+          await decoding.fail(-Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
+          await decoding.fail(NaN, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
+          await decoding.fail(null, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
           await decoding.fail(
             "a",
-            `Expected a string representing a finite number, got "a"
-Expected "Infinity" | "-Infinity" | "NaN", got "a"`
+            `Expected a string representing a finite number
+Expected "Infinity" | "-Infinity" | "NaN"`
           )
         })
 
@@ -1967,22 +1935,22 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
             await encoding.succeed(1, "1")
             await encoding.succeed(-1, "-1")
             await encoding.succeed(1.2, "1.2")
-            await encoding.fail(Infinity, "Expected a finite number, got Infinity")
-            await encoding.fail(-Infinity, "Expected a finite number, got -Infinity")
-            await encoding.fail(NaN, "Expected a finite number, got NaN")
+            await encoding.fail(Infinity, "Expected a finite number")
+            await encoding.fail(-Infinity, "Expected a finite number")
+            await encoding.fail(NaN, "Expected a finite number")
 
             const decoding = asserts.decoding()
             await decoding.succeed("1", 1)
             await decoding.succeed("-1", -1)
             await decoding.succeed("1.2", 1.2)
-            await decoding.fail("Infinity", `Expected a string representing a finite number, got "Infinity"`)
-            await decoding.fail("-Infinity", `Expected a string representing a finite number, got "-Infinity"`)
-            await decoding.fail("NaN", `Expected a string representing a finite number, got "NaN"`)
-            await decoding.fail(Infinity, `Expected string, got Infinity`)
-            await decoding.fail(-Infinity, `Expected string, got -Infinity`)
-            await decoding.fail(NaN, `Expected string, got NaN`)
-            await decoding.fail(null, `Expected string, got null`)
-            await decoding.fail("a", `Expected a string representing a finite number, got "a"`)
+            await decoding.fail("Infinity", `Expected a string representing a finite number`)
+            await decoding.fail("-Infinity", `Expected a string representing a finite number`)
+            await decoding.fail("NaN", `Expected a string representing a finite number`)
+            await decoding.fail(Infinity, `Expected string`)
+            await decoding.fail(-Infinity, `Expected string`)
+            await decoding.fail(NaN, `Expected string`)
+            await decoding.fail(null, `Expected string`)
+            await decoding.fail("a", `Expected a string representing a finite number`)
           })
 
           it("Int", async () => {
@@ -1992,23 +1960,23 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
             const encoding = asserts.encoding()
             await encoding.succeed(1, "1")
             await encoding.succeed(-1, "-1")
-            await encoding.fail(1.2, `Expected an integer, got 1.2`)
-            await encoding.fail(Infinity, `Expected an integer, got Infinity`)
-            await encoding.fail(-Infinity, `Expected an integer, got -Infinity`)
-            await encoding.fail(NaN, `Expected an integer, got NaN`)
+            await encoding.fail(1.2, `Expected an integer`)
+            await encoding.fail(Infinity, `Expected an integer`)
+            await encoding.fail(-Infinity, `Expected an integer`)
+            await encoding.fail(NaN, `Expected an integer`)
 
             const decoding = asserts.decoding()
             await decoding.succeed("1", 1)
             await decoding.succeed("-1", -1)
-            await decoding.fail("1.2", `Expected an integer, got 1.2`)
-            await decoding.fail("Infinity", `Expected a string representing a finite number, got "Infinity"`)
-            await decoding.fail("-Infinity", `Expected a string representing a finite number, got "-Infinity"`)
-            await decoding.fail("NaN", `Expected a string representing a finite number, got "NaN"`)
-            await decoding.fail(Infinity, `Expected string, got Infinity`)
-            await decoding.fail(-Infinity, `Expected string, got -Infinity`)
-            await decoding.fail(NaN, `Expected string, got NaN`)
-            await decoding.fail(null, `Expected string, got null`)
-            await decoding.fail("a", `Expected a string representing a finite number, got "a"`)
+            await decoding.fail("1.2", `Expected an integer`)
+            await decoding.fail("Infinity", `Expected a string representing a finite number`)
+            await decoding.fail("-Infinity", `Expected a string representing a finite number`)
+            await decoding.fail("NaN", `Expected a string representing a finite number`)
+            await decoding.fail(Infinity, `Expected string`)
+            await decoding.fail(-Infinity, `Expected string`)
+            await decoding.fail(NaN, `Expected string`)
+            await decoding.fail(null, `Expected string`)
+            await decoding.fail("a", `Expected a string representing a finite number`)
           })
 
           it("isGreaterThanOrEqualTo", async () => {
@@ -2017,27 +1985,27 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
 
             const encoding = asserts.encoding()
             await encoding.succeed(1, "1")
-            await encoding.fail(-1, `Expected a value greater than or equal to 1, got -1`)
+            await encoding.fail(-1, `Expected a value greater than or equal to 1`)
             await encoding.succeed(1.2, "1.2")
             await encoding.succeed(Infinity, "Infinity")
-            await encoding.fail(-Infinity, "Expected a value greater than or equal to 1, got -Infinity")
-            await encoding.fail(NaN, "Expected a value greater than or equal to 1, got NaN")
+            await encoding.fail(-Infinity, "Expected a value greater than or equal to 1")
+            await encoding.fail(NaN, "Expected a value greater than or equal to 1")
 
             const decoding = asserts.decoding()
             await decoding.succeed("1", 1)
-            await decoding.fail("-1", `Expected a value greater than or equal to 1, got -1`)
+            await decoding.fail("-1", `Expected a value greater than or equal to 1`)
             await decoding.succeed("1.2", 1.2)
             await decoding.succeed("Infinity", Infinity)
-            await decoding.fail("-Infinity", `Expected a value greater than or equal to 1, got -Infinity`)
-            await decoding.fail("NaN", `Expected a value greater than or equal to 1, got NaN`)
-            await decoding.fail(Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN", got Infinity`)
-            await decoding.fail(-Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN", got -Infinity`)
-            await decoding.fail(NaN, `Expected string | "Infinity" | "-Infinity" | "NaN", got NaN`)
-            await decoding.fail(null, `Expected string | "Infinity" | "-Infinity" | "NaN", got null`)
+            await decoding.fail("-Infinity", `Expected a value greater than or equal to 1`)
+            await decoding.fail("NaN", `Expected a value greater than or equal to 1`)
+            await decoding.fail(Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
+            await decoding.fail(-Infinity, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
+            await decoding.fail(NaN, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
+            await decoding.fail(null, `Expected string | "Infinity" | "-Infinity" | "NaN"`)
             await decoding.fail(
               "a",
-              `Expected a string representing a finite number, got "a"
-Expected "Infinity" | "-Infinity" | "NaN", got "a"`
+              `Expected a string representing a finite number
+Expected "Infinity" | "-Infinity" | "NaN"`
             )
           })
         })
@@ -2073,7 +2041,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
 
         const decoding = asserts.decoding()
         await decoding.succeed("Symbol(a)", Symbol.for("a"))
-        await decoding.fail("a", `Expected a string representing a symbol, got "a"`)
+        await decoding.fail("a", `Expected a string representing a symbol`)
       })
 
       it("UniqueSymbol", async () => {
@@ -2085,7 +2053,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
 
         const decoding = asserts.decoding()
         await decoding.succeed("Symbol(a)", Symbol.for("a"))
-        await decoding.fail("a", `Expected a string representing a symbol, got "a"`)
+        await decoding.fail("a", `Expected a string representing a symbol`)
       })
 
       it("BigInt", async () => {
@@ -2097,7 +2065,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
 
         const decoding = asserts.decoding()
         await decoding.succeed("1", 1n)
-        await decoding.fail("a", `Expected a string representing a bigint, got "a"`)
+        await decoding.fail("a", `Expected a string representing a bigint`)
       })
 
       it("PropertyKey", async () => {
@@ -2168,7 +2136,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
         const decoding = asserts.decoding()
         await decoding.fail(
           "-",
-          `Expected "a" | "1" | "2" | "true", got "-"`
+          `Expected "a" | "1" | "2" | "true"`
         )
       })
 
@@ -2449,7 +2417,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
         await encoding.succeed([1, 2], ["1", "2"])
 
         const decoding = asserts.decoding()
-        await decoding.fail("1,2", `Expected array, got "1,2"`)
+        await decoding.fail("1,2", `Expected array`)
         await decoding.succeed(["1", "2"], [1, 2])
       })
 
@@ -2557,8 +2525,8 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
         await decoding.succeed({ a: "0" }, new A({ a: 0 }))
       })
 
-      it("ErrorClass", async () => {
-        class E extends Schema.ErrorClass<E>("E")({
+      it("Error", async () => {
+        class E extends Schema.Error<E>("E")({
           a: Schema.Finite
         }) {}
         const asserts = new TestSchema.Asserts(Schema.toCodecStringTree(Schema.toType(E)))
@@ -2582,7 +2550,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
       })
 
       it("Error", async () => {
-        const schema = Schema.Error()
+        const schema = Schema.ErrorInstance()
         const asserts = new TestSchema.Asserts(Schema.toCodecStringTree(schema))
 
         const encoding = asserts.encoding()
@@ -2636,7 +2604,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
         )
         await decoding.fail(
           "not a url",
-          `Invalid URL string: not a url`
+          "Expected a valid URL string"
         )
       })
 
@@ -2653,7 +2621,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
         await decoding.succeed({ source: "a", flags: "i" }, new RegExp("a", "i"))
         await decoding.fail(
           { source: "a", flags: "x" },
-          `SyntaxError: Invalid flags supplied to RegExp constructor 'x'`
+          "Expected valid RegExp source and flags"
         )
       })
 
@@ -2789,11 +2757,23 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
       const decoding = asserts.decoding()
       await decoding.succeed({})
       await decoding.succeed({ a: ["a"] })
-      await decoding.fail({ a: "a" }, `Expected array, got "a"\n  at ["a"]`)
+      await decoding.fail({ a: "a" }, `Expected array\n  at ["a"]`)
     })
   })
 
   describe("toCodecArrayFromSingle", () => {
+    it("preserves union fallback when a singleton fails array element checks", async () => {
+      const schema = Schema.toCodecArrayFromSingle(Schema.toCodecStringTree(Schema.Union([
+        Schema.Array(Schema.String.check(Schema.isMinLength(2))),
+        Schema.String
+      ])))
+      const asserts = new TestSchema.Asserts(schema)
+
+      const decoding = asserts.decoding()
+      await decoding.succeed("a", "a")
+      await decoding.succeed("ab", ["ab"])
+    })
+
     it("accepts string and array inputs for a top-level array", async () => {
       const serializer = Schema.toCodecArrayFromSingle(Schema.toCodecStringTree(Schema.Array(Schema.Finite)))
       strictEqual(serializer.ast._tag, "Arrays")
@@ -2802,11 +2782,11 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
 
       const encoding = asserts.encoding()
       await encoding.succeed([1, 2], ["1", "2"])
-      await encoding.fail(1 as any, "Expected array, got 1")
+      await encoding.fail(1 as any, "Expected array")
 
       const decoding = asserts.decoding()
       await decoding.succeed("1", [1])
-      await decoding.fail("1,2", `Expected a string representing a finite number, got "1,2"\n  at [0]`)
+      await decoding.fail("1,2", `Expected a string representing a finite number\n  at [0]`)
       await decoding.succeed(["1", "2"], [1, 2])
     })
 
@@ -2855,8 +2835,15 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
       await decoding.succeed([["1", "2"]], [[1, 2]])
     })
 
-    it("is idempotent", () => {
+    it("preserves array-from-single encoding when converting to StringTree again", () => {
       const schema = Schema.toCodecArrayFromSingle(Schema.toCodecStringTree(Schema.Array(Schema.Finite)))
+      strictEqual(Schema.toCodecStringTree(schema).ast, schema.ast)
+    })
+
+    it("is idempotent", () => {
+      const schema = Schema.toCodecArrayFromSingle(
+        Schema.toCodecStringTree(Schema.suspend(() => Schema.Array(Schema.Finite)))
+      )
       strictEqual(schema.ast, Schema.toCodecArrayFromSingle(schema).ast)
     })
   })
@@ -2870,7 +2857,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
     async function assertXmlFailure<T, E, RD>(schema: Schema.Codec<T, E, RD>, value: T, message: string) {
       const serializer = Schema.toEncoderXml(Schema.toCodecStringTree(schema))
       const r = await serializer(value).pipe(
-        Effect.mapError((err) => err.issue.toString()),
+        Effect.mapError((err) => formatIssue(err.issue)),
         Effect.result,
         Effect.runPromise
       )
@@ -2920,7 +2907,7 @@ Expected "Infinity" | "-Infinity" | "NaN", got "a"`
     })
 
     it("Never", async () => {
-      await assertXmlFailure(Schema.Never, "test", `Expected never, got "test"`)
+      await assertXmlFailure(Schema.Never, "test", `Expected never`)
     })
 
     it("Any", async () => {

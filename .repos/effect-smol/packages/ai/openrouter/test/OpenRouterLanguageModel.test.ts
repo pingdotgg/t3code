@@ -1,7 +1,7 @@
 import { Generated, OpenRouterClient, OpenRouterLanguageModel } from "@effect/ai-openrouter"
 import { assert, describe, it } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Array, Context, Effect, Layer, Redacted, Ref, Schema } from "effect"
+import { Array, Context, Effect, Layer, Redacted, Ref, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/unstable/ai"
 import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 
@@ -209,6 +209,142 @@ describe("OpenRouterLanguageModel", () => {
         }).pipe(Effect.provide(makeTestLayer())))
     })
   })
+
+  describe("streamText", () => {
+    it.effect("preserves streamed citation start and end indexes", () =>
+      Effect.gen(function*() {
+        const parts = yield* LanguageModel.streamText({ prompt: "cite a source" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenRouterLanguageModel.model("openai/gpt-4o-mini")),
+          Effect.provide(makeStreamTestLayer([{
+            id: "response-1",
+            object: "chat.completion.chunk",
+            model: "openai/gpt-4o-mini",
+            created: 1,
+            choices: [{
+              index: 0,
+              delta: {
+                annotations: [{
+                  type: "url_citation",
+                  url_citation: {
+                    url: "https://example.com/source",
+                    title: "source",
+                    start_index: 2,
+                    end_index: 9
+                  }
+                }]
+              }
+            }]
+          }]))
+        )
+
+        const source = globalThis.Array.from(parts).find((part) => part.type === "source")
+        assert.isDefined(source)
+        if (source?.type === "source") {
+          assert.deepStrictEqual(source.metadata, {
+            openrouter: { startIndex: 2, endIndex: 9 }
+          })
+        }
+      }))
+
+    it.effect("uses lowercase openrouter reasoning-end metadata", () =>
+      Effect.gen(function*() {
+        const reasoningDetails = [{
+          type: "reasoning.text",
+          text: "thinking",
+          signature: "signature-final",
+          format: "unknown"
+        }] as const
+        const parts = yield* LanguageModel.streamText({ prompt: "reason then answer" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenRouterLanguageModel.model("openai/gpt-4o-mini")),
+          Effect.provide(makeStreamTestLayer([
+            {
+              id: "response-1",
+              object: "chat.completion.chunk",
+              model: "openai/gpt-4o-mini",
+              created: 1,
+              choices: [{ index: 0, delta: { reasoning_details: reasoningDetails } }]
+            },
+            {
+              id: "response-1",
+              object: "chat.completion.chunk",
+              model: "openai/gpt-4o-mini",
+              created: 1,
+              choices: [{ index: 0, finish_reason: "stop", delta: { content: "answer" } }]
+            }
+          ]))
+        )
+
+        const reasoningEnd = parts.find((part) => part.type === "reasoning-end")
+        deepStrictEqual(reasoningEnd?.metadata, { openrouter: { reasoningDetails } })
+      }))
+
+    it.effect("emits incremental tool parameter fragments", () =>
+      Effect.gen(function*() {
+        const ProbeTool = Tool.make("ProbeTool", {
+          parameters: Schema.Struct({ a: Schema.Number }),
+          success: Schema.String
+        })
+        const toolkit = Toolkit.make(ProbeTool)
+        const parts = yield* LanguageModel.streamText({
+          prompt: "call the tool",
+          toolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenRouterLanguageModel.model("openai/gpt-4o-mini")),
+          Effect.provide(toolkit.toLayer({ ProbeTool: () => Effect.succeed("ok") })),
+          Effect.provide(makeStreamTestLayer([
+            {
+              id: "response-1",
+              object: "chat.completion.chunk",
+              model: "openai/gpt-4o-mini",
+              created: 1,
+              choices: [{
+                index: 0,
+                delta: {
+                  tool_calls: [{
+                    index: 0,
+                    id: "call-1",
+                    type: "function",
+                    function: { name: "ProbeTool", arguments: "{\"a\":" }
+                  }]
+                }
+              }]
+            },
+            {
+              id: "response-1",
+              object: "chat.completion.chunk",
+              model: "openai/gpt-4o-mini",
+              created: 1,
+              choices: [{
+                index: 0,
+                delta: { tool_calls: [{ index: 0 }] }
+              }]
+            },
+            {
+              id: "response-1",
+              object: "chat.completion.chunk",
+              model: "openai/gpt-4o-mini",
+              created: 1,
+              choices: [{
+                index: 0,
+                finish_reason: "tool_calls",
+                delta: { tool_calls: [{ index: 0, function: { arguments: "1}" } }] }
+              }]
+            }
+          ]))
+        )
+
+        deepStrictEqual(
+          globalThis.Array.from(parts)
+            .filter((part) => part.type === "tool-params-delta")
+            .map((part) => part.delta),
+          ["{\"a\":", "1}"]
+        )
+      }))
+  })
 })
 
 // =============================================================================
@@ -300,3 +436,23 @@ const getRequestBody = (request: HttpClientRequest.HttpClientRequest) =>
     }
     return yield* Effect.die(new Error("Expected Uint8Array body"))
   })
+
+const makeStreamTestLayer = (events: ReadonlyArray<typeof Generated.ChatStreamChunk.Encoded>) => {
+  const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n"
+  const httpClient = HttpClient.makeWith(
+    Effect.fnUntraced(function*(requestEffect) {
+      const request = yield* requestEffect
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(body, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        })
+      )
+    }),
+    Effect.succeed as HttpClient.HttpClient.Preprocess<HttpClientError.HttpClientError, never>
+  )
+  return OpenRouterClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+    Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient))
+  )
+}

@@ -33,8 +33,8 @@ const TypeId = "~effect/ai/Toolkit" as const
  *
  * **Example** (Defining AI toolkits)
  *
- * ```ts
- * import { Schema } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Schema } from "effect"
  * import { Tool, Toolkit } from "effect/unstable/ai"
  *
  * const SearchDocs = Tool.make("SearchDocs", {
@@ -51,8 +51,12 @@ const TypeId = "~effect/ai/Toolkit" as const
  *
  * const AiToolkit = Toolkit.make(SearchDocs, SummarizeText)
  *
- * console.log(Object.keys(AiToolkit.tools))
- * // ["SearchDocs", "SummarizeText"]
+ * const ready = AiToolkit.pipe(Effect.provide(AiToolkit.toLayer({
+ *   SearchDocs: ({ query }) => Effect.succeed([query]),
+ *   SummarizeText: ({ text }) => Effect.succeed(text)
+ * })))
+ *
+ * Object.keys((await Effect.runPromise(ready)).tools) // => ["SearchDocs", "SummarizeText"]
  * ```
  *
  * @category models
@@ -202,9 +206,9 @@ export interface WithHandler<in out Tools extends Record<string, Tool.Any>> {
      */
     name: Name,
     /**
-     * Parameters to pass to the tool handler.
+     * Encoded parameters to decode and pass to the tool handler.
      */
-    params: Tool.Parameters<Tools[Name]>,
+    params: Tool.ParametersEncoded<Tools[Name]>,
     /**
      * The unique identifier of the tool call.
      */
@@ -459,8 +463,8 @@ export const empty: Toolkit<{}> = makeProto({})
  *
  * **Example** (Creating a toolkit)
  *
- * ```ts
- * import { Schema } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Schema } from "effect"
  * import { Tool, Toolkit } from "effect/unstable/ai"
  *
  * const GetCurrentTime = Tool.make("GetCurrentTime", {
@@ -478,6 +482,12 @@ export const empty: Toolkit<{}> = makeProto({})
  * })
  *
  * const toolkit = Toolkit.make(GetCurrentTime, GetWeather)
+ * const ready = toolkit.pipe(Effect.provide(toolkit.toLayer({
+ *   GetCurrentTime: () => Effect.succeed(0),
+ *   get_weather: () => Effect.succeed({ temperature: 20, condition: "clear" })
+ * })))
+ *
+ * Object.keys((await Effect.runPromise(ready)).tools) // => ["GetCurrentTime", "get_weather"]
  * ```
  *
  * @category constructors
@@ -530,8 +540,8 @@ export type MergedTools<Toolkits extends ReadonlyArray<Any>> = SimplifyRecord<
  *
  * **Example** (Merging toolkits)
  *
- * ```ts
- * import { Schema } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Schema } from "effect"
  * import { Tool, Toolkit } from "effect/unstable/ai"
  *
  * const mathToolkit = Toolkit.make(
@@ -545,6 +555,14 @@ export type MergedTools<Toolkits extends ReadonlyArray<Any>> = SimplifyRecord<
  * )
  *
  * const combined = Toolkit.merge(mathToolkit, utilityToolkit)
+ * const ready = combined.pipe(Effect.provide(combined.toLayer({
+ *   add: () => Effect.succeed(1),
+ *   subtract: () => Effect.succeed(0),
+ *   get_time: () => Effect.succeed(0),
+ *   get_weather: () => Effect.succeed("clear")
+ * })))
+ *
+ * Object.keys((await Effect.runPromise(ready)).tools) // => ["add", "subtract", "get_time", "get_weather"]
  * ```
  *
  * @category constructors

@@ -55,7 +55,13 @@ export declare namespace ToJsonSchema {
   }
 
   /**
-   * JSON Schema compiler for a check.
+   * Compiles a check to a JSON Schema fragment.
+   *
+   * **Gotchas**
+   *
+   * Treat the input schemas as immutable. The returned value must be a valid JSON Schema object graph and must not be
+   * mutated after this function returns. Return a new object graph to produce different output during a later
+   * compilation.
    *
    * @category models
    * @since 4.0.0
@@ -488,17 +494,6 @@ export interface MultiDocument {
 }
 
 /**
- * Live schemas reconstructed from a multi-document.
- *
- * @category models
- * @since 4.0.0
- */
-export interface SchemaMultiDocument {
-  readonly schemas: readonly [Schema.Top, ...Array<Schema.Top>]
-  readonly definitions: Readonly<Record<string, Schema.Top>>
-}
-
-/**
  * Reviver for a declaration.
  *
  * @category models
@@ -611,17 +606,37 @@ export const makeFilterGroupReviver: <P>(
  *
  * **When to use**
  *
- * Use when each JSON Schema node must be transformed before it is translated.
+ * Use when you need to configure pattern handling or transform each JSON Schema node before translation.
+ *
+ * **Details**
+ *
+ * `patterns` controls pattern constraints reached during best-effort translation, including `pattern`, the keys of
+ * `patternProperties`, and patterns nested in `propertyNames`:
+ *
+ * - `"error"` rejects the document and is the default.
+ * - `"ignore"` skips the constraint.
+ * - `"apply"` compiles and enforces the constraint with the runtime's native regular expression engine.
  *
  * **Gotchas**
  *
- * `onEnter` must return a JSON Schema object. Its result is used directly, and exceptions raised by the callback pass through unchanged.
+ * Use `patterns: "apply"` only for trusted documents because regular expression evaluation may block for an unbounded
+ * amount of time. `patterns: "ignore"` weakens validation by accepting values that the source document may reject.
+ * Ignoring `patternProperties` also skips its value constraints and `additionalProperties`, because matching keys cannot
+ * be determined without evaluating the patterns.
+ * `onEnter` must return a JSON Schema object. Its result is used directly, and exceptions raised by the callback pass
+ * through unchanged.
  *
  * @category models
  * @since 4.0.0
  */
 export interface FromJsonSchemaOptions {
   readonly onEnter?: ((schema: JsonSchema.JsonSchema) => JsonSchema.JsonSchema) | undefined
+  /**
+   * Controls how reached JSON Schema regular expression patterns are imported.
+   *
+   * @default "error"
+   */
+  readonly patterns?: "error" | "ignore" | "apply" | undefined
 }
 
 /**
@@ -684,54 +699,114 @@ export interface CodeDocument {
 }
 
 /**
- * Lowers the encoded side of an AST to a live representation document.
+ * Information supplied to a reference policy for one representation candidate.
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export interface ReferencePolicyInput {
+  /** The encoded-side AST owner for the candidate. Contextual copies can share the same owner. */
+  readonly ast: SchemaAST.AST
+  /** The number of times this candidate was encountered. Structurally equal ASTs remain distinct candidates. */
+  readonly occurrences: number
+  /** The resolved encoded-side identifier, including an inherited `Encoded` suffix when applicable. */
+  readonly identifier: string | undefined
+}
+
+/**
+ * Function that chooses whether a representation candidate is emitted as a named reference.
+ *
+ * **When to use**
+ *
+ * Use when you need reference allocation based on schema identity, occurrence counts, identifiers, or another
+ * application-specific rule.
  *
  * **Details**
  *
- * Apply `SchemaAST.toType` to the AST first to lower its type side instead.
+ * Return a reference name to extract the candidate, or `undefined` to keep it inline. The policy is called once per
+ * candidate after all occurrences have been counted. The `identifier` is the resolved identifier for the encoded AST,
+ * including an `Encoded` suffix when an identifier is inherited from the source side of an encoding. If different
+ * candidates request the same name, later names receive numeric suffixes in encounter order.
+ *
+ * **Gotchas**
+ *
+ * Recursive candidates always require a reference. When the policy returns `undefined` for one, the generator assigns
+ * a synthetic name. Treat the input AST as immutable and keep the policy deterministic.
+ *
+ * @see {@link ToRepresentationOptions} for configuring representation generation
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export type ReferencePolicy = (input: ReferencePolicyInput) => string | undefined
+
+/**
+ * Options for generating schema representations.
+ *
+ * @category configuration
+ * @since 4.0.0
+ */
+export interface ToRepresentationOptions {
+  /**
+   * Chooses which representation candidates are extracted as named references.
+   *
+   * **Details**
+   *
+   * The default policy returns the resolved `identifier`, so anonymous non-recursive candidates remain inline even when
+   * they occur more than once.
+   *
+   * **Gotchas**
+   *
+   * Recursive candidates always require a reference and receive a synthetic name when the policy returns `undefined`.
+   *
+   * @default ({ identifier }) => identifier
+   */
+  readonly referencePolicy?: ReferencePolicy | undefined
+}
+
+/**
+ * Lowers the encoded side of an AST to a live representation document.
+ *
+ * **When to use**
+ *
+ * Use when you have one `SchemaAST.AST` and need a live `Document` for inspection, persistence, or compilation.
+ *
+ * **Details**
+ *
+ * Apply `SchemaAST.toType` to the AST first to lower its type side instead. The optional reference policy controls which
+ * candidates are moved into the document's shared reference table.
+ *
+ * @see {@link toRepresentations} for multiple roots sharing one reference table
  *
  * @category constructors
  * @since 4.0.0
  */
-export function toRepresentation(ast: SchemaAST.AST): Document {
-  return InternalToRepresentation.toRepresentation(ast)
+export function toRepresentation(ast: SchemaAST.AST, options?: ToRepresentationOptions): Document {
+  return InternalToRepresentation.toRepresentation(ast, options)
 }
 
 /**
  * Lowers one or more AST encoded sides in a shared reference environment.
  *
+ * **When to use**
+ *
+ * Use when several AST roots must share identifiers, occurrence counts, recursion, and allocated reference names.
+ *
  * **Details**
  *
- * Apply `SchemaAST.toType` to an AST first to lower its type side instead.
+ * Apply `SchemaAST.toType` to an AST first to lower its type side instead. The reference policy observes candidates from
+ * every root before any representation is emitted.
+ *
+ * @see {@link toRepresentation} for a single AST root
  *
  * @category constructors
  * @since 4.0.0
  */
 export function toRepresentations(
-  asts: readonly [SchemaAST.AST, ...Array<SchemaAST.AST>]
+  asts: readonly [SchemaAST.AST, ...Array<SchemaAST.AST>],
+  options?: ToRepresentationOptions
 ): MultiDocument {
-  return InternalToRepresentation.toRepresentations(asts)
-}
-
-/**
- * Converts live schemas and their named definitions to a shared representation document.
- *
- * **When to use**
- *
- * Use when schemas with shared or unreachable definitions must be passed to representation compilers such as `toCodeDocument`.
- *
- * **Gotchas**
- *
- * Every schema is projected to its encoded side. Definitions are preserved even when no root reaches them.
- *
- * @see {@link toRepresentations} for converting AST roots without an explicit definition map
- * @see {@link toCodeDocument} for generating code from the result
- *
- * @category constructors
- * @since 4.0.0
- */
-export function fromSchemaMultiDocument(document: SchemaMultiDocument): MultiDocument {
-  return InternalToRepresentation.fromSchemaMultiDocument(document)
+  return InternalToRepresentation.toRepresentations(asts, options)
 }
 
 /**
@@ -758,9 +833,23 @@ export function toMultiDocument(document: Document): MultiDocument {
  *
  * Use when you need JSON Schema output from a representation whose checks carry compiler annotations.
  *
+ * **Details**
+ *
+ * For representation documents whose validation semantics can be expressed exactly in JSON Schema, importing the
+ * emitted document with {@link fromJsonSchemaDocument} reconstructs a schema that accepts the same JSON values. This
+ * is a semantic round-trip guarantee; the emitted document and reconstructed representation may have different shapes.
+ *
  * **Gotchas**
  *
- * Opaque declarations are represented by an unconstrained JSON Schema. Check callback results are used directly, and exceptions raised by a callback pass through unchanged.
+ * - Reference allocation is already fixed in the input `Document`. The inherited `referencePolicy` option has no effect
+ *   here; pass it to {@link toRepresentation} when creating the document.
+ * - Opaque declarations are represented by an unconstrained JSON Schema and are outside the exact round-trip subset.
+ * - Check callback results are used directly, and exceptions raised by a callback pass through unchanged. Callbacks
+ *   must treat their input schemas as immutable. Each returned value must be a valid JSON Schema object graph and must
+ *   not be mutated after the callback returns.
+ * - Local definition references returned by callbacks are resolved together with compiler-generated references.
+ * - Effect decoding may discard excess object properties by default. Use `onExcessProperty: "error"` when comparing
+ *   validation semantics with the emitted JSON Schema.
  *
  * @see {@link toJsonSchemaMultiDocument} for multiple roots sharing definitions
  *
@@ -783,7 +872,12 @@ export function toJsonSchemaDocument(
  *
  * **Gotchas**
  *
- * Every definition is compiled, including definitions that are not reachable from a root.
+ * - Reference allocation is already fixed in the input `MultiDocument`. The inherited `referencePolicy` option has no
+ *   effect here; pass it to {@link toRepresentations} when creating the document.
+ * - Every definition is compiled, including definitions that are not reachable from a root. Check callbacks must treat
+ *   their input schemas as immutable. Each returned value must be a valid JSON Schema object graph and must not be
+ *   mutated after the callback returns. Local definition references returned by callbacks are resolved together with
+ *   compiler-generated references.
  *
  * @see {@link toJsonSchemaDocument} for a single root
  *
@@ -830,9 +924,6 @@ const CheckRepresentationAnnotationSchema = Schema.Struct({
   schemas: Schema.optional(RepresentationsSchema)
 })
 
-const LiveAnnotationsSchema = Schema.Record(Schema.String, Schema.Unknown)
-const JsonAnnotationsSchema = Schema.Record(Schema.String, Schema.Json)
-
 function pruneAnnotations(
   annotations: Readonly<Record<string, unknown>>
 ): Option.Option<Readonly<Record<string, Schema.Json>>> {
@@ -845,8 +936,8 @@ function pruneAnnotations(
   return Object.keys(out).length === 0 ? Option.none() : Option.some(out)
 }
 
-const AnnotationsSchema = Schema.optional(LiveAnnotationsSchema).pipe(
-  Schema.encodeTo(Schema.optionalKey(JsonAnnotationsSchema), {
+const AnnotationsSchema = Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).pipe(
+  Schema.encodeTo(Schema.optionalKey(Schema.JsonObject), {
     decode: SchemaGetter.passthroughSubtype(),
     encode: SchemaGetter.transformOptional((annotations) =>
       Option.isNone(annotations) || annotations.value === undefined
@@ -1120,6 +1211,20 @@ export function fromJsonMultiDocument(input: Schema.Json): MultiDocument {
  *
  * Revivers are resolved locally by `id`; none are installed implicitly. Reviver results are used directly, and exceptions raised by a reviver pass through unchanged.
  *
+ * **Example** (Restoring a persisted schema)
+ *
+ * ```ts import.meta.vitest
+ * import { Schema, SchemaRepresentation } from "effect"
+ *
+ * const document = SchemaRepresentation.toRepresentation(Schema.Struct({ name: Schema.String }).ast)
+ * const persisted = SchemaRepresentation.toJson(document)
+ * const restored = SchemaRepresentation.fromJson(persisted)
+ * const schema = SchemaRepresentation.fromRepresentation(restored, { revivers: [] })
+ * const Person = Schema.make<Schema.Codec<{ readonly name: string }>>(schema.ast)
+ *
+ * Schema.decodeUnknownSync(Person)({ name: "Ada" }) // => { name: "Ada" }
+ * ```
+ *
  * @see {@link fromJson} for decoding a persisted document
  * @see {@link fromRepresentations} for multiple roots sharing references
  *
@@ -1134,15 +1239,15 @@ export function fromRepresentation(
 }
 
 /**
- * Reconstructs multiple runtime schemas and their shared definitions from a representation multi-document.
+ * Reconstructs multiple runtime schemas from a representation multi-document.
  *
  * **When to use**
  *
- * Use when every root and named definition must be rebuilt in one shared reference environment.
+ * Use when multiple roots must be rebuilt in one shared reference environment.
  *
  * **Gotchas**
  *
- * Every definition is revived, including definitions not reachable from a root. Revivers are resolved locally by `id`; none are installed implicitly.
+ * Only references reachable from a root are revived. Revivers are resolved locally by `id`; none are installed implicitly.
  *
  * @see {@link fromJsonMultiDocument} for decoding a persisted multi-document
  * @see {@link fromRepresentation} for a single root
@@ -1153,7 +1258,7 @@ export function fromRepresentation(
 export function fromRepresentations(
   document: MultiDocument,
   options: { readonly revivers: ReadonlyArray<AnyReviver> }
-): SchemaMultiDocument {
+): readonly [Schema.Top, ...Array<Schema.Top>] {
   return InternalFromRepresentation.fromRepresentations(document, options.revivers)
 }
 
@@ -1164,9 +1269,33 @@ export function fromRepresentations(
  *
  * Use when you need to validate or transform values described by an external JSON Schema document.
  *
+ * **Details**
+ *
+ * For the Draft 2020-12 subset translated exactly by this importer, compiling the imported schema through
+ * {@link toRepresentation} and {@link toJsonSchemaDocument} produces a document that accepts the same JSON values as
+ * the input. This is a semantic round-trip guarantee; keyword layout, definitions, and annotations may be normalized.
+ *
  * **Gotchas**
  *
- * Import is best-effort. Built-in declarations and checks are reconstructed with importer-owned revivers. Callback results are used directly, and exceptions raised by a callback pass through unchanged.
+ * - `$dynamicRef`, `contains`, `dependentRequired`, `dependentSchemas`, `not`, active `if` / `then` / `else`,
+ *   `unevaluatedItems`, and `unevaluatedProperties` throw an `Unsupported JSON Schema keyword` error. Inactive
+ *   conditional keywords and `minContains` / `maxContains` without `contains` have no validation effect and are ignored.
+ * - Objects and arrays used as `const` values or `enum` members throw an `Unsupported structured JSON Schema value`
+ *   error.
+ * - Intersections of overlapping unions are limited to disjoint root-type partitions and finite primitive `anyOf`
+ *   literal sets. Other union intersections, including cases that would duplicate a nested choice, throw an
+ *   `Unsupported intersection of overlapping unions` error.
+ * - Unknown extension keywords are ignored and their semantics are not enforced.
+ * - Only direct local references to top-level definitions in the form `#/$defs/<escaped-token>` are supported. Root
+ *   references, external references, and pointers below a definition throw an `Unsupported reference` error. A direct
+ *   reference to a missing definition throws an `Invalid reference` error.
+ * - Built-in declarations and checks are reconstructed with importer-owned revivers.
+ * - Pattern constraints reached during translation cause an error by default. Use `patterns: "apply"` only for trusted
+ *   documents, or `patterns: "ignore"` to weaken validation explicitly; ignored patterns are outside the round-trip
+ *   guarantee.
+ * - `onEnter` results replace the corresponding input nodes, so the round-trip guarantee applies to the rewritten
+ *   document.
+ * - Callback results are used directly, and exceptions raised by a callback pass through unchanged.
  *
  * @see {@link fromJsonSchemaMultiDocument} for multiple roots sharing definitions
  * @see {@link toRepresentation} for converting the result to a representation document
@@ -1186,14 +1315,27 @@ export function fromJsonSchemaDocument(
  *
  * **When to use**
  *
- * Use when multiple imported roots must preserve shared definitions, aliases, and recursion.
+ * Use when multiple imported roots share reachable definitions, aliases, or recursion.
  *
  * **Gotchas**
  *
- * Every definition is translated, including definitions that no root references. Callback results are used directly, and exceptions raised by a callback pass through unchanged.
+ * - Only definitions reachable from a root are translated.
+ * - Unsupported standard validation and applicator keywords throw an `Unsupported JSON Schema keyword` error. Unknown
+ *   extension keywords are ignored and their semantics are not enforced.
+ * - Objects and arrays used as `const` values or `enum` members throw an `Unsupported structured JSON Schema value`
+ *   error.
+ * - Intersections of overlapping unions are limited to disjoint root-type partitions and finite primitive `anyOf`
+ *   literal sets. Other union intersections, including cases that would duplicate a nested choice, throw an
+ *   `Unsupported intersection of overlapping unions` error.
+ * - Only direct local references to top-level definitions in the form `#/$defs/<escaped-token>` are supported. Root
+ *   references, external references, and pointers below a definition throw an `Unsupported reference` error. A direct
+ *   reference to a missing definition throws an `Invalid reference` error.
+ * - Pattern constraints reached during translation cause an error by default. Use `patterns: "apply"` only for trusted
+ *   documents, or `patterns: "ignore"` to weaken validation explicitly.
+ * - Callback results are used directly, and exceptions raised by a callback pass through unchanged.
  *
  * @see {@link fromJsonSchemaDocument} for a single root
- * @see {@link fromSchemaMultiDocument} for converting the result to a representation document
+ * @see {@link toRepresentations} for converting the returned schema ASTs to a representation document
  *
  * @category constructors
  * @since 4.0.0
@@ -1201,6 +1343,6 @@ export function fromJsonSchemaDocument(
 export function fromJsonSchemaMultiDocument(
   document: JsonSchema.MultiDocument<"draft-2020-12">,
   options?: FromJsonSchemaOptions
-): SchemaMultiDocument {
+): readonly [Schema.Top, ...Array<Schema.Top>] {
   return InternalFromJsonSchemaDocument.fromJsonSchemaMultiDocument(document, options)
 }

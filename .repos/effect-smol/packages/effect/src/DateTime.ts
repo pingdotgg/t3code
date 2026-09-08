@@ -353,21 +353,21 @@ export declare namespace TimeZone {
  *
  * **Example** (Resolving ambiguous local times)
  *
- * ```ts
- * import { DateTime } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
  * // Fall-back example: 01:30 on Nov 2, 2025 in New York happens twice
- * const ambiguousTime = { year: 2025, month: 11, day: 2, hours: 1, minutes: 30 }
+ * const ambiguousTime = { year: 2025, month: 11, day: 2, hour: 1, minute: 30 }
  * const timeZone = DateTime.zoneMakeNamedUnsafe("America/New_York")
  *
- * DateTime.makeZoned(ambiguousTime, {
+ * const earlier = DateTime.makeZoned(ambiguousTime, {
  *   timeZone,
  *   adjustForTimeZone: true,
  *   disambiguation: "earlier"
  * })
  * // Earlier occurrence (DST time): 2025-11-02T05:30:00.000Z
  *
- * DateTime.makeZoned(ambiguousTime, {
+ * const later = DateTime.makeZoned(ambiguousTime, {
  *   timeZone,
  *   adjustForTimeZone: true,
  *   disambiguation: "later"
@@ -375,21 +375,26 @@ export declare namespace TimeZone {
  * // Later occurrence (standard time): 2025-11-02T06:30:00.000Z
  *
  * // Gap example: 02:30 on Mar 9, 2025 in New York doesn't exist
- * const gapTime = { year: 2025, month: 3, day: 9, hours: 2, minutes: 30 }
+ * const gapTime = { year: 2025, month: 3, day: 9, hour: 2, minute: 30 }
  *
- * DateTime.makeZoned(gapTime, {
+ * const beforeGap = DateTime.makeZoned(gapTime, {
  *   timeZone,
  *   adjustForTimeZone: true,
  *   disambiguation: "earlier"
  * })
  * // Time before gap: 2025-03-09T06:30:00.000Z (01:30 EST)
  *
- * DateTime.makeZoned(gapTime, {
+ * const afterGap = DateTime.makeZoned(gapTime, {
  *   timeZone,
  *   adjustForTimeZone: true,
  *   disambiguation: "later"
  * })
  * // Time after gap: 2025-03-09T07:30:00.000Z (03:30 EDT)
+ *
+ * earlier.pipe(Option.getOrThrow, DateTime.formatIso) // => "2025-11-02T05:30:00.000Z"
+ * later.pipe(Option.getOrThrow, DateTime.formatIso) // => "2025-11-02T06:30:00.000Z"
+ * beforeGap.pipe(Option.getOrThrow, DateTime.formatIso) // => "2025-03-09T06:30:00.000Z"
+ * afterGap.pipe(Option.getOrThrow, DateTime.formatIso) // => "2025-03-09T07:30:00.000Z"
  * ```
  *
  * @category models
@@ -510,7 +515,7 @@ export const isZoned: (self: DateTime) => self is Zoned = Internal.isZoned
  *
  * **Example** (Comparing DateTime values for equivalence)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const utc = DateTime.makeUnsafe("2024-01-01T12:00:00Z")
@@ -518,7 +523,7 @@ export const isZoned: (self: DateTime) => self is Zoned = Internal.isZoned
  *   timeZone: "Europe/London"
  * })
  *
- * console.log(DateTime.Equivalence(utc, zoned)) // true
+ * DateTime.Equivalence(utc, zoned) // => true
  * ```
  *
  * @category instances
@@ -536,7 +541,7 @@ export const Equivalence: Equ.Equivalence<DateTime> = Internal.Equivalence
  *
  * **Example** (Sorting DateTime values chronologically)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Array, DateTime } from "effect"
  *
  * const dates = [
@@ -545,8 +550,7 @@ export const Equivalence: Equ.Equivalence<DateTime> = Internal.Equivalence
  *   DateTime.makeUnsafe("2024-02-01")
  * ]
  *
- * const sorted = Array.sort(dates, DateTime.Order)
- * // Results in chronological order: 2024-01-01, 2024-02-01, 2024-03-01
+ * Array.sort(dates, DateTime.Order).map(DateTime.formatIsoDateUtc) // => ["2024-01-01", "2024-02-01", "2024-03-01"]
  * ```
  *
  * @category instances
@@ -565,15 +569,14 @@ export const Order: order.Order<DateTime> = Internal.Order
  *
  * **Example** (Clamping DateTime values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const min = DateTime.makeUnsafe("2024-01-01")
  * const max = DateTime.makeUnsafe("2024-12-31")
  * const date = DateTime.makeUnsafe("2025-06-15")
  *
- * const clamped = DateTime.clamp(date, { minimum: min, maximum: max })
- * // clamped equals max (2024-12-31)
+ * DateTime.clamp(date, { minimum: min, maximum: max }) // => DateTime.makeUnsafe("2024-12-31")
  * ```
  *
  * @category ordering
@@ -602,13 +605,10 @@ export const clamp: {
  *
  * **Example** (Creating DateTime values from Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * const date = new Date("2024-01-01T12:00:00Z")
- * const dateTime = DateTime.fromDateUnsafe(date)
- *
- * console.log(DateTime.formatIso(dateTime)) // "2024-01-01T12:00:00.000Z"
+ * DateTime.fromDateUnsafe(new Date("2024-01-01T12:00:00Z")) // => DateTime.makeUnsafe("2024-01-01T12:00:00Z")
  * ```
  *
  * @category constructors
@@ -634,26 +634,39 @@ export const fromDateUnsafe: (date: Date) => Utc = Internal.fromDateUnsafe
  *
  * **Example** (Creating DateTime values unsafely)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // from Date
- * const fromDate = DateTime.makeUnsafe(new Date("2024-01-01T12:00:00Z"))
- * console.log(DateTime.formatIso(fromDate)) // "2024-01-01T12:00:00.000Z"
+ * DateTime.makeUnsafe(new Date("2024-01-01T12:00:00Z")) // => DateTime.makeUnsafe("2024-01-01T12:00:00Z")
  *
  * // from parts
- * const fromParts = DateTime.makeUnsafe({ year: 2024 })
- * console.log(DateTime.formatIso(fromParts)) // "2024-01-01T00:00:00.000Z"
+ * DateTime.makeUnsafe({ year: 2024 }) // => DateTime.makeUnsafe("2024-01-01T00:00:00Z")
  *
  * // from string
- * const fromString = DateTime.makeUnsafe("2024-01-01")
- * console.log(DateTime.formatIso(fromString)) // "2024-01-01T00:00:00.000Z"
+ * DateTime.makeUnsafe("2024-01-01") // => DateTime.makeUnsafe("2024-01-01T00:00:00Z")
  * ```
  *
  * @category constructors
  * @since 4.0.0
  */
 export const makeUnsafe: <A extends DateTime.Input>(input: A) => DateTime.PreserveZone<A> = Internal.makeUnsafe
+
+/**
+ * Creates a `DateTime.Utc` from the number of seconds since the Unix epoch.
+ *
+ * **Example** (Creating from epoch seconds)
+ *
+ * ```ts import.meta.vitest
+ * import { DateTime } from "effect"
+ *
+ * DateTime.fromEpochSeconds(1704067200).toJSON() // => "2024-01-01T00:00:00.000Z"
+ * ```
+ *
+ * @category constructors
+ * @since 4.0.0
+ */
+export const fromEpochSeconds: (seconds: number) => Utc = Internal.fromEpochSeconds
 
 /**
  * Create a `DateTime.Zoned` using `DateTime.makeUnsafe` and a time zone.
@@ -678,14 +691,14 @@ export const makeUnsafe: <A extends DateTime.Input>(input: A) => DateTime.Preser
  *
  * **Example** (Creating zoned DateTime values unsafely)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-06-15T14:30:00Z", {
  *   timeZone: "Europe/London"
  * })
  *
- * console.log(DateTime.formatIsoZoned(zoned)) // "2024-06-15T15:30:00.000+01:00[Europe/London]"
+ * DateTime.formatIsoZoned(zoned) // => "2024-06-15T15:30:00.000+01:00[Europe/London]"
  * ```
  *
  * @category constructors
@@ -720,17 +733,14 @@ export const makeZonedUnsafe: (input: DateTime.Input, options?: {
  *
  * **Example** (Creating optional zoned DateTime values)
  *
- * ```ts
- * import { DateTime } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
  * const result = DateTime.makeZoned("2024-06-15T14:30:00Z", {
  *   timeZone: "Europe/London"
  * })
  *
- * console.log(result._tag) // "Some"
- * if (result._tag === "Some") {
- *   console.log(DateTime.formatIsoZoned(result.value)) // "2024-06-15T15:30:00.000+01:00[Europe/London]"
- * }
+ * result.pipe(Option.map(DateTime.formatIsoZoned)) // => Option.some("2024-06-15T15:30:00.000+01:00[Europe/London]")
  * ```
  *
  * @category constructors
@@ -762,23 +772,19 @@ export const makeZoned: (
  *
  * **Example** (Creating optional DateTime values)
  *
- * ```ts
- * import { DateTime } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
  * // from Date
- * const fromDate = DateTime.make(new Date("2024-01-01T12:00:00Z"))
- * console.log(fromDate._tag) // "Some"
+ * DateTime.make(new Date("2024-01-01T12:00:00Z")) // => Option.some(DateTime.makeUnsafe("2024-01-01T12:00:00Z"))
  *
  * // from parts
- * const fromParts = DateTime.make({ year: 2024 })
- * console.log(fromParts._tag) // "Some"
+ * DateTime.make({ year: 2024 }) // => Option.some(DateTime.makeUnsafe("2024-01-01T00:00:00Z"))
  *
  * // from string
- * const fromString = DateTime.make("2024-01-01")
- * console.log(fromString._tag) // "Some"
+ * DateTime.make("2024-01-01") // => Option.some(DateTime.makeUnsafe("2024-01-01T00:00:00Z"))
  *
- * const invalid = DateTime.make("not a date")
- * console.log(invalid._tag) // "None"
+ * DateTime.make("not a date") // => Option.none()
  * ```
  *
  * @category constructors
@@ -798,19 +804,15 @@ export const make: <A extends DateTime.Input>(input: A) => Option.Option<DateTim
  *
  * **Example** (Parsing zoned DateTime strings)
  *
- * ```ts
- * import { DateTime } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
- * const result1 = DateTime.makeZonedFromString(
+ * DateTime.makeZonedFromString(
  *   "2024-01-01T12:00:00+02:00[Europe/Berlin]"
- * )
- * console.log(result1._tag === "Some") // true
+ * ).pipe(Option.map(DateTime.formatIsoZoned)) // => Option.some("2024-01-01T11:00:00.000+01:00[Europe/Berlin]")
  *
- * const result2 = DateTime.makeZonedFromString("2024-01-01T12:00:00Z")
- * console.log(result2._tag === "Some") // true
- *
- * const invalid = DateTime.makeZonedFromString("invalid")
- * console.log(invalid._tag === "None") // true
+ * DateTime.makeZonedFromString("2024-01-01T12:00:00Z") // => Option.none()
+ * DateTime.makeZonedFromString("invalid") // => Option.none()
  * ```
  *
  * @category constructors
@@ -819,17 +821,15 @@ export const make: <A extends DateTime.Input>(input: A) => Option.Option<DateTim
 export const makeZonedFromString: (input: string) => Option.Option<Zoned> = Internal.makeZonedFromString
 
 /**
- * Gets the current time using the `Clock` service and convert it to a `DateTime`.
+ * Gets the current time using the `Clock` service and converts it to a `DateTime`.
  *
  * **Example** (Getting the current DateTime)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
+ * import { TestClock } from "effect/testing"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.nowAsDate
- *   console.log(now instanceof Date) // true
- * })
+ * await Effect.runPromise(Effect.map(DateTime.now, DateTime.isDateTime)) // => true
  * ```
  *
  * @category constructors
@@ -843,12 +843,11 @@ export const now: Effect.Effect<Utc> = Internal.now
  *
  * **Example** (Getting the current Date)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
+ * import { TestClock } from "effect/testing"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
- * })
+ * await Effect.runPromise(Effect.map(DateTime.nowAsDate, (now) => now instanceof Date)) // => true
  * ```
  *
  * @category constructors
@@ -871,11 +870,10 @@ export const nowAsDate: Effect.Effect<Date> = Internal.nowAsDate
  *
  * **Example** (Getting the current DateTime unsafely)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * const now = DateTime.nowUnsafe()
- * console.log(DateTime.formatIso(now))
+ * Number.isFinite(DateTime.toEpochMillis(DateTime.nowUnsafe())) // => true
  * ```
  *
  * @category constructors
@@ -901,7 +899,7 @@ export const nowUnsafe: LazyArg<Utc> = Internal.nowUnsafe
  *
  * **Example** (Converting DateTime values to UTC)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const now = DateTime.makeZonedUnsafe({ year: 2024 }, {
@@ -910,9 +908,10 @@ export const nowUnsafe: LazyArg<Utc> = Internal.nowUnsafe
  *
  * // set as UTC
  * const utc: DateTime.Utc = DateTime.toUtc(now)
+ * utc // => DateTime.makeUnsafe("2024-01-01T00:00:00Z")
  * ```
  *
- * @category time zones
+ * @category converting
  * @since 3.13.0
  */
 export const toUtc: (self: DateTime) => Utc = Internal.toUtc
@@ -922,19 +921,16 @@ export const toUtc: (self: DateTime) => Utc = Internal.toUtc
  *
  * **Example** (Setting time zones)
  *
- * ```ts
- * import { DateTime, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime } from "effect"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
- *   const zone = DateTime.zoneMakeNamedUnsafe("Europe/London")
+ * const zone = DateTime.zoneMakeNamedUnsafe("Europe/London")
+ * const zoned: DateTime.Zoned = DateTime.setZone(DateTime.makeUnsafe("2024-01-01"), zone)
  *
- *   // set the time zone
- *   const zoned: DateTime.Zoned = DateTime.setZone(now, zone)
- * })
+ * DateTime.isZoned(zoned) // => true
  * ```
  *
- * @category time zones
+ * @category transforming
  * @since 3.6.0
  */
 export const setZone: {
@@ -957,18 +953,16 @@ export const setZone: {
  *
  * **Example** (Setting fixed-offset time zones)
  *
- * ```ts
- * import { DateTime, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime } from "effect"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
+ * const dateTime = DateTime.makeUnsafe("2024-01-01")
+ * const zoned: DateTime.Zoned = DateTime.setZoneOffset(dateTime, 3 * 60 * 60 * 1000)
  *
- *   // set the offset time zone in milliseconds
- *   const zoned: DateTime.Zoned = DateTime.setZoneOffset(now, 3 * 60 * 60 * 1000)
- * })
+ * DateTime.zoneToString(zoned.zone) // => "+03:00"
  * ```
  *
- * @category time zones
+ * @category transforming
  * @since 3.6.0
  */
 export const setZoneOffset: {
@@ -996,20 +990,17 @@ export const setZoneOffset: {
  *
  * **Example** (Creating named time zones unsafely)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * const londonZone = DateTime.zoneMakeNamedUnsafe("Europe/London")
- * console.log(DateTime.zoneToString(londonZone)) // "Europe/London"
- *
- * const tokyoZone = DateTime.zoneMakeNamedUnsafe("Asia/Tokyo")
- * console.log(DateTime.zoneToString(tokyoZone)) // "Asia/Tokyo"
+ * DateTime.zoneToString(DateTime.zoneMakeNamedUnsafe("Europe/London")) // => "Europe/London"
+ * DateTime.zoneToString(DateTime.zoneMakeNamedUnsafe("Asia/Tokyo")) // => "Asia/Tokyo"
  *
  * // This would throw an IllegalArgumentError:
  * // DateTime.zoneMakeNamedUnsafe("Invalid/Zone")
  * ```
  *
- * @category time zones
+ * @category constructors
  * @since 4.0.0
  */
 export const zoneMakeNamedUnsafe: (zoneId: string) => TimeZone.Named = Internal.zoneMakeNamedUnsafe
@@ -1024,7 +1015,7 @@ export const zoneMakeNamedUnsafe: (zoneId: string) => TimeZone.Named = Internal.
  *
  * **Example** (Creating fixed-offset time zones)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // Create a time zone with +3 hours offset
@@ -1033,9 +1024,10 @@ export const zoneMakeNamedUnsafe: (zoneId: string) => TimeZone.Named = Internal.
  * const dt = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", {
  *   timeZone: zone
  * })
+ * DateTime.formatIsoZoned(dt) // => "2024-01-01T15:00:00.000+03:00"
  * ```
  *
- * @category time zones
+ * @category constructors
  * @since 3.6.0
  */
 export const zoneMakeOffset: (offset: number) => TimeZone.Offset = Internal.zoneMakeOffset
@@ -1049,17 +1041,14 @@ export const zoneMakeOffset: (offset: number) => TimeZone.Offset = Internal.zone
  *
  * **Example** (Creating optional named time zones)
  *
- * ```ts
- * import { DateTime } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
- * const validZone = DateTime.zoneMakeNamed("Europe/London")
- * console.log(validZone._tag === "Some") // true
- *
- * const invalidZone = DateTime.zoneMakeNamed("Invalid/Zone")
- * console.log(invalidZone._tag === "None") // true
+ * DateTime.zoneMakeNamed("Europe/London").pipe(Option.map(DateTime.zoneToString)) // => Option.some("Europe/London")
+ * DateTime.zoneMakeNamed("Invalid/Zone") // => Option.none()
  * ```
  *
- * @category time zones
+ * @category constructors
  * @since 3.6.0
  */
 export const zoneMakeNamed: (zoneId: string) => Option.Option<TimeZone.Named> = Internal.zoneMakeNamed
@@ -1074,7 +1063,7 @@ export const zoneMakeNamed: (zoneId: string) => Option.Option<TimeZone.Named> = 
  *
  * **Example** (Creating named time zones effectfully)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1082,9 +1071,11 @@ export const zoneMakeNamed: (zoneId: string) => Option.Option<TimeZone.Named> = 
  *   const now = yield* DateTime.now
  *   return DateTime.setZone(now, zone)
  * })
+ *
+ * DateTime.zoneToString((await Effect.runPromise(program)).zone) // => "Europe/London"
  * ```
  *
- * @category time zones
+ * @category constructors
  * @since 3.6.0
  */
 export const zoneMakeNamedEffect: (zoneId: string) => Effect.Effect<TimeZone.Named, IllegalArgumentError> =
@@ -1100,14 +1091,13 @@ export const zoneMakeNamedEffect: (zoneId: string) => Effect.Effect<TimeZone.Nam
  *
  * **Example** (Creating local time zones)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * const localZone = DateTime.zoneMakeLocal()
- * console.log(DateTime.zoneToString(localZone)) // Output depends on system time zone
+ * DateTime.isTimeZoneNamed(DateTime.zoneMakeLocal()) // => true
  * ```
  *
- * @category time zones
+ * @category constructors
  * @since 3.6.0
  */
 export const zoneMakeLocal: () => TimeZone.Named = Internal.zoneMakeLocal
@@ -1121,19 +1111,15 @@ export const zoneMakeLocal: () => TimeZone.Named = Internal.zoneMakeLocal
  *
  * **Example** (Parsing time zones)
  *
- * ```ts
- * import { DateTime } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
- * const namedZone = DateTime.zoneFromString("Europe/London")
- * const offsetZone = DateTime.zoneFromString("+03:00")
- * const invalid = DateTime.zoneFromString("invalid")
- *
- * console.log(namedZone._tag === "Some") // true
- * console.log(offsetZone._tag === "Some") // true
- * console.log(invalid._tag === "None") // true
+ * DateTime.zoneFromString("Europe/London").pipe(Option.map(DateTime.zoneToString)) // => Option.some("Europe/London")
+ * DateTime.zoneFromString("+03:00").pipe(Option.map(DateTime.zoneToString)) // => Option.some("+03:00")
+ * DateTime.zoneFromString("invalid") // => Option.none()
  * ```
  *
- * @category time zones
+ * @category decoding
  * @since 3.6.0
  */
 export const zoneFromString: (zone: string) => Option.Option<TimeZone> = Internal.zoneFromString
@@ -1143,17 +1129,14 @@ export const zoneFromString: (zone: string) => Option.Option<TimeZone> = Interna
  *
  * **Example** (Formatting time zones)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * // Outputs "+03:00"
- * DateTime.zoneToString(DateTime.zoneMakeOffset(3 * 60 * 60 * 1000))
- *
- * // Outputs "Europe/London"
- * DateTime.zoneToString(DateTime.zoneMakeNamedUnsafe("Europe/London"))
+ * DateTime.zoneToString(DateTime.zoneMakeOffset(3 * 60 * 60 * 1000)) // => "+03:00"
+ * DateTime.zoneToString(DateTime.zoneMakeNamedUnsafe("Europe/London")) // => "Europe/London"
  * ```
  *
- * @category time zones
+ * @category encoding
  * @since 3.6.0
  */
 export const zoneToString: (self: TimeZone) => string = Internal.zoneToString
@@ -1164,17 +1147,16 @@ export const zoneToString: (self: TimeZone) => string = Internal.zoneToString
  *
  * **Example** (Setting named time zones safely)
  *
- * ```ts
- * import { DateTime, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Option } from "effect"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
- *   // set the time zone, returns an Option
- *   DateTime.setZoneNamed(now, "Europe/London")
- * })
+ * const dateTime = DateTime.makeUnsafe("2024-01-01")
+ * const result = DateTime.setZoneNamed(dateTime, "Europe/London").pipe(Option.map(DateTime.formatIsoZoned))
+ *
+ * result // => Option.some("2024-01-01T00:00:00.000+00:00[Europe/London]")
  * ```
  *
- * @category time zones
+ * @category transforming
  * @since 3.6.0
  */
 export const setZoneNamed: {
@@ -1194,17 +1176,16 @@ export const setZoneNamed: {
  *
  * **Example** (Setting named time zones unsafely)
  *
- * ```ts
- * import { DateTime, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime } from "effect"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
- *   // set the time zone
- *   DateTime.setZoneNamedUnsafe(now, "Europe/London")
- * })
+ * const dateTime = DateTime.makeUnsafe("2024-01-01")
+ * const zoned = DateTime.setZoneNamedUnsafe(dateTime, "Europe/London")
+ *
+ * DateTime.zoneToString(zoned.zone) // => "Europe/London"
  * ```
  *
- * @category time zones
+ * @category transforming
  * @since 4.0.0
  */
 export const setZoneNamedUnsafe: {
@@ -1234,16 +1215,13 @@ export const setZoneNamedUnsafe: {
  *
  * **Example** (Measuring distance between DateTime values)
  *
- * ```ts
- * import { DateTime, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { DateTime, Duration } from "effect"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
- *   const other = DateTime.add(now, { minutes: 1 })
+ * const start = DateTime.makeUnsafe("2024-01-01T00:00:00Z")
+ * const end = DateTime.add(start, { minutes: 1 })
  *
- *   // returns Duration.minutes(1)
- *   DateTime.distance(now, other)
- * })
+ * DateTime.distance(start, end) // => Duration.minutes(1)
  * ```
  *
  * @category comparisons
@@ -1259,14 +1237,13 @@ export const distance: {
  *
  * **Example** (Selecting the earlier DateTime)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const date1 = DateTime.makeUnsafe("2024-01-01")
  * const date2 = DateTime.makeUnsafe("2024-02-01")
  *
- * const earlier = DateTime.min(date1, date2)
- * // earlier equals date1 (2024-01-01)
+ * DateTime.min(date1, date2) // => DateTime.makeUnsafe("2024-01-01")
  * ```
  *
  * @category comparisons
@@ -1282,14 +1259,13 @@ export const min: {
  *
  * **Example** (Selecting the later DateTime)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const date1 = DateTime.makeUnsafe("2024-01-01")
  * const date2 = DateTime.makeUnsafe("2024-02-01")
  *
- * const later = DateTime.max(date1, date2)
- * // later equals date2 (2024-02-01)
+ * DateTime.max(date1, date2) // => DateTime.makeUnsafe("2024-02-01")
  * ```
  *
  * @category comparisons
@@ -1305,14 +1281,14 @@ export const max: {
  *
  * **Example** (Checking whether a DateTime is later)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const date1 = DateTime.makeUnsafe("2024-02-01")
  * const date2 = DateTime.makeUnsafe("2024-01-01")
  *
- * console.log(DateTime.isGreaterThan(date1, date2)) // true
- * console.log(DateTime.isGreaterThan(date2, date1)) // false
+ * DateTime.isGreaterThan(date1, date2) // => true
+ * DateTime.isGreaterThan(date2, date1) // => false
  * ```
  *
  * @category comparisons
@@ -1328,16 +1304,16 @@ export const isGreaterThan: {
  *
  * **Example** (Checking whether a DateTime is later or equal)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const date1 = DateTime.makeUnsafe("2024-01-01")
  * const date2 = DateTime.makeUnsafe("2024-01-01")
  * const date3 = DateTime.makeUnsafe("2024-02-01")
  *
- * console.log(DateTime.isGreaterThanOrEqualTo(date1, date2)) // true
- * console.log(DateTime.isGreaterThanOrEqualTo(date3, date1)) // true
- * console.log(DateTime.isGreaterThanOrEqualTo(date1, date3)) // false
+ * DateTime.isGreaterThanOrEqualTo(date1, date2) // => true
+ * DateTime.isGreaterThanOrEqualTo(date3, date1) // => true
+ * DateTime.isGreaterThanOrEqualTo(date1, date3) // => false
  * ```
  *
  * @category comparisons
@@ -1353,14 +1329,14 @@ export const isGreaterThanOrEqualTo: {
  *
  * **Example** (Checking whether a DateTime is earlier)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const date1 = DateTime.makeUnsafe("2024-01-01")
  * const date2 = DateTime.makeUnsafe("2024-02-01")
  *
- * console.log(DateTime.isLessThan(date1, date2)) // true
- * console.log(DateTime.isLessThan(date2, date1)) // false
+ * DateTime.isLessThan(date1, date2) // => true
+ * DateTime.isLessThan(date2, date1) // => false
  * ```
  *
  * @category comparisons
@@ -1376,16 +1352,16 @@ export const isLessThan: {
  *
  * **Example** (Checking whether a DateTime is earlier or equal)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const date1 = DateTime.makeUnsafe("2024-01-01")
  * const date2 = DateTime.makeUnsafe("2024-01-01")
  * const date3 = DateTime.makeUnsafe("2024-02-01")
  *
- * console.log(DateTime.isLessThanOrEqualTo(date1, date2)) // true
- * console.log(DateTime.isLessThanOrEqualTo(date1, date3)) // true
- * console.log(DateTime.isLessThanOrEqualTo(date3, date1)) // false
+ * DateTime.isLessThanOrEqualTo(date1, date2) // => true
+ * DateTime.isLessThanOrEqualTo(date1, date3) // => true
+ * DateTime.isLessThanOrEqualTo(date3, date1) // => false
  * ```
  *
  * @category comparisons
@@ -1401,14 +1377,14 @@ export const isLessThanOrEqualTo: {
  *
  * **Example** (Checking whether a DateTime is within bounds)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const min = DateTime.makeUnsafe("2024-01-01")
  * const max = DateTime.makeUnsafe("2024-12-31")
  * const date = DateTime.makeUnsafe("2024-06-15")
  *
- * console.log(DateTime.between(date, { minimum: min, maximum: max })) // true
+ * DateTime.between(date, { minimum: min, maximum: max }) // => true
  * ```
  *
  * @category comparisons
@@ -1428,14 +1404,12 @@ export const between: {
  *
  * **Example** (Checking future DateTime values effectfully)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
+ * import { TestClock } from "effect/testing"
  *
- * const program = Effect.gen(function*() {
- *   const futureDate = DateTime.add(yield* DateTime.now, { hours: 1 })
- *   const isFuture = yield* DateTime.isFuture(futureDate)
- *   console.log(isFuture) // true
- * })
+ * const futureDate = DateTime.makeUnsafe(1)
+ * await Effect.runPromise(Effect.provide(DateTime.isFuture(futureDate), TestClock.layer())) // => true
  * ```
  *
  * @category comparisons
@@ -1460,11 +1434,8 @@ export const isFuture: (self: DateTime) => Effect.Effect<boolean> = Internal.isF
  * ```ts
  * import { DateTime } from "effect"
  *
- * const now = DateTime.nowUnsafe()
- * const futureDate = DateTime.add(now, { hours: 1 })
- *
- * console.log(DateTime.isFutureUnsafe(futureDate)) // true
- * console.log(DateTime.isFutureUnsafe(now)) // false
+ * const oneHourFromNow = DateTime.add(DateTime.nowUnsafe(), { hours: 1 })
+ * DateTime.isFutureUnsafe(oneHourFromNow)
  * ```
  *
  * @category comparisons
@@ -1481,14 +1452,12 @@ export const isFutureUnsafe: (self: DateTime) => boolean = Internal.isFutureUnsa
  *
  * **Example** (Checking past DateTime values effectfully)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
+ * import { TestClock } from "effect/testing"
  *
- * const program = Effect.gen(function*() {
- *   const pastDate = DateTime.subtract(yield* DateTime.now, { hours: 1 })
- *   const isPast = yield* DateTime.isPast(pastDate)
- *   console.log(isPast) // true
- * })
+ * const pastDate = DateTime.makeUnsafe(-1)
+ * await Effect.runPromise(Effect.provide(DateTime.isPast(pastDate), TestClock.layer())) // => true
  * ```
  *
  * @category comparisons
@@ -1513,11 +1482,8 @@ export const isPast: (self: DateTime) => Effect.Effect<boolean> = Internal.isPas
  * ```ts
  * import { DateTime } from "effect"
  *
- * const now = DateTime.nowUnsafe()
- * const pastDate = DateTime.subtract(now, { hours: 1 })
- *
- * console.log(DateTime.isPastUnsafe(pastDate)) // true
- * console.log(DateTime.isPastUnsafe(now)) // false
+ * const oneHourAgo = DateTime.subtract(DateTime.nowUnsafe(), { hours: 1 })
+ * DateTime.isPastUnsafe(oneHourAgo)
  * ```
  *
  * @category comparisons
@@ -1538,15 +1504,14 @@ export const isPastUnsafe: (self: DateTime) => boolean = Internal.isPastUnsafe
  *
  * **Example** (Converting DateTime values to UTC Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", {
  *   timeZone: "Europe/London"
  * })
  *
- * const utcDate = DateTime.toDateUtc(dt)
- * console.log(utcDate.toISOString()) // "2024-01-01T12:00:00.000Z"
+ * DateTime.toDateUtc(dt).toISOString() // => "2024-01-01T12:00:00.000Z"
  * ```
  *
  * @category converting
@@ -1564,7 +1529,7 @@ export const toDateUtc: (self: DateTime) => Date = Internal.toDateUtc
  *
  * **Example** (Converting DateTime values to Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const utc = DateTime.makeUnsafe("2024-01-01T12:00:00Z")
@@ -1572,8 +1537,8 @@ export const toDateUtc: (self: DateTime) => Date = Internal.toDateUtc
  *   timeZone: "Europe/London"
  * })
  *
- * console.log(DateTime.toDate(utc).toISOString())
- * console.log(DateTime.toDate(zoned).toISOString())
+ * DateTime.toDate(utc).toISOString() // => "2024-01-01T12:00:00.000Z"
+ * DateTime.toDate(zoned).toISOString() // => "2024-01-01T12:00:00.000Z"
  * ```
  *
  * @category converting
@@ -1591,15 +1556,14 @@ export const toDate: (self: DateTime) => Date = Internal.toDate
  *
  * **Example** (Reading zoned offsets)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", {
  *   timeZone: "Europe/London"
  * })
  *
- * const offset = DateTime.zonedOffset(zoned)
- * console.log(offset) // 0 (London is UTC+0 in winter)
+ * DateTime.zonedOffset(zoned) // => 0
  * ```
  *
  * @category converting
@@ -1616,15 +1580,14 @@ export const zonedOffset: (self: Zoned) => number = Internal.zonedOffset
  *
  * **Example** (Formatting zoned offsets)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", {
  *   timeZone: DateTime.zoneMakeOffset(3 * 60 * 60 * 1000) // +3 hours
  * })
  *
- * const offsetString = DateTime.zonedOffsetIso(zoned)
- * console.log(offsetString) // "+03:00"
+ * DateTime.zonedOffsetIso(zoned) // => "+03:00"
  * ```
  *
  * @category converting
@@ -1641,13 +1604,11 @@ export const zonedOffsetIso: (self: Zoned) => string = Internal.zonedOffsetIso
  *
  * **Example** (Reading epoch milliseconds)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-01-01T00:00:00Z")
- * const epochMillis = DateTime.toEpochMillis(dt)
- *
- * console.log(epochMillis) // 1704067200000
+ * DateTime.toEpochMillis(dt) // => 1704067200000
  * ```
  *
  * @category converting
@@ -1656,12 +1617,34 @@ export const zonedOffsetIso: (self: Zoned) => string = Internal.zonedOffsetIso
 export const toEpochMillis: (self: DateTime) => number = Internal.toEpochMillis
 
 /**
+ * Converts a `DateTime` to the number of seconds since the Unix epoch.
+ *
+ * **Details**
+ *
+ * This returns the UTC timestamp regardless of any time zone information.
+ * The result is floored to the nearest second.
+ *
+ * **Example** (Reading epoch seconds)
+ *
+ * ```ts import.meta.vitest
+ * import { DateTime } from "effect"
+ *
+ * const dt = DateTime.makeUnsafe("2024-01-01T00:00:00Z")
+ * DateTime.toEpochSeconds(dt) // => 1704067200
+ * ```
+ *
+ * @category converting
+ * @since 4.0.0
+ */
+export const toEpochSeconds: (self: DateTime) => number = Internal.toEpochSeconds
+
+/**
  * Removes the time aspect of a `DateTime`, first adjusting for the time
  * zone. It will return a `DateTime.Utc` only containing the date.
  *
  * **Example** (Removing time components)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // returns "2024-01-01T00:00:00Z"
@@ -1671,7 +1654,7 @@ export const toEpochMillis: (self: DateTime) => number = Internal.toEpochMillis
  * }).pipe(
  *   DateTime.removeTime,
  *   DateTime.formatIso
- * )
+ * ) // => "2024-01-01T00:00:00.000Z"
  * ```
  *
  * @category converting
@@ -1692,26 +1675,16 @@ export const removeTime: (self: DateTime) => Utc = Internal.removeTime
  *
  * **Example** (Reading DateTime parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-01-01T12:30:45.123Z")
  * const parts = DateTime.toParts(dt)
  *
- * console.log(parts)
- * // {
- * //   year: 2024,
- * //   month: 1,
- * //   day: 1,
- * //   hours: 12,
- * //   minutes: 30,
- * //   seconds: 45,
- * //   millis: 123,
- * //   weekDay: 1 // Monday
- * // }
+ * const selectedParts = [parts.year, parts.month, parts.day, parts.hour] // => [2024, 1, 1, 12]
  * ```
  *
- * @category parts
+ * @category getters
  * @since 3.6.0
  */
 export const toParts: (self: DateTime) => DateTime.PartsWithWeekday = Internal.toParts
@@ -1725,7 +1698,7 @@ export const toParts: (self: DateTime) => DateTime.PartsWithWeekday = Internal.t
  *
  * **Example** (Reading UTC DateTime parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T12:30:45.123Z", {
@@ -1733,11 +1706,10 @@ export const toParts: (self: DateTime) => DateTime.PartsWithWeekday = Internal.t
  * })
  * const parts = DateTime.toPartsUtc(zoned)
  *
- * console.log(parts)
- * // Always returns UTC parts regardless of time zone
+ * const selectedParts = [parts.year, parts.month, parts.day, parts.hour] // => [2024, 1, 1, 12]
  * ```
  *
- * @category parts
+ * @category getters
  * @since 3.6.0
  */
 export const toPartsUtc: (self: DateTime) => DateTime.PartsWithWeekday = Internal.toPartsUtc
@@ -1751,15 +1723,14 @@ export const toPartsUtc: (self: DateTime) => DateTime.PartsWithWeekday = Interna
  *
  * **Example** (Reading UTC DateTime parts by key)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dateTime = DateTime.makeUnsafe({ year: 2024 })
- * const year = DateTime.getPartUtc(dateTime, "year")
- * console.log(year) // 2024
+ * DateTime.getPartUtc(dateTime, "year") // => 2024
  * ```
  *
- * @category parts
+ * @category getters
  * @since 3.6.0
  */
 export const getPartUtc: {
@@ -1776,17 +1747,16 @@ export const getPartUtc: {
  *
  * **Example** (Reading DateTime parts by key)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dateTime = DateTime.makeZonedUnsafe({ year: 2024 }, {
  *   timeZone: "Europe/London"
  * })
- * const year = DateTime.getPart(dateTime, "year")
- * console.log(year) // 2024
+ * DateTime.getPart(dateTime, "year") // => 2024
  * ```
  *
- * @category parts
+ * @category getters
  * @since 3.6.0
  */
 export const getPart: {
@@ -1803,20 +1773,20 @@ export const getPart: {
  *
  * **Example** (Updating DateTime parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * const dt = DateTime.makeUnsafe("2024-01-01T12:00:00Z")
+ * const dt = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", { timeZone: "UTC" })
  * const updated = DateTime.setParts(dt, {
  *   year: 2025,
  *   month: 6,
  *   day: 15
  * })
  *
- * console.log(DateTime.formatIso(updated)) // "2025-06-15T12:00:00.000Z"
+ * updated // => DateTime.makeZonedUnsafe("2025-06-15T12:00:00Z", { timeZone: "UTC" })
  * ```
  *
- * @category parts
+ * @category transforming
  * @since 3.6.0
  */
 export const setParts: {
@@ -1833,7 +1803,7 @@ export const setParts: {
  *
  * **Example** (Updating UTC DateTime parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-01-01T12:00:00Z")
@@ -1842,10 +1812,10 @@ export const setParts: {
  *   hour: 18
  * })
  *
- * console.log(DateTime.formatIso(updated)) // "2025-01-01T18:00:00.000Z"
+ * updated // => DateTime.makeUnsafe("2025-01-01T18:00:00Z")
  * ```
  *
- * @category parts
+ * @category transforming
  * @since 3.6.0
  */
 export const setPartsUtc: {
@@ -1869,21 +1839,19 @@ export const setPartsUtc: {
  *
  * **Example** (Accessing the current time zone service)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * const program = Effect.gen(function*() {
- *   // Access the current time zone service
- *   const zone = yield* DateTime.CurrentTimeZone
- *   console.log(DateTime.zoneToString(zone))
+ *   return DateTime.zoneToString(yield* DateTime.CurrentTimeZone)
  * })
  *
  * // Provide a time zone
  * const layer = DateTime.layerCurrentZoneNamed("Europe/London")
- * Effect.provide(program, layer)
+ * await Effect.runPromise(Effect.provide(program, layer)) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category services
  * @since 3.11.0
  */
 export class CurrentTimeZone extends Context.Service<CurrentTimeZone, TimeZone>()(
@@ -1896,18 +1864,16 @@ export class CurrentTimeZone extends Context.Service<CurrentTimeZone, TimeZone>(
  *
  * **Example** (Setting the current time zone)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.now
- *
- *   // set the time zone to "Europe/London"
- *   const zoned = yield* DateTime.setZoneCurrent(now)
- * }).pipe(DateTime.withCurrentZoneNamed("Europe/London"))
+ * await Effect.runPromise(Effect.gen(function*() {
+ *   const zoned = yield* DateTime.setZoneCurrent(DateTime.makeUnsafe("2024-01-01"))
+ *   return DateTime.zoneToString(zoned.zone)
+ * }).pipe(DateTime.withCurrentZoneNamed("Europe/London"))) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category accessors
  * @since 3.6.0
  */
 export const setZoneCurrent = (self: DateTime): Effect.Effect<Zoned, never, CurrentTimeZone> =>
@@ -1918,17 +1884,18 @@ export const setZoneCurrent = (self: DateTime): Effect.Effect<Zoned, never, Curr
  *
  * **Example** (Providing the current time zone)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * const zone = DateTime.zoneMakeNamedUnsafe("Europe/London")
  *
- * Effect.gen(function*() {
- *   const now = yield* DateTime.nowInCurrentZone
- * }).pipe(DateTime.withCurrentZone(zone))
+ * await Effect.runPromise(Effect.gen(function*() {
+ *   const zoned = yield* DateTime.setZoneCurrent(DateTime.makeUnsafe("2024-01-01"))
+ *   return DateTime.zoneToString(zoned.zone)
+ * }).pipe(DateTime.withCurrentZone(zone))) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category providing services
  * @since 3.6.0
  */
 export const withCurrentZone: {
@@ -1942,16 +1909,15 @@ export const withCurrentZone: {
  *
  * **Example** (Providing the local time zone)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
- * Effect.gen(function*() {
- *   // will use the system's local time zone
- *   const now = yield* DateTime.nowInCurrentZone
- * }).pipe(DateTime.withCurrentZoneLocal)
+ * await Effect.runPromise(Effect.gen(function*() {
+ *   return DateTime.isZoned(yield* DateTime.nowInCurrentZone)
+ * }).pipe(DateTime.withCurrentZoneLocal)) // => true
  * ```
  *
- * @category current time zone
+ * @category providing services
  * @since 3.6.0
  */
 export const withCurrentZoneLocal = <A, E, R>(
@@ -1964,16 +1930,17 @@ export const withCurrentZoneLocal = <A, E, R>(
  *
  * **Example** (Providing a fixed-offset time zone)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
- * Effect.gen(function*() {
- *   const zone = yield* DateTime.CurrentTimeZone
- *   console.log(DateTime.zoneToString(zone)) // "+03:00"
+ * const program = Effect.gen(function*() {
+ *   return DateTime.zoneToString(yield* DateTime.CurrentTimeZone)
  * }).pipe(DateTime.withCurrentZoneOffset(3 * 60 * 60 * 1000))
+ *
+ * await Effect.runPromise(program) // => "+03:00"
  * ```
  *
- * @category current time zone
+ * @category providing services
  * @since 3.6.0
  */
 export const withCurrentZoneOffset: {
@@ -1997,16 +1964,16 @@ export const withCurrentZoneOffset: {
  *
  * **Example** (Providing a named time zone)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
- * Effect.gen(function*() {
- *   // will use the "Europe/London" time zone
- *   const now = yield* DateTime.nowInCurrentZone
- * }).pipe(DateTime.withCurrentZoneNamed("Europe/London"))
+ * await Effect.runPromise(Effect.gen(function*() {
+ *   const zoned = yield* DateTime.setZoneCurrent(DateTime.makeUnsafe("2024-01-01"))
+ *   return DateTime.zoneToString(zoned.zone)
+ * }).pipe(DateTime.withCurrentZoneNamed("Europe/London"))) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category providing services
  * @since 3.6.0
  */
 export const withCurrentZoneNamed: {
@@ -2031,16 +1998,15 @@ export const withCurrentZoneNamed: {
  *
  * **Example** (Getting the current time in the current zone)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
- * Effect.gen(function*() {
- *   // will use the "Europe/London" time zone
- *   const now = yield* DateTime.nowInCurrentZone
- * }).pipe(DateTime.withCurrentZoneNamed("Europe/London"))
+ * await Effect.runPromise(Effect.gen(function*() {
+ *   return DateTime.zoneToString((yield* DateTime.nowInCurrentZone).zone)
+ * }).pipe(DateTime.withCurrentZoneNamed("Europe/London"))) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category accessors
  * @since 3.6.0
  */
 export const nowInCurrentZone: Effect.Effect<Zoned, never, CurrentTimeZone> = Effect.flatMap(now, setZoneCurrent)
@@ -2066,17 +2032,15 @@ export const nowInCurrentZone: Effect.Effect<Zoned, never, CurrentTimeZone> = Ef
  *
  * **Example** (Mutating DateTime values with Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-01-01T12:00:00Z")
  *
- * const modified = DateTime.mutate(dt, (date) => {
+ * DateTime.mutate(dt, (date) => {
  *   date.setHours(15) // Set to 3 PM
  *   date.setMinutes(30) // Set to 30 minutes
  * })
- *
- * console.log(DateTime.formatIso(modified)) // "2024-01-01T15:30:00.000Z"
  * ```
  *
  * @category mapping
@@ -2108,7 +2072,7 @@ export const mutate: {
  *
  * **Example** (Mutating DateTime values with UTC Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", {
@@ -2119,7 +2083,7 @@ export const mutate: {
  *   date.setUTCHours(18) // Set UTC time to 6 PM
  * })
  *
- * console.log(DateTime.formatIso(modified)) // "2024-01-01T18:00:00.000Z"
+ * modified // => DateTime.makeZonedUnsafe("2024-01-01T18:00:00Z", { timeZone: "Europe/London" })
  * ```
  *
  * @category mapping
@@ -2136,13 +2100,14 @@ export const mutateUtc: {
  *
  * **Example** (Mapping epoch milliseconds)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // add 10 milliseconds
- * DateTime.makeUnsafe(0).pipe(
+ * const result = DateTime.makeUnsafe(0).pipe(
  *   DateTime.mapEpochMillis((millis) => millis + 10)
  * )
+ * result // => DateTime.makeUnsafe(10)
  * ```
  *
  * @category mapping
@@ -2165,13 +2130,13 @@ export const mapEpochMillis: {
  *
  * **Example** (Applying time zone adjusted Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // get the time zone adjusted date in milliseconds
  * DateTime.makeZonedUnsafe(0, { timeZone: "Europe/London" }).pipe(
  *   DateTime.withDate((date) => date.getTime())
- * )
+ * ) // => 3600000
  * ```
  *
  * @category mapping
@@ -2193,13 +2158,13 @@ export const withDate: {
  *
  * **Example** (Applying UTC Dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // get the date in milliseconds
  * DateTime.makeUnsafe(0).pipe(
  *   DateTime.withDateUtc((date) => date.getTime())
- * )
+ * ) // => 0
  * ```
  *
  * @category mapping
@@ -2215,7 +2180,7 @@ export const withDateUtc: {
  *
  * **Example** (Pattern matching DateTime variants)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt1 = DateTime.makeUnsafe("2024-01-01T12:00:00Z") // Utc
@@ -2233,8 +2198,8 @@ export const withDateUtc: {
  *   onZoned: (zoned) => `Zoned: ${DateTime.formatIsoZoned(zoned)}`
  * })
  *
- * console.log(result1) // "UTC: 2024-01-01T12:00:00.000Z"
- * console.log(result2) // "Zoned: 2024-06-15T15:30:00.000+01:00[Europe/London]"
+ * result1 // => "UTC: 2024-01-01T12:00:00.000Z"
+ * result2 // => "Zoned: 2024-06-15T15:30:00.000+01:00[Europe/London]"
  * ```
  *
  * @category mapping
@@ -2276,13 +2241,13 @@ export const match: {
  *
  * **Example** (Adding durations)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // add 5 minutes
  * DateTime.makeUnsafe(0).pipe(
  *   DateTime.addDuration("5 minutes")
- * )
+ * ) // => DateTime.makeUnsafe(300000)
  * ```
  *
  * @see {@link add} for calendar-aware date/time part arithmetic
@@ -2301,13 +2266,13 @@ export const addDuration: {
  *
  * **Example** (Subtracting durations)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // subtract 5 minutes
  * DateTime.makeUnsafe(0).pipe(
  *   DateTime.subtractDuration("5 minutes")
- * )
+ * ) // => DateTime.makeUnsafe(-300000)
  * ```
  *
  * @category math
@@ -2328,13 +2293,13 @@ export const subtractDuration: {
  *
  * **Example** (Adding date and time parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // add 5 minutes
  * DateTime.makeUnsafe(0).pipe(
  *   DateTime.add({ minutes: 5 })
- * )
+ * ) // => DateTime.makeUnsafe(300000)
  * ```
  *
  * @category math
@@ -2350,13 +2315,13 @@ export const add: {
  *
  * **Example** (Subtracting date and time parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // subtract 5 minutes
  * DateTime.makeUnsafe(0).pipe(
  *   DateTime.subtract({ minutes: 5 })
- * )
+ * ) // => DateTime.makeUnsafe(-300000)
  * ```
  *
  * @category math
@@ -2377,14 +2342,13 @@ export const subtract: {
  *
  * **Example** (Rounding down DateTime values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // returns "2024-01-01T00:00:00Z"
  * DateTime.makeUnsafe("2024-01-01T12:00:00Z").pipe(
  *   DateTime.startOf("day"),
- *   DateTime.formatIso
- * )
+ * ) // => DateTime.makeUnsafe("2024-01-01T00:00:00Z")
  * ```
  *
  * @category math
@@ -2412,14 +2376,13 @@ export const startOf: {
  *
  * **Example** (Rounding up DateTime values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // returns "2024-01-01T23:59:59.999Z"
  * DateTime.makeUnsafe("2024-01-01T12:00:00Z").pipe(
  *   DateTime.endOf("day"),
- *   DateTime.formatIso
- * )
+ * ) // => DateTime.makeUnsafe("2024-01-01T23:59:59.999Z")
  * ```
  *
  * @category math
@@ -2447,14 +2410,13 @@ export const endOf: {
  *
  * **Example** (Rounding DateTime values to nearest units)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * // returns "2024-01-02T00:00:00Z"
  * DateTime.makeUnsafe("2024-01-01T12:01:00Z").pipe(
  *   DateTime.nearest("day"),
- *   DateTime.formatIso
- * )
+ * ) // => DateTime.makeUnsafe("2024-01-02T00:00:00Z")
  * ```
  *
  * @category math
@@ -2490,20 +2452,18 @@ export const nearest: {
  *
  * **Example** (Formatting DateTime values with Intl options)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeZonedUnsafe("2024-06-15T14:30:00Z", {
  *   timeZone: "Europe/London"
  * })
  *
- * const formatted = DateTime.format(dt, {
+ * DateTime.format(dt, {
  *   dateStyle: "full",
  *   timeStyle: "short",
  *   locale: "en-US"
- * })
- *
- * console.log(formatted) // "Saturday, June 15, 2024 at 3:30 PM"
+ * }) // => "Saturday, June 15, 2024 at 3:30 PM"
  * ```
  *
  * @category formatting
@@ -2533,21 +2493,19 @@ export const format: {
  *
  * **Example** (Formatting DateTime values locally)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-06-15T14:30:00Z")
  *
  * // Uses system local time zone and locale
- * const local = DateTime.formatLocal(dt, {
+ * DateTime.formatLocal(dt, {
  *   year: "numeric",
  *   month: "long",
  *   day: "numeric",
  *   hour: "2-digit",
  *   minute: "2-digit"
  * })
- *
- * console.log(local) // Output depends on system locale/timezone
  * ```
  *
  * @category formatting
@@ -2580,7 +2538,7 @@ export const formatLocal: {
  *
  * **Example** (Formatting DateTime values in UTC)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeZonedUnsafe("2024-06-15T14:30:00Z", {
@@ -2588,7 +2546,7 @@ export const formatLocal: {
  * })
  *
  * // Force UTC formatting regardless of time zone
- * const utcFormatted = DateTime.formatUtc(dt, {
+ * DateTime.formatUtc(dt, {
  *   year: "numeric",
  *   month: "2-digit",
  *   day: "2-digit",
@@ -2596,8 +2554,6 @@ export const formatLocal: {
  *   minute: "2-digit",
  *   timeZoneName: "short"
  * })
- *
- * console.log(utcFormatted) // "06/15/2024, 02:30 PM UTC"
  * ```
  *
  * @category formatting
@@ -2636,7 +2592,7 @@ export const formatUtc: {
  *
  * **Example** (Formatting DateTime values with custom formatters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-06-15T14:30:00Z")
@@ -2651,8 +2607,7 @@ export const formatUtc: {
  *   timeZone: "Europe/Berlin"
  * })
  *
- * const formatted = DateTime.formatIntl(dt, formatter)
- * console.log(formatted.length > 0) // true
+ * DateTime.formatIntl(dt, formatter).length > 0 // => true
  * ```
  *
  * @see {@link formatUtc} for formatting with options forced to UTC
@@ -2675,16 +2630,15 @@ export const formatIntl: {
  *
  * **Example** (Formatting DateTime values as ISO strings)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
- * const dt = DateTime.makeUnsafe("2024-01-01T12:30:45.123Z")
- * console.log(DateTime.formatIso(dt)) // "2024-01-01T12:30:45.123Z"
+ * DateTime.formatIso(DateTime.makeUnsafe("2024-01-01T12:30:45.123Z")) // => "2024-01-01T12:30:45.123Z"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T12:30:45.123Z", {
  *   timeZone: "Europe/London"
  * })
- * console.log(DateTime.formatIso(zoned)) // "2024-01-01T12:30:45.123Z"
+ * DateTime.formatIso(zoned) // => "2024-01-01T12:30:45.123Z"
  * ```
  *
  * @category formatting
@@ -2701,16 +2655,16 @@ export const formatIso: (self: DateTime) => string = Internal.formatIso
  *
  * **Example** (Formatting DateTime values as ISO dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-01-01T23:30:00Z")
- * console.log(DateTime.formatIsoDate(dt)) // "2024-01-01"
+ * DateTime.formatIsoDate(dt) // => "2024-01-01"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T23:30:00Z", {
  *   timeZone: "Pacific/Auckland" // UTC+12/13
  * })
- * console.log(DateTime.formatIsoDate(zoned)) // "2024-01-02" (next day in Auckland)
+ * DateTime.formatIsoDate(zoned) // => "2024-01-02"
  * ```
  *
  * @category formatting
@@ -2727,16 +2681,16 @@ export const formatIsoDate: (self: DateTime) => string = Internal.formatIsoDate
  *
  * **Example** (Formatting DateTime values as UTC ISO dates)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const dt = DateTime.makeUnsafe("2024-01-01T23:30:00Z")
- * console.log(DateTime.formatIsoDateUtc(dt)) // "2024-01-01"
+ * DateTime.formatIsoDateUtc(dt) // => "2024-01-01"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T23:30:00Z", {
  *   timeZone: "Pacific/Auckland"
  * })
- * console.log(DateTime.formatIsoDateUtc(zoned)) // "2024-01-01" (always UTC)
+ * DateTime.formatIsoDateUtc(zoned) // => "2024-01-01"
  * ```
  *
  * @category formatting
@@ -2754,16 +2708,16 @@ export const formatIsoDateUtc: (self: DateTime) => string = Internal.formatIsoDa
  *
  * **Example** (Formatting DateTime values with offsets)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const utc = DateTime.makeUnsafe("2024-01-01T12:00:00Z")
- * console.log(DateTime.formatIsoOffset(utc)) // "2024-01-01T12:00:00.000Z"
+ * DateTime.formatIsoOffset(utc) // => "2024-01-01T12:00:00.000Z"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-01-01T12:00:00Z", {
  *   timeZone: DateTime.zoneMakeOffset(3 * 60 * 60 * 1000)
  * })
- * console.log(DateTime.formatIsoOffset(zoned)) // "2024-01-01T15:00:00.000+03:00"
+ * DateTime.formatIsoOffset(zoned) // => "2024-01-01T15:00:00.000+03:00"
  * ```
  *
  * @category formatting
@@ -2780,22 +2734,20 @@ export const formatIsoOffset: (self: DateTime) => string = Internal.formatIsoOff
  *
  * **Example** (Formatting zoned DateTime values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  *
  * const zoned = DateTime.makeZonedUnsafe("2024-06-15T14:30:45.123Z", {
  *   timeZone: "Europe/London"
  * })
  *
- * const formatted = DateTime.formatIsoZoned(zoned)
- * console.log(formatted) // "2024-06-15T15:30:45.123+01:00[Europe/London]"
+ * DateTime.formatIsoZoned(zoned) // => "2024-06-15T15:30:45.123+01:00[Europe/London]"
  *
  * const offsetZone = DateTime.makeZonedUnsafe("2024-06-15T14:30:45.123Z", {
  *   timeZone: DateTime.zoneMakeOffset(3 * 60 * 60 * 1000)
  * })
  *
- * const offsetFormatted = DateTime.formatIsoZoned(offsetZone)
- * console.log(offsetFormatted) // "2024-06-15T17:30:45.123+03:00"
+ * DateTime.formatIsoZoned(offsetZone) // => "2024-06-15T17:30:45.123+03:00"
  * ```
  *
  * @category formatting
@@ -2812,7 +2764,7 @@ export const formatIsoZoned: (self: Zoned) => string = Internal.formatIsoZoned
  *
  * **Example** (Providing current time zone layers)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * const zone = DateTime.zoneMakeNamedUnsafe("Europe/London")
@@ -2820,14 +2772,14 @@ export const formatIsoZoned: (self: Zoned) => string = Internal.formatIsoZoned
  *
  * const program = Effect.gen(function*() {
  *   const now = yield* DateTime.nowInCurrentZone
- *   return DateTime.formatIsoZoned(now)
+ *   return DateTime.zoneToString(now.zone)
  * })
  *
  * // Use the layer to provide the time zone
- * Effect.provide(program, layer)
+ * await Effect.runPromise(Effect.provide(program, layer)) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category layers
  * @since 3.6.0
  */
 export const layerCurrentZone: (resource: NoInfer<TimeZone>) => Layer.Layer<CurrentTimeZone> = Layer.succeed(
@@ -2843,7 +2795,7 @@ export const layerCurrentZone: (resource: NoInfer<TimeZone>) => Layer.Layer<Curr
  *
  * **Example** (Providing fixed-offset time zone layers)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * // Create a layer for UTC+3
@@ -2851,13 +2803,13 @@ export const layerCurrentZone: (resource: NoInfer<TimeZone>) => Layer.Layer<Curr
  *
  * const program = Effect.gen(function*() {
  *   const now = yield* DateTime.nowInCurrentZone
- *   return DateTime.formatIsoZoned(now)
+ *   return DateTime.zoneToString(now.zone)
  * })
  *
- * Effect.provide(program, layer)
+ * await Effect.runPromise(Effect.provide(program, layer)) // => "+03:00"
  * ```
  *
- * @category current time zone
+ * @category layers
  * @since 3.6.0
  */
 export const layerCurrentZoneOffset = (offset: number): Layer.Layer<CurrentTimeZone> =>
@@ -2873,20 +2825,20 @@ export const layerCurrentZoneOffset = (offset: number): Layer.Layer<CurrentTimeZ
  *
  * **Example** (Providing named time zone layers)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * const layer = DateTime.layerCurrentZoneNamed("Europe/London")
  *
  * const program = Effect.gen(function*() {
  *   const now = yield* DateTime.nowInCurrentZone
- *   return DateTime.formatIsoZoned(now)
+ *   return DateTime.zoneToString(now.zone)
  * })
  *
- * Effect.provide(program, layer)
+ * await Effect.runPromise(Effect.provide(program, layer)) // => "Europe/London"
  * ```
  *
- * @category current time zone
+ * @category layers
  * @since 3.6.0
  */
 export const layerCurrentZoneNamed: (zoneId: string) => Layer.Layer<
@@ -2904,19 +2856,19 @@ export const layerCurrentZoneNamed: (zoneId: string) => Layer.Layer<
  *
  * **Example** (Providing local time zone layers)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime, Effect } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const now = yield* DateTime.nowInCurrentZone
- *   return DateTime.formatIsoZoned(now)
+ *   return DateTime.isZoned(now)
  * })
  *
  * // Use the system's local time zone
- * Effect.provide(program, DateTime.layerCurrentZoneLocal)
+ * await Effect.runPromise(Effect.provide(program, DateTime.layerCurrentZoneLocal)) // => true
  * ```
  *
- * @category current time zone
+ * @category layers
  * @since 3.6.0
  */
 export const layerCurrentZoneLocal: Layer.Layer<CurrentTimeZone> = Layer.sync(CurrentTimeZone)(zoneMakeLocal)

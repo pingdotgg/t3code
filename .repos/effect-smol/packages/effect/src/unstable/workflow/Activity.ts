@@ -228,7 +228,7 @@ export const retry: {
  * Context reference containing the current activity retry attempt, defaulting
  * to `1`.
  *
- * @category Attempts
+ * @category services
  * @since 4.0.0
  */
 export const CurrentAttempt = Context.Reference<number>(
@@ -240,7 +240,7 @@ export const CurrentAttempt = Context.Reference<number>(
  * Computes a deterministic activity idempotency key from the current workflow
  * execution ID, the supplied name, and optionally the current attempt.
  *
- * @category Idempotency
+ * @category idempotency
  * @since 4.0.0
  */
 export const idempotencyKey: (

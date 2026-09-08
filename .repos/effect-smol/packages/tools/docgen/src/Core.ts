@@ -1,4 +1,6 @@
 /**
+ * Coordinates source parsing, validation, example checking, and Markdown generation.
+ *
  * @since 0.6.0
  */
 
@@ -169,8 +171,9 @@ const extractPrefixedNestedNamespaces = (
 }
 
 /**
- * The metadata key for skipping type-checking.
+ * Fence metadata that excludes an example from docgen type checking.
  *
+ * @category constants
  * @since 0.6.0
  */
 export const SKIP_TYPE_CHECKING_FENCE_METADATA = "skip-type-checking"

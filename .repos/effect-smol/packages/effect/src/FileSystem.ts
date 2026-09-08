@@ -11,7 +11,7 @@
  * @since 4.0.0
  */
 import * as Arr from "./Array.ts"
-import * as Brand from "./Brand.ts"
+import type * as Brand from "./Brand.ts"
 import * as Cause from "./Cause.ts"
 import * as Context from "./Context.ts"
 import * as Effect from "./Effect.ts"
@@ -38,8 +38,15 @@ const TypeId = "~effect/platform/FileSystem"
  *
  * **Example** (Accessing file system operations)
  *
- * ```ts
- * import { Console, Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem } from "effect"
+ *
+ * const fileSystem = FileSystem.makeNoop({
+ *   exists: () => Effect.succeed(true),
+ *   makeDirectory: () => Effect.void,
+ *   stat: () => Effect.succeed({ size: FileSystem.Size(22) } as FileSystem.File.Info),
+ *   readFileString: () => Effect.succeed("{\"env\": \"development\"}")
+ * })
  *
  * const program = Effect.gen(function*() {
  *   const fs = yield* FileSystem.FileSystem
@@ -55,15 +62,17 @@ const TypeId = "~effect/platform/FileSystem"
  *
  *   // File information
  *   const stats = yield* fs.stat("./config.json")
- *   yield* Console.log(`File size: ${stats.size} bytes`)
- *
- *   // Streaming operations
+ *   // Read the file contents
  *   const content = yield* fs.readFileString("./config.json")
- *   yield* Console.log("Config:", content)
+ *   return { size: stats.size, content }
  * })
+ *
+ * const result = Effect.runSync(Effect.provideService(program, FileSystem.FileSystem, fileSystem))
+ * result.size // => 22n
+ * result.content // => "{\"env\": \"development\"}"
  * ```
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface FileSystem {
@@ -341,9 +350,15 @@ export interface FileSystem {
     mtime: Date | number
   ) => Effect.Effect<void, PlatformError>
   /**
-   * Watch a directory or file for changes
+   * Watch a directory or file for changes.
+   *
+   * **Details**
+   *
+   * By default, only changes to the direct children of the directory are
+   * reported. Set the `recursive` option to `true` to watch for changes in
+   * subdirectories as well.
    */
-  readonly watch: (path: string) => Stream.Stream<WatchEvent, PlatformError>
+  readonly watch: (path: string, options?: WatchOptions) => Stream.Stream<WatchEvent, PlatformError>
   /**
    * Write data to a file at `path`.
    */
@@ -380,18 +395,11 @@ export interface FileSystem {
  *
  * **Example** (Creating branded file sizes)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * // Create sizes using the Size constructor
- * const smallFile = FileSystem.Size(1024) // 1 KB
- * const largeFile = FileSystem.Size(BigInt("9007199254740992")) // Very large
- *
- * // Use with file operations
- * const truncateToSize = Effect.fnUntraced(function*(path: string, size: FileSystem.Size) {
- *   const fs = yield* FileSystem.FileSystem
- *   return yield* fs.truncate(path, size)
- * })
+ * FileSystem.Size(1024) // => 1024n
+ * FileSystem.Size(BigInt("9007199254740992")) // => 9007199254740992n
  * ```
  *
  * @category sizes
@@ -410,17 +418,15 @@ export type Size = Brand.Branded<bigint, "Size">
  *
  * **Example** (Using size inputs)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // All of these are valid SizeInput values
- *   yield* fs.truncate("file1.txt", 1024) // number
- *   yield* fs.truncate("file2.txt", BigInt(2048)) // bigint
- *   yield* fs.truncate("file3.txt", FileSystem.Size(4096)) // Size
- * })
+ * const inputs: ReadonlyArray<FileSystem.SizeInput> = [
+ *   1024,
+ *   2048n,
+ *   FileSystem.Size(4096)
+ * ]
+ * inputs.map(FileSystem.Size) // => [1024n, 2048n, 4096n]
  * ```
  *
  * @category sizes
@@ -439,27 +445,19 @@ export type SizeInput = bigint | number | Size
  *
  * **Example** (Converting size inputs)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
  * // From number
  * const size1 = FileSystem.Size(1024)
- * console.log(typeof size1) // "bigint"
+ * typeof size1 // => "bigint"
  *
  * // From bigint
  * const size2 = FileSystem.Size(BigInt(2048))
  *
  * // From existing Size (identity)
  * const size3 = FileSystem.Size(size1)
- *
- * // Use in file operations
- * const readChunk = (path: string, chunkSize: number) =>
- *   Effect.gen(function*() {
- *     const fs = yield* FileSystem.FileSystem
- *     return fs.stream(path, {
- *       chunkSize: FileSystem.Size(chunkSize)
- *     })
- *   })
+ * const sizes = [size2, size3] // => [2048n, 1024n]
  * ```
  *
  * @category sizes
@@ -477,22 +475,11 @@ export const Size = (bytes: SizeInput): Size => typeof bytes === "bigint" ? byte
  *
  * **Example** (Creating kibibyte sizes)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // Create a 64 KiB buffer size for streaming
- *   const bufferSize = FileSystem.KiB(64)
- *
- *   const stream = fs.stream("large-file.txt", {
- *     chunkSize: bufferSize
- *   })
- *
- *   // Truncate file to 100 KiB
- *   yield* fs.truncate("data.txt", FileSystem.KiB(100))
- * })
+ * FileSystem.KiB(64) // => 65536n
+ * FileSystem.KiB(100) // => 102400n
  * ```
  *
  * @category sizes
@@ -510,26 +497,11 @@ export const KiB = (n: number): Size => Size(n * 1024)
  *
  * **Example** (Creating mebibyte sizes)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // Set a 10 MiB chunk size for large file operations
- *   const largeChunkSize = FileSystem.MiB(10)
- *
- *   const stream = fs.stream("video.mp4", {
- *     chunkSize: largeChunkSize
- *   })
- *
- *   // Check if file is larger than 100 MiB
- *   const stats = yield* fs.stat("archive.zip")
- *   const maxSize = FileSystem.MiB(100)
- *   if (stats.size > maxSize) {
- *     yield* Effect.log("File is very large!")
- *   }
- * })
+ * FileSystem.MiB(10) // => 10485760n
+ * FileSystem.MiB(100) // => 104857600n
  * ```
  *
  * @category sizes
@@ -547,24 +519,10 @@ export const MiB = (n: number): Size => Size(n * 1024 * 1024)
  *
  * **Example** (Creating gibibyte sizes)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // Use GiB values as size thresholds
- *   const maxArchiveSize = FileSystem.GiB(1)
- *   console.log(maxArchiveSize.toString()) // "1073741824"
- *
- *   const tempFile = yield* fs.makeTempFile({ prefix: "archive-" })
- *   yield* fs.writeFileString(tempFile, "backup data")
- *
- *   const info = yield* fs.stat(tempFile)
- *   console.log(info.size < maxArchiveSize) // true
- *
- *   yield* fs.remove(tempFile)
- * })
+ * FileSystem.GiB(1) // => 1073741824n
  * ```
  *
  * @category sizes
@@ -582,25 +540,10 @@ export const GiB = (n: number): Size => Size(n * 1024 * 1024 * 1024)
  *
  * **Example** (Creating tebibyte sizes)
  *
- * ```ts
- * import { Console, Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // Check if we're dealing with very large files
- *   const stats = yield* fs.stat("database-backup.sql")
- *   const oneTiB = FileSystem.TiB(1)
- *
- *   if (stats.size > oneTiB) {
- *     yield* Console.log("This is a very large database backup!")
- *
- *     // Use larger chunk sizes for such files
- *     const stream = fs.stream("database-backup.sql", {
- *       chunkSize: FileSystem.MiB(100) // 100 MiB chunks
- *     })
- *   }
- * })
+ * FileSystem.TiB(1) // => 1099511627776n
  * ```
  *
  * @category sizes
@@ -622,24 +565,10 @@ const bigintPiB = bigint1024 * bigint1024 * bigint1024 * bigint1024 * bigint1024
  *
  * **Example** (Creating pebibyte sizes)
  *
- * ```ts
- * import { Console, Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // For extremely large data processing scenarios
- *   const massiveDataset = FileSystem.PiB(2) // 2 PiB
- *
- *   // This would typically be used in enterprise/cloud scenarios
- *   yield* Console.log(`Processing ${massiveDataset} bytes of data`)
- *
- *   // Such large files would require specialized streaming
- *   const stream = fs.stream("massive-dataset.bin", {
- *     chunkSize: FileSystem.GiB(1), // 1 GiB chunks
- *     offset: FileSystem.TiB(100) // Start from 100 TiB offset
- *   })
- * })
+ * FileSystem.PiB(2) // => 2251799813685248n
  * ```
  *
  * @category sizes
@@ -668,24 +597,11 @@ export const PiB = (n: number): Size => Size(BigInt(n) * bigintPiB)
  *
  * **Example** (Opening files with flags)
  *
- * ```ts
- * import { Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import type { FileSystem } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // Open for reading only
- *   const readFile = yield* fs.open("data.txt", { flag: "r" })
- *
- *   // Open for writing, truncating existing content
- *   const writeFile = yield* fs.open("output.txt", { flag: "w" })
- *
- *   // Open for appending
- *   const appendFile = yield* fs.open("log.txt", { flag: "a" })
- *
- *   // Open for read/write, but fail if file doesn't exist
- *   const editFile = yield* fs.open("config.json", { flag: "r+" })
- * })
+ * const flags: ReadonlyArray<FileSystem.OpenFlag> = ["r", "w", "a", "r+"]
+ * flags // => ["r", "w", "a", "r+"]
  * ```
  *
  * @category models
@@ -717,32 +633,28 @@ export type OpenFlag =
  *
  * **Example** (Accessing and providing FileSystem)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, FileSystem } from "effect"
+ *
+ * const customFs = FileSystem.makeNoop({
+ *   exists: () => Effect.succeed(true),
+ *   readFileString: () => Effect.succeed("contents")
+ * })
  *
  * // Access the FileSystem service
  * const program = Effect.gen(function*() {
  *   const fs = yield* FileSystem.FileSystem
  *
  *   const exists = yield* fs.exists("./data.txt")
- *   if (exists) {
- *     const content = yield* fs.readFileString("./data.txt")
- *     yield* Effect.log("File content:", content)
- *   }
+ *   return exists ? yield* fs.readFileString("./data.txt") : undefined
  * })
- *
- * // Provide a custom FileSystem implementation
- * declare const platformImpl: Omit<
- *   FileSystem.FileSystem,
- *   "exists" | "readFileString" | "stream" | "sink" | "writeFileString"
- * >
- * const customFs = FileSystem.make(platformImpl)
  *
  * const withCustomFs = Effect.provideService(
  *   program,
  *   FileSystem.FileSystem,
  *   customFs
  * )
+ * Effect.runSync(withCustomFs) // => "contents"
  * ```
  *
  * @category services
@@ -870,7 +782,7 @@ const notFound = (method: string, path: string) =>
  *
  * **Example** (Creating a no-op FileSystem)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, FileSystem, PlatformError } from "effect"
  *
  * // Create a test filesystem that only allows reading specific files
@@ -895,7 +807,7 @@ const notFound = (method: string, path: string) =>
  * // Use in tests
  * const program = Effect.gen(function*() {
  *   const content = yield* testFs.readFileString("test-config.json")
- *   // Will succeed with mocked content
+ *   return content
  * })
  *
  * // Test with the no-op filesystem
@@ -904,6 +816,7 @@ const notFound = (method: string, path: string) =>
  *   FileSystem.FileSystem,
  *   testFs
  * )
+ * Effect.runSync(testProgram) // => "{\"test\": true}"
  * ```
  *
  * @category constructors
@@ -1015,7 +928,7 @@ export const makeNoop = (fileSystem: Partial<FileSystem>): FileSystem =>
  *
  * **Example** (Providing a no-op FileSystem layer)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, FileSystem } from "effect"
  *
  * // Create a test layer with specific behaviors
@@ -1032,6 +945,7 @@ export const makeNoop = (fileSystem: Partial<FileSystem>): FileSystem =>
  *
  * // Provide the test layer
  * const testProgram = Effect.provide(program, testLayer)
+ * Effect.runSync(testProgram) // => "mocked content"
  * ```
  *
  * @category layers
@@ -1074,7 +988,7 @@ export const FileTypeId = "~effect/platform/FileSystem/File"
  * @see {@link File} for the file-handle interface narrowed by this guard
  * @see {@link FileTypeId} for the runtime marker checked by this guard
  *
- * @category file
+ * @category guards
  * @since 4.0.0
  */
 export const isFile = (u: unknown): u is File => hasProperty(u, FileTypeId)
@@ -1090,44 +1004,43 @@ export const isFile = (u: unknown): u is File => hasProperty(u, FileTypeId)
  *
  * **Example** (Working with file handles)
  *
- * ```ts
- * import { Console, Effect, FileSystem } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Option } from "effect"
+ *
+ * const file: FileSystem.File = {
+ *   [FileSystem.FileTypeId]: FileSystem.FileTypeId,
+ *   stat: Effect.succeed({ size: FileSystem.Size(5) } as FileSystem.File.Info),
+ *   seek: () => Effect.succeed(FileSystem.Size(0)),
+ *   sync: Effect.void,
+ *   read: (buffer) => Effect.sync(() => {
+ *     buffer.set([1, 2, 3, 4, 5])
+ *     return FileSystem.Size(5)
+ *   }),
+ *   readAlloc: () => Effect.succeed(Option.none()),
+ *   truncate: () => Effect.void,
+ *   write: (buffer) => Effect.succeed(FileSystem.Size(buffer.length)),
+ *   writeAll: () => Effect.void
+ * }
  *
  * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // Open a file and work with the handle
- *   yield* Effect.scoped(
- *     Effect.gen(function*() {
- *       const file = yield* fs.open("./data.txt", { flag: "r+" })
- *
- *       // Get file information
- *       const stats = yield* file.stat
- *       yield* Console.log(`File size: ${stats.size} bytes`)
- *
- *       // Read from specific position
- *       yield* file.seek(10, "start")
- *       const buffer = new Uint8Array(5)
- *       const bytesRead = yield* file.read(buffer)
- *       yield* Console.log(`Read ${bytesRead} bytes:`, buffer)
- *
- *       // Write data
- *       const data = new TextEncoder().encode("Hello")
- *       yield* file.write(data)
- *       yield* file.sync // Flush to disk
- *     })
- *   )
+ *   const stats = yield* file.stat
+ *   const buffer = new Uint8Array(5)
+ *   const bytesRead = yield* file.read(buffer)
+ *   yield* file.writeAll(new TextEncoder().encode("Hello"))
+ *   yield* file.sync
+ *   return { size: stats.size, bytesRead, buffer: Array.from(buffer) }
  * })
+ *
+ * Effect.runSync(program) // => { size: 5n, bytesRead: 5n, buffer: [1, 2, 3, 4, 5] }
  * ```
  *
- * @category file
+ * @category models
  * @since 4.0.0
  */
 export interface File {
   readonly [FileTypeId]: typeof FileTypeId
-  readonly fd: File.Descriptor
   readonly stat: Effect.Effect<File.Info, PlatformError>
-  readonly seek: (offset: SizeInput, from: SeekMode) => Effect.Effect<void>
+  readonly seek: (offset: SizeInput, from: SeekMode) => Effect.Effect<Size>
   readonly sync: Effect.Effect<void, PlatformError>
   readonly read: (buffer: Uint8Array) => Effect.Effect<Size, PlatformError>
   readonly readAlloc: (size: SizeInput) => Effect.Effect<Option.Option<Uint8Array>, PlatformError>
@@ -1144,19 +1057,6 @@ export interface File {
  */
 export declare namespace File {
   /**
-   * Branded type for file descriptors.
-   *
-   * **Details**
-   *
-   * File descriptors are numeric handles used by the operating system
-   * to identify open files. The branded type ensures type safety.
-   *
-   * @category file
-   * @since 4.0.0
-   */
-  export type Descriptor = Brand.Branded<number, "FileDescriptor">
-
-  /**
    * Enumeration of possible file system entry types.
    *
    * **Details**
@@ -1164,7 +1064,7 @@ export declare namespace File {
    * Represents the different types of entries that can exist in a file system,
    * from regular files to special device files and symbolic links.
    *
-   * @category file
+   * @category models
    * @since 4.0.0
    */
   export type Type =
@@ -1188,38 +1088,39 @@ export declare namespace File {
    *
    * **Example** (Inspecting file information)
    *
-   * ```ts
-   * import { Effect, FileSystem, Option } from "effect"
+   * ```ts import.meta.vitest
+   * import { FileSystem, Option } from "effect"
    *
-   * const program = Effect.gen(function*() {
-   *   const fs = yield* FileSystem.FileSystem
+   * const info: FileSystem.File.Info = {
+   *   type: "File",
+   *   mtime: Option.none(),
+   *   atime: Option.none(),
+   *   birthtime: Option.none(),
+   *   dev: 1,
+   *   ino: Option.none(),
+   *   mode: 0o644,
+   *   nlink: Option.none(),
+   *   uid: Option.none(),
+   *   gid: Option.none(),
+   *   rdev: Option.none(),
+   *   size: FileSystem.Size(5),
+   *   blksize: Option.none(),
+   *   blocks: Option.none()
+   * }
    *
-   *   const path = yield* fs.makeTempFile({ prefix: "info-" })
-   *   yield* fs.writeFileString(path, "hello")
+   * info.type // => "File"
+   * info.size // => 5n
+   * info.mode.toString(8) // => "644"
    *
-   *   const info: FileSystem.File.Info = yield* fs.stat(path)
-   *
-   *   console.log(`File type: ${info.type}`) // "File type: File"
-   *   console.log(`File size: ${info.size} bytes`) // "File size: 5 bytes"
-   *   console.log(`Mode: ${info.mode.toString(8)}`) // Octal permissions
-   *
-   *   // Handle optional timestamps without inventing a fallback date
-   *   const modified = Option.match(info.mtime, {
-   *     onNone: () => "unavailable",
-   *     onSome: (mtime) => mtime.toISOString()
-   *   })
-   *   console.log(`Modified: ${modified}`)
-   *
-   *   // Check if it's a regular file
-   *   if (info.type === "File") {
-   *     console.log("Processing regular file...") // "Processing regular file..."
-   *   }
-   *
-   *   yield* fs.remove(path)
+   * const modified = Option.match(info.mtime, {
+   *   onNone: () => "unavailable",
+   *   onSome: (mtime) => mtime.toISOString()
    * })
+   * modified // => "unavailable"
+   * info.type === "File" // => true
    * ```
    *
-   * @category file
+   * @category models
    * @since 4.0.0
    */
   export interface Info {
@@ -1241,32 +1142,6 @@ export declare namespace File {
 }
 
 /**
- * Creates a `File.Descriptor` from a number.
- *
- * **When to use**
- *
- * Use to brand an operating-system file descriptor number when implementing a
- * `FileSystem` that returns custom `File` handles.
- *
- * **Details**
- *
- * `File.Descriptor` is a branded integer handle used by operating systems to
- * identify open files.
- *
- * **Gotchas**
- *
- * This constructor is nominal and does not check that the number is an integer
- * or that it refers to an open file descriptor.
- *
- * @see {@link File.Descriptor} for the branded descriptor type produced by this constructor
- * @see {@link File} for file handles that expose a descriptor through `fd`
- *
- * @category constructors
- * @since 4.0.0
- */
-export const FileDescriptor = Brand.nominal<File.Descriptor>()
-
-/**
  * Specifies the reference point for seeking within an open file.
  *
  * **When to use**
@@ -1286,6 +1161,19 @@ export const FileDescriptor = Brand.nominal<File.Descriptor>()
  * @since 4.0.0
  */
 export type SeekMode = "start" | "current"
+
+/**
+ * Options for watching files or directories.
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export interface WatchOptions {
+  /**
+   * When `true`, changes in subdirectories are also reported.
+   */
+  readonly recursive?: boolean | undefined
+}
 
 /**
  * Represents file system events emitted when watching files or directories.
@@ -1373,7 +1261,7 @@ export declare namespace WatchEvent {
  *
  * **Example** (Providing a custom watch backend)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, FileSystem, Option, Stream } from "effect"
  *
  * // Custom watch backend implementation
@@ -1384,12 +1272,11 @@ export declare namespace WatchEvent {
  *   }
  * }
  *
- * // Provide custom watch backend
  * const program = Effect.gen(function*() {
- *   const fs = yield* FileSystem.FileSystem
- *
- *   // File watching will use the custom backend
- *   const watcher = fs.watch("./directory")
+ *   const backend = yield* FileSystem.WatchBackend
+ *   return Option.isSome(
+ *     backend.register("./directory", { type: "Directory" } as FileSystem.File.Info)
+ *   )
  * })
  *
  * const withCustomBackend = Effect.provideService(
@@ -1397,11 +1284,16 @@ export declare namespace WatchEvent {
  *   FileSystem.WatchBackend,
  *   customWatchBackend
  * )
+ * Effect.runSync(withCustomBackend) // => true
  * ```
  *
- * @category file watcher
+ * @category services
  * @since 4.0.0
  */
 export class WatchBackend extends Context.Service<WatchBackend, {
-  readonly register: (path: string, stat: File.Info) => Option.Option<Stream.Stream<WatchEvent, PlatformError>>
+  readonly register: (
+    path: string,
+    stat: File.Info,
+    options?: WatchOptions
+  ) => Option.Option<Stream.Stream<WatchEvent, PlatformError>>
 }>()("effect/platform/FileSystem/WatchBackend") {}

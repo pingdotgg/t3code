@@ -68,5 +68,8 @@ describe("HMR", () => {
 
     expect(b instanceof mod1.A).toBe(false)
     expect(String(schema.encodeUnknownExit(mod1.A)(b))).toBe(`Success({"a":"a"})`)
+
+    const nested = schema.Struct({ rows: schema.Array(mod1.A) })
+    expect(nested.make({ rows: [b] }).rows[0]).toBe(b)
   })
 })

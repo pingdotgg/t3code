@@ -6,11 +6,11 @@
 
 import { Effect, Schema } from "effect"
 
-export class ValidationError extends Schema.TaggedErrorClass<ValidationError>()("ValidationError", {
+export class ValidationError extends Schema.TaggedError<ValidationError>()("ValidationError", {
   message: Schema.String
 }) {}
 
-export class NetworkError extends Schema.TaggedErrorClass<NetworkError>()("NetworkError", {
+export class NetworkError extends Schema.TaggedError<NetworkError>()("NetworkError", {
   statusCode: Schema.Int
 }) {}
 

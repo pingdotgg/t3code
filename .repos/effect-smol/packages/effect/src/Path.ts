@@ -47,38 +47,38 @@ export const TypeId = "~effect/platform/Path"
  *
  * **Example** (Using path operations)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Path } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const path = yield* Path.Path
  *
- *   // Use various path operations
- *   const joined = path.join("home", "user", "documents")
- *   const normalized = path.normalize("./path/../to/file.txt")
- *   const basename = path.basename("/path/to/file.txt")
- *   const dirname = path.dirname("/path/to/file.txt")
- *   const extname = path.extname("file.txt")
- *   const isAbs = path.isAbsolute("/absolute/path")
- *   const parsed = path.parse("/path/to/file.txt")
- *   const relative = path.relative("/from/path", "/to/path")
- *   const resolved = path.resolve("relative", "path")
- *
- *   console.log({
- *     joined,
- *     normalized,
- *     basename,
- *     dirname,
- *     extname,
- *     isAbs,
- *     parsed,
- *     relative,
- *     resolved
- *   })
+ *   return {
+ *     joined: path.join("home", "user", "documents"),
+ *     normalized: path.normalize("./path/../to/file.txt"),
+ *     basename: path.basename("/path/to/file.txt"),
+ *     dirname: path.dirname("/path/to/file.txt"),
+ *     extname: path.extname("file.txt"),
+ *     isAbsolute: path.isAbsolute("/absolute/path"),
+ *     name: path.parse("/path/to/file.txt").name,
+ *     relative: path.relative("/from/path", "/to/path"),
+ *     resolved: path.resolve("/base", "relative", "path")
+ *   }
  * })
+ *
+ * const result = Effect.runSync(Effect.provide(program, Path.layer))
+ * result.joined // => "home/user/documents"
+ * result.normalized // => "to/file.txt"
+ * result.basename // => "file.txt"
+ * result.dirname // => "/path/to"
+ * result.extname // => ".txt"
+ * result.isAbsolute // => true
+ * result.name // => "file"
+ * result.relative // => "../../to/path"
+ * result.resolved // => "/base/relative/path"
  * ```
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface Path {
@@ -108,7 +108,7 @@ export interface Path {
  *
  * **Example** (Working with parsed paths)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Path } from "effect"
  *
  * // Access types and utilities in the Path namespace
@@ -127,8 +127,10 @@ export interface Path {
  *     name: "file"
  *   }
  *
- *   console.log(parsed, exampleParsed)
+ *   return [parsed.base, exampleParsed.base]
  * })
+ *
+ * Effect.runSync(Effect.provide(program, Path.layer)) // => ["file.txt", "file.txt"]
  * ```
  *
  * @since 4.0.0
@@ -150,7 +152,7 @@ export declare namespace Path {
    *
    * **Example** (Parsing and formatting paths)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Effect, Path } from "effect"
    *
    * const program = Effect.gen(function*() {
@@ -158,23 +160,19 @@ export declare namespace Path {
    *
    *   // Parse a path into its components
    *   const parsed = path.parse("/home/user/documents/file.txt")
-   *   console.log(parsed)
-   *   // {
-   *   //   root: "/",
-   *   //   dir: "/home/user/documents",
-   *   //   base: "file.txt",
-   *   //   ext: ".txt",
-   *   //   name: "file"
-   *   // }
-   *
    *   // Format a path from its components
    *   const formatted = path.format({
    *     dir: "/home/user",
    *     name: "newfile",
    *     ext: ".ts"
    *   })
-   *   console.log(formatted) // "/home/user/newfile.ts"
+   *   return { dir: parsed.dir, base: parsed.base, formatted }
    * })
+   *
+   * const result = Effect.runSync(Effect.provide(program, Path.layer))
+   * result.dir // => "/home/user/documents"
+   * result.base // => "file.txt"
+   * result.formatted // => "/home/user/newfile.ts"
    * ```
    *
    * @category models
@@ -198,7 +196,7 @@ export declare namespace Path {
  *
  * **Example** (Providing a custom Path service)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Layer, Path } from "effect"
  *
  * // Create a custom path implementation
@@ -244,12 +242,11 @@ export declare namespace Path {
  *
  * const program = Effect.gen(function*() {
  *   const path = yield* Path.Path
- *   const joined = path.join("home", "user", "file.txt")
- *   console.log(joined) // "home/user/file.txt"
+ *   return path.join("home", "user", "file.txt")
  * })
  *
  * // Run with custom path implementation
- * const result = Effect.provide(program, customPathLayer)
+ * Effect.runSync(Effect.provide(program, customPathLayer)) // => "home/user/file.txt"
  * ```
  *
  * @category services

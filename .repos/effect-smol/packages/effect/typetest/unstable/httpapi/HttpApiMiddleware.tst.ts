@@ -30,7 +30,7 @@ describe("HttpApiMiddleware", () => {
     })
 
     it("preserves error services for status annotations used with pipe", () => {
-      class NotFound extends Schema.TaggedErrorClass<NotFound>()("NotFound", {}) {}
+      class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {}) {}
       class M extends HttpApiMiddleware.Service<M>()("Http/Logger", {
         error: NotFound.pipe(HttpApiSchema.status(404))
       }) {}

@@ -587,12 +587,20 @@ describe("String", () => {
     it("handles single word", () => {
       strictEqual(S.snakeToCamel("hello"), "hello")
     })
+
+    it("handles an empty string", () => {
+      strictEqual(S.snakeToCamel(""), "")
+    })
   })
 
   describe("snakeToPascal", () => {
     it("converts snake_case to PascalCase", () => {
       strictEqual(S.snakeToPascal("hello_world"), "HelloWorld")
       strictEqual(S.snakeToPascal("foo_bar_baz"), "FooBarBaz")
+    })
+
+    it("handles an empty string", () => {
+      strictEqual(S.snakeToPascal(""), "")
     })
   })
 
@@ -632,6 +640,22 @@ describe("String", () => {
 
     it("data-last with options", () => {
       strictEqual(pipe("helloWorld", S.noCase({ delimiter: "-" })), "hello-world")
+    })
+
+    it("uses a custom split regular expression", () => {
+      strictEqual(S.noCase("ab", { splitRegExp: /([a])([b])/g }), "a b")
+    })
+
+    it("uses custom split regular expressions", () => {
+      strictEqual(S.noCase("abc", { splitRegExp: [/([a])([b])/g, /([b])([c])/g] }), "a b c")
+    })
+
+    it("uses a custom strip regular expression", () => {
+      strictEqual(S.noCase("a_b-c", { stripRegExp: /_/g }), "a b-c")
+    })
+
+    it("uses custom strip regular expressions", () => {
+      strictEqual(S.noCase("a_b-c", { stripRegExp: [/_/g, /-/g] }), "a b c")
     })
 
     it("handles underscores and hyphens", () => {

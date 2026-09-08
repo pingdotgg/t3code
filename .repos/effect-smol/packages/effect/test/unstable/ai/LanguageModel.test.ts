@@ -19,6 +19,17 @@ const MyToolkitLayer = MyToolkit.toLayer({
     )
 })
 
+const TransformTool = Tool.make("TransformTool", {
+  parameters: Schema.FiniteFromString,
+  success: Schema.Finite
+})
+
+const TransformToolkit = Toolkit.make(TransformTool)
+
+const TransformToolkitLayer = TransformToolkit.toLayer({
+  TransformTool: (value) => Effect.succeed(value * 2)
+})
+
 const ApprovalTool = Tool.make("ApprovalTool", {
   parameters: Schema.Struct({ action: Schema.String }),
   success: Schema.Struct({ result: Schema.String }),
@@ -49,7 +60,112 @@ describe("LanguageModel", () => {
     response: undefined
   }
 
+  describe("generateText", () => {
+    it.effect("validates encoded tool parameters when tool call resolution is disabled", () =>
+      Effect.gen(function*() {
+        const error = yield* LanguageModel.generateText({
+          prompt: [],
+          toolkit: TransformToolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          TestUtils.withLanguageModel({
+            generateText: [{
+              type: "tool-call",
+              id: "tool-invalid-transform",
+              name: "TransformTool",
+              params: { invalid: true }
+            }]
+          }),
+          Effect.provide(TransformToolkitLayer),
+          Effect.flip
+        )
+
+        strictEqual(error.reason._tag, "InvalidOutputError")
+      }))
+
+    it.effect("preserves encoded tool parameters when tool call resolution is disabled", () =>
+      Effect.gen(function*() {
+        const response = yield* LanguageModel.generateText({
+          prompt: [],
+          toolkit: TransformToolkit,
+          disableToolCallResolution: true
+        })
+        const toolCall = response.toolCalls[0]!
+
+        strictEqual(toolCall.params, "21")
+
+        const toolkit = yield* TransformToolkit
+        const results = yield* toolkit.handle(toolCall.name, toolCall.params).pipe(
+          Effect.flatMap(Stream.runCollect)
+        )
+
+        strictEqual(results[0].result, 42)
+      }).pipe(
+        TestUtils.withLanguageModel({
+          generateText: [{
+            type: "tool-call",
+            id: "tool-transform",
+            name: "TransformTool",
+            params: "21"
+          }]
+        }),
+        Effect.provide(TransformToolkitLayer)
+      ))
+  })
+
   describe("streamText", () => {
+    it.effect("validates encoded tool parameters when tool call resolution is disabled", () =>
+      Effect.gen(function*() {
+        const error = yield* LanguageModel.streamText({
+          prompt: [],
+          toolkit: TransformToolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          Stream.runDrain,
+          TestUtils.withLanguageModel({
+            streamText: [{
+              type: "tool-call",
+              id: "tool-invalid-transform",
+              name: "TransformTool",
+              params: { invalid: true }
+            }]
+          }),
+          Effect.provide(TransformToolkitLayer),
+          Effect.flip
+        )
+
+        strictEqual(error.reason._tag, "InvalidOutputError")
+      }))
+
+    it.effect("preserves encoded tool parameters when tool call resolution is disabled", () =>
+      Effect.gen(function*() {
+        const parts = yield* LanguageModel.streamText({
+          prompt: [],
+          toolkit: TransformToolkit,
+          disableToolCallResolution: true
+        }).pipe(Stream.runCollect)
+        const toolCall = parts.find((part) => part.type === "tool-call")!
+
+        strictEqual(toolCall.params, "21")
+
+        const toolkit = yield* TransformToolkit
+        const results = yield* toolkit.handle(toolCall.name, toolCall.params).pipe(
+          Effect.flatMap(Stream.runCollect)
+        )
+
+        strictEqual(results[0].result, 42)
+      }).pipe(
+        TestUtils.withLanguageModel({
+          streamText: [{
+            type: "tool-call",
+            id: "tool-transform",
+            name: "TransformTool",
+            params: "21"
+          }]
+        }),
+        Effect.provide(TransformToolkitLayer)
+      ))
+
     it.effect("should emit tool calls before executing tool handlers", () =>
       Effect.gen(function*() {
         const parts: Array<Response.StreamPart<Toolkit.Tools<typeof MyToolkit>>> = []
@@ -439,7 +555,7 @@ describe("LanguageModel", () => {
         required: ["name"],
         additionalProperties: false,
         $defs: {
-          "PersonJsonEncoding": {
+          "PersonEncoded": {
             type: "object",
             properties: {
               name: {
@@ -780,7 +896,8 @@ describe("LanguageModel", () => {
                 id: toolCallId,
                 name: "ApprovalTool",
                 result: { result: "approved-result" },
-                isFailure: false
+                isFailure: false,
+                providerExecuted: false
               })
             ]
           }),
@@ -988,7 +1105,8 @@ describe("LanguageModel", () => {
                 id: toolCallId,
                 name: "ApprovalTool",
                 result: { result: "approved-result" },
-                isFailure: false
+                isFailure: false,
+                providerExecuted: false
               })
             ]
           }),
@@ -1082,7 +1200,8 @@ describe("LanguageModel", () => {
                 id: toolCallId,
                 name: "ApprovalTool",
                 result: { result: "approved-result" },
-                isFailure: false
+                isFailure: false,
+                providerExecuted: false
               })
             ]
           }),
@@ -1744,7 +1863,8 @@ describe("LanguageModel", () => {
                 id: toolCallId,
                 name: "ApprovalTool",
                 result: { result: "approved-result" },
-                isFailure: false
+                isFailure: false,
+                providerExecuted: false
               })
             ]
           }),
@@ -1823,7 +1943,8 @@ describe("LanguageModel", () => {
                 id: toolCallId,
                 name: "ApprovalTool",
                 result: { result: "approved-result" },
-                isFailure: false
+                isFailure: false,
+                providerExecuted: false
               })
             ]
           }),

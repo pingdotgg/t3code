@@ -4,15 +4,15 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware } from "effec
 import { type Atom, AtomHttpApi } from "effect/unstable/reactivity"
 import { describe, expect, it } from "tstyche"
 
-class EndpointError extends Schema.ErrorClass<EndpointError>("EndpointError")({
+class EndpointError extends Schema.Error<EndpointError>("EndpointError")({
   _tag: Schema.tag("EndpointError")
 }) {}
 
-class MiddlewareError extends Schema.ErrorClass<MiddlewareError>("MiddlewareError")({
+class MiddlewareError extends Schema.Error<MiddlewareError>("MiddlewareError")({
   _tag: Schema.tag("MiddlewareError")
 }) {}
 
-class MiddlewareClientError extends Schema.ErrorClass<MiddlewareClientError>("MiddlewareClientError")({
+class MiddlewareClientError extends Schema.Error<MiddlewareClientError>("MiddlewareClientError")({
   _tag: Schema.tag("MiddlewareClientError")
 }) {}
 

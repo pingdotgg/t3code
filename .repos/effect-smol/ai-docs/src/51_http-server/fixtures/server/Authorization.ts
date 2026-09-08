@@ -1,6 +1,15 @@
-import { Effect, Layer, Redacted } from "effect"
+import { DateTime, Effect, Layer, Redacted } from "effect"
 import { Authorization, CurrentUser, Unauthorized } from "../api/Authorization.ts"
 import { User, UserId } from "../domain/User.ts"
+
+const fixedTimestamp = DateTime.makeUnsafe("2026-01-01T00:00:00Z")
+const devUser = new User({
+  id: UserId.make("bf3dbe33-0ad2-4c9c-9c9e-733e57bdcbee"),
+  name: "Dev User",
+  email: "dev@acme.com",
+  createdAt: fixedTimestamp,
+  updatedAt: fixedTimestamp
+})
 
 // The implementation of the Authorization middleware. It is seperate from the
 // service definition to avoid leaking it into a client.
@@ -21,15 +30,7 @@ export const AuthorizationLayer = Layer.effect(
 
         // Provide the current user to the rest of the stack. This will be
         // available in any endpoint or middleware that runs after this one.
-        return yield* Effect.provideService(
-          httpEffect,
-          CurrentUser,
-          new User({
-            id: UserId.make(1),
-            name: "Dev User",
-            email: "dev@acme.com"
-          })
-        )
+        return yield* Effect.provideService(httpEffect, CurrentUser, devUser)
       })
     })
   })

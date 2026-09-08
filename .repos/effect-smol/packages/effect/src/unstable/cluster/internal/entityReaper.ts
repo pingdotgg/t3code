@@ -3,7 +3,6 @@ import * as Context from "../../../Context.ts"
 import * as Effect from "../../../Effect.ts"
 import * as Latch from "../../../Latch.ts"
 import * as Layer from "../../../Layer.ts"
-import type { EntityNotAssignedToRunner } from "../ClusterError.ts"
 import type { EntityAddress } from "../EntityAddress.ts"
 import type { EntityId } from "../EntityId.ts"
 import type { EntityState } from "./entityManager.ts"
@@ -16,14 +15,14 @@ export class EntityReaper extends Context.Service<EntityReaper>()("effect/cluste
     const registered: Array<{
       readonly maxIdleTime: number
       readonly servers: Map<EntityId, EntityState>
-      readonly entities: ResourceMap<EntityAddress, EntityState, EntityNotAssignedToRunner>
+      readonly entities: ResourceMap<EntityAddress, EntityState, any>
     }> = []
     const latch = yield* Latch.make()
 
     const register = (options: {
       readonly maxIdleTime: number
       readonly servers: Map<EntityId, EntityState>
-      readonly entities: ResourceMap<EntityAddress, EntityState, EntityNotAssignedToRunner>
+      readonly entities: ResourceMap<EntityAddress, EntityState, any>
     }) =>
       Effect.suspend(() => {
         currentResolution = Math.max(Math.min(currentResolution, options.maxIdleTime), 5000)

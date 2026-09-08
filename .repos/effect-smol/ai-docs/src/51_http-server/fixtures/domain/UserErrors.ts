@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 
-export class UserNotFound extends Schema.TaggedErrorClass<UserNotFound>()(
+export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
   "UserNotFound",
   {},
   // You can specify the status code for this error inline
@@ -8,7 +8,7 @@ export class UserNotFound extends Schema.TaggedErrorClass<UserNotFound>()(
 ) {}
 
 export class SearchQueryTooShort
-  extends Schema.TaggedErrorClass<SearchQueryTooShort>()("SearchQueryTooShort", {}, { httpApiStatus: 422 })
+  extends Schema.TaggedError<SearchQueryTooShort>()("SearchQueryTooShort", {}, { httpApiStatus: 422 })
 {
   static readonly minimumLength = 2
 }
@@ -17,6 +17,6 @@ export class SearchQueryTooShort
 //
 // This prevents adding too many error types to services / endpoint definitions.
 //
-export class UsersError extends Schema.TaggedErrorClass<UsersError>()("UsersError", {
+export class UsersError extends Schema.TaggedError<UsersError>()("UsersError", {
   reason: Schema.Union([UserNotFound, SearchQueryTooShort])
 }) {}

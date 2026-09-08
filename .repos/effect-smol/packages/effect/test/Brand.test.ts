@@ -29,7 +29,7 @@ describe("Brand", () => {
     const Int = Brand.check<Int>(Schema.isInt())
     const result = Int.result(1.1)
     assertTrue(Result.isFailure(result))
-    strictEqual(String(result.failure), "BrandError(Expected an integer, got 1.1)")
+    strictEqual(String(result.failure), "BrandError(Expected an integer)")
   })
 
   it("creates nominal brands without runtime validation", () => {
@@ -94,7 +94,7 @@ describe("Brand", () => {
       assertSome(Int.option(-1), -1 as Int)
 
       assertSuccess(Int, 1)
-      assertFailure(Int, 1.1, "Expected an integer, got 1.1")
+      assertFailure(Int, 1.1, "Expected an integer")
       assertSuccess(Int, -1)
     })
 
@@ -103,13 +103,13 @@ describe("Brand", () => {
       const PositiveInt = Brand.check<PositiveInt>(Schema.isInt(), Schema.isGreaterThan(0))
 
       assertSuccess(PositiveInt, 1)
-      assertFailure(PositiveInt, 1.1, "Expected an integer, got 1.1")
-      assertFailure(PositiveInt, -1, "Expected a value greater than 0, got -1")
+      assertFailure(PositiveInt, 1.1, "Expected an integer")
+      assertFailure(PositiveInt, -1, "Expected a value greater than 0")
       assertFailure(
         PositiveInt,
         -1.1,
-        `Expected an integer, got -1.1
-Expected a value greater than 0, got -1.1`
+        `Expected an integer
+Expected a value greater than 0`
       )
     })
 
@@ -121,9 +121,9 @@ Expected a value greater than 0, got -1.1`
       )
 
       assertSuccess(PositiveInt, 1)
-      assertFailure(PositiveInt, 1.1, "Expected an integer, got 1.1")
-      assertFailure(PositiveInt, -1, "Expected a value greater than 0, got -1")
-      assertFailure(PositiveInt, -1.1, `Expected an integer, got -1.1`)
+      assertFailure(PositiveInt, 1.1, "Expected an integer")
+      assertFailure(PositiveInt, -1, "Expected a value greater than 0")
+      assertFailure(PositiveInt, -1.1, `Expected an integer`)
     })
   })
 
@@ -149,12 +149,12 @@ Expected a value greater than 0, got -1.1`
     assertNone(PositiveInt.option(-1))
 
     assertSuccess(PositiveInt, 1)
-    assertFailure(PositiveInt, 1.1, "Expected an integer, got 1.1")
+    assertFailure(PositiveInt, 1.1, "Expected an integer")
     assertFailure(
       PositiveInt,
       -1.1,
-      `Expected an integer, got -1.1
-Expected a value greater than 0, got -1.1`
+      `Expected an integer
+Expected a value greater than 0`
     )
   })
 })

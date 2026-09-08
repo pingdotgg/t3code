@@ -3,9 +3,14 @@
  *
  * This module opens a SQLite database and exposes it as both `SqliteClient` and
  * the generic Effect SQL client. It serializes access through one connection,
- * caches prepared statements, enables WAL mode unless disabled, and supports
- * database backup, and extension loading. Streaming queries and
- * `updateValues` are not supported by this driver.
+ * caches prepared statements, enables WAL mode unless disabled, and waits up
+ * to five seconds for busy databases by default. Explicit transactions on
+ * writable connections use `BEGIN IMMEDIATE` to avoid read-to-write lock
+ * upgrades, which serializes them behind other writers even when they only
+ * read. Clients opened with `readonly: true` are unaffected. Busy waits block
+ * the Node.js event loop because `node:sqlite` is synchronous. Database backup
+ * and extension loading are supported; streaming queries and `updateValues`
+ * are not.
  *
  * @since 4.0.0
  */
@@ -29,6 +34,7 @@ import { backup as backupDatabase, DatabaseSync } from "node:sqlite"
 import type { StatementSync } from "node:sqlite"
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name"
+const MAX_BUSY_TIMEOUT = 2_147_483_647
 
 /**
  * Runtime type identifier used to mark Node `SqliteClient` values.
@@ -49,7 +55,7 @@ export type TypeId = "~@effect/sql-sqlite-node/SqliteClient"
 /**
  * Node SQLite client service, extending `SqlClient` with database export, backup, and extension loading helpers. `updateValues` is not supported.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface SqliteClient extends Client.SqlClient {
@@ -82,7 +88,7 @@ export interface BackupMetadata {
 export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-node/SqliteClient")
 
 /**
- * Configuration for a node SQLite client backed by `node:sqlite`, including the database filename, read-only mode, statement cache settings, WAL behavior, span attributes, and query/result name transforms.
+ * Configuration for a node SQLite client backed by `node:sqlite`, including the database filename, read-only mode, statement cache settings, WAL and busy timeout behavior, span attributes, and query/result name transforms.
  *
  * @category models
  * @since 4.0.0
@@ -93,6 +99,12 @@ export interface SqliteClientConfig {
   readonly prepareCacheSize?: number | undefined
   readonly prepareCacheTTL?: Duration.Input | undefined
   readonly disableWAL?: boolean | undefined
+  /**
+   * How long SQLite waits when the database is busy. Defaults to 5 seconds.
+   * `Duration.infinity` is clamped to SQLite's maximum timeout.
+   * Waiting blocks the Node.js event loop because `node:sqlite` is synchronous.
+   */
+  readonly busyTimeout?: Duration.Input | undefined
   readonly spanAttributes?: Record<string, unknown> | undefined
 
   readonly transformResultNames?: ((str: string) => string) | undefined
@@ -105,7 +117,7 @@ interface SqliteConnection extends Connection {
 }
 
 /**
- * Creates a scoped node SQLite client from the supplied configuration, using a single serialized connection with WAL enabled by default and exposing SQLite-specific `export`, `backup`, and `loadExtension` operations.
+ * Creates a scoped node SQLite client from the supplied configuration, using a single serialized connection with WAL and a 5-second busy timeout enabled by default. Explicit transactions on writable connections take the write lock for their duration, even when they only read; clients opened with `readonly: true` are unaffected.
  *
  * @category constructors
  * @since 4.0.0
@@ -129,6 +141,11 @@ export const make = (
       })
       yield* Scope.addFinalizer(scope, Effect.sync(() => db.close()))
       db.enableLoadExtension(false)
+      const busyTimeout = Math.min(
+        MAX_BUSY_TIMEOUT,
+        Math.max(0, Math.round(Duration.toMillis(options.busyTimeout ?? Duration.seconds(5))))
+      )
+      db.exec(`PRAGMA busy_timeout = ${busyTimeout}`)
 
       if (options.disableWAL !== true) {
         db.exec("PRAGMA journal_mode = WAL")
@@ -303,6 +320,7 @@ export const make = (
         acquirer,
         compiler,
         transactionAcquirer,
+        beginTransaction: "BEGIN IMMEDIATE",
         spanAttributes: [
           ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
           [ATTR_DB_SYSTEM_NAME, "sqlite"]

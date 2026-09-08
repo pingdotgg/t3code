@@ -1,6 +1,6 @@
-import { describe, test } from "@effect/vitest"
+import { describe, it, test } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Context, Effect, Stream } from "effect"
+import { Context, Effect, References, Scope, Stream } from "effect"
 import * as Layer from "effect/Layer"
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import {
@@ -11,6 +11,30 @@ import {
 const TestValue = Context.Reference<number>("test/TestValue", { defaultValue: () => 0 })
 
 describe("HttpEffect", () => {
+  it.effect("restores the request Scope context identity", () => {
+    const request = HttpServerRequest.fromWeb(new Request("http://localhost:3000/"))
+    return Effect.gen(function*() {
+      const before = yield* Effect.withFiber((fiber) => Effect.succeed(fiber.context))
+      let during: Context.Context<never> | undefined
+
+      yield* HttpEffect.toHandled(
+        Effect.withFiber((fiber) => {
+          during = fiber.context
+          strictEqual(Context.getOrUndefined(fiber.context, Scope.Scope) !== undefined, true)
+          return Effect.succeed(HttpServerResponse.empty())
+        }),
+        () => Effect.void
+      )
+
+      const after = yield* Effect.withFiber((fiber) => Effect.succeed(fiber.context))
+      strictEqual(during === before, false)
+      strictEqual(after, before)
+    }).pipe(
+      Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      Effect.provideService(References.TracerEnabled, false)
+    )
+  })
+
   describe("toWebHandler", () => {
     test("json", async () => {
       const handler = HttpEffect.toWebHandler(HttpServerResponse.json({ foo: "bar" }))

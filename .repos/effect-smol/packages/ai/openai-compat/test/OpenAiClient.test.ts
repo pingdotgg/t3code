@@ -1,4 +1,5 @@
 import { OpenAiClient } from "@effect/ai-openai-compat"
+import * as Errors from "@effect/ai-openai-compat/internal/errors"
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Layer, Redacted, type Schema, Stream } from "effect"
 import {
@@ -145,6 +146,83 @@ describe("OpenAiClient", () => {
           },
           "[DONE]"
         ]
+      }))))
+
+    it.effect("surfaces schema-mismatched chat chunks and continues streaming", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+
+        const events = yield* client.createResponseStream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "hello" }]
+        }).pipe(
+          Effect.flatMap(([_, stream]) => Stream.runCollect(stream))
+        )
+
+        assert.deepStrictEqual(events[0], {
+          _tag: "UnknownChatCompletionEvent",
+          data: {
+            type: "provider.chat.completion.delta",
+            provider_payload: { content: "provider-specific" }
+          }
+        })
+        assert.propertyVal(events[1], "id", "chatcmpl_test_2")
+        assert.strictEqual(events[2], "[DONE]")
+      }).pipe(Effect.provide(makeTestLayer({
+        _tag: "Sse",
+        events: [
+          {
+            type: "provider.chat.completion.delta",
+            provider_payload: { content: "provider-specific" }
+          },
+          {
+            id: "chatcmpl_test_2",
+            object: "chat.completion.chunk",
+            model: "gpt-4o-mini",
+            created: 1,
+            choices: [{
+              index: 0,
+              delta: { content: "Hello" },
+              finish_reason: null
+            }]
+          },
+          "[DONE]"
+        ]
+      }))))
+
+    it.effect("drops invalid JSON and continues streaming", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+
+        const events = yield* client.createResponseStream({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "hello" }]
+        }).pipe(
+          Effect.flatMap(([_, stream]) => Stream.runCollect(stream))
+        )
+
+        assert.strictEqual(events.length, 2)
+        assert.propertyVal(events[0], "id", "chatcmpl_test_3")
+        assert.strictEqual(events[1], "[DONE]")
+      }).pipe(Effect.provide(makeTestLayer({
+        _tag: "RawSse",
+        body: [
+          "data: {invalid-json\n\n",
+          `data: ${
+            JSON.stringify({
+              id: "chatcmpl_test_3",
+              object: "chat.completion.chunk",
+              model: "gpt-4o-mini",
+              created: 1,
+              choices: [{
+                index: 0,
+                delta: { content: "Hello" },
+                finish_reason: null
+              }]
+            })
+          }\n\n`,
+          "data: [DONE]\n\n"
+        ].join("")
       }))))
 
     it.effect("passes chat-completions tool_choice payload through unchanged", () =>
@@ -299,6 +377,86 @@ describe("OpenAiClient", () => {
         }
       }))))
 
+    it.effect("surfaces the provider message on 401 AuthenticationError", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+
+        const error = yield* client.createResponse({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "hello" }]
+        }).pipe(Effect.flip)
+
+        assert.strictEqual(error.reason._tag, "AuthenticationError")
+        if (error.reason._tag !== "AuthenticationError") {
+          return yield* Effect.die(new Error("Expected AuthenticationError"))
+        }
+        assert.strictEqual(error.reason.kind, "InvalidKey")
+        assert.strictEqual(
+          error.reason.description,
+          "Incorrect API key provided (POST https://compat.example.test/v1/chat/completions) [code: invalid_api_key] [requestId: req_openai_compat]"
+        )
+        assert.include(error.reason.message, "Incorrect API key provided")
+      }).pipe(Effect.provide(makeTestLayer({
+        _tag: "Json",
+        status: 401,
+        body: {
+          error: {
+            message: "Incorrect API key provided",
+            type: "invalid_request_error",
+            code: "invalid_api_key"
+          }
+        },
+        headers: { "x-request-id": "req_openai_compat" }
+      }))))
+
+    it("preserves and truncates a fallback HTTP response", () => {
+      const body = `${"a".repeat(200)}b`
+      const reason = Errors.mapStatusCodeToReason({
+        status: 400,
+        headers: {},
+        message: undefined,
+        metadata: { errorCode: null, errorType: null, requestId: null },
+        http: makeHttpContext("https://compat.example.test/v1/chat/completions", body)
+      })
+
+      assert.strictEqual(reason._tag, "InvalidRequestError")
+      if (reason._tag !== "InvalidRequestError") {
+        throw new Error("Expected InvalidRequestError")
+      }
+      assert.strictEqual(
+        reason.description,
+        `HTTP 400 (POST https://compat.example.test/v1/chat/completions) Response: ${"a".repeat(200)}...`
+      )
+    })
+
+    it.effect("surfaces the provider message on 403 AuthenticationError", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+
+        const error = yield* client.createResponse({
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: "hello" }]
+        }).pipe(Effect.flip)
+
+        assert.strictEqual(error.reason._tag, "AuthenticationError")
+        if (error.reason._tag !== "AuthenticationError") {
+          return yield* Effect.die(new Error("Expected AuthenticationError"))
+        }
+        assert.strictEqual(error.reason.kind, "InsufficientPermissions")
+        assert.include(error.reason.description ?? "", "Country, region, or territory not supported")
+        assert.include(error.reason.message, "Country, region, or territory not supported")
+      }).pipe(Effect.provide(makeTestLayer({
+        _tag: "Json",
+        status: 403,
+        body: {
+          error: {
+            message: "Country, region, or territory not supported",
+            type: "permission_error",
+            code: null
+          }
+        }
+      }))))
+
     it.effect("maps insufficient quota errors to QuotaExhaustedError", () =>
       Effect.gen(function*() {
         const client = yield* OpenAiClient.OpenAiClient
@@ -335,6 +493,12 @@ type MockResponse =
   | {
     readonly _tag: "Sse"
     readonly events: ReadonlyArray<Schema.Json>
+    readonly status?: number | undefined
+    readonly headers?: Record<string, string> | undefined
+  }
+  | {
+    readonly _tag: "RawSse"
+    readonly body: string
     readonly status?: number | undefined
     readonly headers?: Record<string, string> | undefined
   }
@@ -421,7 +585,9 @@ const makeResponse = (
     : "text/event-stream"
   const body = response._tag === "Json"
     ? JSON.stringify(response.body)
-    : toSseBody(response.events)
+    : response._tag === "Sse"
+    ? toSseBody(response.events)
+    : response.body
 
   return HttpClientResponse.fromWeb(
     request,
@@ -450,3 +616,14 @@ const toSseBody = (events: ReadonlyArray<Schema.Json>): string =>
     const data = event === "[DONE]" ? event : JSON.stringify(event)
     return `data: ${data}\n\n`
   }).join("")
+
+const makeHttpContext = (url: string, body: string) => ({
+  request: {
+    method: "POST" as const,
+    url,
+    urlParams: [],
+    hash: undefined,
+    headers: {}
+  },
+  body
+})

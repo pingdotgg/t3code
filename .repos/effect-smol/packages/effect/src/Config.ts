@@ -11,12 +11,13 @@ import type { Path, SourceError } from "./ConfigProvider.ts"
 import * as ConfigProvider from "./ConfigProvider.ts"
 import * as Effect from "./Effect.ts"
 import * as Effectable from "./Effectable.ts"
-import { dual } from "./Function.ts"
+import { dual, memoize } from "./Function.ts"
 import * as InternalRecord from "./internal/record.ts"
 import * as LogLevel_ from "./LogLevel.ts"
 import * as Option from "./Option.ts"
 import * as Predicate from "./Predicate.ts"
 import * as Rec from "./Record.ts"
+import * as Result from "./Result.ts"
 import * as Schema from "./Schema.ts"
 import * as SchemaAST from "./SchemaAST.ts"
 import * as SchemaGetter from "./SchemaGetter.ts"
@@ -36,11 +37,11 @@ const TypeId = "~effect/Config"
  *
  * **Example** (Checking Config values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config } from "effect"
  *
- * console.log(Config.isConfig(Config.string("HOST"))) // true
- * console.log(Config.isConfig("not a config"))        // false
+ * Config.isConfig(Config.string("HOST")) // => true
+ * Config.isConfig("not a config") // => false
  * ```
  *
  * @category guards
@@ -63,7 +64,7 @@ export const isConfig = (u: unknown): u is Config<unknown> => Predicate.hasPrope
  *   (wrong type, out of range, missing key, etc.).
  *
  * @see {@link orElse} – recover from a ConfigError
- * @see {@link withDefault} – provide a fallback for missing-data errors
+ * @see {@link withDefault} – provide a fallback when relevant input is absent
  *
  * @category errors
  * @since 4.0.0
@@ -94,9 +95,7 @@ export class ConfigError {
  * **Details**
  *
  * Key members:
- * - `parse(provider, pathPrefix?)` – runs the config against a specific provider.
- *   The optional path prefix is the logical scope accumulated from outer
- *   `Config.nested` calls.
+ * - `parse(provider)` – runs the config against a specific provider.
  * - Yieldable – can be yielded inside `Effect.gen`, which automatically
  *   resolves the current `ConfigProvider` from the context.
  * - Pipeable – supports `.pipe(Config.map(...))` etc.
@@ -108,10 +107,39 @@ export class ConfigError {
  */
 export interface Config<out T> extends Effect.Effect<T, ConfigError> {
   readonly [TypeId]: typeof TypeId
-  readonly parse: (
-    provider: ConfigProvider.ConfigProvider,
-    pathPrefix?: Path
-  ) => Effect.Effect<T, ConfigError>
+  readonly parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<T, ConfigError>
+}
+
+// Config composition needs to distinguish an absent recipe from a hard failure
+// before the public Effect error channel is finalized. `hasInput` records
+// provider evidence separately from the value, because successful values such
+// as `undefined` and values supplied by defaults are not evidence of input.
+// Hard failures carry the same evidence so recovery cannot erase it.
+interface Resolved<out T> {
+  readonly _tag: "Resolved"
+  readonly value: T
+  readonly hasInput: boolean
+}
+
+interface Absent {
+  readonly _tag: "Absent"
+  readonly error: ConfigError
+}
+
+type Resolution<T> = Resolved<T> | Absent
+
+interface EvaluationFailure {
+  readonly error: ConfigError
+  readonly hasInput: boolean
+}
+
+type Evaluator<T> = (
+  provider: ConfigProvider.ConfigProvider,
+  pathPrefix: Path
+) => Effect.Effect<Resolution<T>, EvaluationFailure>
+
+interface ConfigImpl<out T> extends Config<T> {
+  readonly evaluator: Evaluator<T>
 }
 
 const Proto = {
@@ -130,11 +158,69 @@ const Proto = {
 }
 
 function make<T>(
-  parse: (provider: ConfigProvider.ConfigProvider, pathPrefix: Path) => Effect.Effect<T, ConfigError>
+  evaluator: Evaluator<T>
 ): Config<T> {
   const self = Object.create(Proto)
-  self.parse = (provider: ConfigProvider.ConfigProvider, pathPrefix: Path = []) => parse(provider, pathPrefix)
+  self.evaluator = evaluator
+  self.parse = (provider: ConfigProvider.ConfigProvider) =>
+    evaluator(provider, []).pipe(
+      Effect.mapErrorEager((failure) => failure.error),
+      Effect.flatMapEager((resolution) =>
+        resolution._tag === "Resolved" ? Effect.succeed(resolution.value) : Effect.fail(resolution.error)
+      )
+    )
   return self
+}
+
+const evaluateAt = <T>(
+  self: Config<T>,
+  provider: ConfigProvider.ConfigProvider,
+  pathPrefix: Path
+): Effect.Effect<Resolution<T>, EvaluationFailure> => (self as ConfigImpl<T>).evaluator(provider, pathPrefix)
+
+const resolved = <T>(value: T, hasInput: boolean): Resolution<T> => ({
+  _tag: "Resolved",
+  value,
+  hasInput
+})
+
+const absent = (error: ConfigError): Absent => ({
+  _tag: "Absent",
+  error
+})
+
+const evaluationFailure = (error: ConfigError, hasInput: boolean): EvaluationFailure => ({
+  error,
+  hasInput
+})
+
+const isSourceError = (u: unknown): u is ConfigProvider.SourceError => Predicate.isTagged(u, "SourceError")
+
+const catchSourceError = <A, E, R>(
+  self: Effect.Effect<A, E, R>,
+  hasInput: boolean
+): Effect.Effect<A, E | EvaluationFailure, R> =>
+  self.pipe(
+    Effect.catchDefect((defect) =>
+      isSourceError(defect)
+        ? Effect.fail(evaluationFailure(new ConfigError(defect), hasInput))
+        : Effect.die(defect)
+    )
+  )
+
+const preserveInputEvidence = <T>(
+  self: Effect.Effect<Resolution<T>, EvaluationFailure>,
+  hasInput: boolean
+): Effect.Effect<Resolution<T>, EvaluationFailure> => {
+  if (!hasInput) return self
+  return self.pipe(
+    Effect.mapErrorEager((failure) => evaluationFailure(failure.error, true)),
+    Effect.flatMapEager((resolution) =>
+      resolution._tag === "Resolved"
+        ? Effect.succeed(resolved(resolution.value, true))
+        : Effect.fail(evaluationFailure(resolution.error, true))
+    )
+  )
 }
 
 /**
@@ -147,7 +233,7 @@ function make<T>(
  *
  * **Example** (Uppercasing a string config)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const upper = Config.string("name").pipe(
@@ -155,7 +241,7 @@ function make<T>(
  * )
  *
  * const provider = ConfigProvider.fromUnknown({ name: "alice" })
- * // Effect.runSync(upper.parse(provider)) // "ALICE"
+ * Effect.runSync(upper.parse(provider)) // => "ALICE"
  * ```
  *
  * @see {@link mapOrFail} – when the transformation can fail
@@ -167,7 +253,12 @@ export const map: {
   <A, B>(f: (a: A) => B): (self: Config<A>) => Config<B>
   <A, B>(self: Config<A>, f: (a: A) => B): Config<B>
 } = dual(2, <A, B>(self: Config<A>, f: (a: A) => B): Config<B> => {
-  return make((provider, pathPrefix) => Effect.map(self.parse(provider, pathPrefix), f))
+  return make((provider, pathPrefix) =>
+    Effect.map(evaluateAt(self, provider, pathPrefix), (resolution) =>
+      resolution._tag === "Resolved"
+        ? resolved(f(resolution.value), resolution.hasInput)
+        : resolution)
+  )
 })
 
 /**
@@ -180,12 +271,14 @@ export const map: {
  *
  * **Example** (Wrapping a value in an effectful transformation)
  *
- * ```ts
- * import { Config, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const trimmed = Config.string("name").pipe(
  *   Config.mapOrFail((s) => Effect.succeed(s.trim()))
  * )
+ * const provider = ConfigProvider.fromUnknown({ name: " Alice " })
+ * Effect.runSync(trimmed.parse(provider)) // => "Alice"
  * ```
  *
  * @see {@link map} – when the transformation cannot fail
@@ -197,7 +290,15 @@ export const mapOrFail: {
   <A, B>(f: (a: A) => Effect.Effect<B, ConfigError>): (self: Config<A>) => Config<B>
   <A, B>(self: Config<A>, f: (a: A) => Effect.Effect<B, ConfigError>): Config<B>
 } = dual(2, <A, B>(self: Config<A>, f: (a: A) => Effect.Effect<B, ConfigError>): Config<B> => {
-  return make((provider, pathPrefix) => Effect.flatMap(self.parse(provider, pathPrefix), f))
+  return make((provider, pathPrefix) =>
+    Effect.flatMap(evaluateAt(self, provider, pathPrefix), (resolution) =>
+      resolution._tag === "Resolved"
+        ? f(resolution.value).pipe(
+          Effect.mapEager((value) => resolved(value, resolution.hasInput)),
+          Effect.mapErrorEager((error) => evaluationFailure(error, resolution.hasInput))
+        )
+        : Effect.succeed(resolution))
+  )
 })
 
 /**
@@ -210,21 +311,30 @@ export const mapOrFail: {
  *
  * **Details**
  *
- * Unlike {@link withDefault}, this catches **all** `ConfigError`s (not just
- * missing data). The fallback function receives the error and returns a new
+ * Unlike {@link withDefault}, this handles both semantic absence and **all**
+ * `ConfigError`s. The fallback function receives the error and returns a new
  * `Config`.
+ *
+ * **Gotchas**
+ *
+ * Recovery preserves whether the primary config read provider input. When the
+ * recovered config is composed with {@link all}, invalid input in the primary
+ * branch still makes the enclosing group partially supplied, so an outer
+ * {@link withDefault} or {@link option} does not replace the whole group.
  *
  * **Example** (Falling back to a literal)
  *
- * ```ts
- * import { Config } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const hostConfig = Config.string("HOST").pipe(
  *   Config.orElse(() => Config.succeed("localhost"))
  * )
+ * const provider = ConfigProvider.fromUnknown({})
+ * Effect.runSync(hostConfig.parse(provider)) // => "localhost"
  * ```
  *
- * @see {@link withDefault} – fallback only on missing data
+ * @see {@link withDefault} – fallback only on semantic absence
  *
  * @category combinators
  * @since 2.0.0
@@ -233,8 +343,18 @@ export const orElse: {
   <A2>(that: (error: ConfigError) => Config<A2>): <A>(self: Config<A>) => Config<A2 | A>
   <A, A2>(self: Config<A>, that: (error: ConfigError) => Config<A2>): Config<A | A2>
 } = dual(2, <A, A2>(self: Config<A>, that: (error: ConfigError) => Config<A2>): Config<A | A2> => {
-  return make((provider, pathPrefix) =>
-    Effect.catch(self.parse(provider, pathPrefix), (error) => that(error).parse(provider, pathPrefix))
+  return make<A | A2>((provider, pathPrefix) =>
+    Effect.matchEffect(evaluateAt(self, provider, pathPrefix), {
+      onFailure: (failure) =>
+        preserveInputEvidence(
+          evaluateAt(that(failure.error), provider, pathPrefix),
+          failure.hasInput
+        ),
+      onSuccess: (resolution): Effect.Effect<Resolution<A | A2>, EvaluationFailure> =>
+        resolution._tag === "Absent"
+          ? evaluateAt(that(resolution.error), provider, pathPrefix)
+          : Effect.succeed(resolution)
+    })
   )
 })
 
@@ -250,9 +370,19 @@ export const orElse: {
  * Accepts a tuple (preserves positions), an iterable, or a record of configs.
  * Returns a config whose parsed value mirrors the input shape.
  *
+ * A combined config is absent when at least one child cannot resolve and none
+ * of the other children read provider input. This lets {@link withDefault} and
+ * {@link option} handle a wholly absent group. Once any child reads input, a
+ * missing sibling makes the group incomplete and parsing fails. Values supplied
+ * by child defaults do not count as provider input.
+ *
+ * Unlike a `Schema.Struct` passed to {@link schema}, `all` only considers input
+ * read by its children. An explicitly present but empty parent container does
+ * not by itself make the group present.
+ *
  * **Example** (Combining configs as a struct)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const dbConfig = Config.all({
@@ -261,8 +391,7 @@ export const orElse: {
  * })
  *
  * const provider = ConfigProvider.fromUnknown({ host: "localhost", port: 5432 })
- * // Effect.runSync(dbConfig.parse(provider))
- * // { host: "localhost", port: 5432 }
+ * Effect.runSync(dbConfig.parse(provider)) // => { host: "localhost", port: 5432 }
  * ```
  *
  * @category combinators
@@ -287,46 +416,85 @@ export function all<const Arg extends Iterable<Config<any>> | Record<string, Con
     : arg
   if (Array.isArray(configs)) {
     return make((provider, pathPrefix) =>
-      Effect.all(configs.map((config) => config.parse(provider, pathPrefix)))
+      Effect.flatMapEager(
+        Effect.all(configs.map((config) => Effect.result(evaluateAt(config, provider, pathPrefix)))),
+        resolveArray
+      )
     ) as any
   } else {
     return make((provider, pathPrefix) =>
-      Effect.all(Rec.map(configs, (config) => config.parse(provider, pathPrefix)))
+      Effect.flatMapEager(
+        Effect.all(Rec.map(configs, (config) => Effect.result(evaluateAt(config, provider, pathPrefix)))),
+        resolveRecord
+      )
     ) as any
   }
 }
 
-function isMissingDataOnly(issue: SchemaIssue.Issue): boolean {
-  switch (issue._tag) {
-    case "MissingKey":
-      return true
-    case "InvalidType":
-    case "InvalidValue":
-      return Option.isNone(issue.actual) || (Option.isSome(issue.actual) && issue.actual.value === undefined)
-    case "OneOf":
-      return issue.actual === undefined
-    case "Encoding":
-      return Option.isNone(issue.actual) || (Option.isSome(issue.actual) && issue.actual.value === undefined)
-        ? true
-        : isMissingDataOnly(issue.issue)
-    case "Pointer":
-      return isMissingDataOnly(issue.issue)
-    case "Filter":
-    case "UnexpectedKey":
-    case "Forbidden":
-      return false
-    case "Composite":
-      return issue.issues.every(isMissingDataOnly)
-    case "AnyOf":
-      if (issue.issues.length === 0) {
-        return issue.actual === undefined
-      }
-      return issue.issues.every(isMissingDataOnly)
+const resolveArray = (
+  results: ReadonlyArray<Result.Result<Resolution<any>, EvaluationFailure>>
+): Effect.Effect<Resolution<Array<any>>, EvaluationFailure> => {
+  const values: Array<any> = []
+  let firstFailure: EvaluationFailure | undefined
+  let firstAbsent: Absent | undefined
+  let hasInput = false
+  for (const result of results) {
+    if (Result.isFailure(result)) {
+      firstFailure ??= result.failure
+      hasInput = hasInput || result.failure.hasInput
+      continue
+    }
+    const resolution = result.success
+    if (resolution._tag === "Absent") {
+      firstAbsent ??= resolution
+    } else {
+      values.push(resolution.value)
+      hasInput = hasInput || resolution.hasInput
+    }
   }
+  if (firstFailure !== undefined) {
+    return Effect.fail(evaluationFailure(firstFailure.error, hasInput))
+  }
+  if (firstAbsent !== undefined) {
+    return hasInput ? Effect.fail(evaluationFailure(firstAbsent.error, true)) : Effect.succeed(firstAbsent)
+  }
+  return Effect.succeed(resolved(values, hasInput))
+}
+
+const resolveRecord = (
+  results: Record<string, Result.Result<Resolution<any>, EvaluationFailure>>
+): Effect.Effect<Resolution<Record<string, any>>, EvaluationFailure> => {
+  const values: Record<string, any> = {}
+  let firstFailure: EvaluationFailure | undefined
+  let firstAbsent: Absent | undefined
+  let hasInput = false
+  for (const key in results) {
+    const result = results[key]
+    if (Result.isFailure(result)) {
+      firstFailure ??= result.failure
+      hasInput = hasInput || result.failure.hasInput
+      continue
+    }
+    const resolution = result.success
+    if (resolution._tag === "Absent") {
+      firstAbsent ??= resolution
+    } else {
+      InternalRecord.assignProperty(values, key, resolution.value)
+      hasInput = hasInput || resolution.hasInput
+    }
+  }
+  if (firstFailure !== undefined) {
+    return Effect.fail(evaluationFailure(firstFailure.error, hasInput))
+  }
+  if (firstAbsent !== undefined) {
+    return hasInput ? Effect.fail(evaluationFailure(firstAbsent.error, true)) : Effect.succeed(firstAbsent)
+  }
+  return Effect.succeed(resolved(values, hasInput))
 }
 
 /**
- * Provides a fallback value when the config fails due to missing data.
+ * Provides a fallback value when the config cannot resolve because none of its
+ * relevant input is present.
  *
  * **When to use**
  *
@@ -334,23 +502,25 @@ function isMissingDataOnly(issue: SchemaIssue.Issue): boolean {
  *
  * **Gotchas**
  *
- * Only applies when the error is a `SchemaError` caused exclusively by
- * missing data (missing keys, undefined values). Validation errors (wrong
- * type, out of range) still propagate.
+ * Validation errors and partially supplied groups still propagate. A schema
+ * that successfully decodes absent input also keeps its decoded value instead
+ * of using the default. Schema configs first represent a missing or
+ * incompatible provider shape as `undefined`; the default is used only when
+ * the schema rejects that value and no relevant input was found.
  *
  * **Example** (Defaulting a missing port)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const port = Config.number("port").pipe(Config.withDefault(3000))
  *
  * const provider = ConfigProvider.fromUnknown({})
- * // Effect.runSync(port.parse(provider)) // 3000
+ * Effect.runSync(port.parse(provider)) // => 3000
  * ```
  *
  * @see {@link option} – returns `Option` instead of a default value
- * @see {@link orElse} – catches all errors, not just missing data
+ * @see {@link orElse} – catches all errors, not just absent input
  *
  * @category combinators
  * @since 2.0.0
@@ -359,20 +529,17 @@ export const withDefault: {
   <const A2>(defaultValue: A2): <A>(self: Config<A>) => Config<A2 | A>
   <A, const A2>(self: Config<A>, defaultValue: A2): Config<A | A2>
 } = dual(2, <A, const A2>(self: Config<A>, defaultValue: A2): Config<A | A2> => {
-  return orElse(self, (err) => {
-    if (Schema.isSchemaError(err.cause)) {
-      const issue = err.cause.issue
-      if (isMissingDataOnly(issue)) {
-        return succeed(defaultValue)
-      }
-    }
-    return fail(err.cause)
-  })
+  return make<A | A2>((provider, pathPrefix) =>
+    Effect.mapEager(
+      evaluateAt(self, provider, pathPrefix),
+      (resolution) => resolution._tag === "Absent" ? resolved(defaultValue, false) : resolution
+    )
+  )
 })
 
 /**
- * Makes a config optional: returns `Some(value)` on success and `None` when
- * data is missing.
+ * Makes a config optional: returns `Some(value)` on success and `None` when the
+ * config cannot resolve because none of its relevant input is present.
  *
  * **When to use**
  *
@@ -380,18 +547,21 @@ export const withDefault: {
  *
  * **Gotchas**
  *
- * Like {@link withDefault}, only missing-data errors produce `None`.
- * Validation errors still propagate.
+ * Validation errors and partially supplied groups still propagate. Successful
+ * values are always wrapped in `Some`, including `undefined` when the schema
+ * explicitly accepts it. Schema configs first represent a missing or
+ * incompatible provider shape as `undefined`; `None` is returned only when the
+ * schema rejects that value and no relevant input was found.
  *
  * **Example** (Reading optional config)
  *
- * ```ts
- * import { Config, ConfigProvider, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect, Option } from "effect"
  *
  * const maybePort = Config.option(Config.number("port"))
  *
  * const provider = ConfigProvider.fromUnknown({})
- * // Effect.runSync(maybePort.parse(provider)) // { _tag: "None" }
+ * Effect.runSync(maybePort.parse(provider)) // => Option.none()
  * ```
  *
  * @see {@link withDefault} – provide a concrete fallback value instead
@@ -433,7 +603,7 @@ export type Success<T> = [T] extends [Config<infer A>] ? A : never
  *
  * @see {@link unwrap} – construct a `Config` from a `Wrap<T>`
  *
- * @category Wrap
+ * @category utility types
  * @since 2.0.0
  */
 export type Wrap<A> = [NonNullable<A>] extends [infer T] ? [IsPlainObject<T>] extends [true] ?
@@ -461,8 +631,8 @@ type IsPlainObject<A> = [A] extends [Record<string, any>]
  *
  * **Example** (Unwrapping a record of configs)
  *
- * ```ts
- * import { Config } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect } from "effect"
  *
  * interface Options {
  *   key: string
@@ -470,128 +640,158 @@ type IsPlainObject<A> = [A] extends [Record<string, any>]
  *
  * const makeConfig = (config: Config.Wrap<Options>): Config.Config<Options> =>
  *   Config.unwrap(config)
+ *
+ * const config = makeConfig({ key: Config.string("key") })
+ * const provider = ConfigProvider.fromUnknown({ key: "value" })
+ * Effect.runSync(config.parse(provider)) // => { key: "value" }
  * ```
  *
  * @see {@link Wrap} – the utility type accepted by this function
  *
- * @category Wrap
+ * @category converting
  * @since 2.0.0
  */
 export const unwrap = <T>(wrapped: Wrap<T>): Config<T> => {
   if (isConfig(wrapped)) return wrapped
-  return make((provider, pathPrefix) => {
-    const entries = Object.entries(wrapped)
-    const configs = entries.map(([key, config]) =>
-      unwrap(config as any).parse(provider, pathPrefix).pipe(Effect.map((value) => [key, value] as const))
-    )
-    return Effect.all(configs).pipe(Effect.map(Object.fromEntries))
-  })
+  return all(Rec.map(wrapped as Record<string, Wrap<any>>, (config) => unwrap(config))) as Config<T>
 }
 
 // -----------------------------------------------------------------------------
 // schema
 // -----------------------------------------------------------------------------
 
-const dump: (
-  provider: ConfigProvider.ConfigProvider,
-  path: Path
-) => Effect.Effect<Schema.StringTree, SourceError> = Effect.fnUntraced(function*(
-  provider,
-  path
-) {
-  const stat = yield* provider.load(path)
-  if (stat === undefined) return undefined
-  switch (stat._tag) {
-    case "Value":
-      return stat.value
-    case "Record": {
-      if (stat.value !== undefined) return stat.value
-      const out: Record<string, Schema.StringTree> = {}
-      for (const key of stat.keys) {
-        const child = yield* dump(provider, [...path, key])
-        if (child !== undefined) InternalRecord.assignProperty(out, key, child)
-      }
-      return out
-    }
-    case "Array": {
-      if (stat.value !== undefined) return stat.value
-      const out: Array<Schema.StringTree> = []
-      for (let i = 0; i < stat.length; i++) {
-        out.push(yield* dump(provider, [...path, i]))
-      }
-      return out
-    }
-  }
-})
+interface ConfigCursor {
+  readonly provider: ConfigProvider.ConfigProvider
+  readonly path: Path
+  readonly node: ConfigProvider.Node | undefined
+  readonly toString: () => string
+}
 
-const recur: (
-  ast: SchemaAST.AST,
+const cursorToString = (): string => "<configuration>"
+
+const loadCursor: (
   provider: ConfigProvider.ConfigProvider,
   path: Path
-) => Effect.Effect<Schema.StringTree, Schema.SchemaError | SourceError> = Effect.fnUntraced(
-  function*(ast, provider, path) {
+) => Effect.Effect<ConfigCursor> = (provider, path) =>
+  provider.load(path).pipe(
+    Effect.orDie,
+    Effect.mapEager((node) => ({ provider, path, node, toString: cursorToString }))
+  )
+
+const loadChildCursor = (cursor: ConfigCursor, segment: string | number): Effect.Effect<ConfigCursor> =>
+  loadCursor(cursor.provider, [...cursor.path, segment])
+
+const getScalar = (node: ConfigProvider.Node | undefined): string | undefined => node?.value
+
+const decodeFromCursor = (
+  ast: SchemaAST.AST,
+  decode: (cursor: ConfigCursor) => Effect.Effect<unknown, SchemaIssue.Issue>
+): SchemaAST.AST =>
+  SchemaAST.decodeTo(
+    SchemaAST.unknown,
+    ast,
+    new SchemaTransformation.Transformation(
+      SchemaGetter.transformOrFail((input: unknown) => decode(input as ConfigCursor)),
+      SchemaGetter.passthrough()
+    )
+  )
+
+const isScalarInput = (ast: SchemaAST.AST): boolean => {
+  switch (ast._tag) {
+    case "Union":
+      return ast.types.every(isScalarInput)
+    case "Objects":
+    case "Arrays":
+    case "Suspend":
+      return false
+    default:
+      return true
+  }
+}
+
+const hasProviderInput = (
+  ast: SchemaAST.AST,
+  node: ConfigProvider.Node | undefined
+): boolean => {
+  switch (ast._tag) {
+    case "Objects":
+      return node?._tag === "Record"
+    case "Arrays":
+      return node?._tag === "Array"
+    case "Union":
+      return ast.types.some((ast) => hasProviderInput(ast, node))
+    case "Suspend":
+      return hasProviderInput(ast.thunk(), node)
+    default:
+      return getScalar(node) !== undefined
+  }
+}
+
+const toConfigCursorAST = memoize((root: SchemaAST.AST): SchemaAST.AST => {
+  const seen = new WeakSet<SchemaAST.AST>()
+  const recur = SchemaAST.applyToSelfOrLastLinkEncoding((ast) => {
+    seen.add(ast)
     switch (ast._tag) {
       case "Objects": {
-        const stat = yield* provider.load(path)
-        if (stat === undefined && path.length > 0) return undefined
-        const out: Record<string, Schema.StringTree> = {}
-        for (const ps of ast.propertySignatures) {
-          const name = ps.name
-          if (typeof name === "string") {
-            const value = yield* recur(ps.type, provider, [...path, name])
-            if (value !== undefined) InternalRecord.assignProperty(out, name, value)
+        const matchesIndex = ast.indexSignatures.map((is) => SchemaParser._is(is.parameter))
+        const materialize = Effect.fnUntraced(function*(cursor: ConfigCursor) {
+          if (cursor.node?._tag !== "Record") {
+            return undefined
           }
-        }
-        if (ast.indexSignatures.length > 0) {
-          if (stat && stat._tag === "Record") {
-            for (const is of ast.indexSignatures) {
-              const matches = SchemaParser._is(is.parameter)
-              for (const key of stat.keys) {
-                if (!Object.hasOwn(out, key) && matches(key)) {
-                  const value = yield* recur(is.type, provider, [...path, key])
-                  if (value !== undefined) InternalRecord.assignProperty(out, key, value)
-                }
-              }
+          const node = cursor.node
+          const keys = new Set<string>()
+          for (const property of ast.propertySignatures) {
+            if (typeof property.name === "string") keys.add(property.name)
+          }
+          if (matchesIndex.length > 0) {
+            for (const key of node.keys) {
+              if (matchesIndex.some((matches) => matches(key))) keys.add(key)
             }
           }
-        }
-        return out
+          const out: Record<string, ConfigCursor> = {}
+          for (const key of keys) {
+            const child = yield* loadChildCursor(cursor, key)
+            if (child.node !== undefined) InternalRecord.assignProperty(out, key, child)
+          }
+          return out
+        })
+        return decodeFromCursor(ast.recur(recur, (ast) => ast), materialize)
       }
       case "Arrays": {
-        const stat = yield* provider.load(path)
-        if (stat === undefined) return undefined
-        if (stat && stat._tag === "Value") return stat.value === "" ? [] : stat.value.split(",")
-        if (stat && stat._tag === "Array" && stat.value !== undefined) {
-          return stat.value === "" ? [] : stat.value.split(",")
-        }
-        const out: Array<Schema.StringTree> = []
-        const length = stat && stat._tag === "Array" ? stat.length : ast.elements.length
-        for (let i = 0; i < length; i++) {
-          const element = ast.elements[i] ?? ast.rest[0]
-          if (element !== undefined) {
-            out.push(yield* recur(element, provider, [...path, i]))
+        const materialize = Effect.fnUntraced(function*(cursor: ConfigCursor) {
+          if (cursor.node?._tag !== "Array") {
+            return undefined
           }
-        }
-        return out
+          const out: Array<ConfigCursor> = []
+          for (let i = 0; i < cursor.node.length; i++) {
+            out.push(yield* loadChildCursor(cursor, i))
+          }
+          return out
+        })
+        return decodeFromCursor(ast.recur(recur), materialize)
       }
       case "Union":
-        // Let downstream decoding decide; dump can return a string, object, or array.
-        return yield* dump(provider, path)
-      case "Suspend":
-        return yield* recur(ast.thunk(), provider, path)
-      default: {
-        // Base primitives / string-like encoded nodes.
-        const stat = yield* provider.load(path)
-        if (stat === undefined) return undefined
-        if (stat._tag === "Value") return stat.value
-        if (stat._tag === "Record" && stat.value !== undefined) return stat.value
-        if (stat._tag === "Array" && stat.value !== undefined) return stat.value
-        // Container without a co-located value cannot satisfy a scalar request.
-        return undefined
+        for (const member of ast.types) {
+          recur(member)
+        }
+        return isScalarInput(ast)
+          ? decodeFromCursor(ast, (cursor) => Effect.succeed(getScalar(cursor.node)))
+          : ast.recur(recur)
+      case "Suspend": {
+        const target = ast.thunk()
+        // Force new branches so opaque encodings fail when the Config is constructed.
+        if (!seen.has(target)) recur(target)
+        return ast.recur(recur)
       }
+      case "Declaration":
+      case "Any":
+        throw new globalThis.Error("Config.schema does not support opaque StringTree encodings", { cause: ast })
+      default:
+        return decodeFromCursor(ast, (cursor) => Effect.succeed(getScalar(cursor.node)))
     }
-  }
-)
+  })
+  return recur(root)
+})
 
 /**
  * Creates a `Config<T>` from a `Schema.Codec`.
@@ -610,12 +810,47 @@ const recur: (
  * Convenience constructors such as `string`, `number`, and `boolean` delegate
  * to this API.
  *
- * The codec is used to decode the raw `StringTree` produced by the provider
- * into `T`. Schema validation errors are wrapped in `ConfigError`.
+ * The codec is converted to its canonical `StringTree` form. Its encoded shape
+ * determines how provider data is loaded: scalar schemas read a co-located
+ * scalar value, object schemas read declared properties and matching record
+ * keys, and array schemas read indexed children. A mixed-shape union loads each
+ * member according to that member's shape before applying the union's mode and
+ * checks.
+ *
+ * At the config's lookup path, a missing node or a node that cannot provide the
+ * representation required by the schema is decoded as `undefined`. Missing
+ * object properties remain omitted so the schema's property semantics still
+ * apply. Decoding success always wins, even when no provider input was found.
+ * For example,
+ * `Schema.UndefinedOr(Schema.String)` decodes to `undefined` and is not replaced
+ * by {@link withDefault}. If decoding fails and no relevant representation was
+ * found, the config is absent. Invalid data in a relevant representation is a
+ * validation failure. Provider `SourceError`s are always failures.
+ *
+ * **Gotchas**
+ *
+ * Plain `Schema.Array` and `Schema.Record` schemas use structural provider
+ * input. Use {@link Array} or {@link Record} when a flat separated string must
+ * also be accepted.
+ *
+ * `Schema.Struct` and {@link all} describe different lookup models. An
+ * explicitly present empty object is relevant input for a struct and required
+ * fields are validated. The same empty parent container does not make an
+ * `all` group present when all of its child configs are absent.
+ *
+ * The canonical `StringTree` encoding must expose a concrete scalar, object,
+ * array, or union shape. Opaque encodings such as `Schema.Any`,
+ * `Schema.Unknown`, `Schema.ObjectKeyword`, `Schema.Json`, and
+ * `Schema.MutableJson` are rejected synchronously when this config is
+ * constructed, including when they are nested in another schema. Suspended
+ * recursive schemas remain supported when their eventual shape is concrete.
+ * Declarations such as `Schema.URL` also remain supported when their canonical
+ * encoding has a concrete shape. To read arbitrary JSON from one scalar value,
+ * use `Schema.fromJsonString(Schema.Json)`.
  *
  * **Example** (Reading a structured config)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect, Schema } from "effect"
  *
  * const DbConfig = Config.schema(
@@ -630,8 +865,7 @@ const recur: (
  *   db: { host: "localhost", port: 5432 }
  * })
  *
- * // Effect.runSync(DbConfig.parse(provider))
- * // { host: "localhost", port: 5432 }
+ * Effect.runSync(DbConfig.parse(provider)) // => { host: "localhost", port: 5432 }
  * ```
  *
  * @see {@link string} / {@link number} / {@link boolean} – shortcuts for
@@ -642,20 +876,31 @@ const recur: (
  */
 export function schema<T>(codec: Schema.ConstraintCodec<T, unknown>, path?: string | ConfigProvider.Path): Config<T> {
   const codecStringTree = Schema.toCodecStringTree(codec)
-  const decodeUnknownEffect = SchemaParser.decodeUnknownEffect(codecStringTree)
-  const codecStringTreeEncoded = SchemaAST.toEncoded(codecStringTree.ast)
+  const encodedAst = SchemaAST.toEncoded(codecStringTree.ast)
+  const decodeCursor = SchemaParser.decodeUnknownEffect(
+    Schema.make<Schema.Codec<T, ConfigCursor>>(toConfigCursorAST(codecStringTree.ast))
+  )
   const localPath = typeof path === "string" ? [path] : path ?? []
   return make((provider, pathPrefix) => {
     const fullPath = [...pathPrefix, ...localPath]
-    return recur(codecStringTreeEncoded, provider, fullPath).pipe(
-      Effect.flatMapEager((tree) =>
-        decodeUnknownEffect(tree).pipe(
-          Effect.mapErrorEager((issue) =>
-            new Schema.SchemaError(fullPath.length > 0 ? new SchemaIssue.Pointer(fullPath, issue) : issue)
-          )
+    return catchSourceError(loadCursor(provider, fullPath), false).pipe(
+      Effect.flatMapEager((cursor) => {
+        const hasInput = hasProviderInput(encodedAst, cursor.node)
+        return catchSourceError(
+          decodeCursor(cursor).pipe(
+            Effect.mapEager((value) => resolved(value, hasInput)),
+            Effect.catchEager((issue) => {
+              const error = new ConfigError(
+                new Schema.SchemaError(fullPath.length > 0 ? new SchemaIssue.Pointer(fullPath, issue) : issue)
+              )
+              return hasInput
+                ? Effect.fail(evaluationFailure(error, true))
+                : Effect.succeed(absent(error))
+            })
+          ),
+          hasInput
         )
-      ),
-      Effect.mapErrorEager((cause) => new ConfigError(cause))
+      })
     )
   })
 }
@@ -746,7 +991,7 @@ export const LogLevel = Schema.Literals(LogLevel_.values)
  *
  * **Example** (Parsing a comma-separated record)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect, Schema } from "effect"
  *
  * const schema = Config.Record(Schema.String, Schema.String)
@@ -759,13 +1004,13 @@ export const LogLevel = Schema.Literals(LogLevel_.values)
  *   }
  * })
  *
- * console.dir(Effect.runSync(config.parse(provider)))
- * // {
- * //   'service.name': 'my-service',
- * //   'service.version': '1.0.0',
- * //   'custom.attribute': 'value'
- * // }
+ * const result = Effect.runSync(config.parse(provider))
+ * result["service.name"] // => "my-service"
+ * result["service.version"] // => "1.0.0"
+ * result["custom.attribute"] // => "value"
  * ```
+ *
+ * @see {@link Array} for separated or structural array input
  *
  * @category schemas
  * @since 4.0.0
@@ -775,35 +1020,31 @@ export const Record = <K extends Schema.Record.Key, V extends Schema.Constraint>
   readonly keyValueSeparator?: string | undefined
 }) => {
   const record = Schema.Record(key, value)
+  const split = SchemaTransformation.splitKeyValue(options)
   const recordString = Schema.String.pipe(
-    Schema.decodeTo(
-      Schema.Record(Schema.String, Schema.String),
-      SchemaTransformation.splitKeyValue(options)
-    ),
-    Schema.decodeTo(record)
+    Schema.decodeTo(Schema.toCodecStringTree(record), {
+      decode: split.decode,
+      encode: SchemaGetter.passthrough<Record<string, string>, Schema.StringTree>({ strict: false }).compose(
+        split.encode
+      )
+    })
   )
 
   return Schema.Union([record, recordString])
 }
 
-/**
- * @category schemas
- * @since 4.0.0
- */
 const ArrayConfig = <V extends Schema.Constraint>(value: V, options?: {
   readonly separator?: string | undefined
 }) => {
   const array = Schema.Array(value)
   const separator = options?.separator ?? ","
   const arrayString = Schema.String.pipe(
-    Schema.decodeTo(
-      Schema.Array(Schema.String),
-      {
-        decode: SchemaGetter.split(options),
-        encode: SchemaGetter.transform((input: ReadonlyArray<string>) => input.join(separator))
-      }
-    ),
-    Schema.decodeTo(array)
+    Schema.decodeTo(Schema.toCodecStringTree(array), {
+      decode: SchemaGetter.split(options),
+      encode: SchemaGetter.passthrough<ReadonlyArray<string>, Schema.StringTree>({ strict: false }).compose(
+        SchemaGetter.transform((input) => input.join(separator))
+      )
+    })
   )
 
   return Schema.Union([arrayString, array])
@@ -822,6 +1063,8 @@ export {
    *
    * Accepts either a JSON-like array from the provider or a flat string like
    * `"a,b,c"`. The `separator` defaults to `","` and can be customized.
+   *
+   * @see {@link Record} for separated or structural record input
    *
    * @category schemas
    * @since 4.0.0
@@ -845,7 +1088,7 @@ export {
  * @since 2.0.0
  */
 export function fail(err: SourceError | Schema.SchemaError) {
-  return make(() => Effect.fail(new ConfigError(err)))
+  return make(() => Effect.fail(evaluationFailure(new ConfigError(err), false)))
 }
 
 /**
@@ -859,19 +1102,21 @@ export function fail(err: SourceError | Schema.SchemaError) {
  *
  * **Example** (Returning a constant fallback)
  *
- * ```ts
- * import { Config } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const host = Config.string("HOST").pipe(
  *   Config.orElse(() => Config.succeed("localhost"))
  * )
+ * const provider = ConfigProvider.fromUnknown({})
+ * Effect.runSync(host.parse(provider)) // => "localhost"
  * ```
  *
  * @category constructors
  * @since 2.0.0
  */
 export function succeed<T>(value: T) {
-  return make(() => Effect.succeed(value))
+  return make(() => Effect.succeed(resolved(value, false)))
 }
 
 /**
@@ -887,13 +1132,13 @@ export function succeed<T>(value: T) {
  *
  * **Example** (Reading a string config)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const host = Config.string("HOST")
  *
  * const provider = ConfigProvider.fromUnknown({ HOST: "localhost" })
- * // Effect.runSync(host.parse(provider)) // "localhost"
+ * Effect.runSync(host.parse(provider)) // => "localhost"
  * ```
  *
  * @see {@link nonEmptyString} – rejects empty strings
@@ -1004,10 +1249,12 @@ export function int(name?: string) {
  *
  * **Example** (Restricting to a literal)
  *
- * ```ts
- * import { Config } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const env = Config.literal("production", "ENV")
+ * const provider = ConfigProvider.fromUnknown({ ENV: "production" })
+ * Effect.runSync(env.parse(provider)) // => "production"
  * ```
  *
  * @see {@link literals} – accepts multiple literal values
@@ -1031,10 +1278,12 @@ export function literal<L extends SchemaAST.LiteralValue>(literal: L, name?: str
  *
  * **Example** (Restricting to a set of literals)
  *
- * ```ts
- * import { Config } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const env = Config.literals(["development", "production"], "ENV")
+ * const provider = ConfigProvider.fromUnknown({ ENV: "development" })
+ * Effect.runSync(env.parse(provider)) // => "development"
  * ```
  *
  * @see {@link literal} for accepting one specific literal value
@@ -1063,13 +1312,10 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  *
  * **Example** (Reading a boolean flag)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const flag = yield* Config.boolean("FEATURE_FLAG")
- *   console.log(flag)
- * })
+ * const program = Config.boolean("FEATURE_FLAG")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1079,8 +1325,7 @@ export function literals<const L extends ReadonlyArray<SchemaAST.LiteralValue>>(
  *
  * Effect.runSync(
  *   program.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider))
- * )
- * // Output: true
+ * ) // => true
  * ```
  *
  * @see {@link Boolean} for the underlying boolean codec
@@ -1109,13 +1354,10 @@ export function boolean(name?: string) {
  *
  * **Example** (Reading a duration)
  *
- * ```ts
- * import { Config, ConfigProvider, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Duration, Effect } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const duration = yield* Config.duration("DURATION")
- *   console.log(duration)
- * })
+ * const program = Config.duration("DURATION").pipe(Effect.map(Duration.toMillis))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1125,8 +1367,7 @@ export function boolean(name?: string) {
  *
  * Effect.runSync(
  *   program.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider))
- * )
- * // Output: Duration { _tag: "millis", value: 10000 }
+ * ) // => 10000
  * ```
  *
  * @see {@link schema} for decoding configuration values with a custom codec
@@ -1151,13 +1392,10 @@ export function duration(name?: string) {
  *
  * **Example** (Reading a port)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const port = yield* Config.port("PORT")
- *   console.log(port)
- * })
+ * const program = Config.port("PORT")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1167,8 +1405,7 @@ export function duration(name?: string) {
  *
  * Effect.runSync(
  *   program.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider))
- * )
- * // Output: 8080
+ * ) // => 8080
  * ```
  *
  * @see {@link int} for integer config values outside the port range
@@ -1197,13 +1434,10 @@ export function port(name?: string) {
  *
  * **Example** (Reading a log level)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const logLevel = yield* Config.logLevel("LOG_LEVEL")
- *   console.log(logLevel)
- * })
+ * const program = Config.logLevel("LOG_LEVEL")
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1213,8 +1447,7 @@ export function port(name?: string) {
  *
  * Effect.runSync(
  *   program.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider))
- * )
- * // Output: "Info"
+ * ) // => "Info"
  * ```
  *
  * @see {@link LogLevel} for the underlying log-level codec
@@ -1241,13 +1474,10 @@ export function logLevel(name?: string) {
  *
  * **Example** (Reading a secret)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const apiKey = yield* Config.redacted("API_KEY")
- *   console.log(apiKey)
- * })
+ * const program = Config.redacted("API_KEY").pipe(Effect.map(String))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1257,8 +1487,7 @@ export function logLevel(name?: string) {
  *
  * Effect.runSync(
  *   program.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider))
- * )
- * // Output: <redacted>
+ * ) // => "<redacted>"
  * ```
  *
  * @see {@link string} for non-secret string settings
@@ -1287,13 +1516,10 @@ export function redacted(name?: string) {
  *
  * **Example** (Reading a URL)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
- * const program = Effect.gen(function*() {
- *   const url = yield* Config.url("URL")
- *   console.log(url)
- * })
+ * const program = Config.url("URL").pipe(Effect.map((url) => url.href))
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: {
@@ -1303,22 +1529,7 @@ export function redacted(name?: string) {
  *
  * Effect.runSync(
  *   program.pipe(Effect.provideService(ConfigProvider.ConfigProvider, provider))
- * )
- * // Output:
- * // URL {
- * //   href: 'https://example.com/',
- * //   origin: 'https://example.com',
- * //   protocol: 'https:',
- * //   username: '',
- * //   password: '',
- * //   host: 'example.com',
- * //   hostname: 'example.com',
- * //   port: '',
- * //   pathname: '/',
- * //   search: '',
- * //   searchParams: URLSearchParams {},
- * //   hash: ''
- * // }
+ * ) // => "https://example.com/"
  * ```
  *
  * @see {@link schema} for decoding configuration values with a custom codec
@@ -1347,14 +1558,13 @@ export function url(name?: string) {
  *
  * **Example** (Reading a date)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const createdAt = Config.date("CREATED_AT")
  *
  * const provider = ConfigProvider.fromUnknown({ CREATED_AT: "2024-01-15" })
- * // Effect.runSync(createdAt.parse(provider))
- * // Date("2024-01-15T00:00:00.000Z")
+ * Effect.runSync(createdAt.parse(provider)).toISOString() // => "2024-01-15T00:00:00.000Z"
  * ```
  *
  * @category constructors
@@ -1382,7 +1592,7 @@ export function date(name?: string) {
  *
  * **Example** (Nesting a struct config under `"database"`)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const dbConfig = Config.all({
@@ -1393,13 +1603,12 @@ export function date(name?: string) {
  * const provider = ConfigProvider.fromUnknown({
  *   database: { host: "localhost", port: "5432" }
  * })
- * // Effect.runSync(dbConfig.parse(provider))
- * // { host: "localhost", port: 5432 }
+ * Effect.runSync(dbConfig.parse(provider)) // => { host: "localhost", port: 5432 }
  * ```
  *
  * **Example** (Reading env vars with a nested prefix)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const host = Config.string("host").pipe(Config.nested("database"))
@@ -1407,7 +1616,7 @@ export function date(name?: string) {
  * const provider = ConfigProvider.fromEnv({
  *   env: { database_host: "localhost" }
  * })
- * // Effect.runSync(host.parse(provider)) // "localhost"
+ * Effect.runSync(host.parse(provider)) // => "localhost"
  * ```
  *
  * @see {@link all} – combine multiple configs into a struct
@@ -1422,5 +1631,5 @@ export const nested: {
 } = dual(
   2,
   <A>(self: Config<A>, name: string): Config<A> =>
-    make((provider, pathPrefix) => self.parse(provider, [...pathPrefix, name]))
+    make((provider, pathPrefix) => evaluateAt(self, provider, [...pathPrefix, name]))
 )

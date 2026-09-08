@@ -178,7 +178,7 @@ type FilterOut<A> = A extends any ? typeSymbol extends keyof A ? never : A : nev
  *
  * **Example** (Unifying protocol types)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import type { Unify } from "effect"
  *
  * // Example of types that can be unified
@@ -196,7 +196,8 @@ type FilterOut<A> = A extends any ? typeSymbol extends keyof A ? never : A : nev
  *
  * // Unify automatically handles the union
  * type Unified = Unify.Unify<UnifiableA | UnifiableB>
- * // Results in a properly unified type
+ *
+ * const witness: Unified = "value"
  * ```
  *
  * @see {@link unify} for applying this normalization to a value or function
@@ -243,27 +244,24 @@ export type Unify<A> = Values<
  *
  * **Example** (Unifying values and function results)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Unify } from "effect"
  *
  * // Unify a simple value
- * const unifiedValue = Unify.unify("hello")
+ * const unifiedValue = Unify.unify("hello") // => "hello"
  * // Type: string
  *
  * // Unify a function result
- * const createUnifiableValue = () => ({
- *   value: "test",
- *   [Unify.typeSymbol]: "string" as const,
- *   [Unify.unifySymbol]: { String: () => "test" as const }
- * })
+ * const createValue = () => ({ value: "test" })
  *
- * const unifiedFunction = Unify.unify(createUnifiableValue)
- * // The result will be properly unified
+ * const unifiedFunction = Unify.unify(createValue)
+ * unifiedFunction().value // => "test"
  *
  * // Unify with curried functions
  * const curriedFunction = (a: string) => (b: number) => ({ result: a + b })
  * const unifiedCurried = Unify.unify(curriedFunction)
  * // Type: (a: string) => (b: number) => Unify<{ result: string }>
+ * unifiedCurried("value-")(1).result // => "value-1"
  * ```
  *
  * @see {@link Unify} for the type-level normalization applied by this helper

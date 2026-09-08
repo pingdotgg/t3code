@@ -90,6 +90,31 @@ describe("Logger", () => {
       assert.ok(!output.includes("annotation=\"\\\"value with spaces\\\"\""))
     }))
 
+  it.effect("formats BigInt messages consistently", () =>
+    Effect.gen(function*() {
+      const simple: Array<string> = []
+      const logFmt: Array<string> = []
+      const structured: Array<{ readonly message: unknown; readonly level: string }> = []
+      const json: Array<{ readonly message: unknown; readonly level: string }> = []
+      const loggers = [
+        Logger.formatSimple.pipe(Logger.map((output) => void simple.push(output))),
+        Logger.formatLogFmt.pipe(Logger.map((output) => void logFmt.push(output))),
+        Logger.formatStructured.pipe(Logger.map((output) => void structured.push(output))),
+        Logger.formatJson.pipe(Logger.map((output) => void json.push(JSON.parse(output))))
+      ]
+
+      yield* Effect.logInfo(123n, { value: 123n }).pipe(Effect.provide(Logger.layer(loggers)))
+
+      assert.include(simple[0], ` level=INFO fiber=`)
+      assert.include(simple[0], `message=123n message="{\\"value\\":123n}"`)
+      assert.include(logFmt[0], ` level=INFO fiber=`)
+      assert.include(logFmt[0], `message=123n message="{\\"value\\":123n}"`)
+      assert.deepStrictEqual(structured[0].message, [123n, { value: 123n }])
+      assert.strictEqual(structured[0].level, "INFO")
+      assert.deepStrictEqual(json[0].message, ["123n", { value: "123n" }])
+      assert.strictEqual(json[0].level, "INFO")
+    }))
+
   it.effect("annotateLogsScoped applies annotations only while scoped", () =>
     Effect.gen(function*() {
       const annotations: Array<Record<string, unknown>> = []

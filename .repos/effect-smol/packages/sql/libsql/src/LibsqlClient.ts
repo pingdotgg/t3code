@@ -13,6 +13,7 @@ import * as Libsql from "@libsql/client"
 import * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Redacted from "effect/Redacted"
@@ -49,7 +50,7 @@ export type TypeId = "~@effect/sql-libsql/LibsqlClient"
 /**
  * libSQL-backed SQL client service, extending `SqlClient` with its runtime type marker and client configuration.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface LibsqlClient extends Client.SqlClient {
@@ -311,7 +312,9 @@ export const make = (
         const scope = Scope.makeUnsafe()
         yield* restore(semaphore.take(1))
         yield* Scope.addFinalizer(scope, semaphore.release(1))
-        const conn = yield* connection.beginTransaction
+        const conn = yield* connection.beginTransaction.pipe(
+          Effect.tapCause((cause) => Scope.close(scope, Exit.failCause(cause)))
+        )
         return [scope, conn] as const
       })),
       begin: () => Effect.void, // already begun in acquireConnection

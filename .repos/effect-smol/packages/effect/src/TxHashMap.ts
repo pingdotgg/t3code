@@ -51,8 +51,8 @@ const TxHashMapProto = {
  *
  * **Example** (Using transactional hash maps)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a transactional hash map
@@ -60,8 +60,7 @@ const TxHashMapProto = {
  *
  *   // Single operations are automatically transactional
  *   yield* TxHashMap.set(txMap, "user3", "Charlie")
- *   const user = yield* TxHashMap.get(txMap, "user1")
- *   console.log(user) // Option.some("Alice")
+ *   yield* TxHashMap.get(txMap, "user1") // => Option.some("Alice")
  *
  *   // Multi-step atomic operations
  *   yield* Effect.tx(
@@ -74,9 +73,10 @@ const TxHashMapProto = {
  *     })
  *   )
  *
- *   const size = yield* TxHashMap.size(txMap)
- *   console.log(size) // 2
+ *   return yield* TxHashMap.size(txMap)
  * })
+ *
+ * await Effect.runPromise(program) // => 2
  * ```
  *
  * @category models
@@ -93,8 +93,8 @@ export interface TxHashMap<in out K, in out V> extends Inspectable, Pipeable {
  *
  * **Example** (Reusing extracted TxHashMap types)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a transactional inventory map
@@ -117,7 +117,10 @@ export interface TxHashMap<in out K, in out V> extends Inspectable, Pipeable {
  *     )
  *
  *   yield* updateStock("laptop", 3)
+ *   return yield* TxHashMap.get(inventory, "laptop")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some({ stock: 3, price: 999 })
  * ```
  *
  * @since 4.0.0
@@ -128,8 +131,8 @@ export declare namespace TxHashMap {
    *
    * **Example** (Extracting key types)
    *
-   * ```ts
-   * import { Effect, TxHashMap } from "effect"
+   * ```ts import.meta.vitest
+   * import { Effect, Option, TxHashMap } from "effect"
    *
    * const program = Effect.gen(function*() {
    *   // Create a user map to extract key type from
@@ -143,8 +146,10 @@ export declare namespace TxHashMap {
    *
    *   // Use the extracted type in functions
    *   const getUserById = (id: UserKey) => TxHashMap.get(userMap, id)
-   *   const alice = yield* getUserById("alice") // Option<{ name: string, age: number }>
+   *   return yield* getUserById("alice")
    * })
+   *
+   * await Effect.runPromise(program) // => Option.some({ name: "Alice", age: 30 })
    * ```
    *
    * @category utility types
@@ -157,8 +162,8 @@ export declare namespace TxHashMap {
    *
    * **Example** (Extracting value types)
    *
-   * ```ts
-   * import { Effect, TxHashMap } from "effect"
+   * ```ts import.meta.vitest
+   * import { Effect, Option, TxHashMap } from "effect"
    *
    * const program = Effect.gen(function*() {
    *   // Create a product catalog TxHashMap
@@ -175,9 +180,10 @@ export declare namespace TxHashMap {
    *     return `${product.category}: $${product.price}`
    *   }
    *
-   *   const laptop = yield* TxHashMap.get(catalog, "laptop")
-   *   // laptop has type Option<Product> thanks to type extraction
+   *   return Option.map(yield* TxHashMap.get(catalog, "laptop"), processProduct)
    * })
+   *
+   * await Effect.runPromise(program) // => Option.some("electronics: $999")
    * ```
    *
    * @category utility types
@@ -190,7 +196,7 @@ export declare namespace TxHashMap {
    *
    * **Example** (Extracting entry types)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Effect, TxHashMap } from "effect"
    *
    * const program = Effect.gen(function*() {
@@ -210,10 +216,10 @@ export declare namespace TxHashMap {
    *   }
    *
    *   // Get all entries and process them
-   *   const entries = yield* TxHashMap.entries(config)
-   *   const configLines = entries.map(processEntry)
-   *   console.log(configLines) // ["api_url=https://api.example.com", ...]
+   *   return (yield* TxHashMap.entries(config)).map(processEntry).sort()
    * })
+   *
+   * await Effect.runPromise(program) // => ["api_url=https://api.example.com", "retries=3", "timeout=5000"]
    * ```
    *
    * @category utility types
@@ -227,7 +233,7 @@ export declare namespace TxHashMap {
  *
  * **Example** (Creating an empty map)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -235,17 +241,15 @@ export declare namespace TxHashMap {
  *   const emptyMap = yield* TxHashMap.empty<string, number>()
  *
  *   // Verify it's empty
- *   const isEmpty = yield* TxHashMap.isEmpty(emptyMap)
- *   console.log(isEmpty) // true
- *
- *   const size = yield* TxHashMap.size(emptyMap)
- *   console.log(size) // 0
+ *   yield* TxHashMap.isEmpty(emptyMap) // => true
+ *   yield* TxHashMap.size(emptyMap) // => 0
  *
  *   // Start adding elements
  *   yield* TxHashMap.set(emptyMap, "first", 1)
- *   const newSize = yield* TxHashMap.size(emptyMap)
- *   console.log(newSize) // 1
+ *   return yield* TxHashMap.size(emptyMap)
  * })
+ *
+ * await Effect.runPromise(program) // => 1
  * ```
  *
  * @category constructors
@@ -262,8 +266,8 @@ export const empty = <K, V>(): Effect.Effect<TxHashMap<K, V>> =>
  *
  * **Example** (Creating a map from entries)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a user directory
@@ -274,16 +278,14 @@ export const empty = <K, V>(): Effect.Effect<TxHashMap<K, V>> =>
  *   )
  *
  *   // Check the initial size
- *   const size = yield* TxHashMap.size(userMap)
- *   console.log(size) // 3
+ *   yield* TxHashMap.size(userMap) // => 3
  *
  *   // Access users
- *   const alice = yield* TxHashMap.get(userMap, "alice")
- *   console.log(alice) // Option.some({ name: "Alice Smith", role: "admin" })
- *
- *   const nonExistent = yield* TxHashMap.get(userMap, "david")
- *   console.log(nonExistent) // Option.none()
+ *   yield* TxHashMap.get(userMap, "alice") // => Option.some({ name: "Alice Smith", role: "admin" })
+ *   return yield* TxHashMap.get(userMap, "david")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.none()
  * ```
  *
  * @category constructors
@@ -303,8 +305,8 @@ export const make = <K, V>(
  *
  * **Example** (Creating a map from an iterable)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create from various iterable sources
@@ -318,16 +320,15 @@ export const make = <K, V>(
  *   const configMap = yield* TxHashMap.fromIterable(configEntries)
  *
  *   // Verify the configuration was loaded
- *   const size = yield* TxHashMap.size(configMap)
- *   console.log(size) // 4
- *
- *   const dbHost = yield* TxHashMap.get(configMap, "database.host")
- *   console.log(dbHost) // Option.some("localhost")
+ *   yield* TxHashMap.size(configMap) // => 4
+ *   yield* TxHashMap.get(configMap, "database.host") // => Option.some("localhost")
  *
  *   // Can also create from Map, Set of tuples, etc.
  *   const jsMap = new Map([["key1", "value1"], ["key2", "value2"]])
- *   const txMapFromJs = yield* TxHashMap.fromIterable(jsMap)
+ *   return yield* TxHashMap.fromIterable(jsMap)
  * })
+ *
+ * await Effect.runPromise(program)
  * ```
  *
  * @category constructors
@@ -347,7 +348,7 @@ export const fromIterable = <K, V>(
  *
  * **Example** (Looking up values safely)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -357,18 +358,14 @@ export const fromIterable = <K, V>(
  *   )
  *
  *   // Safe lookup - returns Option
- *   const alice = yield* TxHashMap.get(userMap, "alice")
- *   console.log(alice) // Option.some({ name: "Alice", role: "admin" })
- *
- *   const nonExistent = yield* TxHashMap.get(userMap, "charlie")
- *   console.log(nonExistent) // Option.none()
+ *   yield* TxHashMap.get(userMap, "alice") // => Option.some({ name: "Alice", role: "admin" })
+ *   yield* TxHashMap.get(userMap, "charlie") // => Option.none()
  *
  *   // Use with pipe syntax for type-safe access
- *   const bobRole = yield* TxHashMap.get(userMap, "bob")
- *   if (bobRole._tag === "Some") {
- *     console.log(bobRole.value.role) // "user"
- *   }
+ *   return yield* TxHashMap.get(userMap, "bob")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some({ name: "Bob", role: "user" })
  * ```
  *
  * @category combinators
@@ -396,8 +393,8 @@ export const get: {
  *
  * **Example** (Setting values)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const inventory = yield* TxHashMap.make(
@@ -407,17 +404,18 @@ export const get: {
  *
  *   // Update existing item
  *   yield* TxHashMap.set(inventory, "laptop", 3)
- *   const laptopStock = yield* TxHashMap.get(inventory, "laptop")
- *   console.log(laptopStock) // Option.some(3)
+ *   yield* TxHashMap.get(inventory, "laptop") // => Option.some(3)
  *
  *   // Add new item
  *   yield* TxHashMap.set(inventory, "keyboard", 15)
- *   const keyboardStock = yield* TxHashMap.get(inventory, "keyboard")
- *   console.log(keyboardStock) // Option.some(15)
+ *   yield* TxHashMap.get(inventory, "keyboard") // => Option.some(15)
  *
  *   // Use with pipe syntax
  *   yield* TxHashMap.set("tablet", 8)(inventory)
+ *   return yield* TxHashMap.get(inventory, "tablet")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some(8)
  * ```
  *
  * @category combinators
@@ -437,7 +435,7 @@ export const set: {
  *
  * **Example** (Checking for keys)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -448,19 +446,17 @@ export const set: {
  *   )
  *
  *   // Check if users exist
- *   const hasAlice = yield* TxHashMap.has(permissions, "alice")
- *   console.log(hasAlice) // true
- *
- *   const hasDavid = yield* TxHashMap.has(permissions, "david")
- *   console.log(hasDavid) // false
+ *   yield* TxHashMap.has(permissions, "alice") // => true
+ *   yield* TxHashMap.has(permissions, "david") // => false
  *
  *   // Use direct method call for type-safe access
- *   const hasBob = yield* TxHashMap.has(permissions, "bob")
- *   console.log(hasBob) // true
+ *   return yield* TxHashMap.has(permissions, "bob")
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 2.0.0
  */
 export const has: {
@@ -485,7 +481,7 @@ export const has: {
  *
  * **Example** (Removing keys)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -496,20 +492,17 @@ export const has: {
  *   )
  *
  *   // Remove expired user
- *   const removed = yield* TxHashMap.remove(cache, "user:3")
- *   console.log(removed) // true (key existed and was removed)
+ *   yield* TxHashMap.remove(cache, "user:3") // => true
  *
  *   // Try to remove non-existent key
- *   const notRemoved = yield* TxHashMap.remove(cache, "user:999")
- *   console.log(notRemoved) // false (key didn't exist)
+ *   yield* TxHashMap.remove(cache, "user:999") // => false
  *
  *   // Verify removal
- *   const hasUser3 = yield* TxHashMap.has(cache, "user:3")
- *   console.log(hasUser3) // false
- *
- *   const size = yield* TxHashMap.size(cache)
- *   console.log(size) // 2
+ *   yield* TxHashMap.has(cache, "user:3") // => false
+ *   return yield* TxHashMap.size(cache)
  * })
+ *
+ * await Effect.runPromise(program) // => 2
  * ```
  *
  * @category combinators
@@ -541,7 +534,7 @@ export const remove: {
  *
  * **Example** (Clearing all entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -552,19 +545,17 @@ export const remove: {
  *   )
  *
  *   // Check initial state
- *   const initialSize = yield* TxHashMap.size(sessionMap)
- *   console.log(initialSize) // 3
+ *   yield* TxHashMap.size(sessionMap) // => 3
  *
  *   // Clear all sessions (e.g., during maintenance)
  *   yield* TxHashMap.clear(sessionMap)
  *
  *   // Verify cleared
- *   const finalSize = yield* TxHashMap.size(sessionMap)
- *   console.log(finalSize) // 0
- *
- *   const isEmpty = yield* TxHashMap.isEmpty(sessionMap)
- *   console.log(isEmpty) // true
+ *   yield* TxHashMap.size(sessionMap) // => 0
+ *   return yield* TxHashMap.isEmpty(sessionMap)
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
  * @category combinators
@@ -577,7 +568,7 @@ export const clear = <K, V>(self: TxHashMap<K, V>): Effect.Effect<void> => TxRef
  *
  * **Example** (Counting entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -587,19 +578,18 @@ export const clear = <K, V>(self: TxHashMap<K, V>): Effect.Effect<void> => TxRef
  *     ["users", 50]
  *   )
  *
- *   const count = yield* TxHashMap.size(metrics)
- *   console.log(count) // 3
+ *   yield* TxHashMap.size(metrics) // => 3
  *
  *   // Add more metrics
  *   yield* TxHashMap.set(metrics, "response_time", 250)
- *   const newCount = yield* TxHashMap.size(metrics)
- *   console.log(newCount) // 4
+ *   yield* TxHashMap.size(metrics) // => 4
  *
  *   // Remove a metric
  *   yield* TxHashMap.remove(metrics, "errors")
- *   const finalCount = yield* TxHashMap.size(metrics)
- *   console.log(finalCount) // 3
+ *   return yield* TxHashMap.size(metrics)
  * })
+ *
+ * await Effect.runPromise(program) // => 3
  * ```
  *
  * @category combinators
@@ -616,28 +606,27 @@ export const size = <K, V>(self: TxHashMap<K, V>): Effect.Effect<number> =>
  *
  * **Example** (Checking for an empty map)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Start with empty map
  *   const cache = yield* TxHashMap.empty<string, any>()
- *   const empty = yield* TxHashMap.isEmpty(cache)
- *   console.log(empty) // true
+ *   yield* TxHashMap.isEmpty(cache) // => true
  *
  *   // Add an item
  *   yield* TxHashMap.set(cache, "key1", "value1")
- *   const stillEmpty = yield* TxHashMap.isEmpty(cache)
- *   console.log(stillEmpty) // false
+ *   yield* TxHashMap.isEmpty(cache) // => false
  *
  *   // Clear and check again
  *   yield* TxHashMap.clear(cache)
- *   const emptyAgain = yield* TxHashMap.isEmpty(cache)
- *   console.log(emptyAgain) // true
+ *   return yield* TxHashMap.isEmpty(cache)
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 2.0.0
  */
 export const isEmpty = <K, V>(self: TxHashMap<K, V>): Effect.Effect<boolean> =>
@@ -651,23 +640,23 @@ export const isEmpty = <K, V>(self: TxHashMap<K, V>): Effect.Effect<boolean> =>
  *
  * **Example** (Checking for a non-empty map)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const inventory = yield* TxHashMap.make(["laptop", 5])
  *
- *   const hasItems = yield* TxHashMap.isNonEmpty(inventory)
- *   console.log(hasItems) // true
+ *   yield* TxHashMap.isNonEmpty(inventory) // => true
  *
  *   // Clear inventory
  *   yield* TxHashMap.clear(inventory)
- *   const stillHasItems = yield* TxHashMap.isNonEmpty(inventory)
- *   console.log(stillHasItems) // false
+ *   return yield* TxHashMap.isNonEmpty(inventory)
  * })
+ *
+ * await Effect.runPromise(program) // => false
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 4.0.0
  */
 export const isNonEmpty = <K, V>(self: TxHashMap<K, V>): Effect.Effect<boolean> =>
@@ -683,8 +672,8 @@ export const isNonEmpty = <K, V>(self: TxHashMap<K, V>): Effect.Effect<boolean> 
  *
  * **Example** (Updating existing values)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const counters = yield* TxHashMap.make(
@@ -698,10 +687,9 @@ export const isNonEmpty = <K, V>(self: TxHashMap<K, V>): Effect.Effect<boolean> 
  *     "downloads",
  *     (count) => count + 1
  *   )
- *   console.log(oldDownloads) // Option.some(100)
+ *   oldDownloads // => Option.some(100)
  *
- *   const newDownloads = yield* TxHashMap.get(counters, "downloads")
- *   console.log(newDownloads) // Option.some(101)
+ *   yield* TxHashMap.get(counters, "downloads") // => Option.some(101)
  *
  *   // Try to modify non-existent key
  *   const nonExistent = yield* TxHashMap.modify(
@@ -709,11 +697,14 @@ export const isNonEmpty = <K, V>(self: TxHashMap<K, V>): Effect.Effect<boolean> 
  *     "clicks",
  *     (count) => count + 1
  *   )
- *   console.log(nonExistent) // Option.none()
+ *   nonExistent // => Option.none()
  *
  *   // Update views counter with direct method call
  *   yield* TxHashMap.modify(counters, "views", (views) => views * 2)
+ *   return yield* TxHashMap.get(counters, "views")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some(500)
  * ```
  *
  * @category combinators
@@ -755,42 +746,34 @@ export const modify: {
  *
  * **Example** (Updating values with Option)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const storage = yield* TxHashMap.make<string, string | number>([
  *     "file1.txt",
  *     "content1"
  *   ], ["access_count", 0])
+ *   const increment = Option.map((value: string | number) => typeof value === "number" ? value + 1 : value)
  *
  *   // Increment existing counter
- *   yield* TxHashMap.modifyAt(storage, "access_count", (current) =>
- *     current._tag === "Some" && typeof current.value === "number"
- *       ? { ...current, value: current.value + 1 }
- *       : current
- *   )
- *   const count1 = yield* TxHashMap.get(storage, "access_count")
- *   console.log(count1) // Option.some(1)
+ *   yield* TxHashMap.modifyAt(storage, "access_count", increment)
+ *   yield* TxHashMap.get(storage, "access_count") // => Option.some(1)
  *
  *   // Increment existing counter again
- *   yield* TxHashMap.modifyAt(storage, "access_count", (current) =>
- *     current._tag === "Some" && typeof current.value === "number"
- *       ? { ...current, value: current.value + 1 }
- *       : current
- *   )
- *   const count2 = yield* TxHashMap.get(storage, "access_count")
- *   console.log(count2) // Option.some(2)
+ *   yield* TxHashMap.modifyAt(storage, "access_count", increment)
+ *   yield* TxHashMap.get(storage, "access_count") // => Option.some(2)
  *
  *   // Update an existing string entry
- *   yield* TxHashMap.modifyAt(storage, "file1.txt", (current) =>
- *     current._tag === "Some" && typeof current.value === "string"
- *       ? { ...current, value: `${current.value}.bak` }
- *       : current
+ *   yield* TxHashMap.modifyAt(
+ *     storage,
+ *     "file1.txt",
+ *     Option.map((value) => typeof value === "string" ? `${value}.bak` : value)
  *   )
- *   const backup = yield* TxHashMap.get(storage, "file1.txt")
- *   console.log(backup) // Option.some("content1.bak")
+ *   return yield* TxHashMap.get(storage, "file1.txt")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some("content1.bak")
  * ```
  *
  * @category combinators
@@ -831,7 +814,7 @@ export const modifyAt: {
  *
  * **Example** (Reading keys)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -841,17 +824,21 @@ export const modifyAt: {
  *     ["charlie", "moderator"]
  *   )
  *
- *   const usernames = yield* TxHashMap.keys(userRoles)
- *   console.log(usernames.sort()) // ["alice", "bob", "charlie"]
+ *   const usernames = (yield* TxHashMap.keys(userRoles)).sort()
+ *   usernames // => ["alice", "bob", "charlie"]
  *
  *   // Useful for iteration
+ *   const assignments: Array<string> = []
  *   for (const username of usernames) {
  *     const role = yield* TxHashMap.get(userRoles, username)
  *     if (role._tag === "Some") {
- *       console.log(`${username}: ${role.value}`)
+ *       assignments.push(`${username}: ${role.value}`)
  *     }
  *   }
+ *   return assignments
  * })
+ *
+ * await Effect.runPromise(program) // => ["alice: admin", "bob: user", "charlie: moderator"]
  * ```
  *
  * @category combinators
@@ -868,7 +855,7 @@ export const keys = <K, V>(self: TxHashMap<K, V>): Effect.Effect<Array<K>> =>
  *
  * **Example** (Reading values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -878,18 +865,19 @@ export const keys = <K, V>(self: TxHashMap<K, V>): Effect.Effect<Array<K>> =>
  *     ["charlie", 92]
  *   )
  *
- *   const allScores = yield* TxHashMap.values(scores)
- *   console.log(allScores.sort((a, b) => a - b)) // [87, 92, 95]
+ *   const allScores = (yield* TxHashMap.values(scores)).sort((a, b) => a - b)
+ *   allScores // => [87, 92, 95]
  *
  *   // Calculate average
  *   const average = allScores.reduce((sum, score) => sum + score, 0) /
  *     allScores.length
- *   console.log(average.toFixed(2)) // "91.33"
+ *   average.toFixed(2) // => "91.33"
  *
  *   // Find maximum
- *   const maxScore = Math.max(...allScores)
- *   console.log(maxScore) // 95
+ *   return Math.max(...allScores)
  * })
+ *
+ * await Effect.runPromise(program) // => 95
  * ```
  *
  * @category combinators
@@ -906,7 +894,7 @@ export const values = <K, V>(self: TxHashMap<K, V>): Effect.Effect<Array<V>> =>
  *
  * **Example** (Reading entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -916,19 +904,10 @@ export const values = <K, V>(self: TxHashMap<K, V>): Effect.Effect<Array<V>> =>
  *     ["ssl", "false"]
  *   )
  *
- *   const allEntries = yield* TxHashMap.entries(config)
- *   const sortedEntries = allEntries.toSorted(([left], [right]) => left.localeCompare(right))
- *   console.log(sortedEntries)
- *   // [["host", "localhost"], ["port", "3000"], ["ssl", "false"]]
- *
- *   // Process configuration entries
- *   for (const [key, value] of sortedEntries) {
- *     console.log(`${key}=${value}`)
- *   }
- *   // host=localhost
- *   // port=3000
- *   // ssl=false
+ *   return (yield* TxHashMap.entries(config)).toSorted(([left], [right]) => left.localeCompare(right))
  * })
+ *
+ * await Effect.runPromise(program) // => [["host", "localhost"], ["port", "3000"], ["ssl", "false"]]
  * ```
  *
  * @category combinators
@@ -947,8 +926,8 @@ export const entries = <K, V>(
  *
  * **Example** (Taking immutable snapshots)
  *
- * ```ts
- * import { Effect, HashMap, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, HashMap, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const liveData = yield* TxHashMap.make(
@@ -965,13 +944,14 @@ export const entries = <K, V>(
  *   yield* TxHashMap.set(liveData, "wind_speed", 5.3)
  *
  *   // Snapshot remains unchanged
- *   console.log(HashMap.size(snapshot)) // 3
- *   console.log(HashMap.get(snapshot, "temperature")) // Option.some(22.5)
+ *   HashMap.size(snapshot) // => 3
+ *   HashMap.get(snapshot, "temperature") // => Option.some(22.5)
  *
  *   // Can use regular HashMap operations on snapshot
- *   const tempReading = HashMap.get(snapshot, "temperature")
- *   const humidityReading = HashMap.get(snapshot, "humidity")
+ *   return HashMap.get(snapshot, "humidity")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some(45.2)
  * ```
  *
  * @category combinators
@@ -992,8 +972,8 @@ export const snapshot = <K, V>(
  *
  * **Example** (Merging HashMaps)
  *
- * ```ts
- * import { Effect, HashMap, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, HashMap, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create initial user preferences
@@ -1014,18 +994,13 @@ export const snapshot = <K, V>(
  *   yield* TxHashMap.union(userPrefs, newSettings)
  *
  *   // Check the merged result
- *   const theme = yield* TxHashMap.get(userPrefs, "theme")
- *   console.log(theme) // Option.some("dark") - overridden
- *
- *   const language = yield* TxHashMap.get(userPrefs, "language")
- *   console.log(language) // Option.some("en") - preserved
- *
- *   const timezone = yield* TxHashMap.get(userPrefs, "timezone")
- *   console.log(timezone) // Option.some("UTC") - newly added
- *
- *   const size = yield* TxHashMap.size(userPrefs)
- *   console.log(size) // 5 total settings
+ *   yield* TxHashMap.get(userPrefs, "theme") // => Option.some("dark")
+ *   yield* TxHashMap.get(userPrefs, "language") // => Option.some("en")
+ *   yield* TxHashMap.get(userPrefs, "timezone") // => Option.some("UTC")
+ *   return yield* TxHashMap.size(userPrefs)
  * })
+ *
+ * await Effect.runPromise(program) // => 5
  * ```
  *
  * @category combinators
@@ -1057,8 +1032,8 @@ export const union: {
  *
  * **Example** (Removing multiple keys)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a cache with temporary data
@@ -1070,23 +1045,24 @@ export const union: {
  *     ["temp_data_2", { value: "also_temporary" }]
  *   )
  *
- *   console.log(yield* TxHashMap.size(cache)) // 5
+ *   yield* TxHashMap.size(cache) // => 5
  *
  *   // Remove expired sessions and temporary data
  *   const keysToRemove = ["session_1", "session_2", "temp_data_1", "temp_data_2"]
  *   yield* TxHashMap.removeMany(cache, keysToRemove)
  *
- *   console.log(yield* TxHashMap.size(cache)) // 1
+ *   yield* TxHashMap.size(cache) // => 1
  *
  *   // Verify only the valid session remains
- *   const remainingSession = yield* TxHashMap.get(cache, "session_3")
- *   console.log(remainingSession) // Option.some({ user: "charlie", expires: "2024-12-31" })
+ *   yield* TxHashMap.get(cache, "session_3") // => Option.some({ user: "charlie", expires: "2024-12-31" })
  *
  *   // Can also remove from Set, Array, or any iterable
  *   const moreKeysToRemove = new Set(["session_3"])
  *   yield* TxHashMap.removeMany(cache, moreKeysToRemove)
- *   console.log(yield* TxHashMap.isEmpty(cache)) // true
+ *   return yield* TxHashMap.isEmpty(cache)
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
  * @category combinators
@@ -1111,8 +1087,8 @@ export const removeMany: {
  *
  * **Example** (Setting multiple entries)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create an empty product catalog
@@ -1133,7 +1109,7 @@ export const removeMany: {
  *
  *   yield* TxHashMap.setMany(catalog, initialProducts)
  *
- *   console.log(yield* TxHashMap.size(catalog)) // 4
+ *   yield* TxHashMap.size(catalog) // => 4
  *
  *   // Update prices with a new batch
  *   const priceUpdates: Array<
@@ -1146,16 +1122,18 @@ export const removeMany: {
  *
  *   yield* TxHashMap.setMany(catalog, priceUpdates)
  *
- *   console.log(yield* TxHashMap.size(catalog)) // 5 (4 original + 1 new)
+ *   yield* TxHashMap.size(catalog) // => 5
  *
  *   // Verify the updates
- *   const laptop = yield* TxHashMap.get(catalog, "laptop")
- *   console.log(laptop) // Option.some({ price: 899, stock: 5 })
+ *   yield* TxHashMap.get(catalog, "laptop") // => Option.some({ price: 899, stock: 5 })
  *
  *   // Can also use Map, Set of tuples, or any iterable of entries
  *   const jsMap = new Map([["tablet", { price: 399, stock: 3 }]])
  *   yield* TxHashMap.setMany(catalog, jsMap)
+ *   return yield* TxHashMap.get(catalog, "tablet")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some({ price: 399, stock: 3 })
  * ```
  *
  * @category combinators
@@ -1182,16 +1160,16 @@ export const setMany: {
  *
  * **Example** (Checking TxHashMap values)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Exit, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const txMap = yield* TxHashMap.make(["key", "value"])
  *
- *   console.log(TxHashMap.isTxHashMap(txMap)) // true
- *   console.log(TxHashMap.isTxHashMap({})) // false
- *   console.log(TxHashMap.isTxHashMap(null)) // false
- *   console.log(TxHashMap.isTxHashMap("not a map")) // false
+ *   TxHashMap.isTxHashMap(txMap) // => true
+ *   TxHashMap.isTxHashMap({}) // => false
+ *   TxHashMap.isTxHashMap(null) // => false
+ *   TxHashMap.isTxHashMap("not a map") // => false
  *
  *   // Useful for type guards in runtime checks
  *   const validateInput = (value: unknown) => {
@@ -1201,7 +1179,12 @@ export const setMany: {
  *     }
  *     return Effect.fail("Invalid input")
  *   }
+ *
+ *   yield* Effect.exit(validateInput(null)) // => Exit.fail("Invalid input")
+ *   return yield* Effect.exit(validateInput(txMap))
  * })
+ *
+ * await Effect.runPromise(program) // => Exit.succeed("Valid TxHashMap")
  * ```
  *
  * @category guards
@@ -1222,8 +1205,8 @@ export const isTxHashMap = <K, V>(value: unknown): value is TxHashMap<K, V> => {
  *
  * **Example** (Looking up values with precomputed hashes)
  *
- * ```ts
- * import { Effect, Hash, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Hash, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a cache with user sessions
@@ -1238,16 +1221,17 @@ export const isTxHashMap = <K, V>(value: unknown): value is TxHashMap<K, V> => {
  *
  *   // Use hash-optimized lookup for performance in hot paths
  *   const session = yield* TxHashMap.getHash(cache, sessionId, precomputedHash)
- *   console.log(session) // Option.some({ userId: "user1", lastActive: ... })
+ *   session // => Option.some({ userId: "user1", lastActive: 1_700_000_000_000 })
  *
  *   // This avoids recomputing the hash when you already have it
- *   const invalidSession = yield* TxHashMap.getHash(
+ *   return yield* TxHashMap.getHash(
  *     cache,
  *     "invalid",
  *     Hash.string("invalid")
  *   )
- *   console.log(invalidSession) // Option.none()
  * })
+ *
+ * await Effect.runPromise(program) // => Option.none()
  * ```
  *
  * @category combinators
@@ -1283,7 +1267,7 @@ export const getHash: {
  *
  * **Example** (Checking keys with precomputed hashes)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Hash, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1298,29 +1282,30 @@ export const getHash: {
  *   const roleHash = Hash.string(role)
  *
  *   // Use hash-optimized existence check
- *   const hasAdminRole = yield* TxHashMap.hasHash(permissions, role, roleHash)
- *   console.log(hasAdminRole) // true
+ *   yield* TxHashMap.hasHash(permissions, role, roleHash) // => true
  *
  *   // Check non-existent role
- *   const hasGuestRole = yield* TxHashMap.hasHash(
+ *   yield* TxHashMap.hasHash(
  *     permissions,
  *     "guest",
  *     Hash.string("guest")
- *   )
- *   console.log(hasGuestRole) // false
+ *   ) // => false
  *
  *   // Useful in hot paths where hash is computed once and reused
  *   const roles = ["admin", "user", "moderator"]
  *   const roleHashes = roles.map((role) => [role, Hash.string(role)] as const)
- *
+ *   const results: Array<string> = []
  *   for (const [role, hash] of roleHashes) {
  *     const exists = yield* TxHashMap.hasHash(permissions, role, hash)
- *     console.log(`Role ${role}: ${exists}`)
+ *     results.push(`Role ${role}: ${exists}`)
  *   }
+ *   return results
  * })
+ *
+ * await Effect.runPromise(program) // => ["Role admin: true", "Role user: true", "Role moderator: false"]
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 4.0.0
  */
 export const hasHash: {
@@ -1348,8 +1333,8 @@ export const hasHash: {
  *
  * **Example** (Mapping values)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a user profile map
@@ -1366,21 +1351,20 @@ export const hasHash: {
  *   )
  *
  *   // Check the transformed values
- *   const aliceGreeting = yield* TxHashMap.get(greetings, "alice")
- *   console.log(aliceGreeting) // Option.some("Hello, Alice! (User: alice)")
+ *   yield* TxHashMap.get(greetings, "alice") // => Option.some("Hello, Alice! (User: alice)")
  *
  *   // Data-last usage with pipe
  *   const ages = yield* profiles.pipe(
  *     TxHashMap.map((profile) => profile.age)
  *   )
  *
- *   const aliceAge = yield* TxHashMap.get(ages, "alice")
- *   console.log(aliceAge) // Option.some(30)
+ *   yield* TxHashMap.get(ages, "alice") // => Option.some(30)
  *
  *   // Original map is unchanged
- *   const originalAlice = yield* TxHashMap.get(profiles, "alice")
- *   console.log(originalAlice) // Option.some({ name: "Alice", age: 30, active: true })
+ *   return yield* TxHashMap.get(profiles, "alice")
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some({ name: "Alice", age: 30, active: true })
  * ```
  *
  * @category combinators
@@ -1417,7 +1401,7 @@ export const map: {
  *
  * **Example** (Filtering entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1435,24 +1419,24 @@ export const map: {
  *     (product) => product.category === "electronics" && product.stock > 0
  *   )
  *
- *   const size = yield* TxHashMap.size(electronicsInStock)
- *   console.log(size) // 2 (laptop and mouse)
+ *   yield* TxHashMap.size(electronicsInStock) // => 2
  *
  *   // Data-last usage with pipe
  *   const expensiveItems = yield* inventory.pipe(
  *     TxHashMap.filter((product) => product.price > 500)
  *   )
  *
- *   const expensiveSize = yield* TxHashMap.size(expensiveItems)
- *   console.log(expensiveSize) // 2 (laptop and phone)
+ *   yield* TxHashMap.size(expensiveItems) // => 2
  *
  *   // Type guard usage
- *   const highValueItems = yield* TxHashMap.filter(
+ *   return yield* TxHashMap.filter(
  *     inventory,
  *     (product): product is typeof product & { price: number } =>
  *       product.price > 50
  *   )
  * })
+ *
+ * await Effect.runPromise(program)
  * ```
  *
  * @category combinators
@@ -1492,7 +1476,7 @@ export const filter: {
  *
  * **Example** (Reducing entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1508,12 +1492,9 @@ export const filter: {
  *   const totalSales = yield* TxHashMap.reduce(
  *     sales,
  *     0,
- *     (total, amount, quarter) => {
- *       console.log(`Adding ${quarter}: ${amount}`)
- *       return total + amount
- *     }
+ *     (total, amount) => total + amount
  *   )
- *   console.log(`Total sales: ${totalSales}`) // 80000
+ *   totalSales // => 80000
  *
  *   // Data-last usage with pipe
  *   const quarterlyReport = yield* sales.pipe(
@@ -1526,16 +1507,10 @@ export const filter: {
  *       })
  *     )
  *   )
- *   console.log(quarterlyReport) // { quarters: 4, total: 80000, max: 25000 }
- *
- *   // Build a summary string
- *   const summary = yield* TxHashMap.reduce(
- *     sales,
- *     "",
- *     (acc, amount, quarter) => acc + `${quarter}: $${amount.toLocaleString()}\n`
- *   )
- *   console.log(summary)
+ *   return quarterlyReport
  * })
+ *
+ * await Effect.runPromise(program) // => { quarters: 4, total: 80000, max: 25000 }
  * ```
  *
  * @category combinators
@@ -1571,7 +1546,7 @@ export const reduce: {
  *
  * **Example** (Filtering and mapping entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Option, Result, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1599,10 +1574,8 @@ export const reduce: {
  *   )
  *
  *   const aliceData = yield* TxHashMap.get(activeAdminAges, "alice")
- *   console.log(aliceData) // Option.some({ username: "alice", age: 30, seniority: "senior" })
- *
- *   const charlieData = yield* TxHashMap.get(activeAdminAges, "charlie")
- *   console.log(charlieData) // Option.none() (not active)
+ *   aliceData // => Option.some({ username: "alice", age: 30, seniority: "senior" })
+ *   yield* TxHashMap.get(activeAdminAges, "charlie") // => Option.none()
  *
  *   // Data-last usage with pipe
  *   const validAges = yield* userData.pipe(
@@ -1612,9 +1585,10 @@ export const reduce: {
  *     })
  *   )
  *
- *   const size = yield* TxHashMap.size(validAges)
- *   console.log(size) // 3 (alice, charlie, diana have valid ages)
+ *   return yield* TxHashMap.size(validAges)
  * })
+ *
+ * await Effect.runPromise(program) // => 3
  * ```
  *
  * @category combinators
@@ -1646,7 +1620,7 @@ export const filterMap: {
  *
  * **Example** (Checking entries with a predicate)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1659,28 +1633,27 @@ export const filterMap: {
  *   )
  *
  *   // Check if any users are online
- *   const hasOnlineUsers = yield* TxHashMap.hasBy(
+ *   yield* TxHashMap.hasBy(
  *     userStatuses,
  *     (user) => user.status === "online"
- *   )
- *   console.log(hasOnlineUsers) // true
+ *   ) // => true
  *
  *   // Check if any users have specific username pattern
- *   const hasAdminUser = yield* TxHashMap.hasBy(
+ *   yield* TxHashMap.hasBy(
  *     userStatuses,
  *     (user, username) => username.startsWith("admin")
- *   )
- *   console.log(hasAdminUser) // false
+ *   ) // => false
  *
  *   // Data-last usage with pipe
- *   const hasRecentActivity = yield* userStatuses.pipe(
+ *   return yield* userStatuses.pipe(
  *     TxHashMap.hasBy((user) => currentTime - user.lastSeen < 1_800_000) // 30 minutes
  *   )
- *   console.log(hasRecentActivity) // true
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 4.0.0
  */
 export const hasBy: {
@@ -1705,8 +1678,8 @@ export const hasBy: {
  *
  * **Example** (Finding the first matching entry)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a task priority map
@@ -1722,21 +1695,15 @@ export const hasBy: {
  *     (task) => task.priority >= 2 && !task.completed
  *   )
  *
- *   if (highPriorityTask._tag === "Some") {
- *     const [taskId, task] = highPriorityTask.value
- *     console.log(`Found task: ${taskId}, priority: ${task.priority}`)
- *     // "Found task: task3, priority: 2"
- *   }
+ *   highPriorityTask // => Option.some(["task3", { priority: 2, assignee: "alice", completed: false }])
  *
  *   // Find first task assigned to specific user
- *   const aliceTask = yield* tasks.pipe(
+ *   return yield* tasks.pipe(
  *     TxHashMap.findFirst((task) => task.assignee === "alice")
  *   )
- *
- *   if (aliceTask._tag === "Some") {
- *     console.log(`Alice's task: ${aliceTask.value[0]}`)
- *   }
  * })
+ *
+ * await Effect.runPromise(program) // => Option.some(["task1", { priority: 1, assignee: "alice", completed: false }])
  * ```
  *
  * @category combinators
@@ -1764,7 +1731,7 @@ export const findFirst: {
  *
  * **Example** (Checking whether some entries match)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1776,28 +1743,27 @@ export const findFirst: {
  *   )
  *
  *   // Check if any products are expensive
- *   const hasExpensiveProducts = yield* TxHashMap.some(
+ *   yield* TxHashMap.some(
  *     inventory,
  *     (product) => product.price > 500
- *   )
- *   console.log(hasExpensiveProducts) // true
+ *   ) // => true
  *
  *   // Check if any products are out of stock
- *   const hasOutOfStock = yield* TxHashMap.some(
+ *   yield* TxHashMap.some(
  *     inventory,
  *     (product) => product.stock === 0
- *   )
- *   console.log(hasOutOfStock) // true
+ *   ) // => true
  *
  *   // Data-last usage with pipe
- *   const hasAffordableItems = yield* inventory.pipe(
+ *   return yield* inventory.pipe(
  *     TxHashMap.some((product) => product.price < 50)
  *   )
- *   console.log(hasAffordableItems) // true (mouse is $29)
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 4.0.0
  */
 export const some: {
@@ -1821,7 +1787,7 @@ export const some: {
  *
  * **Example** (Checking whether every entry matches)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -1833,28 +1799,27 @@ export const some: {
  *   )
  *
  *   // Check if all users can read
- *   const allCanRead = yield* TxHashMap.every(
+ *   yield* TxHashMap.every(
  *     permissions,
  *     (perms) => perms.canRead
- *   )
- *   console.log(allCanRead) // true
+ *   ) // => true
  *
  *   // Check if all users can write
- *   const allCanWrite = yield* TxHashMap.every(
+ *   yield* TxHashMap.every(
  *     permissions,
  *     (perms) => perms.canWrite
- *   )
- *   console.log(allCanWrite) // false
+ *   ) // => false
  *
  *   // Data-last usage with pipe
- *   const allHaveBasicAccess = yield* permissions.pipe(
+ *   return yield* permissions.pipe(
  *     TxHashMap.every((perms, username) => perms.canRead && username.length > 2)
  *   )
- *   console.log(allHaveBasicAccess) // true
  * })
+ *
+ * await Effect.runPromise(program) // => true
  * ```
  *
- * @category combinators
+ * @category predicates
  * @since 4.0.0
  */
 export const every: {
@@ -1879,8 +1844,8 @@ export const every: {
  *
  * **Example** (Running effects for each entry)
  *
- * ```ts
- * import { Console, Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a log processing map
@@ -1890,26 +1855,17 @@ export const every: {
  *     ["debug.log", { size: 512, level: "debug" }]
  *   )
  *
- *   // Process each log file with side effects
+ *   const messages: Array<string> = []
  *   yield* TxHashMap.forEach(logs, (logInfo, filename) =>
- *     Effect.gen(function*() {
- *       yield* Console.log(
- *         `Processing ${filename}: ${logInfo.size} bytes, level: ${logInfo.level}`
- *       )
- *       if (logInfo.level === "error") {
- *         yield* Console.log(`⚠️  Error log detected: ${filename}`)
- *       }
+ *     Effect.sync(() => {
+ *       messages.push(`${filename}: ${logInfo.size} bytes (${logInfo.level})`)
  *     }))
  *
- *   // Data-last usage with pipe
- *   yield* logs.pipe(
- *     TxHashMap.forEach((logInfo) =>
- *       logInfo.size > 1000
- *         ? Console.log(`Large log file: ${logInfo.size} bytes`)
- *         : Effect.void
- *     )
- *   )
+ *   return messages.sort()
  * })
+ *
+ * const result = await Effect.runPromise(program)
+ * result // => ["access.log: 2048 bytes (info)", "debug.log: 512 bytes (debug)", "error.log: 1024 bytes (error)"]
  * ```
  *
  * @category combinators
@@ -1946,8 +1902,8 @@ export const forEach: {
  *
  * **Example** (Flat mapping entries)
  *
- * ```ts
- * import { Effect, TxHashMap } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   // Create a department-employee map
@@ -1975,15 +1931,12 @@ export const forEach: {
  *   )
  *
  *   // Check the flattened result
- *   const alice = yield* TxHashMap.get(employeeDetails, "alice")
- *   console.log(alice) // Option.some({ department: "engineering", role: "lead" })
- *
- *   const charlie = yield* TxHashMap.get(employeeDetails, "charlie")
- *   console.log(charlie) // Option.some({ department: "marketing", role: "lead" })
- *
- *   const size = yield* TxHashMap.size(employeeDetails)
- *   console.log(size) // 4 (all employees)
+ *   yield* TxHashMap.get(employeeDetails, "alice") // => Option.some({ department: "engineering", role: "lead" })
+ *   yield* TxHashMap.get(employeeDetails, "charlie") // => Option.some({ department: "marketing", role: "lead" })
+ *   return yield* TxHashMap.size(employeeDetails)
  * })
+ *
+ * await Effect.runPromise(program) // => 4
  * ```
  *
  * @category combinators
@@ -2028,7 +1981,7 @@ export const flatMap: {
  *
  * **Example** (Compacting optional values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, Option, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -2047,21 +2000,17 @@ export const flatMap: {
  *   // Remove all None values and unwrap Some values
  *   const validUsers = yield* TxHashMap.compact(userData)
  *
- *   const size = yield* TxHashMap.size(validUsers)
- *   console.log(size) // 3 (alice, charlie, eve)
+ *   yield* TxHashMap.size(validUsers) // => 3
  *
- *   const alice = yield* TxHashMap.get(validUsers, "alice")
- *   console.log(alice) // Option.some({ age: 30, email: "alice@example.com" })
- *
- *   const bob = yield* TxHashMap.get(validUsers, "bob")
- *   console.log(bob) // Option.none() (removed from map)
+ *   yield* TxHashMap.get(validUsers, "alice") // => Option.some({ age: 30, email: "alice@example.com" })
+ *   yield* TxHashMap.get(validUsers, "bob") // => Option.none()
  *
  *   // Useful for cleaning up optional data processing results
  *   const userAges = yield* TxHashMap.map(validUsers, (user) => user.age)
- *   const ageEntries = yield* TxHashMap.entries(userAges)
- *   const sortedAgeEntries = ageEntries.toSorted(([left], [right]) => left.localeCompare(right))
- *   console.log(sortedAgeEntries) // [["alice", 30], ["charlie", 25], ["eve", 28]]
+ *   return (yield* TxHashMap.entries(userAges)).toSorted(([left], [right]) => left.localeCompare(right))
  * })
+ *
+ * await Effect.runPromise(program) // => [["alice", 30], ["charlie", 25], ["eve", 28]]
  * ```
  *
  * @category combinators
@@ -2082,7 +2031,7 @@ export const compact = <K, A>(
  *
  * **Example** (Converting to entries)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -2093,24 +2042,18 @@ export const compact = <K, A>(
  *   )
  *
  *   // Get all entries as an array
- *   const allEntries = yield* TxHashMap.toEntries(settings)
- *   const sortedEntries = allEntries.toSorted(([left], [right]) => left.localeCompare(right))
- *   console.log(sortedEntries)
- *   // [["language", "en-US"], ["theme", "dark"], ["timezone", "UTC"]]
+ *   const sortedEntries = (yield* TxHashMap.toEntries(settings))
+ *     .toSorted(([left], [right]) => left.localeCompare(right))
+ *   sortedEntries // => [["language", "en-US"], ["theme", "dark"], ["timezone", "UTC"]]
  *
- *   // Process entries
- *   for (const [setting, value] of sortedEntries) {
- *     console.log(`${setting}: ${value}`)
- *   }
- *
- *   // Convert to object for JSON serialization
- *   const settingsObj = Object.fromEntries(sortedEntries)
- *   console.log(JSON.stringify(settingsObj))
- *   // {"language":"en-US","theme":"dark","timezone":"UTC"}
+ *   // Convert to an object
+ *   return Object.fromEntries(sortedEntries)
  * })
+ *
+ * await Effect.runPromise(program) // => { language: "en-US", theme: "dark", timezone: "UTC" }
  * ```
  *
- * @category combinators
+ * @category getters
  * @since 4.0.0
  */
 export const toEntries = <K, V>(
@@ -2123,7 +2066,7 @@ export const toEntries = <K, V>(
  *
  * **Example** (Converting to values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, TxHashMap } from "effect"
  *
  * const program = Effect.gen(function*() {
@@ -2135,22 +2078,23 @@ export const toEntries = <K, V>(
  *
  *   // Get all product information
  *   const products = yield* TxHashMap.toValues(inventory)
- *   console.log(products.length) // 3
+ *   products.length // => 3
  *
  *   // Calculate total inventory value
  *   const totalValue = products.reduce(
  *     (sum, product) => sum + (product.price * product.stock),
  *     0
  *   )
- *   console.log(`Total inventory value: $${totalValue}`) // Total inventory value: $8025
+ *   totalValue // => 8025
  *
  *   // Find products with low stock
- *   const lowStockProducts = products.filter((product) => product.stock < 10)
- *   console.log(`${lowStockProducts.length} product with low stock`) // 1 product with low stock
+ *   return products.filter((product) => product.stock < 10).length
  * })
+ *
+ * await Effect.runPromise(program) // => 1
  * ```
  *
- * @category combinators
+ * @category getters
  * @since 4.0.0
  */
 export const toValues = <K, V>(self: TxHashMap<K, V>): Effect.Effect<Array<V>> => values(self)

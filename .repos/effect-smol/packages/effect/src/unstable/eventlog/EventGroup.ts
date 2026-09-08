@@ -100,7 +100,7 @@ export type AnyWithProps = EventGroup<Event.Any>
 /**
  * Derives the handler service markers required for all events in an event group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ToService<A> = A extends EventGroup<infer _Events> ? Event.ToService<_Events>
@@ -109,7 +109,7 @@ export type ToService<A> = A extends EventGroup<infer _Events> ? Event.ToService
 /**
  * Extracts the union of event definitions contained in an event group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type Events<Group> = Group extends EventGroup<infer _Events> ? _Events
@@ -118,7 +118,7 @@ export type Events<Group> = Group extends EventGroup<infer _Events> ? _Events
 /**
  * Client-side schema services required by all events in an event group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ServicesClient<Group> = Event.ServicesClient<Events<Group>>
@@ -126,7 +126,7 @@ export type ServicesClient<Group> = Event.ServicesClient<Events<Group>>
 /**
  * Server-side schema services required by all events in an event group.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ServicesServer<Group> = Event.ServicesServer<Events<Group>>

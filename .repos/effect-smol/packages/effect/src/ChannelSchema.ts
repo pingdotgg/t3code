@@ -136,7 +136,7 @@ export const decodeUnknown: <S extends Schema.Constraint>(
   Arr.NonEmptyReadonlyArray<S["Type"]>,
   IE | Schema.SchemaError,
   Done,
-  Arr.NonEmptyReadonlyArray<S["Encoded"]>,
+  Arr.NonEmptyReadonlyArray<unknown>,
   IE,
   Done,
   S["DecodingServices"]

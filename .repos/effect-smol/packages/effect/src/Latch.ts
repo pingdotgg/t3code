@@ -28,18 +28,18 @@ import * as internal from "./internal/effect.ts"
  *
  * **Example** (Coordinating fibers with a latch)
  *
- * ```ts
- * import { Effect, Latch } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Fiber, Latch } from "effect"
  *
  * // Create and use a latch for coordination between fibers
  * const program = Effect.gen(function*() {
  *   const latch = yield* Latch.make()
- *
- *   // Wait for the latch to be opened
- *   yield* latch.await
- *
- *   return "Latch was opened!"
+ *   const waiter = yield* Effect.forkChild(latch.await.pipe(Effect.as("opened")))
+ *   yield* latch.open
+ *   return yield* Fiber.join(waiter)
  * })
+ *
+ * await Effect.runPromise(program) // => "opened"
  * ```
  *
  * @see {@link make} for creating a latch inside Effect code
@@ -138,24 +138,19 @@ export interface Latch {
  *
  * **Example** (Creating a latch unsafely)
  *
- * ```ts
- * import { Effect, Latch } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Fiber, Latch } from "effect"
  *
  * const latch = Latch.makeUnsafe(false)
+ * const waiter = latch.await.pipe(Effect.as("opened"))
  *
- * const waiter = Effect.gen(function*() {
- *   yield* Effect.log("Waiting for latch to open...")
- *   yield* latch.await
- *   yield* Effect.log("Latch opened! Continuing...")
- * })
- *
- * const opener = Effect.gen(function*() {
- *   yield* Effect.sleep("2 seconds")
- *   yield* Effect.log("Opening latch...")
+ * const program = Effect.gen(function*() {
+ *   const fiber = yield* Effect.forkChild(waiter)
  *   yield* latch.open
+ *   return yield* Fiber.join(fiber)
  * })
  *
- * const program = Effect.all([waiter, opener])
+ * await Effect.runPromise(program) // => "opened"
  * ```
  *
  * @see {@link make} for creating a latch inside Effect code
@@ -178,26 +173,19 @@ export const makeUnsafe: (open?: boolean | undefined) => Latch = internal.makeLa
  *
  * **Example** (Creating a latch)
  *
- * ```ts
- * import { Effect, Latch } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, Fiber, Latch } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const latch = yield* Latch.make(false)
+ *   const waiter = latch.await.pipe(Effect.as("opened"))
  *
- *   const waiter = Effect.gen(function*() {
- *     yield* Effect.log("Waiting for latch to open...")
- *     yield* latch.await
- *     yield* Effect.log("Latch opened! Continuing...")
- *   })
- *
- *   const opener = Effect.gen(function*() {
- *     yield* Effect.sleep("2 seconds")
- *     yield* Effect.log("Opening latch...")
- *     yield* latch.open
- *   })
- *
- *   yield* Effect.all([waiter, opener])
+ *   const fiber = yield* Effect.forkChild(waiter)
+ *   yield* latch.open
+ *   return yield* Fiber.join(fiber)
  * })
+ *
+ * await Effect.runPromise(program) // => "opened"
  * ```
  *
  * @see {@link makeUnsafe} for synchronous allocation outside Effect code
@@ -388,7 +376,7 @@ export const whenOpen: {
  *
  * Use to check the state of the latch without suspending or changing its state.
  *
- * @category getters
+ * @category predicates
  * @since 4.0.0
  */
 export const isOpen = (self: Latch): boolean => self.isOpen()

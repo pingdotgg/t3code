@@ -1,6 +1,6 @@
 import { SqliteClient } from "@effect/sql-sqlite-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import * as EventJournal from "effect/unstable/eventlog/EventJournal"
 import * as SqlEventJournal from "effect/unstable/eventlog/SqlEventJournal"
 import { Reactivity } from "effect/unstable/reactivity"
@@ -14,6 +14,19 @@ const makeJournal = Effect.gen(function*() {
 }).pipe(Effect.provide(Reactivity.layer))
 
 describe("SqlEventJournal", () => {
+  it.effect("commits only after the write callback succeeds", () =>
+    Effect.gen(function*() {
+      const sql = yield* SqliteClient.make({ filename: ":memory:" })
+      const journal = yield* SqlEventJournal.make().pipe(Effect.provideService(SqlClient.SqlClient, sql))
+      yield* Effect.exit(journal.write({
+        event: "Repro",
+        primaryKey: "key",
+        payload: new Uint8Array([1]),
+        effect: () => Effect.fail("callback failed")
+      }))
+      assert.deepStrictEqual(yield* journal.entries, [])
+    }).pipe(Effect.provide(Reactivity.layer)))
+
   it.effect("writes and reads entries", () =>
     Effect.gen(function*() {
       const journal = yield* makeJournal
@@ -68,15 +81,31 @@ describe("SqlEventJournal", () => {
       const next = yield* journal.nextRemoteSequence(remoteId)
       assert.strictEqual(next, 2)
 
+      let emptyCalls = 0
+      const emptyResult = yield* journal.withRemoteUncommited(remoteId, () =>
+        Effect.sync(() => {
+          emptyCalls++
+          return "called"
+        }))
+      assert.isTrue(Option.isNone(emptyResult))
+      assert.strictEqual(emptyCalls, 0)
+
       yield* journal.write({
         event: "LocalCreated",
         primaryKey: "local-1",
         payload: new Uint8Array([4]),
         effect: () => Effect.void
       })
-      const uncommitted = yield* journal.withRemoteUncommited(remoteId, (entries) => Effect.succeed(entries))
-      assert.strictEqual(uncommitted.length, 1)
-      assert.strictEqual(uncommitted[0].event, "LocalCreated")
+      let uncommittedCalls = 0
+      const uncommitted = yield* journal.withRemoteUncommited(remoteId, (entries) =>
+        Effect.sync(() => {
+          uncommittedCalls++
+          return entries
+        }))
+      if (Option.isNone(uncommitted)) assert.fail("Expected the callback result")
+      assert.strictEqual(uncommitted.value.length, 1)
+      assert.strictEqual(uncommitted.value[0].event, "LocalCreated")
+      assert.strictEqual(uncommittedCalls, 1)
       assert.strictEqual(seenConflicts.length, 2)
       assert.strictEqual(seenConflicts[0][0]?.idString, entryA.idString)
       assert.strictEqual(seenConflicts[1][0]?.idString, entryB.idString)

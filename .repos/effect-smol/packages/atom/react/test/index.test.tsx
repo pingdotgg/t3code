@@ -135,6 +135,49 @@ describe("atom-react", () => {
 
       expect(screen.getByTestId("loading")).toBeInTheDocument()
     })
+
+    test("suspense subscriptions are isolated per registry", async () => {
+      const atom = Atom.make(AsyncResult.initial<string>())
+      const firstRegistry = AtomRegistry.make()
+      const secondRegistry = AtomRegistry.make()
+
+      function TestComponent({ id }: { readonly id: string }) {
+        const value = useAtomSuspense(atom).value
+        return <div data-testid={`${id}-value`}>{value}</div>
+      }
+
+      render(
+        <RegistryContext.Provider value={firstRegistry}>
+          <Suspense fallback={<div data-testid="first-loading">Loading...</div>}>
+            <TestComponent id="first" />
+          </Suspense>
+        </RegistryContext.Provider>
+      )
+      render(
+        <RegistryContext.Provider value={secondRegistry}>
+          <Suspense fallback={<div data-testid="second-loading">Loading...</div>}>
+            <TestComponent id="second" />
+          </Suspense>
+        </RegistryContext.Provider>
+      )
+
+      act(() => {
+        secondRegistry.set(atom, AsyncResult.success("second"))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId("second-value")).toHaveTextContent("second")
+      })
+      expect(screen.getByTestId("first-loading")).toBeInTheDocument()
+
+      act(() => {
+        firstRegistry.set(atom, AsyncResult.success("first"))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId("first-value")).toHaveTextContent("first")
+      })
+    })
   })
 
   describe("ScopedAtom", () => {

@@ -1,0 +1,3 @@
+"@effect/ai/EmbeddingModel#makeDataLoader":
+  replacement: "EmbeddingModel.make + RequestResolver.setDelay + RequestResolver.batchN"
+  note: "The dedicated data-loader constructor was removed. EmbeddingModel.make batches concurrent embed requests through its resolver; compose the exposed resolver with setDelay and optional batchN for the old window and maximum-batch behavior."

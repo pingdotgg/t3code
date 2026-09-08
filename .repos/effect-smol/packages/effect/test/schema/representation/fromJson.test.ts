@@ -386,7 +386,7 @@ describe("SchemaRepresentation.fromJson", () => {
           representation: { _tag: "Reference", $ref: "" },
           references: {}
         }),
-      `Expected a value with a length of at least 1, got ""\n  at ["representation"]["$ref"]`
+      `Expected a value with a length of at least 1\n  at ["representation"]["$ref"]`
     )
   })
 
@@ -401,7 +401,7 @@ describe("SchemaRepresentation.fromJson", () => {
           },
           references: {}
         } as never),
-      `Expected JSON value, got 1n\n  at ["representation"]["annotations"]["invalid"]`
+      `Expected JSON value\n  at ["representation"]["annotations"]["invalid"]`
     )
   })
 
@@ -409,7 +409,7 @@ describe("SchemaRepresentation.fromJson", () => {
     const input = () => undefined
     throws(
       () => SchemaRepresentation.fromJson(input as never),
-      `Expected object, got () => void 0`
+      `Expected object`
     )
   })
 

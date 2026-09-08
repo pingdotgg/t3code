@@ -112,7 +112,7 @@ declare module "effect/unstable/ai/Prompt" {
    * These options are used when translating system instructions into
    * OpenRouter chat messages.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface SystemMessageOptions extends ProviderOptions {
@@ -135,7 +135,7 @@ declare module "effect/unstable/ai/Prompt" {
    * These options are used when translating user content into OpenRouter chat
    * messages.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface UserMessageOptions extends ProviderOptions {
@@ -158,7 +158,7 @@ declare module "effect/unstable/ai/Prompt" {
    * Preserves reasoning metadata when assistant messages are replayed in later
    * OpenRouter requests.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface AssistantMessageOptions extends ProviderOptions {
@@ -185,7 +185,7 @@ declare module "effect/unstable/ai/Prompt" {
    * These options are used when converting tool results into OpenRouter chat
    * messages.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface ToolMessageOptions extends ProviderOptions {
@@ -207,7 +207,7 @@ declare module "effect/unstable/ai/Prompt" {
    *
    * Use when you use these options to control how text content is sent to OpenRouter.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface TextPartOptions extends ProviderOptions {
@@ -230,7 +230,7 @@ declare module "effect/unstable/ai/Prompt" {
    * Preserves provider reasoning blocks so reasoning-aware conversations can
    * continue across OpenRouter requests.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface ReasoningPartOptions extends ProviderOptions {
@@ -256,7 +256,7 @@ declare module "effect/unstable/ai/Prompt" {
    *
    * Controls file naming and prompt caching for files sent to OpenRouter.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface FilePartOptions extends ProviderOptions {
@@ -284,7 +284,7 @@ declare module "effect/unstable/ai/Prompt" {
    * Preserves reasoning details associated with tool calls when a conversation
    * is sent back to OpenRouter.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface ToolCallPartOptions extends ProviderOptions {
@@ -306,7 +306,7 @@ declare module "effect/unstable/ai/Prompt" {
    *
    * Controls prompt caching for tool results sent to OpenRouter.
    *
-   * @category request
+   * @category models
    * @since 4.0.0
    */
   export interface ToolResultPartOptions extends ProviderOptions {
@@ -330,7 +330,7 @@ declare module "effect/unstable/ai/Response" {
    *
    * Preserves provider reasoning details that can be sent back in later turns.
    *
-   * @category response
+   * @category models
    * @since 4.0.0
    */
   export interface ReasoningPartMetadata extends ProviderMetadata {
@@ -352,7 +352,7 @@ declare module "effect/unstable/ai/Response" {
    *
    * Carries the first reasoning detail chunk when OpenRouter exposes one.
    *
-   * @category response
+   * @category models
    * @since 4.0.0
    */
   export interface ReasoningStartPartMetadata extends ProviderMetadata {
@@ -374,7 +374,7 @@ declare module "effect/unstable/ai/Response" {
    *
    * Carries provider reasoning detail chunks as they arrive from OpenRouter.
    *
-   * @category response
+   * @category models
    * @since 4.0.0
    */
   export interface ReasoningDeltaPartMetadata extends ProviderMetadata {
@@ -397,7 +397,7 @@ declare module "effect/unstable/ai/Response" {
    * Associates tool calls with provider reasoning details when the model emits
    * reasoning and tool calls together.
    *
-   * @category response
+   * @category models
    * @since 4.0.0
    */
   export interface ToolCallPartMetadata extends ProviderMetadata {
@@ -420,7 +420,7 @@ declare module "effect/unstable/ai/Response" {
    * Includes citation text and offsets returned by providers that support URL
    * annotations.
    *
-   * @category response
+   * @category models
    * @since 4.0.0
    */
   export interface UrlSourcePartMetadata extends ProviderMetadata {
@@ -451,7 +451,7 @@ declare module "effect/unstable/ai/Response" {
    * Exposes provider response details that are not represented by the common
    * Effect AI finish part fields.
    *
-   * @category response
+   * @category models
    * @since 4.0.0
    */
   export interface FinishPartMetadata extends ProviderMetadata {
@@ -545,10 +545,9 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
   const client = yield* OpenRouterClient
   const codecTransformer = getCodecTransformer(model)
 
-  const makeConfig = Effect.gen(function*() {
-    const services = yield* Effect.context<never>()
-    return { model, ...providerConfig, ...services.mapUnsafe.get(Config.key) }
-  })
+  const makeConfig = Effect.contextWith((services: Context.Context<never>) =>
+    Effect.succeed({ model, ...providerConfig, ...Context.getOrUndefined(services, Config) })
+  )
 
   const makeRequest = Effect.fnUntraced(
     function*({ config, options }: {
@@ -1320,7 +1319,7 @@ const makeStreamResponse = Effect.fnUntraced(
                 // The signature typically arrives in the last reasoning delta,
                 // but reasoning-start only carries the first delta's metadata.
                 metadata: accumulatedReasoningDetails.length > 0
-                  ? { openRouter: { reasoningDetails: accumulatedReasoningDetails } }
+                  ? { openrouter: { reasoningDetails: accumulatedReasoningDetails } }
                   : undefined
               })
               reasoningStarted = false
@@ -1361,7 +1360,7 @@ const makeStreamResponse = Effect.fnUntraced(
                         ? { startIndex: annotation.url_citation.start_index }
                         : undefined),
                       ...(Predicate.isNotUndefined(annotation.url_citation.end_index)
-                        ? { startIndex: annotation.url_citation.end_index }
+                        ? { endIndex: annotation.url_citation.end_index }
                         : undefined)
                     }
                   }
@@ -1377,6 +1376,7 @@ const makeStreamResponse = Effect.fnUntraced(
             for (const toolCall of toolCalls) {
               const index = toolCall.index ?? toolCalls.length - 1
               let activeToolCall = activeToolCalls[index]
+              const argumentsDelta = toolCall.function?.arguments ?? ""
 
               // Tool call start - OpenRouter returns all information except the
               // tool call parameters in the first chunk
@@ -1415,7 +1415,7 @@ const makeStreamResponse = Effect.fnUntraced(
                   id: toolCall.id,
                   type: "function",
                   name: toolCall.function.name,
-                  params: toolCall.function.arguments ?? ""
+                  params: argumentsDelta
                 }
 
                 activeToolCalls[index] = activeToolCall
@@ -1425,23 +1425,16 @@ const makeStreamResponse = Effect.fnUntraced(
                   id: activeToolCall.id,
                   name: activeToolCall.name
                 })
-
-                // Emit a tool call delta part if parameters were also sent
-                if (activeToolCall.params.length > 0) {
-                  parts.push({
-                    type: "tool-params-delta",
-                    id: activeToolCall.id,
-                    delta: activeToolCall.params
-                  })
-                }
               } else {
-                // If an active tool call was found, update and emit the delta for
-                // the tool call's parameters
-                activeToolCall.params += toolCall.function?.arguments ?? ""
+                activeToolCall.params += argumentsDelta
+              }
+
+              // Emit a tool call delta part if parameters were also sent
+              if (argumentsDelta.length > 0) {
                 parts.push({
                   type: "tool-params-delta",
                   id: activeToolCall.id,
-                  delta: activeToolCall.params
+                  delta: argumentsDelta
                 })
               }
 

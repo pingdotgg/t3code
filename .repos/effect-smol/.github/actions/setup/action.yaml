@@ -12,19 +12,19 @@ runs:
   using: composite
   steps:
     - name: Install pnpm
-      uses: pnpm/action-setup@v4
+      uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
     - name: Install node
-      uses: actions/setup-node@v6
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
       with:
         cache: pnpm
         node-version: 26.4.0
     - name: Install deno
-      uses: denoland/setup-deno@v2
+      uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
       if: ${{ inputs.deno-version != '' }}
       with:
         deno-version: ${{ inputs.deno-version }}
     - name: Install bun
-      uses: oven-sh/setup-bun@v2
+      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       if: ${{ inputs.bun-version != '' }}
       with:
         bun-version: ${{ inputs.bun-version }}

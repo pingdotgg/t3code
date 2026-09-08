@@ -1,6 +1,6 @@
 {
   "name": "@effect/atom-react",
-  "version": "4.0.0-beta.102",
+  "version": "4.0.0-rc.112",
   "type": "module",
   "license": "MIT",
   "description": "React bindings for the Effect Atom modules",
@@ -29,6 +29,7 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts",
     "./internal/*": null,
+    "./index": null,
     "./*/index": null
   },
   "files": [
@@ -36,7 +37,10 @@
     "dist/**/*.js",
     "dist/**/*.js.map",
     "dist/**/*.d.ts",
-    "dist/**/*.d.ts.map"
+    "dist/**/*.d.ts.map",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "ai-docs/**/*"
   ],
   "publishConfig": {
     "access": "public",
@@ -46,33 +50,32 @@
       ".": "./dist/index.js",
       "./*": "./dist/*.js",
       "./internal/*": null,
+      "./index": null,
       "./*/index": null
     }
   },
   "scripts": {
     "build": "tsc -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
-    "check": "tsc -b tsconfig.json",
-    "test": "vitest",
-    "coverage": "vitest --coverage"
+    "check": "tsc -b tsconfig.json"
   },
   "peerDependencies": {
     "effect": "workspace:^",
-    "react": "^19.2.4",
-    "scheduler": "*"
+    "react": ">=19.0.0 <20.0.0",
+    "scheduler": ">=0.25.0 <0.28.0"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@types/scheduler": "^0.26.0",
     "effect": "workspace:^",
-    "jsdom": "^29.1.1",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
-    "react-error-boundary": "^6.1.2",
+    "jsdom": "^30.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-error-boundary": "^6.1.3",
     "scheduler": "^0.27.0"
   }
 }

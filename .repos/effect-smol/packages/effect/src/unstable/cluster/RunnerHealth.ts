@@ -27,7 +27,7 @@ import * as Runners from "./Runners.ts"
  * still be processing messages. If a Runner is not responsive, then its
  * associated shards can and will be re-assigned to a different Runner.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class RunnerHealth extends Context.Service<

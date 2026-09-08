@@ -544,10 +544,16 @@ export function toCodeDocument(
         ).join(", ")
         const indexTypes = indexSignatures.map((signature) =>
           `readonly [x: ${signature.parameter.Type}]: ${signature.type.Type}`
-        ).join(", ")
+        )
+        if (properties.length === 0) {
+          return makeCode(
+            `Schema.StructWithRest(Schema.Struct({ ${propertyRuntimes} }), [${indexRuntimes}])`,
+            `{ ${indexTypes.join(", ")} }`
+          )
+        }
         return makeCode(
           `Schema.StructWithRest(Schema.Struct({ ${propertyRuntimes} }), [${indexRuntimes}])`,
-          `{ ${propertyTypes}${properties.length > 0 ? ", " : ""}${indexTypes} }`
+          [`{ ${propertyTypes} }`, ...indexTypes.map((indexType) => `{ ${indexType} }`)].join(" & ")
         )
       }
       case "Union": {

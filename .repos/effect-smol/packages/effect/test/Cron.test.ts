@@ -218,6 +218,62 @@ describe("Cron", () => {
     )
   })
 
+  it("format preserves compact cron syntax", () => {
+    strictEqual(
+      Cron.format(Cron.parseUnsafe("23 0-20/2 * * 0", "Europe/Berlin")),
+      "23 0-20/2 * * 0"
+    )
+  })
+
+  it("format can include the default seconds field", () => {
+    strictEqual(
+      Cron.format(Cron.parseUnsafe("23 0-20/2 * * 0"), { includeSeconds: true }),
+      "0 23 0-20/2 * * 0"
+    )
+  })
+
+  it("format compacts multiple runs within a field", () => {
+    strictEqual(
+      Cron.format(Cron.make({
+        minutes: [0, 1, 2, 10, 20, 30],
+        hours: [],
+        days: [],
+        months: [],
+        weekdays: []
+      })),
+      "0-2,10-30/10 * * * *"
+    )
+  })
+
+  it("format preserves non-uniform values", () => {
+    strictEqual(
+      Cron.format(Cron.make({
+        minutes: [1, 5, 11],
+        hours: [],
+        days: [],
+        months: [],
+        weekdays: []
+      })),
+      "1,5,11 * * * *"
+    )
+  })
+
+  it("format handles default, non-default, and unrestricted seconds", () => {
+    const format = (seconds?: Iterable<number>) =>
+      Cron.format(Cron.make({
+        seconds,
+        minutes: [],
+        hours: [],
+        days: [],
+        months: [],
+        weekdays: []
+      }))
+
+    strictEqual(format(), "* * * * *")
+    strictEqual(format([15, 30]), "15,30 * * * * *")
+    strictEqual(format([]), "* * * * * *")
+  })
+
   it("make supports requiring both days and weekdays", () => {
     const utc = DateTime.zoneMakeNamedUnsafe("UTC")
     const values = {

@@ -32803,7 +32803,7 @@ export const make = (
     request: HttpClientRequest.HttpClientRequest
   ): Stream.Stream<
     { readonly event: string; readonly id: string | undefined; readonly data: Type },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     DecodingServices
   > =>
     HttpClient.filterStatusOk(httpClient).execute(request).pipe(
@@ -34824,7 +34824,7 @@ export interface OpenRouterClient {
       readonly id: string | undefined
       readonly data: typeof SendChatCompletionRequest200Sse.Type
     },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     typeof SendChatCompletionRequest200Sse.DecodingServices
   >
   /**
@@ -35005,7 +35005,7 @@ export interface OpenRouterClient {
     }
   ) => Stream.Stream<
     { readonly event: string; readonly id: string | undefined; readonly data: typeof CreateEmbeddings200Sse.Type },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     typeof CreateEmbeddings200Sse.DecodingServices
   >
   /**
@@ -35450,7 +35450,7 @@ export interface OpenRouterClient {
     }
   ) => Stream.Stream<
     { readonly event: string; readonly id: string | undefined; readonly data: typeof CreateImages200Sse.Type },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     typeof CreateImages200Sse.DecodingServices
   >
   /**
@@ -35619,7 +35619,7 @@ export interface OpenRouterClient {
     }
   ) => Stream.Stream<
     { readonly event: string; readonly id: string | undefined; readonly data: typeof CreateMessages200Sse.Type },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     typeof CreateMessages200Sse.DecodingServices
   >
   /**
@@ -35987,7 +35987,7 @@ export interface OpenRouterClient {
     }
   ) => Stream.Stream<
     { readonly event: string; readonly id: string | undefined; readonly data: typeof CreateRerank200Sse.Type },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     typeof CreateRerank200Sse.DecodingServices
   >
   /**
@@ -36028,7 +36028,7 @@ export interface OpenRouterClient {
     }
   ) => Stream.Stream<
     { readonly event: string; readonly id: string | undefined; readonly data: typeof CreateResponses200Sse.Type },
-    HttpClientError.HttpClientError | SchemaError | Sse.Retry,
+    HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError,
     typeof CreateResponses200Sse.DecodingServices
   >
   /**

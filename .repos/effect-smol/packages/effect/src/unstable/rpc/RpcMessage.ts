@@ -20,7 +20,7 @@ import type { RpcClientError } from "./RpcClientError.ts"
 /**
  * Decoded messages that can be sent from an RPC client to a server.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export type FromClient<A extends Rpc.Any> = Request<A> | Ack | Interrupt | Eof
@@ -28,7 +28,7 @@ export type FromClient<A extends Rpc.Any> = Request<A> | Ack | Interrupt | Eof
 /**
  * Transport-encoded messages that can be sent from an RPC client to a server.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export type FromClientEncoded = RequestEncoded | AckEncoded | InterruptEncoded | Ping | Eof
@@ -37,7 +37,7 @@ export type FromClientEncoded = RequestEncoded | AckEncoded | InterruptEncoded |
  * A branded request identifier used to correlate RPC requests, responses,
  * chunks, acknowledgements, and interrupts.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export type RequestId = Branded<string | number, "~effect/rpc/RpcMessage/RequestId">
@@ -45,7 +45,7 @@ export type RequestId = Branded<string | number, "~effect/rpc/RpcMessage/Request
 /**
  * Converts a bigint or string request id into the branded `RequestId` type.
  *
- * @category request
+ * @category constructors
  * @since 4.0.0
  */
 export const RequestId = (id: string | number): RequestId => id as RequestId
@@ -54,7 +54,10 @@ export const RequestId = (id: string | number): RequestId => id as RequestId
  * The transport-encoded RPC request envelope, including the string request id,
  * RPC tag, encoded payload, headers, and optional trace context.
  *
- * @category request
+ * Requests flow in both directions: servers use them for server-originated
+ * requests and, with `isNotification` set, for server notifications.
+ *
+ * @category models
  * @since 4.0.0
  */
 export interface RequestEncoded {
@@ -63,6 +66,7 @@ export interface RequestEncoded {
   readonly tag: string
   readonly payload: unknown
   readonly headers: ReadonlyArray<[string, string]>
+  readonly isNotification?: true
   readonly traceId?: string
   readonly spanId?: string
   readonly sampled?: boolean
@@ -72,7 +76,7 @@ export interface RequestEncoded {
  * The decoded RPC request envelope for an RPC union, carrying a branded request
  * id, typed RPC tag, decoded payload, headers, and optional trace context.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface Request<A extends Rpc.Any> {
@@ -89,7 +93,7 @@ export interface Request<A extends Rpc.Any> {
 /**
  * A decoded acknowledgement for a streamed RPC response chunk.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface Ack {
@@ -101,7 +105,7 @@ export interface Ack {
  * A decoded request to interrupt an in-flight RPC, carrying the request id and
  * interrupting fiber ids.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface Interrupt {
@@ -113,7 +117,7 @@ export interface Interrupt {
 /**
  * The transport-encoded acknowledgement for a streamed RPC response chunk.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface AckEncoded {
@@ -124,7 +128,7 @@ export interface AckEncoded {
 /**
  * The transport-encoded request to interrupt an in-flight RPC.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface InterruptEncoded {
@@ -136,7 +140,7 @@ export interface InterruptEncoded {
  * A client-to-server message indicating that the client has finished sending
  * input for the current connection or request batch.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface Eof {
@@ -147,7 +151,7 @@ export interface Eof {
  * A client-to-server keepalive message used by protocols that monitor
  * connection liveness.
  *
- * @category request
+ * @category models
  * @since 4.0.0
  */
 export interface Ping {
@@ -157,7 +161,7 @@ export interface Ping {
 /**
  * Represents the reusable `Eof` message value.
  *
- * @category request
+ * @category constants
  * @since 4.0.0
  */
 export const constEof: Eof = { _tag: "Eof" }
@@ -165,7 +169,7 @@ export const constEof: Eof = { _tag: "Eof" }
 /**
  * Represents the reusable `Ping` message value.
  *
- * @category request
+ * @category constants
  * @since 4.0.0
  */
 export const constPing: Ping = { _tag: "Ping" }
@@ -173,7 +177,7 @@ export const constPing: Ping = { _tag: "Ping" }
 /**
  * Decoded messages that can be sent from an RPC server to a client.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export type FromServer<A extends Rpc.Any> =
@@ -185,7 +189,7 @@ export type FromServer<A extends Rpc.Any> =
 /**
  * Transport-encoded messages that can be sent from an RPC server to a client.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export type FromServerEncoded =
@@ -194,6 +198,7 @@ export type FromServerEncoded =
   | ResponseDefectEncoded
   | Pong
   | ClientProtocolError
+  | RequestEncoded
 
 /**
  * The brand identifier used by the `ResponseId` type.
@@ -214,7 +219,7 @@ export type ResponseIdTypeId = typeof ResponseIdTypeId
 /**
  * A branded numeric identifier for server responses.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export type ResponseId = Branded<number, ResponseIdTypeId>
@@ -223,7 +228,7 @@ export type ResponseId = Branded<number, ResponseIdTypeId>
  * The transport-encoded response message containing a non-empty batch of stream
  * chunk values for a request.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ResponseChunkEncoded {
@@ -236,7 +241,7 @@ export interface ResponseChunkEncoded {
  * The decoded response message containing a non-empty batch of stream chunk
  * values for a specific client and request.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ResponseChunk<A extends Rpc.Any> {
@@ -250,7 +255,7 @@ export interface ResponseChunk<A extends Rpc.Any> {
  * The transport representation of an RPC `Exit`, encoding success values or a
  * failure cause made of failures, defects, and interrupts.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export type ExitEncoded<A, E> = {
@@ -276,7 +281,7 @@ export type ExitEncoded<A, E> = {
  * The transport-encoded terminal response for a request, carrying the encoded
  * `Exit`.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ResponseExitEncoded {
@@ -289,7 +294,7 @@ export interface ResponseExitEncoded {
  * A server-to-client protocol message reporting a client protocol error to all
  * affected in-flight requests.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ClientProtocolError {
@@ -301,7 +306,7 @@ export interface ClientProtocolError {
  * The decoded terminal response for a request, carrying the typed `Rpc.Exit`
  * for the RPC.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ResponseExit<A extends Rpc.Any> {
@@ -315,7 +320,7 @@ export interface ResponseExit<A extends Rpc.Any> {
  * The transport-encoded server defect message used for protocol-level defects
  * that affect the client connection.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ResponseDefectEncoded {
@@ -323,18 +328,25 @@ export interface ResponseDefectEncoded {
   readonly defect: unknown
 }
 
-const encodeDefect = Schema.encodeSync(Schema.Defect())
-
 /**
- * Creates an encoded terminal response for a request whose exit is a defect
- * encoded with `Schema.Defect()`.
+ * Creates an encoded terminal response for a request whose exit is a defect.
  *
- * @category response
+ * **Details**
+ *
+ * The defect must already be encoded, because the codec that fills the defect
+ * hole belongs to the protocol. Encode it with
+ * `protocol.codecFor(Schema.Defect())` first.
+ *
+ * This constructor produces the structured exit used by JSON-compatible
+ * protocols. Serializations whose `codecFor` returns bytes must encode the
+ * complete RPC exit before placing it in the response envelope instead.
+ *
+ * @category constructors
  * @since 4.0.0
  */
 export const ResponseExitDieEncoded = (options: {
   readonly requestId: RequestId
-  readonly defect: unknown
+  readonly encodedDefect: unknown
 }): ResponseExitEncoded => ({
   _tag: "Exit",
   requestId: options.requestId,
@@ -342,27 +354,31 @@ export const ResponseExitDieEncoded = (options: {
     _tag: "Failure",
     cause: [{
       _tag: "Die",
-      defect: encodeDefect(options.defect)
+      defect: options.encodedDefect
     }]
   }
 })
 
 /**
- * Creates a transport-encoded defect response by encoding the input with
- * `Schema.Defect()`.
+ * Creates a transport-encoded defect response around an already-encoded defect.
  *
- * @category response
+ * **Details**
+ *
+ * Encode the defect with `protocol.codecFor(Schema.Defect())` before wrapping
+ * it, because the codec that fills the defect hole belongs to the protocol.
+ *
+ * @category constructors
  * @since 4.0.0
  */
-export const ResponseDefectEncoded = (input: unknown): ResponseDefectEncoded => ({
+export const ResponseDefectEncoded = (encodedDefect: unknown): ResponseDefectEncoded => ({
   _tag: "Defect",
-  defect: encodeDefect(input)
+  defect: encodedDefect
 })
 
 /**
  * The decoded server defect message for a client connection.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ResponseDefect {
@@ -374,7 +390,7 @@ export interface ResponseDefect {
 /**
  * A server message indicating that the client connection has ended.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface ClientEnd {
@@ -385,17 +401,71 @@ export interface ClientEnd {
 /**
  * A server-to-client keepalive response to a `Ping` message.
  *
- * @category response
+ * @category models
  * @since 4.0.0
  */
 export interface Pong {
   readonly _tag: "Pong"
 }
 
+const RequestIdSchema = Schema.Union([Schema.String, Schema.Number])
+
+// Schema for transport-encoded RPC requests whose payload hole has already
+// been filled by the active serialization.
+const RequestEncodedSchema = Schema.Struct({
+  _tag: Schema.tag("Request"),
+  id: RequestIdSchema,
+  tag: Schema.String,
+  payload: Schema.Uint8Array,
+  headers: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+  isNotification: Schema.optional(Schema.Literal(true)),
+  traceId: Schema.optional(Schema.String),
+  spanId: Schema.optional(Schema.String),
+  sampled: Schema.optional(Schema.Boolean)
+})
+
+/**
+ * Schema for every transport-encoded RPC envelope that crosses the wire.
+ * Binary serializers use it only after each schema-dependent hole has been
+ * encoded as bytes. `ClientProtocolError` is excluded because clients create
+ * it locally rather than receiving it from a server.
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const EncodedSchema = Schema.Union([
+  RequestEncodedSchema,
+  Schema.Struct({
+    _tag: Schema.tag("Ack"),
+    requestId: RequestIdSchema
+  }),
+  Schema.Struct({
+    _tag: Schema.tag("Interrupt"),
+    requestId: RequestIdSchema
+  }),
+  Schema.Struct({ _tag: Schema.tag("Ping") }),
+  Schema.Struct({ _tag: Schema.tag("Eof") }),
+  Schema.Struct({
+    _tag: Schema.tag("Chunk"),
+    requestId: RequestIdSchema,
+    values: Schema.Uint8Array
+  }),
+  Schema.Struct({
+    _tag: Schema.tag("Exit"),
+    requestId: RequestIdSchema,
+    exit: Schema.Uint8Array
+  }),
+  Schema.Struct({
+    _tag: Schema.tag("Defect"),
+    defect: Schema.Uint8Array
+  }),
+  Schema.Struct({ _tag: Schema.tag("Pong") })
+])
+
 /**
  * Represents the reusable `Pong` message value.
  *
- * @category response
+ * @category constants
  * @since 4.0.0
  */
 export const constPong: Pong = { _tag: "Pong" }

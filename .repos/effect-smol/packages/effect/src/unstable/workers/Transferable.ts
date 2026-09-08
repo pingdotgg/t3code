@@ -20,7 +20,7 @@ import * as SchemaGetter from "../../SchemaGetter.ts"
  * Service for collecting `Transferable` objects while encoding worker messages
  * so they can be passed to `postMessage` transfer lists.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class Collector extends Context.Service<Collector, {

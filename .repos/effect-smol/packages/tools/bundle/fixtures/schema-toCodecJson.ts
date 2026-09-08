@@ -6,4 +6,4 @@ const schema = Schema.Struct({
   c: Schema.Array(Schema.String)
 })
 
-Schema.toCodecJson(schema)
+export const codec = Schema.toCodecJson(schema)

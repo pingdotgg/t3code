@@ -396,6 +396,13 @@ describe("Iterable", () => {
     deepStrictEqual(toArray(Iter.flatten([[1], [2], [3]])), [1, 2, 3])
   })
 
+  it("flatten is stack safe across empty iterables", () => {
+    const input: Array<Iterable<number>> = Array.from({ length: 20_000 }, () => [])
+    input.push([1])
+
+    deepStrictEqual(toArray(Iter.flatten(input)), [1])
+  })
+
   it("cartesianWith", () => {
     const right = (function*() {
       yield* [1, 2, 3]

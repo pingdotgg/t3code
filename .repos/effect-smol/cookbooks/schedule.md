@@ -31,8 +31,8 @@ This cookbook intentionally defines schedules only. It does not apply them with
 | Poll latest status                        | `Schedule.spaced` or `Schedule.fixed`, then `Schedule.setInputType`, `Schedule.passthrough`, and `Schedule.while` |
 | Adapt delay from metadata                 | `Schedule.addDelay`                                                                                               |
 | Replace or cap selected delay             | `Schedule.modifyDelay`                                                                                            |
-| Run phases in sequence                    | `Schedule.andThen`                                                                                                |
-| Preserve phase in output                  | `Schedule.andThenResult`                                                                                          |
+| Run phases in sequence                    | `Schedule.concat`                                                                                                 |
+| Preserve phase in output                  | `Schedule.concatResult`                                                                                           |
 | Continue while all policies continue      | `Schedule.max`                                                                                                    |
 | Continue while any policy continues       | `Schedule.min`                                                                                                    |
 | Shape output from metadata                | `Schedule.map`                                                                                                    |
@@ -256,7 +256,7 @@ import { Schedule } from "effect"
 
 const cacheInvalidationSequence = Schedule.spaced("100 millis").pipe(
   Schedule.upTo({ times: 2 }),
-  Schedule.andThen(Schedule.spaced("30 seconds").pipe(Schedule.upTo({ times: 3 })))
+  Schedule.concat(Schedule.spaced("30 seconds").pipe(Schedule.upTo({ times: 3 })))
 )
 ```
 
@@ -270,7 +270,7 @@ import { Result, Schedule } from "effect"
 
 const phasedRetryClassifier = Schedule.exponential("100 millis").pipe(
   Schedule.upTo({ times: 2 }),
-  Schedule.andThenResult(Schedule.fibonacci("500 millis").pipe(Schedule.upTo({ times: 3 }))),
+  Schedule.concatResult(Schedule.fibonacci("500 millis").pipe(Schedule.upTo({ times: 3 }))),
   Schedule.map(({ output: result }) =>
     Result.match(result, {
       onFailure: (delay) => ({ phase: "fast", delay }),
@@ -280,7 +280,7 @@ const phasedRetryClassifier = Schedule.exponential("100 millis").pipe(
 )
 ```
 
-Explanation: `Schedule.andThenResult` keeps phase information in the output.
+Explanation: `Schedule.concatResult` keeps phase information in the output.
 The first schedule is represented by the failure side, and the second schedule
 is represented by the success side.
 
@@ -543,8 +543,8 @@ import { Schedule } from "effect"
 
 const incidentEscalationCadence = Schedule.spaced("1 minute").pipe(
   Schedule.upTo({ times: 3 }),
-  Schedule.andThen(Schedule.spaced("5 minutes").pipe(Schedule.upTo({ times: 3 }))),
-  Schedule.andThen(Schedule.fixed("15 minutes"))
+  Schedule.concat(Schedule.spaced("5 minutes").pipe(Schedule.upTo({ times: 3 }))),
+  Schedule.concat(Schedule.fixed("15 minutes"))
 )
 ```
 
@@ -558,6 +558,6 @@ about 30 seconds, then switches to a cron schedule that recurs every day at
 import { Schedule } from "effect"
 
 const maintenanceCronAfterWarmup = Schedule.duration("30 seconds").pipe(
-  Schedule.andThen(Schedule.cron("0 3 * * *"))
+  Schedule.concat(Schedule.cron("0 3 * * *"))
 )
 ```

@@ -2,7 +2,7 @@ import { describe, it } from "@effect/vitest"
 import { assertNone, assertSome, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Effect, Stream } from "effect"
 import * as Option from "effect/Option"
-import { Headers, HttpClientRequest } from "effect/unstable/http"
+import { Headers, HttpBody, HttpClientRequest } from "effect/unstable/http"
 
 describe("HttpClientRequest", () => {
   describe("appendUrl", () => {
@@ -78,6 +78,16 @@ describe("HttpClientRequest", () => {
       )
 
       strictEqual(request.headers["content-type"], undefined)
+      strictEqual(request.headers["content-length"], undefined)
+    })
+  })
+
+  describe("setBody", () => {
+    it("removes stale content length when the replacement body has no known length", () => {
+      const request = HttpClientRequest.bodyText(HttpClientRequest.post("https://example.com"), "abc").pipe(
+        HttpClientRequest.setBody(HttpBody.stream(Stream.empty))
+      )
+
       strictEqual(request.headers["content-length"], undefined)
     })
   })

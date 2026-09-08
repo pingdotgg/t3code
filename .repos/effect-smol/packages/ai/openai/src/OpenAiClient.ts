@@ -47,7 +47,7 @@ import * as OpenAiSchema from "./OpenAiSchema.ts"
  *
  * Provides the configured HTTP client plus helpers for Responses API calls, streaming Responses events, and embeddings. Transport and schema decoding failures are mapped to `AiError`.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface Service {
@@ -270,12 +270,14 @@ export const make = Effect.fnUntraced(
         Stream.pipeThroughChannel(Sse.decodeDataSchema(OpenAiSchema.ResponseStreamEvent)),
         Stream.takeUntil((event) =>
           event.data.type === "response.completed" ||
-          event.data.type === "response.incomplete"
+          event.data.type === "response.incomplete" ||
+          event.data.type === "response.failed"
         ),
         Stream.map((event) => event.data),
         Stream.catchTags({
           // TODO: handle SSE retries
           Retry: (error) => Stream.die(error),
+          SseError: (error) => Stream.fail(Errors.mapSseError(error, "createResponseStream")),
           HttpClientError: (error) => Stream.fromEffect(Errors.mapHttpClientError(error, "createResponseStream")),
           SchemaError: (error) => Stream.fail(Errors.mapSchemaError(error, "createResponseStream"))
         })
@@ -432,7 +434,7 @@ export const layerConfig = (options?: {
 /**
  * Response stream event emitted by the OpenAI Responses API.
  *
- * @category Events
+ * @category models
  * @since 4.0.0
  */
 export type ResponseStreamEvent = typeof OpenAiSchema.ResponseStreamEvent.Type
@@ -459,7 +461,7 @@ export type ResponseStreamEvent = typeof OpenAiSchema.ResponseStreamEvent.Type
  * @see {@link withWebSocketMode} for enabling WebSocket mode for one effect
  * @see {@link layerWebSocketMode} for providing WebSocket mode through a layer
  *
- * @category Websocket mode
+ * @category services
  * @since 4.0.0
  */
 export class OpenAiSocket extends Context.Service<OpenAiSocket, {
@@ -636,7 +638,7 @@ const makeSocket = Effect.gen(function*() {
 
         return Stream.fromQueue(incoming).pipe(
           Stream.takeUntil((e) => {
-            done = e.type === "response.completed" || e.type === "response.incomplete"
+            done = e.type === "response.completed" || e.type === "response.incomplete" || e.type === "response.failed"
             return done
           })
         )
@@ -695,7 +697,7 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(AllEvents))
  * @see {@link layerWebSocketMode} for providing WebSocket mode through a layer
  * @see {@link OpenAiSocket} for direct access to the WebSocket-backed streaming service
  *
- * @category Websocket mode
+ * @category providing services
  * @since 4.0.0
  */
 export const withWebSocketMode = <A, E, R>(
@@ -732,7 +734,7 @@ export const withWebSocketMode = <A, E, R>(
  *
  * @see {@link withWebSocketMode} for enabling WebSocket mode around a single effect
  *
- * @category Websocket mode
+ * @category layers
  * @since 4.0.0
  */
 export const layerWebSocketMode: Layer.Layer<

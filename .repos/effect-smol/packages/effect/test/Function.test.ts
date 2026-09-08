@@ -330,4 +330,33 @@ describe("Function", () => {
       assert.strictEqual(callCount, 2)
     })
   })
+
+  describe("memoizeIdempotent", () => {
+    it("caches the output as a fixed point", () => {
+      let callCount = 0
+      const input = { id: "input" }
+      const output = { id: "output" }
+      const f = F.memoizeIdempotent((obj: { id: string }) => {
+        callCount++
+        return obj === input ? output : obj
+      })
+
+      assert.strictEqual(f(input), output)
+      assert.strictEqual(f(output), output)
+      assert.strictEqual(callCount, 1)
+    })
+
+    it("caches an input that is already a fixed point", () => {
+      let callCount = 0
+      const f = F.memoizeIdempotent((obj: object) => {
+        callCount++
+        return obj
+      })
+      const input = {}
+
+      assert.strictEqual(f(input), input)
+      assert.strictEqual(f(input), input)
+      assert.strictEqual(callCount, 1)
+    })
+  })
 })

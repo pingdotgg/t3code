@@ -20,7 +20,7 @@ import * as Fiber from "../../Fiber.ts"
 import * as Filter from "../../Filter.ts"
 import { constFalse, constTrue, dual, identity } from "../../Function.ts"
 import * as Layer from "../../Layer.ts"
-import * as Option from "../../Option.ts"
+import type * as Option from "../../Option.ts"
 import * as Predicate from "../../Predicate.ts"
 import type * as Schedule from "../../Schedule.ts"
 import * as Schema from "../../Schema.ts"
@@ -200,7 +200,7 @@ export interface AnyStructSchema extends Schema.Top {
  * Type-level marker for services associated with a specific workflow
  * execution tag.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export interface Execution<Tag extends string> {
@@ -252,7 +252,7 @@ export interface AnyWithProps extends Any {
 /**
  * Extracts the payload schema from a `Workflow`.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type PayloadSchema<W> = W extends Workflow<
@@ -267,7 +267,7 @@ export type PayloadSchema<W> = W extends Workflow<
  * Computes the schema services required by clients that execute or poll
  * workflows.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type RequirementsClient<Workflows extends Any> = Workflows extends Workflow<
@@ -285,7 +285,7 @@ export type RequirementsClient<Workflows extends Any> = Workflows extends Workfl
  * Computes the schema services required by handlers that decode workflow
  * payloads and encode workflow results.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type RequirementsHandler<Workflows extends Any> = Workflows extends Workflow<
@@ -465,7 +465,7 @@ const ResultTypeId = "~effect/workflow/Workflow/Result"
 /**
  * Returns `true` when a value is a workflow `Result`.
  *
- * @category results
+ * @category guards
  * @since 4.0.0
  */
 export const isResult = <A = unknown, E = unknown>(
@@ -476,7 +476,7 @@ export const isResult = <A = unknown, E = unknown>(
  * Result of a workflow execution, either a completed exit or a suspended
  * workflow state.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export type Result<A, E> = Complete<A, E> | Suspended
@@ -484,7 +484,7 @@ export type Result<A, E> = Complete<A, E> | Suspended
 /**
  * Encoded representation of a workflow `Result`.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export type ResultEncoded<A, E> =
@@ -495,7 +495,7 @@ export type ResultEncoded<A, E> =
  * Encoded representation of a completed workflow result containing an encoded
  * `Exit`.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export interface CompleteEncoded<A, E> {
@@ -527,7 +527,7 @@ export interface CompleteSchema<
 /**
  * Represents a completed workflow execution with its success or failure `Exit`.
  *
- * @category results
+ * @category models
  * @since 4.0.0
  */
 export class Complete<A, E> extends Data.TaggedClass("Complete")<{
@@ -557,16 +557,13 @@ export class Complete<A, E> extends Data.TaggedClass("Complete")<{
       [Schema.Exit(options.success, options.error, Schema.Defect())],
       ([exit]) => (input, ast, options) => {
         if (!(isResult(input) && input._tag === "Complete")) {
-          return Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input)))
+          return Effect.fail(new SchemaIssue.InvalidType(ast, input, options))
         }
         return Effect.mapBothEager(
           SchemaParser.decodeEffect(exit)(input.exit, options),
           {
             onSuccess: (exit) => new Complete({ exit }),
-            onFailure: (issue) =>
-              new SchemaIssue.Composite(ast, Option.some(input), [
-                new SchemaIssue.Pointer(["exit"], issue)
-              ])
+            onFailure: (issue) => SchemaIssue.makeCompositeAtKey(ast, "exit", issue, input, options)
           }
         )
       },
@@ -599,7 +596,7 @@ export class Complete<A, E> extends Data.TaggedClass("Complete")<{
  * Represents a suspended workflow execution, optionally carrying the cause that
  * triggered suspension.
  *
- * @category results
+ * @category schemas
  * @since 4.0.0
  */
 export class Suspended extends Schema.Class<Suspended>(
@@ -620,7 +617,7 @@ export class Suspended extends Schema.Class<Suspended>(
  * Creates a schema for workflow results using the supplied success and error
  * schemas.
  *
- * @category results
+ * @category schemas
  * @since 4.0.0
  */
 export const Result = <
@@ -636,7 +633,7 @@ const AnyOrVoid = Schema.Union([Schema.Any, Schema.Void])
 /**
  * Schema for encoded workflow results with generic success and error payloads.
  *
- * @category results
+ * @category schemas
  * @since 4.0.0
  */
 export const ResultEncoded: Schema.Codec<ResultEncoded<any, any>> = Schema.toEncoded(
@@ -653,7 +650,7 @@ export const ResultEncoded: Schema.Codec<ResultEncoded<any, any>> = Schema.toEnc
  * `Result`, handling suspension, defect capture, interruption, and workflow
  * scope finalization.
  *
- * @category results
+ * @category converting
  * @since 4.0.0
  */
 export const intoResult = <A, E, R>(
@@ -716,7 +713,7 @@ export const intoResult = <A, E, R>(
  * Wraps an activity-like effect so workflow suspension waits for currently
  * running activities to finish or suspend.
  *
- * @category results
+ * @category resource management
  * @since 4.0.0
  */
 export const wrapActivityResult = <A, E, R>(
@@ -792,6 +789,9 @@ export const provideScope = <A, E, R>(
  * Adds an exit finalizer to the current workflow scope, preserving the
  * services available when the finalizer is registered.
  *
+ * Body-level `Effect.onExit` finalizers cannot observe a deposited workflow
+ * interrupt. Use this function for terminal-state work that must observe it.
+ *
  * @category resource management
  * @since 4.0.0
  */
@@ -825,7 +825,7 @@ export const addFinalizer: <R>(
  *
  * Compensation finalizers are only registered for top-level effects in the workflow and do not work for nested activities.
  *
- * @category Compensation
+ * @category compensation
  * @since 4.0.0
  */
 export const withCompensation: {
@@ -853,7 +853,7 @@ export const withCompensation: {
  * Marks a workflow instance as suspended and interrupts the current fiber to
  * stop execution until it is resumed.
  *
- * @category results
+ * @category interruption
  * @since 4.0.0
  */
 export const suspend = (instance: WorkflowInstance["Service"]): Effect.Effect<never> =>
@@ -870,7 +870,7 @@ export const suspend = (instance: WorkflowInstance["Service"]): Effect.Effect<ne
  *
  * By default, this annotation is set to `true`, meaning defects are captured.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const CaptureDefects = Context.Reference<boolean>(
@@ -887,7 +887,7 @@ export const CaptureDefects = Context.Reference<boolean>(
  *
  * The suspended execution can later be resumed with the workflow's `resume` method, for example `MyWorkflow.resume(executionId)`.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const SuspendOnFailure = Context.Reference<boolean>(

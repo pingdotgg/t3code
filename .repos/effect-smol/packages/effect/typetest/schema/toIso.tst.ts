@@ -239,19 +239,19 @@ it("Cause", () => {
   >()
 })
 
-it("Error", () => {
-  const schema = Schema.Error()
+it("ErrorInstance", () => {
+  const schema = Schema.ErrorInstance()
   const optic = Schema.toIso(schema)
 
   expect(optic).type.toBe<Optic.Iso<Error, Error>>()
 })
 
 it("Exit", () => {
-  const schema = Schema.Exit(Value, Schema.Error(), Schema.Defect())
+  const schema = Schema.Exit(Value, Schema.ErrorInstance(), Schema.Defect())
   const optic = Schema.toIso(schema)
 
   expect(optic).type.toBe<
-    Optic.Iso<Exit.Exit<Value, Error>, Schema.ExitIso<typeof Value, Schema.Error, Schema.Defect>>
+    Optic.Iso<Exit.Exit<Value, Error>, Schema.ExitIso<typeof Value, Schema.ErrorInstance, Schema.Defect>>
   >()
 })
 

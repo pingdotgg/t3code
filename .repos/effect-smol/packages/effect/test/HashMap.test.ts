@@ -29,6 +29,23 @@ describe("HashMap", () => {
   })
 
   describe("basic operations", () => {
+    it("modifyHash stores a new key under the supplied hash", () => {
+      const key = {}
+      const hash = 12345
+      const map = HashMap.modifyHash(HashMap.empty<object, string>(), key, hash, () => Option.some("value"))
+
+      expect(HashMap.getHash(map, key, hash)).toEqual(Option.some("value"))
+    })
+
+    it("modifyHash removes a key using the supplied hash", () => {
+      const key = {}
+      const hash = 12345
+      const map = HashMap.modifyHash(HashMap.empty<object, string>(), key, hash, () => Option.some("value"))
+      const removed = HashMap.modifyHash(map, key, hash, () => Option.none())
+
+      expect(HashMap.getHash(removed, key, hash)).toEqual(Option.none())
+    })
+
     it("get - existing key", () => {
       const map = HashMap.make(["a", 1], ["b", 2])
       expect(HashMap.get(map, "a")).toEqual(Option.some(1))

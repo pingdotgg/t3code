@@ -1,0 +1,15 @@
+"@effect/experimental/RateLimiter#layer":
+  replacement: effect/unstable/persistence/RateLimiter#layer
+  note: Import layer from the v4 unstable RateLimiter module.
+"@effect/experimental/RateLimiter#make":
+  replacement: effect/unstable/persistence/RateLimiter#make
+  note: Import make from the v4 unstable RateLimiter module.
+"@effect/experimental/RateLimiter#makeSleep":
+  replacement: effect/unstable/persistence/RateLimiter#sleep
+  note: The accessor Effect was replaced by sleep; obtain the RateLimiter service and pass it to sleep directly or with its curried overload.
+"@effect/experimental/RateLimiter#RateLimiterError":
+  replacement: effect/unstable/persistence/RateLimiter#RateLimiterError
+  note: The retained name is now a wrapper error class whose reason is RateLimitExceeded or RateLimitStoreError.
+"@effect/experimental/RateLimiter#TypeId":
+  replacement: effect/unstable/persistence/RateLimiter#TypeId
+  note: Import TypeId from the v4 unstable RateLimiter module; it is now a string brand.

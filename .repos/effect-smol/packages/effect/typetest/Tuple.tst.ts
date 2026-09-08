@@ -7,6 +7,10 @@ const tuple = ["a", 2, true] as [string, number, boolean]
 const optionalTuple = ["a", 2, true] as [string?, number?, boolean?]
 
 describe("Tuple", () => {
+  it("make preserves argument literals", () => {
+    expect(Tuple.make("a", 1, true)).type.toBe<["a", 1, true]>()
+  })
+
   describe("get", () => {
     it("errors", () => {
       pipe(
@@ -53,6 +57,10 @@ describe("Tuple", () => {
 
     it("data-last", () => {
       expect(pipe(tuple, Tuple.pick([0, 2]))).type.toBe<[string, boolean]>()
+    })
+
+    it("preserves index order and duplicates", () => {
+      expect(Tuple.pick(tuple, [2, 0, 2])).type.toBe<[boolean, string, boolean]>()
     })
   })
 

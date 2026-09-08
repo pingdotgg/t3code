@@ -29,6 +29,9 @@ const encodeTag = (fieldNumber: number, wireType: WireType): number => (fieldNum
 export const encodeVarint = (value: number | bigint): Uint8Array => {
   const bytes: Array<number> = []
   let n = typeof value === "bigint" ? value : BigInt(value)
+  if (n < BigInt(0)) {
+    n = BigInt.asUintN(64, n)
+  }
   while (n > BigInt(127)) {
     bytes.push(Number(n & BigInt(127)) | 0x80)
     n >>= BigInt(7)

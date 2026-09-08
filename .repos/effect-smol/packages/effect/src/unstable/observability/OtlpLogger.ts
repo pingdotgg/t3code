@@ -71,7 +71,7 @@ export const make: (
     headers: options.headers,
     maxBatchSize: options.maxBatchSize ?? 1000,
     exportInterval: options.exportInterval ?? Duration.seconds(1),
-    body: (data) =>
+    body: (data) => [
       serialization.logs({
         resourceLogs: [{
           resource: otelResource,
@@ -81,6 +81,8 @@ export const make: (
           }]
         }]
       }),
+      Effect.void
+    ],
     shutdownTimeout: options.shutdownTimeout ?? Duration.seconds(3)
   })
 

@@ -1,4 +1,4 @@
-import { type Cause, Data, type Effect, pipe, type Queue, Result, type Scope, Stream } from "effect"
+import { type Cause, Data, type Effect, type ExecutionPlan, pipe, type Queue, Result, type Scope, Stream } from "effect"
 import { describe, expect, it } from "tstyche"
 
 class ErrorA extends Data.TaggedError("ErrorA")<{
@@ -193,5 +193,43 @@ describe("Stream.toQueue", () => {
     expect(result).type.toBe<
       Effect.Effect<Queue.Dequeue<string, ErrorA | ErrorB | Cause.Done>, never, "dep-1" | Scope.Scope>
     >()
+  })
+})
+
+describe("Stream.withExecutionPlan", () => {
+  const plan = null as unknown as ExecutionPlan.ExecutionPlan<{
+    provides: "provided"
+    input: string
+    error: "plan-error"
+    requirements: "plan-dep"
+  }>
+  const self = null as unknown as Stream.Stream<number, string, "provided" | "other-dep">
+
+  it("data-first adds handler requirements to R", () => {
+    const result = Stream.withExecutionPlan(self, plan, {
+      onEvent: (event) => {
+        expect(event).type.toBe<ExecutionPlan.Event<string>>()
+        return null as unknown as Effect.Effect<void, never, "handler-dep">
+      }
+    })
+    expect(result).type.toBe<Stream.Stream<number, string, "plan-dep" | "other-dep" | "handler-dep">>()
+  })
+
+  it("data-last adds handler requirements to R", () => {
+    const result = pipe(
+      self,
+      Stream.withExecutionPlan(plan, {
+        onEvent: (event) => {
+          expect(event).type.toBe<ExecutionPlan.Event<string>>()
+          return null as unknown as Effect.Effect<void, never, "handler-dep">
+        }
+      })
+    )
+    expect(result).type.toBe<Stream.Stream<number, string, "plan-dep" | "other-dep" | "handler-dep">>()
+  })
+
+  it("without options the requirements are unchanged", () => {
+    const result = Stream.withExecutionPlan(self, plan)
+    expect(result).type.toBe<Stream.Stream<number, string, "plan-dep" | "other-dep">>()
   })
 })

@@ -219,6 +219,26 @@ describe("TxQueue", () => {
         assert.deepStrictEqual(maybe, Option.some(42))
       })))
 
+    it.effect("poll completes a closing queue after removing the last item", () =>
+      Effect.tx(Effect.gen(function*() {
+        const queue = yield* TxQueue.bounded<number>(1)
+        yield* TxQueue.offer(queue, 42)
+        yield* TxQueue.interrupt(queue)
+
+        assert.deepStrictEqual(yield* TxQueue.poll(queue), Option.some(42))
+        assert.strictEqual(yield* TxQueue.isDone(queue), true)
+      })))
+
+    it.effect("clear completes a closing queue after removing all items", () =>
+      Effect.tx(Effect.gen(function*() {
+        const queue = yield* TxQueue.bounded<number>(1)
+        yield* TxQueue.offer(queue, 42)
+        yield* TxQueue.interrupt(queue)
+
+        assert.deepStrictEqual(yield* TxQueue.clear(queue), [42])
+        assert.strictEqual(yield* TxQueue.isDone(queue), true)
+      })))
+
     it.effect("offerAll works correctly", () =>
       Effect.tx(Effect.gen(function*() {
         const queue = yield* TxQueue.bounded<number>(10)
@@ -229,6 +249,25 @@ describe("TxQueue", () => {
         const size = yield* TxQueue.size(queue)
         assert.strictEqual(size, 5)
       })))
+
+    it.effect("offerAll preserves a one-shot iterable across retries and runs", () =>
+      Effect.gen(function*() {
+        const queue = yield* TxQueue.bounded<number>(1)
+        yield* TxQueue.offer(queue, 1)
+
+        const values = (function*() {
+          yield 2
+        })()
+        const offer = TxQueue.offerAll(queue, values)
+        const fiber = yield* Effect.forkChild(offer, { startImmediately: true })
+
+        assert.strictEqual(yield* TxQueue.take(queue), 1)
+        assert.deepStrictEqual(yield* Fiber.join(fiber), [])
+        assert.deepStrictEqual(yield* TxQueue.poll(queue), Option.some(2))
+
+        assert.deepStrictEqual(yield* offer, [])
+        assert.deepStrictEqual(yield* TxQueue.poll(queue), Option.some(2))
+      }))
 
     it.effect("takeAll works correctly with new signature", () =>
       Effect.tx(Effect.gen(function*() {

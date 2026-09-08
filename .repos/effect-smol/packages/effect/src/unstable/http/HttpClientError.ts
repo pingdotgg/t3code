@@ -299,7 +299,7 @@ export type HttpClientErrorReason = RequestError | ResponseError
  * @category schemas
  * @since 4.0.0
  */
-export class HttpClientErrorSchema extends Schema.ErrorClass<HttpClientErrorSchema>(TypeId)({
+export class HttpClientErrorSchema extends Schema.Error<HttpClientErrorSchema>(TypeId)({
   _tag: Schema.tag("HttpError"),
   kind: Schema.Literals(
     [

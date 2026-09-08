@@ -4,6 +4,12 @@ import { Array, Deferred, Effect, Exit, Fiber, FiberSet, pipe, Ref, Scope } from
 import { TestClock } from "effect/testing"
 
 describe("FiberSet", () => {
+  it.effect("identifies FiberSet in JSON", () =>
+    Effect.gen(function*() {
+      const set = yield* FiberSet.make()
+      strictEqual((set.toJSON() as { readonly _id: string })._id, "FiberSet")
+    }))
+
   it.effect("interrupts running fibers when the scope closes", () =>
     Effect.gen(function*() {
       const ref = yield* Ref.make(0)

@@ -49,7 +49,7 @@ export type PlatformMessage<I> = readonly [request: 0, I] | readonly [close: 1]
 /**
  * Context service that starts a platform-specific `WorkerRunner`.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class WorkerRunnerPlatform extends Context.Service<WorkerRunnerPlatform, {

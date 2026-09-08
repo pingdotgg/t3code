@@ -1,5 +1,5 @@
 import { describe, it } from "@effect/vitest"
-import { assertNone, assertSome } from "@effect/vitest/utils"
+import { assertNone, assertSome, deepStrictEqual } from "@effect/vitest/utils"
 import { Schema } from "effect"
 import { UrlParams } from "effect/unstable/http"
 import { assertSuccess } from "../../utils/assert.ts"
@@ -26,5 +26,16 @@ describe("UrlParams", () => {
     assertSome(UrlParams.getLast(params, "foo"), "b")
     assertNone(UrlParams.getFirst(params, "bar"))
     assertNone(UrlParams.getLast(params, "bar"))
+  })
+
+  it("schemaJsonField applies a JSON reviver", () => {
+    const schema = UrlParams.schemaJsonField("json", {
+      reviver: (key, value) => key === "value" ? "revived" : value
+    }).pipe(Schema.decodeTo(Schema.Struct({ value: Schema.String })))
+
+    deepStrictEqual(
+      Schema.decodeSync(schema)(UrlParams.fromInput({ json: "{\"value\":\"original\"}" })),
+      { value: "revived" }
+    )
   })
 })

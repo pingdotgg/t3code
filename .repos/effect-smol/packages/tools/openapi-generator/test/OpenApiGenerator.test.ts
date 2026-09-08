@@ -2,6 +2,10 @@ import * as OpenApiGenerator from "@effect/openapi-generator/OpenApiGenerator"
 import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 function assertRuntime(spec: OpenAPISpec, expected: string) {
   return Effect.gen(function*() {
@@ -35,7 +39,11 @@ function assertTypeOnly(spec: OpenAPISpec, expected: string) {
   )
 }
 
-function assertRuntimeIncludes(spec: OpenAPISpec, includes: ReadonlyArray<string>) {
+function assertRuntimeIncludes(
+  spec: OpenAPISpec,
+  includes: ReadonlyArray<string>,
+  excludes: ReadonlyArray<string> = []
+) {
   return Effect.gen(function*() {
     const generator = yield* OpenApiGenerator.OpenApiGenerator
 
@@ -47,9 +55,100 @@ function assertRuntimeIncludes(spec: OpenAPISpec, includes: ReadonlyArray<string
     for (const expected of includes) {
       assert.include(result, expected)
     }
+    for (const excluded of excludes) {
+      assert.notInclude(result, excluded)
+    }
   }).pipe(
     Effect.provide(OpenApiGenerator.layerTransformerSchema)
   )
+}
+
+function assertTypeOnlyIncludes(
+  spec: OpenAPISpec,
+  includes: ReadonlyArray<string>,
+  excludes: ReadonlyArray<string> = []
+) {
+  return Effect.gen(function*() {
+    const generator = yield* OpenApiGenerator.OpenApiGenerator
+
+    const result = yield* generator.generate(spec, {
+      name: "TestClient",
+      format: "httpclient-type-only"
+    })
+
+    for (const expected of includes) {
+      assert.include(result, expected)
+    }
+    for (const excluded of excludes) {
+      assert.notInclude(result, excluded)
+    }
+  }).pipe(
+    Effect.provide(OpenApiGenerator.layerTransformerTs)
+  )
+}
+
+function assertGeneratedClientsCompile(
+  spec: OpenAPISpec,
+  options: {
+    readonly exactOptionalPropertyTypes?: boolean | undefined
+    readonly formats?: ReadonlyArray<"httpclient" | "httpclient-type-only"> | undefined
+  } = {}
+) {
+  const generate = (
+    format: "httpclient" | "httpclient-type-only",
+    layer: typeof OpenApiGenerator.layerTransformerSchema
+  ) =>
+    Effect.gen(function*() {
+      const generator = yield* OpenApiGenerator.OpenApiGenerator
+      return yield* generator.generate(spec, { name: "TestClient", format })
+    }).pipe(Effect.provide(layer))
+
+  return Effect.gen(function*() {
+    const formats = options.formats ?? ["httpclient", "httpclient-type-only"]
+    const clients = yield* Effect.all(formats.map((format) =>
+      generate(
+        format,
+        format === "httpclient"
+          ? OpenApiGenerator.layerTransformerSchema
+          : OpenApiGenerator.layerTransformerTs
+      )
+    ))
+    const directory = mkdtempSync(join(dirname(fileURLToPath(import.meta.url)), ".generated-clients-"))
+    try {
+      const files = clients.map((client, index) => {
+        const path = join(directory, `Client${index}.ts`)
+        writeFileSync(path, client)
+        return path
+      })
+      const configPath = join(directory, "tsconfig.json")
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          compilerOptions: {
+            allowImportingTsExtensions: true,
+            exactOptionalPropertyTypes: options.exactOptionalPropertyTypes ?? true,
+            lib: ["ESNext", "DOM"],
+            module: "NodeNext",
+            noEmit: true,
+            skipLibCheck: true,
+            strict: true,
+            target: "ES2022",
+            types: [],
+            verbatimModuleSyntax: true
+          },
+          files
+        })
+      )
+      const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "../../../..")
+      const result = spawnSync(join(repositoryRoot, "node_modules/.bin/tsc"), ["-p", configPath, "--pretty", "false"], {
+        cwd: repositoryRoot,
+        encoding: "utf8"
+      })
+      assert.strictEqual(result.status, 0, `${result.stdout}${result.stderr}`)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 }
 
 function assertHttpApiIncludes(
@@ -286,6 +385,231 @@ const regressionSpec: OpenAPISpec = {
   tags: [{ name: "Users" }]
 }
 
+const responseMatchingSpec: OpenAPISpec = {
+  openapi: "3.1.0",
+  info: {
+    title: "Response matching API",
+    version: "1.0.0"
+  },
+  paths: {
+    "/auth/device/token": {
+      post: {
+        operationId: "pollDeviceToken",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          400: {
+            description: "Problem details or OAuth polling state",
+            content: {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    kind: { const: "InvalidRequestError" },
+                    code: { type: "string" }
+                  },
+                  required: ["kind", "code"],
+                  additionalProperties: false
+                }
+              },
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    kind: { const: "DeviceTokenOAuthError" },
+                    error: { type: "string" }
+                  },
+                  required: ["kind", "error"],
+                  additionalProperties: false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/archive": {
+      get: {
+        operationId: "downloadArchive",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "Archive",
+            content: {
+              "application/zip": {
+                schema: { type: "string", format: "binary" }
+              }
+            }
+          },
+          404: {
+            description: "Not found",
+            content: {
+              "application/problem+json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" }
+                  },
+                  required: ["title"],
+                  additionalProperties: false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/avatar": {
+      get: {
+        operationId: "downloadAvatar",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "Avatar",
+            content: {
+              "image/png": {
+                schema: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/custom-binary": {
+      get: {
+        operationId: "downloadCustomBinary",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "Custom binary",
+            content: {
+              "application/vnd.example.data": {
+                schema: { type: "string", format: "binary" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mixed-content": {
+      get: {
+        operationId: "downloadMixedContent",
+        parameters: [],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: {
+            description: "JSON metadata or binary content",
+            content: {
+              "application/json; charset=utf-8": {
+                schema: {
+                  type: "object",
+                  properties: { href: { type: "string" } },
+                  required: ["href"],
+                  additionalProperties: false
+                }
+              },
+              "application/octet-stream; boundary=payload": {
+                schema: { type: "string" }
+              }
+            }
+          },
+          400: {
+            description: "Invalid request",
+            content: {
+              "application/problem+json; charset=utf-8": {
+                schema: {
+                  type: "object",
+                  properties: { title: { type: "string" } },
+                  required: ["title"],
+                  additionalProperties: false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/resources/{id}": {
+      head: {
+        operationId: "checkResource",
+        parameters: [{
+          name: "id",
+          in: "path",
+          required: true,
+          schema: { type: "string" }
+        }],
+        tags: ["ResponseMatching"],
+        security: [],
+        responses: {
+          200: { description: "Exists" },
+          404: { description: "Not found" },
+          500: { description: "Server error" }
+        }
+      }
+    }
+  },
+  components: {
+    schemas: {},
+    securitySchemes: {}
+  },
+  security: [],
+  tags: [{ name: "ResponseMatching" }]
+}
+
+const voidSuccessSpec: OpenAPISpec = {
+  openapi: "3.1.0",
+  info: {
+    title: "Void success API",
+    version: "1.0.0"
+  },
+  paths: {
+    "/mixed": {
+      get: {
+        operationId: "mixedSuccess",
+        parameters: [],
+        tags: ["VoidSuccess"],
+        security: [],
+        responses: {
+          200: {
+            description: "JSON value",
+            content: {
+              "application/json": {
+                schema: { type: "string" }
+              }
+            }
+          },
+          204: { description: "No content" }
+        }
+      }
+    },
+    "/cached": {
+      get: {
+        operationId: "cached",
+        parameters: [],
+        tags: ["VoidSuccess"],
+        security: [],
+        responses: {
+          304: { description: "Not modified" }
+        }
+      }
+    }
+  },
+  components: {
+    schemas: {},
+    securitySchemes: {}
+  },
+  security: [],
+  tags: [{ name: "VoidSuccess" }]
+}
+
 describe("OpenApiGenerator", () => {
   describe("schema", () => {
     it.effect("get operation", () =>
@@ -469,6 +793,59 @@ export const TestClientError = <Tag extends string, E>(
   }) as any`
       ))
 
+    it.effect("resolves JSON Pointer-escaped local references", () =>
+      assertRuntimeIncludes(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Test API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/widgets": {
+              get: {
+                operationId: "listWidgets",
+                parameters: [
+                  { $ref: "#/components/parameters/Page~1Limit" } as any,
+                  { $ref: "#/components/parameters/Tilde~0Name" } as any
+                ],
+                responses: {
+                  204: {
+                    description: "No content"
+                  }
+                },
+                tags: ["Widgets"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            parameters: {
+              "Page/Limit": {
+                name: "limit",
+                in: "query",
+                required: false,
+                schema: { type: "integer" }
+              },
+              "Tilde~Name": {
+                name: "tilde",
+                in: "query",
+                required: false,
+                schema: { type: "string" }
+              }
+            }
+          } as any,
+          security: [],
+          tags: [{ name: "Widgets" }]
+        },
+        [
+          `readonly "limit"?: number`,
+          `readonly "tilde"?: string`,
+          `HttpClientRequest.setUrlParams({ "limit": options?.params?.["limit"] as any, "tilde": options?.params?.["tilde"] as any })`
+        ]
+      ))
+
     it.effect("sse operation decodes event payload from json string", () =>
       assertRuntimeIncludes(
         {
@@ -518,10 +895,71 @@ export const TestClientError = <Tag extends string, E>(
         },
         [
           `import * as Sse from "effect/unstable/encoding/Sse"`,
-          `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: typeof StreamEvents200Sse.Type }, HttpClientError.HttpClientError | SchemaError | Sse.Retry, typeof StreamEvents200Sse.DecodingServices>`,
+          `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: typeof StreamEvents200Sse.Type }, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
           `"streamEventsSse": () => HttpClientRequest.get(\`/events\`).pipe(`,
           `sseRequest(StreamEvents200Sse)`,
           `schema: Schema.ConstraintDecoder<Type, DecodingServices>`
+        ]
+      ))
+
+    it.effect("annotated sse operation decodes the full event schema", () =>
+      assertRuntimeIncludes(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Test API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/events": {
+              get: {
+                operationId: "streamEvents",
+                parameters: [],
+                responses: {
+                  200: {
+                    description: "Events streamed successfully",
+                    content: {
+                      "text/event-stream": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            id: {
+                              anyOf: [{ type: "string" }, { type: "null" }]
+                            },
+                            event: { const: "message" },
+                            data: { type: "string" }
+                          },
+                          required: ["id", "event", "data"],
+                          additionalProperties: false
+                        },
+                        "x-effect-stream": {
+                          encoding: "sse",
+                          errorSchema: {},
+                          causeSchema: {},
+                          failureEvent: "effect/httpapi/stream/failure"
+                        }
+                      }
+                    }
+                  }
+                },
+                tags: ["Events"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            securitySchemes: {}
+          },
+          security: [],
+          tags: []
+        },
+        [
+          `"id": Schema.optionalKey(Schema.String), "event": Schema.Literal("message"), "data": Schema.String`,
+          `"id": Schema.optionalKey(Schema.String), "event": Schema.Literal("effect/httpapi/stream/failure"), "data": Schema.String`,
+          `readonly "streamEventsSse": () => Stream.Stream<typeof StreamEvents200Sse.Type, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
+          `sseEventRequest(StreamEvents200Sse)`,
+          `Stream.pipeThroughChannel(Sse.decodeSchema(schema))`
         ]
       ))
 
@@ -588,6 +1026,44 @@ export const TestClientError = <Tag extends string, E>(
           `readonly payload: typeof IssueTokenRequestFormUrlEncoded.Encoded`
         ]
       ))
+
+    it.effect("preserves response variants and routes binary and bodiless statuses", () =>
+      assertRuntimeIncludes(responseMatchingSpec, [
+        `export const PollDeviceToken400 = Schema.Union(`,
+        `Schema.Literal("InvalidRequestError")`,
+        `Schema.Literal("DeviceTokenOAuthError")`,
+        `"400": decodeError("PollDeviceToken400", PollDeviceToken400)`,
+        `export type DownloadArchive404 = { readonly "title": string }`,
+        `const decodeBinary = (response: HttpClientResponse.HttpClientResponse) =>`,
+        `Effect.map(response.arrayBuffer, (buffer) => new Uint8Array(buffer))`,
+        `"2xx": decodeBinary`,
+        `readonly "downloadArchive": <Config extends OperationConfig>(options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `readonly "downloadArchiveStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"downloadAvatar": (options) => HttpClientRequest.get(\`/avatar\`).pipe(
+    withResponse(options?.config)(HttpClientResponse.matchStatus({
+      "2xx": decodeBinary`,
+        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"400": decodeError("DownloadMixedContent400", DownloadMixedContent400)`,
+        `readonly "downloadMixedContent": <Config extends OperationConfig>(options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"200": () => Effect.void`,
+        `"404": decodeVoidError("404")`,
+        `"500": decodeVoidError("500")`,
+        `TestClientError<"404", undefined>`,
+        `TestClientError<"500", undefined>`
+      ], [
+        `"200": decodeSuccess(DownloadMixedContent200)`,
+        `typeof DownloadMixedContent200.Type | Uint8Array`
+      ]))
+
+    it.effect("routes mixed and non-2xx bodiless success responses", () =>
+      assertRuntimeIncludes(voidSuccessSpec, [
+        `"200": decodeSuccess(MixedSuccess200)`,
+        `"204": () => Effect.void`,
+        `"304": () => Effect.void`,
+        `WithOptionalResponse<typeof MixedSuccess200.Type | void, Config>`
+      ]))
   })
 
   describe("type-only", () => {
@@ -787,6 +1263,41 @@ export const TestClientError = <Tag extends string, E>(
     request: response.request,
   }) as any`
       ))
+
+    it.effect("preserves response variants and routes binary and bodiless statuses", () =>
+      assertTypeOnlyIncludes(responseMatchingSpec, [
+        `export type PollDeviceToken400 =`,
+        `readonly "kind": "InvalidRequestError"`,
+        `readonly "kind": "DeviceTokenOAuthError"`,
+        `onRequest(options?.config)([], {"400":"PollDeviceToken400"})`,
+        `const decodeBinary = (response: HttpClientResponse.HttpClientResponse) =>`,
+        `onRequest(options?.config)([], {"404":"DownloadArchive404"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `readonly "downloadArchive": <Config extends OperationConfig>(options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `"downloadAvatar": (options) => HttpClientRequest.get(\`/avatar\`).pipe(
+    onRequest(options?.config)([], undefined, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `import * as HttpClient from "effect/unstable/http/HttpClient"`,
+        `onRequest(options?.config)([], {"400":"DownloadMixedContent400"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `readonly "downloadMixedContent": <Config extends OperationConfig>(options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
+        `readonly "downloadMixedContentStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
+        `onRequest(options?.config)([], undefined, {"binary":[],"voidSuccess":["200"],"voidError":["404","500"]})`,
+        `cases[code] = decodeVoidError(code)`,
+        `TestClientError<"404", undefined>`,
+        `TestClientError<"500", undefined>`
+      ], [
+        `DownloadMixedContent200 | Uint8Array`
+      ]))
+
+    it.effect("routes mixed and non-2xx bodiless success responses", () =>
+      assertTypeOnlyIncludes(voidSuccessSpec, [
+        `onRequest(options?.config)(["200"], undefined, {"binary":[],"voidSuccess":["204"],"voidError":[]})`,
+        `onRequest(options?.config)([], undefined, {"binary":[],"voidSuccess":["304"],"voidError":[]})`,
+        `WithOptionalResponse<MixedSuccess200 | void, Config>`
+      ]))
+
+    it.effect("emits compilable clients for schema-backed and type-only formats", () =>
+      assertGeneratedClientsCompile(responseMatchingSpec))
   })
 
   describe("httpapi", () => {
@@ -924,7 +1435,7 @@ export const TestClientError = <Tag extends string, E>(
                 tags: ["Applications"],
                 security: []
               }
-            } as any
+            }
           },
           components: {
             schemas: {},
@@ -1154,6 +1665,65 @@ export const CreatePayloadRequestText = Schema.String`,
         [
           "Schema.Opaque",
           `extends Schema.Class<CreatePayloadRequestJson>("CreatePayloadRequestJson")`
+        ]
+      ))
+
+    it.effect("preserves multiple JSON response representations with application/json preferred", () =>
+      assertHttpApiIncludes(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Test API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/dual": {
+              get: {
+                operationId: "dualJson",
+                parameters: [],
+                responses: {
+                  200: {
+                    description: "Dual JSON response",
+                    content: {
+                      "application/problem+json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            title: { type: "string" }
+                          },
+                          required: ["title"],
+                          additionalProperties: false
+                        }
+                      },
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            value: { type: "string" }
+                          },
+                          required: ["value"],
+                          additionalProperties: false
+                        }
+                      }
+                    }
+                  }
+                },
+                tags: ["DualJson"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            securitySchemes: {}
+          },
+          security: [],
+          tags: [{ name: "DualJson" }]
+        },
+        [
+          `export type DualJson200 = { readonly "value": string }`,
+          `export type DualJson200ApplicationProblemJson = { readonly "title": string }`,
+          `HttpApiEndpoint.get("dualJson", "/dual", { success: [DualJson200, DualJson200ApplicationProblemJson.pipe(HttpApiSchema.asJson({ contentType: "application/problem+json" }))] })`
         ]
       ))
 
@@ -2201,6 +2771,45 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
   })
 
   describe("regression", () => {
+    it.effect("emits compilable clients when schema examples are invalid", () =>
+      assertGeneratedClientsCompile({
+        openapi: "3.0.3",
+        info: {
+          title: "Invalid examples API",
+          version: "1.0.0"
+        },
+        paths: {
+          "/triggers": {
+            get: {
+              operationId: "getTriggers",
+              parameters: [],
+              responses: {
+                200: {
+                  description: "OK",
+                  content: {
+                    "application/json": {
+                      schema: {
+                        type: "array",
+                        items: { type: "string" },
+                        example: "create"
+                      }
+                    }
+                  }
+                }
+              },
+              tags: ["Triggers"],
+              security: []
+            }
+          }
+        },
+        components: {
+          schemas: {},
+          securitySchemes: {}
+        },
+        security: [],
+        tags: [{ name: "Triggers" }]
+      } as unknown as OpenAPISpec))
+
     it.effect("runtime warnings do not report additional-tags-dropped outside httpapi", () =>
       assertRuntimeStableWithWarnings(
         {
@@ -2265,5 +2874,54 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
           operationId: "getUser"
         }
       ]))
+
+    it.effect("emits compilable open objects with optional properties", () =>
+      assertGeneratedClientsCompile(
+        {
+          openapi: "3.1.0",
+          info: {
+            title: "Open object regression API",
+            version: "1.0.0"
+          },
+          paths: {
+            "/widget": {
+              get: {
+                operationId: "getWidget",
+                parameters: [],
+                responses: {
+                  200: {
+                    description: "OK",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            optionalValue: {
+                              type: "string"
+                            }
+                          },
+                          additionalProperties: true
+                        }
+                      }
+                    }
+                  }
+                },
+                tags: ["Widgets"],
+                security: []
+              }
+            }
+          },
+          components: {
+            schemas: {},
+            securitySchemes: {}
+          },
+          security: [],
+          tags: []
+        },
+        {
+          exactOptionalPropertyTypes: false,
+          formats: ["httpclient"]
+        }
+      ))
   })
 })

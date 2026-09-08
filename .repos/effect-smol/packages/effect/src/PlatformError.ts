@@ -30,7 +30,7 @@ const TypeId = "~effect/platform/PlatformError"
  * @see {@link SystemError} for failures reported by the host platform or operating system
  * @see {@link PlatformError} for the wrapper used by most platform APIs
  *
- * @category models
+ * @category errors
  * @since 4.0.0
  */
 export class BadArgument extends Data.TaggedError("BadArgument")<{
@@ -69,7 +69,7 @@ export class BadArgument extends Data.TaggedError("BadArgument")<{
  * @see {@link SystemError} for the error data that carries this tag on its `_tag` field
  * @see {@link systemError} for creating a `PlatformError` from a system failure with one of these tags
  *
- * @category models
+ * @category errors
  * @since 4.0.0
  */
 export type SystemErrorTag =
@@ -103,7 +103,7 @@ export type SystemErrorTag =
  * @see {@link BadArgument} for platform API failures caused by rejected caller input before an operation runs
  * @see {@link SystemErrorTag} for the normalized tag values stored in `_tag`
  *
- * @category models
+ * @category errors
  * @since 4.0.0
  */
 export class SystemError extends Data.Error<{
@@ -151,7 +151,7 @@ export class SystemError extends Data.Error<{
  * @see {@link badArgument} for creating this wrapper from rejected caller input
  * @see {@link systemError} for creating this wrapper from a host or operating-system failure
  *
- * @category models
+ * @category errors
  * @since 4.0.0
  */
 export class PlatformError extends Data.TaggedError("PlatformError")<{

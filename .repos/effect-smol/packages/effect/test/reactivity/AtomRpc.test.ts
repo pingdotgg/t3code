@@ -16,7 +16,7 @@ const Group = RpcGroup.make(
 )
 
 describe("AtomRpc", () => {
-  it.effect("query creates a serializable atom", () =>
+  it.effect("query creates a serializable atom with reactivity and retention", () =>
     Effect.gen(function*() {
       const Client = AtomRpc.Service()("Client", {
         group: Group,
@@ -38,9 +38,36 @@ describe("AtomRpc", () => {
         headers: {
           "x-id": "abc"
         },
+        reactivityKeys: ["users"],
+        timeToLive: "1 minute",
         serializationKey: "1"
       })
 
+      assert.deepStrictEqual(
+        {
+          idleTTL: atom.idleTTL,
+          serializable: Atom.isSerializable(atom)
+        },
+        {
+          idleTTL: 60_000,
+          serializable: true
+        }
+      )
+      const keepAliveAtom = Client.query("getUser", { id: 2 }, {
+        reactivityKeys: ["users"],
+        timeToLive: "Infinity",
+        serializationKey: "keep-alive"
+      })
+      assert.deepStrictEqual(
+        {
+          keepAlive: keepAliveAtom.keepAlive,
+          serializable: Atom.isSerializable(keepAliveAtom)
+        },
+        {
+          keepAlive: true,
+          serializable: true
+        }
+      )
       if (!Atom.isSerializable(atom)) {
         assert.fail("expected query atom to be serializable")
       }
@@ -50,6 +77,8 @@ describe("AtomRpc", () => {
         headers: {
           "x-id": "abc"
         },
+        reactivityKeys: ["users"],
+        timeToLive: "1 minute",
         serializationKey: "1"
       })
       assert(Atom.isSerializable(atomFromEncodedPayload), "expected query atom from encoded payload to be serializable")

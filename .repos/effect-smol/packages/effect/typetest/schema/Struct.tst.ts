@@ -62,6 +62,15 @@ describe("Struct", () => {
       void [type, encoded, iso]
     })
 
+    it("simplifies readonly & required make input", () => {
+      const schema = Schema.Struct({ a: Schema.String, b: Schema.Number })
+
+      // @ts-expect-error Type '{ readonly a: string; readonly b: number; }'
+      const makeIn: never = null as unknown as Schema.Struct.MakeIn<typeof schema.fields>
+
+      void makeIn
+    })
+
     it("readonly & optionalKey field", () => {
       const schema = Schema.Struct({
         a: Schema.optionalKey(Schema.String)

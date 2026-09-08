@@ -4,6 +4,37 @@ import { TestClock } from "effect/testing"
 import { RateLimiter } from "effect/unstable/persistence"
 
 describe(`RateLimiter`, () => {
+  it.effect("supports partially applied sleep", () =>
+    Effect.gen(function*() {
+      const limiter = yield* RateLimiter.make
+      const sleep = RateLimiter.sleep(limiter)
+      const result = yield* sleep({
+        algorithm: "fixed-window",
+        window: "1 minute",
+        limit: 5,
+        key: "partial"
+      })
+
+      assert.strictEqual(result.remaining, 4)
+    }).pipe(
+      Effect.provide(RateLimiter.layerStoreMemory)
+    ))
+
+  it.effect("supports uncurried sleep", () =>
+    Effect.gen(function*() {
+      const limiter = yield* RateLimiter.make
+      const result = yield* RateLimiter.sleep(limiter, {
+        algorithm: "fixed-window",
+        window: "1 minute",
+        limit: 5,
+        key: "direct"
+      })
+
+      assert.strictEqual(result.remaining, 4)
+    }).pipe(
+      Effect.provide(RateLimiter.layerStoreMemory)
+    ))
+
   describe("fixed-window", () => {
     it.effect("returns accumulated delays after the fixed window is exceeded", () =>
       Effect.gen(function*() {

@@ -56,6 +56,14 @@ export class ResourceMap<K, A, E> {
     )
   })
 
+  hasUnsafe(key: K): boolean {
+    return backingGet(this.entries, key) !== undefined
+  }
+
+  keysUnsafe(): Array<K> {
+    return Array.from(this.entries.map, ([key]) => key)
+  }
+
   get(key: K): Effect.Effect<A, E> {
     return Effect.suspend(() => {
       if (MutableRef.get(this.isClosed)) {
@@ -65,7 +73,7 @@ export class ResourceMap<K, A, E> {
       if (existing) {
         return Deferred.await(existing.deferred)
       }
-      const scope = Effect.runSync(Scope.make())
+      const scope = Scope.makeUnsafe()
       const deferred = Deferred.makeUnsafe<A, E>()
       backingSet(this.entries, key, { scope, deferred })
       return Effect.onExit(this.lookup(key, scope), (exit) => {
@@ -73,7 +81,10 @@ export class ResourceMap<K, A, E> {
           return Deferred.done(deferred, exit)
         }
         backingDelete(this.entries, key)
-        return Deferred.done(deferred, exit)
+        return Effect.andThen(
+          Deferred.done(deferred, exit),
+          Scope.close(scope, exit)
+        )
       })
     })
   }

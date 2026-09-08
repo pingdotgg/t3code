@@ -32,7 +32,7 @@ export type UserEncoded = typeof User["Encoded"]
 export const decodeUser = Schema.decodeUnknownEffect(User)
 export const encodeUser = Schema.encodeEffect(User)
 
-export class InvalidUserPayload extends Schema.TaggedErrorClass<InvalidUserPayload>()("InvalidUserPayload", {
+export class InvalidUserPayload extends Schema.TaggedError<InvalidUserPayload>()("InvalidUserPayload", {
   message: Schema.String
 }) {}
 

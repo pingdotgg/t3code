@@ -16,7 +16,6 @@ import type * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import { identity } from "../../Function.ts"
 import * as InternalRecord from "../../internal/record.ts"
-import * as Option from "../../Option.ts"
 import * as Predicate from "../../Predicate.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
@@ -62,22 +61,26 @@ export type Client<Groups extends HttpApiGroup.Constraint, E = never, R = never>
  * Derives the typed client interface for an `HttpApi`, preserving any additional
  * client error and service requirements supplied by the caller.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ForApi<Api extends HttpApi.Constraint, E = never, R = never> = Api extends
   HttpApi.HttpApi<infer _Id, infer Groups> ? Client<Groups, E, R> :
   never
 
-type SuccessType<S> = S extends HttpApiSchema.StreamSse<
-  infer _Events,
-  infer _Error,
-  infer _Value
-> ? Stream.Stream<
-    _Value,
-    _Error["Type"] | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry,
-    never
-  >
+type SuccessType<S> = S extends HttpApiSchema.WithHeaders<
+  infer _Inner,
+  infer _Headers
+> ? HttpApiSchema.withHeaders<SuccessType<_Inner>, _Headers["Type"]>
+  : S extends HttpApiSchema.StreamSse<
+    infer _Events,
+    infer _Error,
+    infer _Value
+  > ? Stream.Stream<
+      _Value,
+      _Error["Type"] | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry | Sse.SseError,
+      never
+    >
   : S extends HttpApiSchema.StreamUint8Array ? Stream.Stream<Uint8Array, HttpClientError.HttpClientError, never>
   : S extends Schema.Constraint ? S["Type"]
   : never
@@ -367,10 +370,11 @@ export const makeClient = <ApiId extends string, Groups extends HttpApiGroup.Con
           }
         }
         for (const streamSuccess of getStreamSuccessSchemas(endpoint)) {
+          const streamSchema = isWithHeadersStreamSuccess(streamSuccess) ? streamSuccess.schema : streamSuccess
           addResponseAlternative(
             successAlternatives,
-            HttpApiSchema.getStatusStream(streamSuccess),
-            streamSuccess.contentType,
+            HttpApiSchema.getStatusSuccessSchema(streamSuccess),
+            streamSchema.contentType,
             streamToResponse(streamSuccess)
           )
         }
@@ -629,7 +633,7 @@ export const endpoint = <
  *
  * **Example** (Building typed URLs)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { HttpApi, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
  *
@@ -647,8 +651,7 @@ export const endpoint = <
  *
  * buildUrl.users.getUser({
  *   params: { id: "123" }
- * })
- * //=> "https://api.example.com/users/123"
+ * }) // => "https://api.example.com/users/123"
  * ```
  *
  * @category constructors
@@ -724,9 +727,44 @@ const compilePath = (path: string) => {
 }
 
 function schemasToResponse(schemas: readonly [Schema.Constraint, ...Array<Schema.Constraint>]) {
-  const codec = toCodecArrayBuffer(schemas)
+  const hasWithHeaders = schemas.some((schema) =>
+    HttpApiSchema.isWithHeaders(schema) || HttpApiSchema.getWithHeadersAnnotation(schema.ast) !== undefined
+  )
+  const codec = hasWithHeaders
+    ? Schema.Union(schemas.map(toCodecArrayBufferWithHeaders))
+    : toCodecArrayBuffer(schemas)
   const decode = Schema.decodeEffect(codec)
-  return (response: HttpClientResponse.HttpClientResponse) => Effect.flatMap(response.arrayBuffer, decode)
+  return (response: HttpClientResponse.HttpClientResponse) =>
+    Effect.flatMap(
+      response.arrayBuffer,
+      hasWithHeaders
+        ? (body) => decode({ body, headers: response.headers })
+        : decode
+    )
+}
+
+function toCodecArrayBufferWithHeaders(schema: Schema.Constraint): Schema.Top {
+  const isWithHeaders = HttpApiSchema.isWithHeaders(schema)
+  const annotation = HttpApiSchema.getWithHeadersAnnotation(schema.ast)
+  if (annotation !== undefined) {
+    return Schema.Struct({
+      body: fromArrayBuffer(annotation.body),
+      headers: annotation.headersCodec
+    }).pipe(Schema.decodeTo(schema))
+  }
+  const body = isWithHeaders ? schema.schema : schema
+  return Schema.Struct({
+    body: fromArrayBuffer(body).pipe(Schema.decodeTo(body)),
+    headers: isWithHeaders ? schema.headers : Schema.Unknown
+  }).pipe(
+    Schema.decodeTo(
+      isWithHeaders ? schema : Schema.toType(schema),
+      SchemaTransformation.transform({
+        decode: (value) => isWithHeaders ? HttpApiSchema.withHeaders(value) : value.body,
+        encode: (value: any) => isWithHeaders ? value : { body: value, headers: undefined }
+      }) as any
+    )
+  )
 }
 
 type ResponseDecoder = (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<unknown, unknown, unknown>
@@ -770,9 +808,10 @@ function groupSchemasByContentType(
 ): Map<string, Arr.NonEmptyReadonlyArray<Schema.Top>> {
   const grouped = new Map<string, [Schema.Top, ...Array<Schema.Top>]>()
   for (const schema of schemas) {
-    const contentType = HttpApiSchema.isNoContent(schema.ast)
+    const body = HttpApiSchema.isWithHeaders(schema) ? schema.schema : schema
+    const contentType = HttpApiSchema.isNoContent(body.ast)
       ? ""
-      : MediaType.normalize(HttpApiSchema.getResponseEncoding(schema.ast).contentType)
+      : MediaType.normalize(HttpApiSchema.getResponseEncodingSchema(schema).contentType)
     const existing = grouped.get(contentType)
     if (existing === undefined) {
       grouped.set(contentType, [schema])
@@ -804,24 +843,35 @@ function failUnsupportedContentType(
 
 const reservedStreamFailureEvent = "effect/httpapi/stream/failure"
 
-function getStreamSuccessSchemas(endpoint: HttpApiEndpoint.Top): Array<HttpApiSchema.StreamSchema> {
-  const schemas: Array<HttpApiSchema.StreamSchema> = []
+type StreamSuccessSchema =
+  | HttpApiSchema.StreamSchema
+  | HttpApiSchema.WithHeaders<HttpApiSchema.StreamSchema, Schema.Top>
+
+const isWithHeadersStreamSuccess = (
+  schema: StreamSuccessSchema
+): schema is HttpApiSchema.WithHeaders<HttpApiSchema.StreamSchema, Schema.Top> => HttpApiSchema.isWithHeaders(schema)
+
+function getStreamSuccessSchemas(endpoint: HttpApiEndpoint.Top): Array<StreamSuccessSchema> {
+  const schemas: Array<StreamSuccessSchema> = []
   for (const schema of endpoint.success) {
-    if (HttpApiSchema.isStreamSchema(schema)) {
-      schemas.push(schema)
+    const body = HttpApiSchema.isWithHeaders(schema) ? schema.schema : schema
+    if (HttpApiSchema.isStreamSchema(body)) {
+      schemas.push(schema as StreamSuccessSchema)
     }
   }
   return schemas
 }
 
-function streamToResponse(streamSchema: HttpApiSchema.StreamSchema) {
+function streamToResponse(successSchema: StreamSuccessSchema) {
+  const isWithHeaders = isWithHeadersStreamSuccess(successSchema)
+  const streamSchema = isWithHeaders ? successSchema.schema : successSchema
   const sse = HttpApiSchema.isStreamUint8Array(streamSchema)
     ? undefined
     : {
       declaration: streamSchema,
       decoder: makeSseDecoder(streamSchema)
     }
-  return (response: HttpClientResponse.HttpClientResponse) =>
+  const toStream = (response: HttpClientResponse.HttpClientResponse) =>
     Effect.map(Effect.context<never>(), (context) =>
       Stream.provideContext(
         sse === undefined ?
@@ -829,6 +879,14 @@ function streamToResponse(streamSchema: HttpApiSchema.StreamSchema) {
           decodeSseStream(response.stream, sse.declaration, sse.decoder),
         context as Context.Context<unknown>
       ))
+  if (!isWithHeaders) return toStream
+
+  const decodeHeaders = Schema.decodeUnknownEffect(successSchema.headers)
+  return (response: HttpClientResponse.HttpClientResponse) =>
+    Effect.flatMap(
+      decodeHeaders(response.headers),
+      (headers) => Effect.map(toStream(response), (body) => HttpApiSchema.withHeaders({ body, headers }))
+    )
 }
 
 function makeSseDecoder(
@@ -942,31 +1000,34 @@ function toCodecArrayBuffer(schemas: readonly [Schema.Constraint, ...Array<Schem
   return Schema.Union(schemas.map(onSchema))
 
   function onSchema(schema: Schema.Constraint) {
-    const encoding = HttpApiSchema.getResponseEncoding(schema.ast)
-    switch (encoding._tag) {
-      case "Json": {
-        // handle json codecs that transform void schemas to null
-        const encodedIsNull = SchemaAST.isNull(SchemaAST.toEncoded(schema.ast))
-        return UnknownFromArrayBuffer.pipe(Schema.decodeTo(
-          schema,
-          encodedIsNull ?
+    return fromArrayBuffer(schema).pipe(Schema.decodeTo(schema))
+  }
+}
+
+function fromArrayBuffer(schema: Schema.Constraint): Schema.Top {
+  const encoding = HttpApiSchema.getResponseEncoding(schema.ast)
+  switch (encoding._tag) {
+    case "Json": {
+      // handle json codecs that transform void schemas to null
+      const encodedIsNull = SchemaAST.isNull(SchemaAST.toEncoded(schema.ast))
+      return encodedIsNull
+        ? UnknownFromArrayBuffer.pipe(
+          Schema.decodeTo(
+            Schema.Unknown,
             SchemaTransformation.transform({
               decode: (a) => a === undefined ? null : a,
               encode: (a) => a === null ? undefined : a
-            }) as any :
-            undefined
-        ))
-      }
-      case "FormUrlEncoded":
-        return StringFromArrayBuffer.pipe(
-          Schema.decodeTo(UrlParams.schemaRecord),
-          Schema.decodeTo(schema)
+            }) as any
+          )
         )
-      case "Uint8Array":
-        return Uint8ArrayFromArrayBuffer.pipe(Schema.decodeTo(schema))
-      case "Text":
-        return StringFromArrayBuffer.pipe(Schema.decodeTo(schema))
+        : UnknownFromArrayBuffer
     }
+    case "FormUrlEncoded":
+      return StringFromArrayBuffer.pipe(Schema.decodeTo(UrlParams.schemaRecord))
+    case "Uint8Array":
+      return Uint8ArrayFromArrayBuffer
+    case "Text":
+      return StringFromArrayBuffer
   }
 }
 
@@ -1004,39 +1065,59 @@ function getEncodePayloadSchemaFromBody(
   const out = $HttpBody.pipe(Schema.decodeTo(
     schema,
     SchemaTransformation.transformOrFail<unknown, HttpBody.HttpBody>({
-      decode(httpBody) {
-        return Effect.fail(new SchemaIssue.Forbidden(Option.some(httpBody), { message: "Encode only schema" }))
+      decode(input, options) {
+        return Effect.fail(
+          new SchemaIssue.Forbidden({ message: "Encode only schema" }, input, options)
+        )
       },
-      encode(t) {
+      encode(t, options) {
         switch (encoding._tag) {
           case "Multipart":
-            return Effect.fail(new SchemaIssue.Forbidden(Option.some(t), { message: "Payload must be a FormData" }))
+            return Effect.fail(
+              new SchemaIssue.Forbidden(
+                { message: "Payload must be a FormData" },
+                t,
+                options
+              )
+            )
           case "Json": {
             try {
               const body = JSON.stringify(t)
               return Effect.succeed(HttpBody.text(body, encoding.contentType))
-            } catch (error) {
-              return Effect.fail(new SchemaIssue.InvalidValue(Option.some(t), { message: globalThis.String(error) }))
+            } catch {
+              return Effect.fail(
+                new SchemaIssue.InvalidValue(
+                  { expected: "a JSON-serializable request body" },
+                  t,
+                  options
+                )
+              )
             }
           }
           case "Text": {
             if (typeof t !== "string") {
               return Effect.fail(
-                new SchemaIssue.InvalidValue(Option.some(t), { message: "Expected a string" })
+                new SchemaIssue.InvalidValue({ message: "Expected a string" }, t, options)
               )
             }
             return Effect.succeed(HttpBody.text(t, encoding.contentType))
           }
           case "FormUrlEncoded": {
             if (!Predicate.isObject(t)) {
-              return Effect.fail(new SchemaIssue.InvalidValue(Option.some(t), { message: "Expected a record" }))
+              return Effect.fail(
+                new SchemaIssue.InvalidValue({ message: "Expected a record" }, t, options)
+              )
             }
             return Effect.succeed(HttpBody.urlParams(UrlParams.fromInput(t as any), encoding.contentType))
           }
           case "Uint8Array": {
             if (!(t instanceof Uint8Array)) {
               return Effect.fail(
-                new SchemaIssue.InvalidValue(Option.some(t), { message: "Expected a Uint8Array" })
+                new SchemaIssue.InvalidValue(
+                  { message: "Expected a Uint8Array" },
+                  t,
+                  options
+                )
               )
             }
             return Effect.succeed(HttpBody.uint8Array(t, encoding.contentType))

@@ -1,0 +1,24 @@
+"effect/Record#getEquivalence":
+  replacement: "Record.makeEquivalence"
+  note: "Direct rename; pass the value equivalence unchanged."
+"effect/Record#getLefts":
+  replacement: "Record.getFailures"
+  note: "Extract Result.Failure values while preserving keys."
+"effect/Record#getRights":
+  replacement: "Record.getSuccesses"
+  note: "Extract Result.Success values while preserving keys."
+"effect/Record#modifyOption":
+  replacement: "Record.modify"
+  note: "The Option suffix was dropped; missing keys still return Option.none."
+"effect/Record#partitionMap":
+  replacement: "Record.partition"
+  note: "Pass a mapper returning Result; failures and successes form the two output records."
+"effect/Record#ReadonlyRecord":
+  replacement: "Record.ReadonlyRecord"
+  note: "The public type and parameter order are unchanged."
+"effect/Record#ReadonlyRecord.IsFiniteString":
+  replacement: "Record.ReadonlyRecord.IsFiniteString"
+  note: "The namespace utility type is unchanged."
+"effect/Record#replaceOption":
+  replacement: "Record.replace"
+  note: "The Option suffix was dropped; missing keys still return Option.none."

@@ -1,4 +1,4 @@
-import type { CreateRule, Visitor } from "oxlint"
+import type { CreateRule, Visitor } from "@oxlint/plugins"
 
 export interface ReportedError {
   node: unknown

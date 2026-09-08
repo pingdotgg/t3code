@@ -1,7 +1,14 @@
-# `@effect/sql-libsql`
+# @effect/sql-libsql
 
-An Effect SQL implementation using the `@libsql/client` library.
+An Effect SQL client for [libSQL](https://turso.tech/libsql), built on the [`@libsql/client`](https://docs.turso.tech/sdk/ts) library.
+
+## Installation
+
+```sh
+npm install effect@rc @effect/sql-libsql@rc
+```
 
 ## Documentation
 
-- **API Reference**: [View the full documentation](https://effect-ts.github.io/effect/docs/sql-libsql).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/sql-libsql)

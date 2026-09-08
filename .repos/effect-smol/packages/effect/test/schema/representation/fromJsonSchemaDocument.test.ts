@@ -6,14 +6,14 @@ function toSchemaFromJsonSchemaDocument(
   document: JsonSchema.Document<"draft-2020-12">,
   options?: SchemaRepresentation.FromJsonSchemaOptions
 ): Schema.Top {
-  return SchemaRepresentation.fromJsonSchemaDocument(document, options)
+  return SchemaRepresentation.fromJsonSchemaDocument(document, { patterns: "apply", ...options })
 }
 
 function fromJsonSchemaRepresentation(
   document: JsonSchema.Document<"draft-2020-12">,
   options?: SchemaRepresentation.FromJsonSchemaOptions
 ): SchemaRepresentation.Document {
-  return SchemaRepresentation.toRepresentation(SchemaRepresentation.fromJsonSchemaDocument(document, options).ast)
+  return SchemaRepresentation.toRepresentation(toSchemaFromJsonSchemaDocument(document, options).ast)
 }
 
 describe("fromJsonSchemaDocument", () => {
@@ -25,13 +25,13 @@ describe("fromJsonSchemaDocument", () => {
     expected: Schema.Json
   ) {
     const jsonDocument = JsonSchema.fromSchemaDraft2020_12(input.schema)
-    const schema = SchemaRepresentation.fromJsonSchemaDocument(jsonDocument, input.options)
+    const schema = toSchemaFromJsonSchemaDocument(jsonDocument, input.options)
     const document = SchemaRepresentation.toRepresentation(schema.ast)
     deepStrictEqual(SchemaRepresentation.toJson(document), expected)
     return schema
   }
 
-  it("{}", () => {
+  it("unconstrained schema", () => {
     assertFromJsonSchema(
       { schema: {} },
       {
@@ -87,8 +87,16 @@ describe("fromJsonSchemaDocument", () => {
     )
   })
 
+  it("keeps annotation-only schemas unconstrained", () => {
+    const representation = fromJsonSchemaRepresentation(
+      JsonSchema.fromSchemaDraft2020_12({ format: "email" })
+    ).representation
+    assertTrue(representation._tag === "Declaration")
+    strictEqual(representation.annotations?.format, "email")
+  })
+
   describe("const", () => {
-    it("const: literal (string)", () => {
+    it("string literal", () => {
       assertFromJsonSchema(
         { schema: { const: "a" } },
         {
@@ -156,7 +164,7 @@ describe("fromJsonSchemaDocument", () => {
       )
     })
 
-    it("const: null", () => {
+    it("null literal", () => {
       assertFromJsonSchema(
         { schema: { const: null } },
         {
@@ -182,30 +190,18 @@ describe("fromJsonSchemaDocument", () => {
       )
     })
 
-    it("const: non-literal", () => {
-      assertFromJsonSchema(
-        { schema: { const: {} } },
-        {
-          "representation": {
-            "_tag": "Declaration",
-            "representation": {
-              "id": "effect/schema/Json",
-              "payload": null
-            },
-            "annotations": {
-              "expected": "JSON value"
-            },
-            "typeParameters": [],
-            "checks": []
-          },
-          "references": {}
-        }
-      )
+    it("rejects structured values", () => {
+      for (const value of [{}, []]) {
+        throws(
+          () => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ const: value })),
+          `Unsupported structured JSON Schema value for "const"\n  at ["schema"]["const"]`
+        )
+      }
     })
   })
 
   describe("enum", () => {
-    it("single enum (string)", () => {
+    it("single string member", () => {
       assertFromJsonSchema(
         { schema: { enum: ["a"] } },
         {
@@ -273,7 +269,7 @@ describe("fromJsonSchemaDocument", () => {
       )
     })
 
-    it("multiple enum (literals)", () => {
+    it("multiple literal members", () => {
       assertFromJsonSchema(
         { schema: { enum: ["a", 1] } },
         {
@@ -844,7 +840,7 @@ describe("fromJsonSchemaDocument", () => {
         )
       })
 
-      it("pattern", () => {
+      it("pattern with an explicit string type", () => {
         assertFromJsonSchema(
           { schema: { type: "string", pattern: "a*" } },
           {
@@ -877,38 +873,16 @@ describe("fromJsonSchemaDocument", () => {
             "references": {}
           }
         )
-        assertFromJsonSchema(
-          { schema: { pattern: "a*" } },
-          {
-            "representation": {
-              "_tag": "String",
-              "checks": [
-                {
-                  "_tag": "Filter",
-                  "representation": {
-                    "id": "effect/schema/isPattern",
-                    "payload": {
-                      "source": "a*",
-                      "flags": ""
-                    }
-                  },
-                  "annotations": {
-                    "expected": "a string matching the RegExp a*",
-                    "arbitrary": {
-                      "constraint": {
-                        "patterns": [
-                          "a*"
-                        ]
-                      }
-                    }
-                  },
-                  "aborted": false
-                }
-              ]
-            },
-            "references": {}
-          }
-        )
+      })
+
+      it("pattern only constrains strings", () => {
+        const is = Schema.is(toSchemaFromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({ pattern: "^a+$" })
+        ))
+        assertTrue(is("a"))
+        assertFalse(is("b"))
+        assertTrue(is(1))
+        assertTrue(is(null))
       })
     })
   })
@@ -1486,7 +1460,186 @@ describe("fromJsonSchemaDocument", () => {
       )
     })
 
-    it("prefixItems", () => {
+    it("prefixItems preserves maxItems below the prefix length", () => {
+      assertFromJsonSchema(
+        {
+          schema: {
+            type: "array",
+            prefixItems: [{ type: "string" }, { type: "number" }],
+            maxItems: 1
+          }
+        },
+        {
+          "representation": {
+            "_tag": "Arrays",
+            "checks": [
+              {
+                "_tag": "Filter",
+                "representation": {
+                  "id": "effect/schema/isMaxLength",
+                  "payload": {
+                    "maxLength": 1
+                  }
+                },
+                "annotations": {
+                  "expected": "a value with a length of at most 1",
+                  "~structural": true,
+                  "arbitrary": {
+                    "constraint": {
+                      "maxLength": 1
+                    }
+                  }
+                },
+                "aborted": false
+              }
+            ],
+            "elements": [
+              {
+                "isOptional": true,
+                "type": {
+                  "_tag": "String",
+                  "checks": []
+                }
+              },
+              {
+                "isOptional": true,
+                "type": {
+                  "_tag": "Number",
+                  "checks": [
+                    {
+                      "_tag": "Filter",
+                      "representation": {
+                        "id": "effect/schema/isFinite",
+                        "payload": null
+                      },
+                      "annotations": {
+                        "expected": "a finite number",
+                        "arbitrary": {
+                          "constraint": {
+                            "noInfinity": true,
+                            "noNaN": true
+                          }
+                        }
+                      },
+                      "aborted": false
+                    }
+                  ]
+                }
+              }
+            ],
+            "rest": [
+              {
+                "_tag": "Declaration",
+                "representation": {
+                  "id": "effect/schema/Json",
+                  "payload": null
+                },
+                "annotations": {
+                  "expected": "JSON value"
+                },
+                "typeParameters": [],
+                "checks": []
+              }
+            ]
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("prefixItems preserves maxItems above the prefix length", () => {
+      assertFromJsonSchema(
+        {
+          schema: {
+            type: "array",
+            prefixItems: [{ type: "string" }],
+            maxItems: 2
+          }
+        },
+        {
+          "representation": {
+            "_tag": "Arrays",
+            "checks": [
+              {
+                "_tag": "Filter",
+                "representation": {
+                  "id": "effect/schema/isMaxLength",
+                  "payload": {
+                    "maxLength": 2
+                  }
+                },
+                "annotations": {
+                  "expected": "a value with a length of at most 2",
+                  "~structural": true,
+                  "arbitrary": {
+                    "constraint": {
+                      "maxLength": 2
+                    }
+                  }
+                },
+                "aborted": false
+              }
+            ],
+            "elements": [
+              {
+                "isOptional": true,
+                "type": {
+                  "_tag": "String",
+                  "checks": []
+                }
+              }
+            ],
+            "rest": [
+              {
+                "_tag": "Declaration",
+                "representation": {
+                  "id": "effect/schema/Json",
+                  "payload": null
+                },
+                "annotations": {
+                  "expected": "JSON value"
+                },
+                "typeParameters": [],
+                "checks": []
+              }
+            ]
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("prefixItems omits maxItems redundant with items: false", () => {
+      assertFromJsonSchema(
+        {
+          schema: {
+            type: "array",
+            prefixItems: [{ type: "string" }],
+            items: false,
+            maxItems: 2
+          }
+        },
+        {
+          "representation": {
+            "_tag": "Arrays",
+            "checks": [],
+            "elements": [
+              {
+                "isOptional": true,
+                "type": {
+                  "_tag": "String",
+                  "checks": []
+                }
+              }
+            ],
+            "rest": []
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("prefixItems closes when maxItems equals the prefix length", () => {
       assertFromJsonSchema(
         {
           schema: {
@@ -1513,7 +1666,9 @@ describe("fromJsonSchemaDocument", () => {
           "references": {}
         }
       )
+    })
 
+    it("prefixItems marks elements required by minItems", () => {
       assertFromJsonSchema(
         {
           schema: {
@@ -1737,11 +1892,19 @@ describe("fromJsonSchemaDocument", () => {
           }
         )
       })
+
+      it("does not require uniqueness when uniqueItems is false", () => {
+        const schema = toSchemaFromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({ type: "array", uniqueItems: false })
+        )
+
+        assertTrue(Schema.is(schema)(["a", "a"]))
+      })
     })
   })
 
   describe("type: object", () => {
-    it("type only", () => {
+    it("allows additional properties by default", () => {
       assertFromJsonSchema(
         { schema: { type: "object" } },
         {
@@ -1773,6 +1936,9 @@ describe("fromJsonSchemaDocument", () => {
           "references": {}
         }
       )
+    })
+
+    it("closes an object when additionalProperties is false", () => {
       assertFromJsonSchema(
         {
           schema: {
@@ -1785,7 +1951,18 @@ describe("fromJsonSchemaDocument", () => {
             "_tag": "Objects",
             "checks": [],
             "propertySignatures": [],
-            "indexSignatures": []
+            "indexSignatures": [
+              {
+                "parameter": {
+                  "_tag": "String",
+                  "checks": []
+                },
+                "type": {
+                  "_tag": "Never",
+                  "checks": []
+                }
+              }
+            ]
           },
           "references": {}
         }
@@ -1871,208 +2048,44 @@ describe("fromJsonSchemaDocument", () => {
     })
 
     it("properties & additionalProperties", () => {
-      assertFromJsonSchema(
-        {
-          schema: {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
             type: "object",
             properties: { a: { type: "string" } },
             required: ["a"],
             additionalProperties: { type: "boolean" }
-          }
-        },
-        {
-          "representation": {
-            "_tag": "Objects",
-            "checks": [],
-            "propertySignatures": [
-              {
-                "name": {
-                  "type": "string",
-                  "value": "a"
-                },
-                "type": {
-                  "_tag": "String",
-                  "checks": []
-                },
-                "isOptional": false,
-                "isMutable": false
-              }
-            ],
-            "indexSignatures": [
-              {
-                "parameter": {
-                  "_tag": "String",
-                  "checks": []
-                },
-                "type": {
-                  "_tag": "Boolean",
-                  "checks": []
-                }
-              }
-            ]
-          },
-          "references": {}
-        }
+          })),
+        `Unsupported object keyword scopes\n  at ["schema"]`
       )
     })
 
-    it("patternProperties", () => {
-      assertFromJsonSchema(
-        {
-          schema: {
+    it("rejects a closed single pattern property", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
             type: "object",
             patternProperties: {
               "a*": { type: "string" }
             },
             additionalProperties: false
-          }
-        },
-        {
-          "representation": {
-            "_tag": "Objects",
-            "checks": [],
-            "propertySignatures": [],
-            "indexSignatures": [
-              {
-                "parameter": {
-                  "_tag": "String",
-                  "checks": [
-                    {
-                      "_tag": "Filter",
-                      "representation": {
-                        "id": "effect/schema/isPattern",
-                        "payload": {
-                          "source": "a*",
-                          "flags": ""
-                        }
-                      },
-                      "annotations": {
-                        "expected": "a string matching the RegExp a*",
-                        "arbitrary": {
-                          "constraint": {
-                            "patterns": [
-                              "a*"
-                            ]
-                          }
-                        }
-                      },
-                      "aborted": false
-                    }
-                  ]
-                },
-                "type": {
-                  "_tag": "String",
-                  "checks": []
-                }
-              }
-            ]
-          },
-          "references": {}
-        }
+          })),
+        `Unsupported object keyword scopes\n  at ["schema"]`
       )
-      assertFromJsonSchema(
-        {
-          schema: {
+    })
+
+    it("rejects closed multiple pattern properties", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
             type: "object",
             patternProperties: {
               "a*": { type: "string" },
               "b*": { type: "number" }
             },
             additionalProperties: false
-          }
-        },
-        {
-          "representation": {
-            "_tag": "Objects",
-            "checks": [],
-            "propertySignatures": [],
-            "indexSignatures": [
-              {
-                "parameter": {
-                  "_tag": "String",
-                  "checks": [
-                    {
-                      "_tag": "Filter",
-                      "representation": {
-                        "id": "effect/schema/isPattern",
-                        "payload": {
-                          "source": "a*",
-                          "flags": ""
-                        }
-                      },
-                      "annotations": {
-                        "expected": "a string matching the RegExp a*",
-                        "arbitrary": {
-                          "constraint": {
-                            "patterns": [
-                              "a*"
-                            ]
-                          }
-                        }
-                      },
-                      "aborted": false
-                    }
-                  ]
-                },
-                "type": {
-                  "_tag": "String",
-                  "checks": []
-                }
-              },
-              {
-                "parameter": {
-                  "_tag": "String",
-                  "checks": [
-                    {
-                      "_tag": "Filter",
-                      "representation": {
-                        "id": "effect/schema/isPattern",
-                        "payload": {
-                          "source": "b*",
-                          "flags": ""
-                        }
-                      },
-                      "annotations": {
-                        "expected": "a string matching the RegExp b*",
-                        "arbitrary": {
-                          "constraint": {
-                            "patterns": [
-                              "b*"
-                            ]
-                          }
-                        }
-                      },
-                      "aborted": false
-                    }
-                  ]
-                },
-                "type": {
-                  "_tag": "Number",
-                  "checks": [
-                    {
-                      "_tag": "Filter",
-                      "representation": {
-                        "id": "effect/schema/isFinite",
-                        "payload": null
-                      },
-                      "annotations": {
-                        "expected": "a finite number",
-                        "arbitrary": {
-                          "constraint": {
-                            "noInfinity": true,
-                            "noNaN": true
-                          }
-                        }
-                      },
-                      "aborted": false
-                    }
-                  ]
-                }
-              }
-            ]
-          },
-          "references": {}
-        }
+          })),
+        `Unsupported object keyword scopes\n  at ["schema"]`
       )
     })
 
@@ -2447,7 +2460,7 @@ describe("fromJsonSchemaDocument", () => {
     })
   })
 
-  it("type: array of strings", () => {
+  it("array of types", () => {
     assertFromJsonSchema(
       {
         schema: { type: ["string", "null"] }
@@ -2502,7 +2515,7 @@ describe("fromJsonSchemaDocument", () => {
     )
   })
 
-  it("imports true schemas and structured enum members", () => {
+  it("ignores true schemas in allOf", () => {
     assertFromJsonSchema(
       { schema: { allOf: [true, { type: "string" }] } },
       {
@@ -2513,42 +2526,18 @@ describe("fromJsonSchemaDocument", () => {
         "references": {}
       }
     )
-    assertFromJsonSchema(
-      { schema: { enum: [[], {}] } },
-      {
-        "representation": {
-          "_tag": "Union",
-          "checks": [],
-          "types": [
-            {
-              "_tag": "Declaration",
-              "representation": {
-                "id": "effect/schema/Json",
-                "payload": null
-              },
-              "annotations": {
-                "expected": "JSON value"
-              },
-              "typeParameters": [],
-              "checks": []
-            },
-            {
-              "_tag": "Declaration",
-              "representation": {
-                "id": "effect/schema/Json",
-                "payload": null
-              },
-              "annotations": {
-                "expected": "JSON value"
-              },
-              "typeParameters": [],
-              "checks": []
-            }
-          ],
-          "mode": "anyOf"
-        },
-        "references": {}
-      }
+  })
+
+  it("rejects structured enum members", () => {
+    for (const value of [[], {}, { not: "data" }]) {
+      throws(
+        () => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ enum: ["a", value] })),
+        `Unsupported structured JSON Schema value for "enum"\n  at ["schema"]["enum"][1]`
+      )
+    }
+    throws(
+      () => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ const: "a", enum: [{}] })),
+      `Unsupported structured JSON Schema value for "enum"\n  at ["schema"]["enum"][0]`
     )
   })
 
@@ -2580,25 +2569,91 @@ describe("fromJsonSchemaDocument", () => {
   })
 
   describe("$ref", () => {
-    it("treats a reference with an empty token as unconstrained", () => {
-      assertFromJsonSchema(
-        { schema: { $ref: "" } },
-        {
-          "representation": {
-            "_tag": "Declaration",
-            "representation": {
-              "id": "effect/schema/Json",
-              "payload": null
-            },
-            "annotations": {
-              "expected": "JSON value"
-            },
-            "typeParameters": [],
-            "checks": []
-          },
-          "references": {}
-        }
+    it("rejects a reference below a definition instead of resolving its final token", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(
+            JsonSchema.fromSchemaDraft07({
+              definitions: {
+                inner: { type: "number" },
+                outer: {
+                  type: "object",
+                  properties: {
+                    inner: { type: "string" }
+                  }
+                }
+              },
+              type: "object",
+              properties: {
+                copy: { $ref: "#/definitions/outer/properties/inner" }
+              }
+            })
+          ),
+        `Unsupported reference "#/$defs/outer/properties/inner"\n  at ["schema"]["properties"]["copy"]["$ref"]`
       )
+    })
+
+    it("rejects an empty reference", () => {
+      throws(
+        () => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ $ref: "" })),
+        `Unsupported reference ""\n  at ["schema"]["$ref"]`
+      )
+    })
+
+    it("rejects an external reference instead of aliasing a local definition", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+            $ref: "https://example.com/schema#/$defs/A",
+            $defs: {
+              A: { type: "string" }
+            }
+          })),
+        `Unsupported reference "https://example.com/schema#/$defs/A"\n  at ["schema"]["$ref"]`
+      )
+    })
+
+    it("reports the full reference when a direct definition is missing", () => {
+      throws(
+        () => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ $ref: "#/$defs/Missing" })),
+        `Invalid reference "#/$defs/Missing"\n  at ["schema"]["$ref"]`
+      )
+    })
+
+    it("unescapes a direct definition reference", () => {
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        $ref: "#/$defs/A~1B~0C",
+        $defs: {
+          "A/B~C": { type: "string" }
+        }
+      }))
+      const is = Schema.is(schema)
+      assertTrue(is("a"))
+      assertFalse(is(1))
+    })
+
+    it("decodes a direct definition reference", () => {
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        $ref: "#/$defs/A%20B",
+        $defs: {
+          "A B": { type: "string" }
+        }
+      }))
+      const is = Schema.is(schema)
+      assertTrue(is("a"))
+      assertFalse(is(1))
+    })
+
+    it("resolves a direct reference to an empty definition key", () => {
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        $ref: "#/$defs/",
+        $defs: {
+          "": { type: "string" }
+        }
+      }))
+      const is = Schema.is(schema)
+      assertTrue(is("a"))
+      assertFalse(is(1))
     })
 
     it("should create a Reference and a definition", () => {
@@ -2918,71 +2973,233 @@ describe("fromJsonSchemaDocument", () => {
   })
 
   describe("allOf", () => {
-    it("resolves references on either side of an intersection", () => {
-      const definition: JsonSchema.JsonSchema = { type: "string", minLength: 1 }
-      for (
-        const schema of [
-          {
-            $ref: "#/$defs/A",
-            allOf: [{ type: "string", maxLength: 2 }],
-            $defs: { A: definition }
-          },
-          {
-            allOf: [{ $ref: "#/$defs/A" }, { type: "string", maxLength: 2 }],
-            $defs: { A: definition }
-          }
-        ]
-      ) {
-        assertFromJsonSchema({ schema }, {
-          "representation": {
-            "_tag": "String",
-            "checks": [
-              {
-                "_tag": "Filter",
-                "representation": {
-                  "id": "effect/schema/isMinLength",
-                  "payload": {
-                    "minLength": 1
-                  }
-                },
-                "annotations": {
-                  "expected": "a value with a length of at least 1",
-                  "~structural": true,
-                  "arbitrary": {
-                    "constraint": {
-                      "minLength": 1
-                    }
-                  }
-                },
-                "aborted": false
-              },
-              {
-                "_tag": "Filter",
-                "representation": {
-                  "id": "effect/schema/isMaxLength",
-                  "payload": {
-                    "maxLength": 2
-                  }
-                },
-                "annotations": {
-                  "expected": "a value with a length of at most 2",
-                  "~structural": true,
-                  "arbitrary": {
-                    "constraint": {
-                      "maxLength": 2
-                    }
-                  }
-                },
-                "aborted": false
-              }
-            ]
-          },
-          "references": {}
+    it("prunes disjoint lanes before intersecting unions", () => {
+      const representation = fromJsonSchemaRepresentation(
+        JsonSchema.fromSchemaDraft2020_12({
+          allOf: [
+            { anyOf: [{ type: "string" }, { type: "number" }] },
+            { anyOf: [{ type: "number" }, { type: "boolean" }] }
+          ]
         })
-      }
+      ).representation
+      strictEqual(representation._tag, "Number")
     })
 
-    it("preserves annotations on array and object intersections", () => {
+    it("rejects intersections requiring a Cartesian product", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(
+            JsonSchema.fromSchemaDraft2020_12({
+              allOf: [
+                {
+                  anyOf: [
+                    { type: "string", minLength: 2, maxLength: 3 },
+                    { type: "string", minLength: 5, maxLength: 6 }
+                  ]
+                },
+                {
+                  anyOf: [
+                    { type: "string", pattern: "^a" },
+                    { type: "string", pattern: "z$" }
+                  ]
+                }
+              ]
+            })
+          ),
+        `Unsupported intersection of overlapping unions\n  at ["schema"]["allOf"][1]`
+      )
+    })
+
+    it("rejects distributions that duplicate a nested choice", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(
+            JsonSchema.fromSchemaDraft2020_12({
+              allOf: [
+                {
+                  anyOf: [
+                    { type: "object", properties: { tag: { const: "a" } } },
+                    { type: "object", properties: { tag: { const: "b" } } }
+                  ]
+                },
+                {
+                  type: "object",
+                  properties: {
+                    value: { anyOf: [{ type: "string" }, { type: "number" }] }
+                  }
+                }
+              ]
+            })
+          ),
+        `Unsupported intersection of overlapping unions\n  at ["schema"]["allOf"][1]`
+      )
+    })
+
+    it("distributes across a nested reference without choices", () => {
+      const schema = toSchemaFromJsonSchemaDocument(
+        JsonSchema.fromSchemaDraft2020_12({
+          allOf: [
+            {
+              anyOf: [
+                { type: "object", required: ["a"] },
+                { type: "object", required: ["b"] }
+              ]
+            },
+            {
+              type: "object",
+              properties: {
+                value: { $ref: "#/$defs/Value" }
+              },
+              required: ["value"]
+            }
+          ],
+          $defs: {
+            Value: { type: "string" }
+          }
+        })
+      )
+      const is = Schema.is(schema)
+      assertTrue(is({ a: true, value: "a" }))
+      assertTrue(is({ b: true, value: "b" }))
+      assertFalse(is({ a: true, value: 1 }))
+      assertFalse(is({ value: "a" }))
+    })
+
+    it("reports unsupported keywords after a false schema", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(
+            JsonSchema.fromSchemaDraft2020_12({
+              allOf: [false, { contains: {} }]
+            })
+          ),
+        `Unsupported JSON Schema keyword "contains"\n  at ["schema"]["allOf"][1]["contains"]`
+      )
+    })
+
+    it("intersects one constraint with many alternatives linearly", () => {
+      const representation = fromJsonSchemaRepresentation(
+        JsonSchema.fromSchemaDraft2020_12({
+          pattern: "^value-",
+          anyOf: Array.from({ length: 16 }, (_, index) => ({ const: `value-${index}` }))
+        })
+      ).representation
+      assertTrue(representation._tag === "Union")
+      strictEqual(representation.types.length, 16)
+    })
+
+    it("resolves a root reference before intersecting allOf", () => {
+      const definition: JsonSchema.JsonSchema = { type: "string", minLength: 1 }
+      assertFromJsonSchema({
+        schema: {
+          $ref: "#/$defs/A",
+          allOf: [{ type: "string", maxLength: 2 }],
+          $defs: { A: definition }
+        }
+      }, {
+        "representation": {
+          "_tag": "String",
+          "checks": [
+            {
+              "_tag": "Filter",
+              "representation": {
+                "id": "effect/schema/isMinLength",
+                "payload": {
+                  "minLength": 1
+                }
+              },
+              "annotations": {
+                "expected": "a value with a length of at least 1",
+                "~structural": true,
+                "arbitrary": {
+                  "constraint": {
+                    "minLength": 1
+                  }
+                }
+              },
+              "aborted": false
+            },
+            {
+              "_tag": "Filter",
+              "representation": {
+                "id": "effect/schema/isMaxLength",
+                "payload": {
+                  "maxLength": 2
+                }
+              },
+              "annotations": {
+                "expected": "a value with a length of at most 2",
+                "~structural": true,
+                "arbitrary": {
+                  "constraint": {
+                    "maxLength": 2
+                  }
+                }
+              },
+              "aborted": false
+            }
+          ]
+        },
+        "references": {}
+      })
+    })
+
+    it("resolves a reference declared inside allOf", () => {
+      const definition: JsonSchema.JsonSchema = { type: "string", minLength: 1 }
+      assertFromJsonSchema({
+        schema: {
+          allOf: [{ $ref: "#/$defs/A" }, { type: "string", maxLength: 2 }],
+          $defs: { A: definition }
+        }
+      }, {
+        "representation": {
+          "_tag": "String",
+          "checks": [
+            {
+              "_tag": "Filter",
+              "representation": {
+                "id": "effect/schema/isMinLength",
+                "payload": {
+                  "minLength": 1
+                }
+              },
+              "annotations": {
+                "expected": "a value with a length of at least 1",
+                "~structural": true,
+                "arbitrary": {
+                  "constraint": {
+                    "minLength": 1
+                  }
+                }
+              },
+              "aborted": false
+            },
+            {
+              "_tag": "Filter",
+              "representation": {
+                "id": "effect/schema/isMaxLength",
+                "payload": {
+                  "maxLength": 2
+                }
+              },
+              "annotations": {
+                "expected": "a value with a length of at most 2",
+                "~structural": true,
+                "arbitrary": {
+                  "constraint": {
+                    "maxLength": 2
+                  }
+                }
+              },
+              "aborted": false
+            }
+          ]
+        },
+        "references": {}
+      })
+    })
+
+    it("preserves annotations on array intersections", () => {
       assertFromJsonSchema(
         {
           schema: {
@@ -3016,6 +3233,9 @@ describe("fromJsonSchemaDocument", () => {
           "references": {}
         }
       )
+    })
+
+    it("preserves annotations on object intersections", () => {
       assertFromJsonSchema(
         {
           schema: {
@@ -3032,7 +3252,18 @@ describe("fromJsonSchemaDocument", () => {
             },
             "checks": [],
             "propertySignatures": [],
-            "indexSignatures": []
+            "indexSignatures": [
+              {
+                "parameter": {
+                  "_tag": "String",
+                  "checks": []
+                },
+                "type": {
+                  "_tag": "Never",
+                  "checks": []
+                }
+              }
+            ]
           },
           "references": {}
         }
@@ -3134,35 +3365,38 @@ describe("fromJsonSchemaDocument", () => {
         )
       })
 
-      it("filters enum members", () => {
-        for (
-          const [schema, member] of [
-            [{ type: "string", minLength: 2 }, { enum: ["a", "ab"] }],
-            [{ enum: ["a", "ab"] }, { type: "string", minLength: 2 }]
-          ]
-        ) {
-          assertFromJsonSchema(
-            { schema: { ...schema, allOf: [member] } },
-            {
-              "representation": {
-                "_tag": "Union",
-                "checks": [],
-                "types": [
-                  {
-                    "_tag": "Literal",
-                    "checks": [],
-                    "literal": {
-                      "type": "string",
-                      "value": "ab"
-                    }
-                  }
-                ],
-                "mode": "anyOf"
-              },
-              "references": {}
-            }
-          )
-        }
+      it("filters enum members when the refinement precedes the enum", () => {
+        assertFromJsonSchema(
+          { schema: { type: "string", minLength: 2, allOf: [{ enum: ["a", "ab"] }] } },
+          {
+            "representation": {
+              "_tag": "Literal",
+              "checks": [],
+              "literal": {
+                "type": "string",
+                "value": "ab"
+              }
+            },
+            "references": {}
+          }
+        )
+      })
+
+      it("filters enum members when the enum precedes the refinement", () => {
+        assertFromJsonSchema(
+          { schema: { enum: ["a", "ab"], allOf: [{ type: "string", minLength: 2 }] } },
+          {
+            "representation": {
+              "_tag": "Literal",
+              "checks": [],
+              "literal": {
+                "type": "string",
+                "value": "ab"
+              }
+            },
+            "references": {}
+          }
+        )
       })
     })
 
@@ -3823,7 +4057,7 @@ describe("fromJsonSchemaDocument", () => {
         )
       })
 
-      it("& string enum", () => {
+      it("intersects with a single-member string enum", () => {
         assertFromJsonSchema(
           {
             schema: {
@@ -3870,6 +4104,9 @@ describe("fromJsonSchemaDocument", () => {
             "references": {}
           }
         )
+      })
+
+      it("intersects with a multi-member string enum", () => {
         assertFromJsonSchema(
           {
             schema: {
@@ -3920,19 +4157,12 @@ describe("fromJsonSchemaDocument", () => {
           },
           {
             "representation": {
-              "_tag": "Union",
+              "_tag": "Literal",
               "checks": [],
-              "types": [
-                {
-                  "_tag": "Literal",
-                  "checks": [],
-                  "literal": {
-                    "type": "string",
-                    "value": "a"
-                  }
-                }
-              ],
-              "mode": "anyOf"
+              "literal": {
+                "type": "string",
+                "value": "a"
+              }
             },
             "references": {}
           }
@@ -4331,7 +4561,7 @@ describe("fromJsonSchemaDocument", () => {
         )
       })
 
-      it("& number enum", () => {
+      it("intersects with a single-member number enum", () => {
         assertFromJsonSchema(
           {
             schema: {
@@ -4378,6 +4608,9 @@ describe("fromJsonSchemaDocument", () => {
             "references": {}
           }
         )
+      })
+
+      it("intersects with a multi-member number enum", () => {
         assertFromJsonSchema(
           {
             schema: {
@@ -4454,7 +4687,7 @@ describe("fromJsonSchemaDocument", () => {
         )
       })
 
-      it("& boolean enum", () => {
+      it("intersects with a single-member boolean enum", () => {
         assertFromJsonSchema(
           {
             schema: {
@@ -4876,25 +5109,72 @@ describe("fromJsonSchemaDocument", () => {
       })
     })
 
-    it("short-circuits Never and handles primitive intersections", () => {
-      for (
-        const schema of [
-          { allOf: [false, { type: "string" }] },
-          { allOf: [{ type: "array" }, { type: "string" }] },
-          { allOf: [{ type: "object" }, { type: "string" }] },
-          { allOf: [{ type: "null" }, { type: "string" }] },
-          { allOf: [{ const: 1 }, { const: 2 }] }
-        ]
-      ) {
-        assertFromJsonSchema({ schema }, {
+    it("short-circuits false intersections to Never", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [false, { type: "string" }] } },
+        {
           "representation": {
             "_tag": "Never",
             "checks": []
           },
           "references": {}
-        })
-      }
+        }
+      )
+    })
 
+    it("returns Never when intersecting array and string", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [{ type: "array" }, { type: "string" }] } },
+        {
+          "representation": {
+            "_tag": "Never",
+            "checks": []
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("returns Never when intersecting object and string", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [{ type: "object" }, { type: "string" }] } },
+        {
+          "representation": {
+            "_tag": "Never",
+            "checks": []
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("returns Never when intersecting null and string", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [{ type: "null" }, { type: "string" }] } },
+        {
+          "representation": {
+            "_tag": "Never",
+            "checks": []
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("returns Never when intersecting distinct literals", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [{ const: 1 }, { const: 2 }] } },
+        {
+          "representation": {
+            "_tag": "Never",
+            "checks": []
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("preserves null when intersecting null types", () => {
       assertFromJsonSchema(
         { schema: { allOf: [{ type: "null" }, { type: "null" }] } },
         {
@@ -4905,6 +5185,9 @@ describe("fromJsonSchemaDocument", () => {
           "references": {}
         }
       )
+    })
+
+    it("preserves a literal when intersecting identical literals", () => {
       assertFromJsonSchema(
         { schema: { allOf: [{ const: 1 }, { const: 1 }] } },
         {
@@ -4919,30 +5202,43 @@ describe("fromJsonSchemaDocument", () => {
           "references": {}
         }
       )
-      for (
-        const allOf of [
-          [{ type: "boolean" }, { const: true }],
-          [{ const: true }, { type: "boolean" }]
-        ]
-      ) {
-        assertFromJsonSchema(
-          { schema: { allOf } },
-          {
-            "representation": {
-              "_tag": "Literal",
-              "checks": [],
-              "literal": {
-                "type": "boolean",
-                "value": true
-              }
-            },
-            "references": {}
-          }
-        )
-      }
     })
 
-    it("combines references and annotated stable wrappers on either side", () => {
+    it("preserves a matching literal after a boolean type", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [{ type: "boolean" }, { const: true }] } },
+        {
+          "representation": {
+            "_tag": "Literal",
+            "checks": [],
+            "literal": {
+              "type": "boolean",
+              "value": true
+            }
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("preserves a matching literal before a boolean type", () => {
+      assertFromJsonSchema(
+        { schema: { allOf: [{ const: true }, { type: "boolean" }] } },
+        {
+          "representation": {
+            "_tag": "Literal",
+            "checks": [],
+            "literal": {
+              "type": "boolean",
+              "value": true
+            }
+          },
+          "references": {}
+        }
+      )
+    })
+
+    it("combines a string with a reference", () => {
       const definition: JsonSchema.JsonSchema = { type: "string", minLength: 1 }
       assertFromJsonSchema(
         {
@@ -4980,29 +5276,40 @@ describe("fromJsonSchemaDocument", () => {
           "references": {}
         }
       )
+    })
 
-      for (
-        const schema of [
-          {
-            type: "string",
-            allOf: [{ $ref: "#/$defs/A", description: "annotated" }],
-            $defs: { A: definition }
-          },
-          {
-            $ref: "#/$defs/A",
-            description: "annotated",
-            allOf: [{ type: "string" }],
-            $defs: { A: definition }
-          }
-        ]
-      ) {
-        const document = fromJsonSchemaRepresentation(JsonSchema.fromSchemaDraft2020_12(schema))
-        strictEqual(document.representation._tag, "String")
-        if (document.representation._tag === "String") {
-          strictEqual(document.representation.annotations?.description, "annotated")
-        }
+    it("preserves annotations on a reference inside allOf", () => {
+      const definition: JsonSchema.JsonSchema = { type: "string", minLength: 1 }
+      const document = fromJsonSchemaRepresentation(
+        JsonSchema.fromSchemaDraft2020_12({
+          type: "string",
+          allOf: [{ $ref: "#/$defs/A", description: "annotated" }],
+          $defs: { A: definition }
+        })
+      )
+      strictEqual(document.representation._tag, "String")
+      if (document.representation._tag === "String") {
+        strictEqual(document.representation.annotations?.description, "annotated")
       }
+    })
 
+    it("preserves annotations on a root reference intersected with allOf", () => {
+      const definition: JsonSchema.JsonSchema = { type: "string", minLength: 1 }
+      const document = fromJsonSchemaRepresentation(
+        JsonSchema.fromSchemaDraft2020_12({
+          $ref: "#/$defs/A",
+          description: "annotated",
+          allOf: [{ type: "string" }],
+          $defs: { A: definition }
+        })
+      )
+      strictEqual(document.representation._tag, "String")
+      if (document.representation._tag === "String") {
+        strictEqual(document.representation.annotations?.description, "annotated")
+      }
+    })
+
+    it("preserves annotations through reference aliases", () => {
       const aliases = fromJsonSchemaRepresentation(
         JsonSchema.fromSchemaDraft2020_12({
           type: "string",
@@ -5019,7 +5326,7 @@ describe("fromJsonSchemaDocument", () => {
       }
     })
 
-    it("merges string annotations, overlapping properties and index signatures", () => {
+    it("merges annotations on string intersections", () => {
       const string = fromJsonSchemaRepresentation(
         JsonSchema.fromSchemaDraft2020_12({
           allOf: [
@@ -5035,7 +5342,9 @@ describe("fromJsonSchemaDocument", () => {
           contentSchema: { type: "number" }
         })
       }
+    })
 
+    it("merges constraints on overlapping required properties", () => {
       const object = toSchemaFromJsonSchemaDocument(
         JsonSchema.fromSchemaDraft2020_12({
           type: "object",
@@ -5053,7 +5362,9 @@ describe("fromJsonSchemaDocument", () => {
       const isObject = Schema.is(object)
       assertTrue(isObject({ a: "ab" }))
       assertFalse(isObject({ a: "a" }))
+    })
 
+    it("preserves optional properties when intersecting object fields", () => {
       const optionalObject = fromJsonSchemaRepresentation(
         JsonSchema.fromSchemaDraft2020_12({
           type: "object",
@@ -5070,26 +5381,128 @@ describe("fromJsonSchemaDocument", () => {
       if (optionalObject.representation._tag === "Objects") {
         strictEqual(optionalObject.representation.propertySignatures[0].isOptional, true)
       }
+    })
 
-      const indexes = fromJsonSchemaRepresentation(
-        JsonSchema.fromSchemaDraft2020_12({
-          type: "object",
-          additionalProperties: false,
-          patternProperties: { "^a": { type: "string" } },
-          allOf: [
-            { type: "object", additionalProperties: true },
-            {
-              type: "object",
-              additionalProperties: false,
-              patternProperties: { "^b": { type: "number" } }
-            }
-          ]
-        })
-      )
-      strictEqual(indexes.representation._tag, "Objects")
-      if (indexes.representation._tag === "Objects") {
-        strictEqual(indexes.representation.indexSignatures.length, 3)
+    it("keeps additionalProperties scopes separate", () => {
+      for (
+        const schema of [
+          {
+            type: "object",
+            additionalProperties: false,
+            allOf: [{ properties: { a: { type: "string" } } }]
+          },
+          {
+            type: "object",
+            properties: { a: { type: "string" } },
+            allOf: [{ additionalProperties: false }]
+          }
+        ]
+      ) {
+        const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12(schema)))
+        assertTrue(is({}))
+        assertFalse(is({ a: "a" }))
       }
+    })
+
+    it("does not move sibling properties into a closed scope", () => {
+      const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        properties: { a: { type: "string" } },
+        additionalProperties: false,
+        allOf: [{ properties: { b: { type: "number" } } }]
+      })))
+      assertTrue(is({ a: "a" }))
+      assertFalse(is({ b: 1 }))
+      assertFalse(is({ a: "a", b: 1 }))
+    })
+
+    it("rejects an object when a required sibling property is outside a closed scope", () => {
+      const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        additionalProperties: false,
+        allOf: [{ properties: { a: { type: "string" } }, required: ["a"] }]
+      })))
+      assertFalse(is({}))
+      assertFalse(is({ a: "a" }))
+    })
+
+    it("keeps object keyword scopes through references", () => {
+      const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        $ref: "#/$defs/Closed",
+        allOf: [{ properties: { a: { type: "string" } } }],
+        $defs: {
+          Closed: { type: "object", additionalProperties: false }
+        }
+      })))
+      assertTrue(is({}))
+      assertFalse(is({ a: "a" }))
+    })
+
+    it("applies a sibling additionalProperties schema to fixed properties", () => {
+      const schema = toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        properties: { a: { type: "string" } },
+        allOf: [{ additionalProperties: { type: "boolean" } }]
+      }))
+      const is = Schema.is(schema)
+      assertTrue(is({ b: true }))
+      assertFalse(is({ a: "a" }))
+      assertFalse(is({ b: "b" }))
+      deepStrictEqual(Schema.toJsonSchemaDocument(schema).schema, {
+        type: "object",
+        properties: { a: { not: {} } },
+        allOf: [{ type: "object", additionalProperties: { type: "boolean" } }]
+      })
+    })
+
+    it("lowers open patterns over a finite object domain", () => {
+      const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        properties: { a: { type: "string" } },
+        additionalProperties: false,
+        allOf: [{ patternProperties: { "^a$": { minLength: 2 } } }]
+      })))
+      assertTrue(is({ a: "aa" }))
+      assertFalse(is({ a: "a" }))
+    })
+
+    it("preserves open pattern scopes", () => {
+      const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        patternProperties: { "^a": { type: "string" } }
+      })))
+      assertTrue(is({ a: "a", b: 1 }))
+      assertFalse(is({ a: 1 }))
+    })
+
+    it("applies open patterns to fixed properties", () => {
+      const is = Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+        type: "object",
+        properties: { a: { type: "string" } },
+        patternProperties: { "^a$": { minLength: 2 } }
+      })))
+      assertTrue(is({ a: "aa" }))
+      assertFalse(is({ a: "a" }))
+    })
+
+    it("rejects object scopes that require pattern complements", () => {
+      throws(
+        () =>
+          fromJsonSchemaRepresentation(JsonSchema.fromSchemaDraft2020_12({
+            type: "object",
+            additionalProperties: false,
+            patternProperties: { "^a": { type: "string" } },
+            allOf: [
+              { type: "object", additionalProperties: true },
+              {
+                type: "object",
+                additionalProperties: false,
+                patternProperties: { "^b": { type: "number" } }
+              }
+            ]
+          })),
+        `Unsupported object keyword scopes\n  at ["schema"]`
+      )
     })
 
     describe("type: object", () => {
@@ -5115,7 +5528,7 @@ describe("fromJsonSchemaDocument", () => {
                     "value": "a"
                   },
                   "type": {
-                    "_tag": "String",
+                    "_tag": "Never",
                     "checks": []
                   },
                   "isOptional": true,
@@ -5164,7 +5577,159 @@ describe("fromJsonSchemaDocument", () => {
     })
   })
 
+  describe("unsupported validation keywords", () => {
+    it("not", () => {
+      throws(
+        () =>
+          toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft07({
+            type: "object",
+            properties: {
+              value: { not: { type: "string" } }
+            }
+          })),
+        `Unsupported JSON Schema keyword "not"\n  at ["schema"]["properties"]["value"]["not"]`
+      )
+    })
+
+    for (
+      const [keyword, value] of [
+        ["$dynamicRef", "#node"],
+        ["contains", { type: "string" }],
+        ["dependentRequired", { a: ["b"] }],
+        ["dependentSchemas", { a: { required: ["b"] } }],
+        ["unevaluatedItems", false],
+        ["unevaluatedProperties", false]
+      ] as const
+    ) {
+      it(keyword, () => {
+        throws(
+          () => toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ [keyword]: value })),
+          `Unsupported JSON Schema keyword "${keyword}"\n  at ["schema"][${JSON.stringify(keyword)}]`
+        )
+      })
+    }
+
+    for (const branch of ["then", "else"] as const) {
+      it(`if/${branch}`, () => {
+        throws(
+          () =>
+            toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({
+              if: { type: "string" },
+              [branch]: false
+            })),
+          `Unsupported JSON Schema keyword "if"\n  at ["schema"]["if"]`
+        )
+      })
+    }
+
+    it("ignores inactive conditional and contains cardinality keywords", () => {
+      for (
+        const [keyword, value] of [
+          ["if", false],
+          ["then", false],
+          ["else", false],
+          ["minContains", 1],
+          ["maxContains", 2]
+        ] as const
+      ) {
+        const document = JsonSchema.fromSchemaDraft2020_12({ [keyword]: value })
+        assertTrue(Schema.is(toSchemaFromJsonSchemaDocument(document))({}))
+      }
+    })
+
+    it("ignores custom keywords", () => {
+      assertTrue(Schema.is(toSchemaFromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12({ custom: false })))({}))
+    })
+  })
+
   describe("options", () => {
+    describe("patterns", () => {
+      it("rejects patterns by default", () => {
+        for (
+          const [schema, path] of [
+            [{ type: "string", pattern: "^a+$" }, `["schema"]["pattern"]`],
+            [
+              { type: "object", patternProperties: { "^a+$": { type: "string" } } },
+              `["schema"]["patternProperties"]["^a+$"]`
+            ],
+            [
+              { type: "object", propertyNames: { pattern: "^a+$" } },
+              `["schema"]["propertyNames"]["pattern"]`
+            ]
+          ] as const
+        ) {
+          throws(
+            () => SchemaRepresentation.fromJsonSchemaDocument(JsonSchema.fromSchemaDraft2020_12(schema)),
+            `Pattern encountered while patterns is set to "error"\n  at ${path}`
+          )
+        }
+      })
+
+      it("applies patterns explicitly", () => {
+        const schema = SchemaRepresentation.fromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({ type: "string", pattern: "^a+$" }),
+          { patterns: "apply" }
+        )
+        const is = Schema.is(schema)
+        assertTrue(is("aaa"))
+        assertFalse(is("bbb"))
+      })
+
+      it("ignores patterns explicitly", () => {
+        const schema = SchemaRepresentation.fromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({ type: "string", pattern: "^a+$" }),
+          { patterns: "ignore" }
+        )
+        const is = Schema.is(schema)
+        assertTrue(is("aaa"))
+        assertTrue(is("bbb"))
+        deepStrictEqual(SchemaRepresentation.toRepresentation(schema.ast).representation, {
+          _tag: "String",
+          checks: []
+        })
+
+        const invalidPattern = SchemaRepresentation.fromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({ type: "string", pattern: "[" }),
+          { patterns: "ignore" }
+        )
+        assertTrue(Schema.is(invalidPattern)("anything"))
+      })
+
+      it("ignores pattern property value constraints explicitly", () => {
+        const schema = SchemaRepresentation.fromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({
+            type: "object",
+            patternProperties: {
+              "^a+$": { type: "string" },
+              "^b+$": { type: "number" }
+            },
+            additionalProperties: false
+          }),
+          { patterns: "ignore" }
+        )
+        const is = Schema.is(schema)
+        assertTrue(is({ aaa: 1, bbb: "b", ccc: true }))
+        const representation = SchemaRepresentation.toRepresentation(schema.ast).representation
+        strictEqual(representation._tag, "Objects")
+        if (representation._tag === "Objects") {
+          deepStrictEqual(representation.indexSignatures.map(({ parameter }) => parameter), [{
+            _tag: "String",
+            checks: []
+          }])
+        }
+
+        const withAdditionalProperties = SchemaRepresentation.fromJsonSchemaDocument(
+          JsonSchema.fromSchemaDraft2020_12({
+            type: "object",
+            patternProperties: { "^a+$": { type: "string" } },
+            additionalProperties: { type: "boolean" }
+          }),
+          { patterns: "ignore" }
+        )
+        assertTrue(Schema.is(withAdditionalProperties)({ bbb: 1 }))
+      })
+    })
+
     describe("onEnter", () => {
       it("additionalProperties false via onEnter", () => {
         assertFromJsonSchema(

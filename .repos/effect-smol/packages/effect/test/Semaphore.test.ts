@@ -332,6 +332,156 @@ describe("Semaphore", () => {
       assert.isTrue(acquired)
     }))
 
+  it.effect("withPermits interrupted at any operation does not leak permits", () =>
+    Effect.gen(function*() {
+      let operations = 0
+      const counted = new Scheduler.MixedScheduler()
+      const baseline = yield* (yield* Semaphore.make(1)).withPermits(1)(Effect.void).pipe(
+        Effect.provideService(Scheduler.Scheduler, {
+          executionMode: counted.executionMode,
+          makeDispatcher: () => counted.makeDispatcher(),
+          shouldYield: (fiber) => {
+            operations++
+            return counted.shouldYield(fiber)
+          }
+        }),
+        Effect.forkChild
+      )
+      yield* Fiber.await(baseline)
+
+      const recovered: Array<boolean> = []
+      let ranUnderPermits = false
+
+      for (let at = 1; at <= operations; at++) {
+        const sem = yield* Semaphore.make(1)
+        const base = new Scheduler.MixedScheduler()
+        let seen = 0
+        const scheduler: Scheduler.Scheduler = {
+          executionMode: base.executionMode,
+          makeDispatcher: () => base.makeDispatcher(),
+          shouldYield: (fiber) => {
+            if (++seen === at) fiber.interruptUnsafe()
+            return base.shouldYield(fiber)
+          }
+        }
+
+        const holder = yield* sem.withPermits(1)(
+          Effect.sync(() => {
+            ranUnderPermits = true
+          })
+        ).pipe(
+          Effect.provideService(Scheduler.Scheduler, scheduler),
+          Effect.forkChild
+        )
+        yield* Fiber.await(holder)
+
+        const result = yield* sem.withPermitsIfAvailable(1)(Effect.void)
+        recovered.push(Option.isSome(result))
+      }
+
+      assert.deepStrictEqual(recovered, Array.from({ length: operations }, () => true))
+      assert.isTrue(ranUnderPermits)
+    }))
+
+  it.effect("queued withPermits interrupted at any operation does not leak permits", () =>
+    Effect.gen(function*() {
+      const queuedScheduler = (
+        tasks: Array<() => void>,
+        onOperation: (fiber: Fiber.Fiber<unknown, unknown>) => void
+      ) => {
+        const scheduler: Scheduler.Scheduler = {
+          executionMode: "async",
+          makeDispatcher: () => ({
+            scheduleTask(task) {
+              tasks.push(task)
+            },
+            flush() {}
+          }),
+          shouldYield: (fiber) => {
+            onOperation(fiber)
+            return false
+          }
+        }
+        return scheduler
+      }
+
+      let operations = 0
+      const baselineSem = yield* Semaphore.make(1)
+      const baselineTasks: Array<() => void> = []
+      const baselineHolder = yield* Effect.forkChild(baselineSem.withPermits(1)(Effect.never))
+      yield* Effect.yieldNow
+      yield* Effect.forkChild(
+        baselineSem.withPermits(1)(Effect.void).pipe(
+          Effect.provideService(Scheduler.Scheduler, queuedScheduler(baselineTasks, () => operations++))
+        ),
+        { startImmediately: true }
+      )
+      yield* Fiber.interrupt(baselineHolder)
+      yield* Effect.yieldNow
+      while (baselineTasks.length > 0) baselineTasks.shift()!()
+
+      const recovered: Array<boolean> = []
+      let ranUnderPermits = false
+
+      for (let at = 1; at <= operations; at++) {
+        const sem = yield* Semaphore.make(1)
+        const tasks: Array<() => void> = []
+        let seen = 0
+        const scheduler = queuedScheduler(tasks, (fiber) => {
+          if (++seen === at) fiber.interruptUnsafe()
+        })
+
+        const holder = yield* Effect.forkChild(sem.withPermits(1)(Effect.never))
+        yield* Effect.yieldNow
+
+        yield* Effect.forkChild(
+          sem.withPermits(1)(
+            Effect.sync(() => {
+              ranUnderPermits = true
+            })
+          ).pipe(Effect.provideService(Scheduler.Scheduler, scheduler)),
+          { startImmediately: true }
+        )
+
+        yield* Fiber.interrupt(holder)
+        yield* Effect.yieldNow
+        while (tasks.length > 0) tasks.shift()!()
+
+        const result = yield* sem.withPermitsIfAvailable(1)(Effect.void)
+        recovered.push(Option.isSome(result))
+      }
+
+      assert.deepStrictEqual(recovered, Array.from({ length: operations }, () => true))
+      assert.isTrue(ranUnderPermits)
+    }))
+
+  it.effect("takeIfAvailable acquires permits when they are available", () =>
+    Effect.gen(function*() {
+      const sem = yield* Semaphore.make(2)
+
+      const acquired = yield* Semaphore.takeIfAvailable(sem, 2)
+      assert.isTrue(acquired)
+
+      const unavailable = yield* sem.takeIfAvailable(1)
+      assert.isFalse(unavailable)
+
+      const released = yield* sem.release(2)
+      assert.strictEqual(released, 2)
+    }))
+
+  it.effect("takeIfAvailable returns immediately when permits are unavailable", () =>
+    Effect.gen(function*() {
+      const sem = yield* Semaphore.make(1)
+
+      yield* sem.take(1)
+
+      const acquired = yield* Semaphore.takeIfAvailable(1)(sem)
+      assert.isFalse(acquired)
+
+      yield* sem.release(1)
+      assert.isTrue(yield* sem.takeIfAvailable(1))
+    }))
+
   it.effect("module-level combinators delegate to the instance api", () =>
     Effect.gen(function*() {
       const sem = yield* Semaphore.make(1)

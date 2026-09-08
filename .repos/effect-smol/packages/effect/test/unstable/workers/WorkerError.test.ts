@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Schema } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Schema } from "effect"
+import * as Worker from "effect/unstable/workers/Worker"
 import {
   isWorkerError,
   WorkerError,
@@ -85,6 +86,45 @@ describe("WorkerError", () => {
         assert.strictEqual(decoded._tag, "WorkerError")
         assert.strictEqual(decoded.reason._tag, "WorkerSendError")
         assert.strictEqual(decoded.message, "Failed to send message")
+      }))
+  })
+
+  describe("buffered sends", () => {
+    it.effect("reports postMessage failures as WorkerSendError", () =>
+      Effect.gen(function*() {
+        const listening = yield* Deferred.make<void>()
+        let emit!: (message: Worker.PlatformMessage) => void
+        const platform = Worker.makePlatform<object>()({
+          setup: () =>
+            Effect.succeed({
+              postMessage() {
+                throw new Error("post failed")
+              }
+            }),
+          listen: (options) =>
+            Effect.sync(() => {
+              emit = options.emit
+            }).pipe(Effect.andThen(Deferred.succeed(listening, void 0)))
+        })
+        const worker = yield* platform.spawn(0).pipe(
+          Effect.provideService(Worker.Spawner, () => ({}))
+        )
+
+        yield* worker.send("buffered")
+        const run = yield* Effect.forkChild(worker.run(() => Effect.void))
+        yield* Deferred.await(listening)
+        yield* Effect.sync(() => emit([0]))
+        const exit = yield* Fiber.await(run)
+
+        assert(Exit.isFailure(exit))
+        if (Exit.isFailure(exit)) {
+          assert.isFalse(Cause.hasDies(exit.cause))
+          const error = Cause.squash(exit.cause)
+          assert.isTrue(isWorkerError(error))
+          if (isWorkerError(error)) {
+            assert.strictEqual(error.reason._tag, "WorkerSendError")
+          }
+        }
       }))
   })
 })

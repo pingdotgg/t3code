@@ -62,7 +62,7 @@ export type TypeId = "~@effect/sql-sqlite-do/SqliteClient"
 /**
  * Cloudflare Durable Object SQLite client service, extending `SqlClient` with its configuration. `updateValues` is not supported.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface SqliteClient extends Client.SqlClient {

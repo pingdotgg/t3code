@@ -8,11 +8,11 @@ describe("nested sibling layers", () => {
   const releasedChildIds: Array<number> = []
 
   class Parent extends Context.Service<Parent, "parent">()("Parent") {
-    static readonly Live = Layer.succeed(Parent)("parent")
+    static readonly layer = Layer.succeed(Parent)("parent")
   }
 
   class Child extends Context.Service<Child, { readonly id: number }>()("Child") {
-    static readonly Live = Layer.effect(Child)(
+    static readonly layer = Layer.effect(Child)(
       Effect.flatMap(Parent, () => {
         const id = ++nextChildId
         return Effect.acquireRelease(
@@ -26,8 +26,8 @@ describe("nested sibling layers", () => {
     )
   }
 
-  layer(Parent.Live)("parent", (it) => {
-    it.layer(Child.Live)("first sibling", (it) => {
+  layer(Parent.layer)("parent", (it) => {
+    it.layer(Child.layer)("first sibling", (it) => {
       it.effect("allocates child", () =>
         Effect.gen(function*() {
           const child = yield* Child
@@ -38,7 +38,7 @@ describe("nested sibling layers", () => {
         }))
     })
 
-    it.layer(Child.Live)("second sibling", (it) => {
+    it.layer(Child.layer)("second sibling", (it) => {
       beforeAll(() => {
         expect(releasedChildIds).toEqual([firstChildId])
       })
@@ -69,11 +69,11 @@ describe.concurrent("nested sibling layers in concurrent suites", () => {
   const releasedSharedIds: Array<number> = []
 
   class Parent extends Context.Service<Parent, "parent">()("ConcurrentParent") {
-    static readonly Live = Layer.succeed(Parent)("parent")
+    static readonly layer = Layer.succeed(Parent)("parent")
   }
 
   class SharedChild extends Context.Service<SharedChild, { readonly id: number }>()("SharedChild") {
-    static readonly Live = Layer.effect(SharedChild)(
+    static readonly layer = Layer.effect(SharedChild)(
       Effect.flatMap(Parent, () =>
         Effect.gen(function*() {
           yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 50)))
@@ -90,9 +90,9 @@ describe.concurrent("nested sibling layers in concurrent suites", () => {
     )
   }
 
-  layer(Parent.Live)("parent", (it) => {
+  layer(Parent.layer)("parent", (it) => {
     describe.concurrent("concurrent siblings", () => {
-      it.layer(SharedChild.Live)("first sibling", (it) => {
+      it.layer(SharedChild.layer)("first sibling", (it) => {
         it.effect("captures shared child", () =>
           Effect.gen(function*() {
             const child = yield* SharedChild
@@ -101,7 +101,7 @@ describe.concurrent("nested sibling layers in concurrent suites", () => {
           }))
       })
 
-      it.layer(SharedChild.Live)("second sibling", (it) => {
+      it.layer(SharedChild.layer)("second sibling", (it) => {
         it.effect("allocates an isolated child", () =>
           Effect.gen(function*() {
             const child = yield* SharedChild
@@ -127,7 +127,7 @@ describe("nested sibling isolation with provided state graph", () => {
   }
 
   class Parent extends Context.Service<Parent, "parent">()("ProvidedParent") {
-    static readonly Live = Layer.succeed(Parent)("parent")
+    static readonly layer = Layer.succeed(Parent)("parent")
   }
 
   class State extends Context.Service<State, StateShape>()("ProvidedState") {}
@@ -176,7 +176,7 @@ describe("nested sibling isolation with provided state graph", () => {
     })
   ).pipe(Layer.provide(migratedLayer))
 
-  layer(Parent.Live)("parent", (it) => {
+  layer(Parent.layer)("parent", (it) => {
     it.layer(inMemoryLayer)("first sibling", (it) => {
       it.effect("mutates isolated provided state", () =>
         Effect.gen(function*() {

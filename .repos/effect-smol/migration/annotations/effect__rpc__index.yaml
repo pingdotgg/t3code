@@ -1,0 +1,3 @@
+"@effect/rpc/index":
+  replacement: "effect/unstable/rpc"
+  note: "The package barrel was removed; import the same namespaces from the effect/unstable/rpc barrel or import specific modules directly."

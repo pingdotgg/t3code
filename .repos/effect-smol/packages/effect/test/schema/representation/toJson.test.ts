@@ -39,7 +39,7 @@ describe("SchemaRepresentation.toJson", () => {
           representation: { _tag: "Reference", $ref: "" },
           references: {}
         }),
-      `Expected a value with a length of at least 1, got ""\n  at ["representation"]["$ref"]`
+      `Expected a value with a length of at least 1\n  at ["representation"]["$ref"]`
     )
   })
 
@@ -54,7 +54,7 @@ describe("SchemaRepresentation.toJson", () => {
           } as never,
           references: {}
         }),
-      `Unexpected key with value null\n  at ["representation"]["checks"][0]`
+      `Expected no excess property\n  at ["representation"]["checks"][0]`
     )
   })
 

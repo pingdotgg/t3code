@@ -16,7 +16,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
  *
  * **Example** (Creating a post-process error)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import * as PostProcess from "@effect/ai-codegen/PostProcess"
  *
  * const error = new PostProcess.PostProcessError({
@@ -28,6 +28,9 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
  *   stderr: "error: some lint error",
  *   cause: new Error("Lint failed")
  * })
+ *
+ * error.step // => "lint"
+ * error.exitCode // => 1
  * ```
  *
  * @category errors
@@ -63,7 +66,7 @@ export class PostProcessError extends Data.TaggedError("PostProcessError")<{
 /**
  * Service for post-processing generated code.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface PostProcessor {

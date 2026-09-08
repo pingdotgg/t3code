@@ -1,0 +1,3 @@
+"@effect/cluster/EntityId#make":
+  replacement: "effect/unstable/cluster/EntityId#make"
+  note: "Moved into core Effect; the branding helper remains and performs no validation or normalization."

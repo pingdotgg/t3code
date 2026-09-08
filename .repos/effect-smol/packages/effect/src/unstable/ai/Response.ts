@@ -155,7 +155,7 @@ export type AllPartsEncoded =
  *
  * **Example** (Building a response parts schema)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Response, Tool, Toolkit } from "effect/unstable/ai"
  *
@@ -167,6 +167,7 @@ export type AllPartsEncoded =
  * )
  *
  * const allPartsSchema = Response.AllParts(myToolkit)
+ * Schema.isSchema(allPartsSchema) // => true
  * ```
  *
  * @category schemas
@@ -223,10 +224,13 @@ export const AllParts = <T extends Toolkit.Any | Toolkit.WithHandler<any>>(
  * @category models
  * @since 4.0.0
  */
-export type Part<Tools extends Record<string, Tool.Any>> =
+export type Part<
+  Tools extends Record<string, Tool.Any>,
+  EncodedToolParameters extends boolean = false
+> =
   | TextPart
   | ReasoningPart
-  | ToolCallParts<Tools>
+  | ToolCallParts<Tools, EncodedToolParameters>
   | ToolResultParts<Tools>
   | ToolApprovalRequestPart
   | FilePart
@@ -301,7 +305,10 @@ export const Part = <T extends Toolkit.Any | Toolkit.WithHandler<any>>(
  * @category models
  * @since 4.0.0
  */
-export type StreamPart<Tools extends Record<string, Tool.Any>> =
+export type StreamPart<
+  Tools extends Record<string, Tool.Any>,
+  EncodedToolParameters extends boolean = false
+> =
   | TextStartPart
   | TextDeltaPart
   | TextEndPart
@@ -311,7 +318,7 @@ export type StreamPart<Tools extends Record<string, Tool.Any>> =
   | ToolParamsStartPart
   | ToolParamsDeltaPart
   | ToolParamsEndPart
-  | ToolCallParts<Tools>
+  | ToolCallParts<Tools, EncodedToolParameters>
   | ToolResultParts<Tools>
   | ToolApprovalRequestPart
   | FilePart
@@ -401,8 +408,14 @@ export const StreamPart = <T extends Toolkit.Any | Toolkit.WithHandler<any>>(
  * @category utility types
  * @since 4.0.0
  */
-export type ToolCallParts<Tools extends Record<string, Tool.Any>> = {
-  [Name in keyof Tools]: Name extends string ? ToolCallPart<Name, Tool.Parameters<Tools[Name]>>
+export type ToolCallParts<
+  Tools extends Record<string, Tool.Any>,
+  EncodedParameters extends boolean = false
+> = {
+  [Name in keyof Tools]: Name extends string ? ToolCallPart<
+      Name,
+      EncodedParameters extends true ? Tool.ParametersEncoded<Tools[Name]> : Tool.Parameters<Tools[Name]>
+    >
     : never
 }[keyof Tools]
 
@@ -493,7 +506,7 @@ const BasePart = Schema.Struct({
  *
  * **Example** (Creating response content parts)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const textPart = Response.makePart("text", {
@@ -506,6 +519,8 @@ const BasePart = Schema.Struct({
  *   params: { city: "San Francisco" },
  *   providerExecuted: false
  * })
+ *
+ * const result = [textPart.type, toolCallPart.name] // => ["text", "get_weather"]
  * ```
  *
  * @category constructors
@@ -557,12 +572,13 @@ export type ConstructorParams<Part extends AnyPart> =
  *
  * **Example** (Creating a text part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const textPart: Response.TextPart = Response.makePart("text", {
  *   text: "The answer to your question is 42."
  * })
+ * textPart.text // => "The answer to your question is 42."
  * ```
  *
  * @category models
@@ -813,13 +829,14 @@ export const TextEndPart: Schema.Struct<{
  *
  * **Example** (Creating a reasoning part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const reasoningPart: Response.ReasoningPart = Response.makePart("reasoning", {
  *   text:
  *     "Let me think step by step: First I need to analyze the user's question..."
  * })
+ * reasoningPart.type // => "reasoning"
  * ```
  *
  * @category models
@@ -1295,7 +1312,7 @@ export const ToolParamsEndPart: Schema.Struct<{
  *
  * **Example** (Creating a tool call part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Response } from "effect/unstable/ai"
  *
@@ -1316,6 +1333,7 @@ export const ToolParamsEndPart: Schema.Struct<{
  *   params: { city: "San Francisco", units: "celsius" },
  *   providerExecuted: false
  * })
+ * const result = [toolCallPart.name, toolCallPart.params.city] // => ["get_weather", "San Francisco"]
  * ```
  *
  * @category models
@@ -1503,7 +1521,7 @@ export interface ToolResultFailure<Name extends string, Failure> extends BaseToo
  *
  * **Example** (Creating a tool result part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * interface WeatherData {
@@ -1533,6 +1551,7 @@ export interface ToolResultFailure<Name extends string, Failure> extends BaseToo
  *   providerExecuted: false,
  *   preliminary: false
  * })
+ * const result = [toolResultPart.name, toolResultPart.result.temperature] // => ["get_weather", 22]
  * ```
  *
  * @category models
@@ -1723,7 +1742,7 @@ export const toolResultPart = <const Params extends ConstructorParams<ToolResult
  *
  * **Example** (Creating an approval request part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const approvalRequest: Response.ToolApprovalRequestPart = Response.makePart(
@@ -1733,6 +1752,7 @@ export const toolResultPart = <const Params extends ConstructorParams<ToolResult
  *     toolCallId: "call_456"
  *   }
  * )
+ * const result = [approvalRequest.approvalId, approvalRequest.toolCallId] // => ["approval_123", "call_456"]
  * ```
  *
  * @category models
@@ -1824,13 +1844,14 @@ export const toolApprovalRequestPart = (
  *
  * **Example** (Creating a file part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const imagePart: Response.FilePart = Response.makePart("file", {
  *   mediaType: "image/jpeg",
  *   data: new Uint8Array([1, 2, 3])
  * })
+ * const result = [imagePart.mediaType, imagePart.data] // => ["image/jpeg", new Uint8Array([1, 2, 3])]
  * ```
  *
  * @category models
@@ -2116,7 +2137,7 @@ export const UrlSourcePart: Schema.Struct<{
  *
  * **Example** (Describing an HTTP request)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import type { Response } from "effect/unstable/ai"
  *
  * const requestDetails: typeof Response.HttpRequestDetails.Type = {
@@ -2126,6 +2147,7 @@ export const UrlSourcePart: Schema.Struct<{
  *   hash: undefined,
  *   headers: { "Content-Type": "application/json" }
  * }
+ * const result = [requestDetails.method, requestDetails.urlParams] // => ["POST", []]
  * ```
  *
  * @category schemas
@@ -2156,7 +2178,7 @@ export const HttpRequestDetails = Schema.Struct({
  *
  * **Example** (Describing an HTTP response)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import type { Response } from "effect/unstable/ai"
  *
  * const responseDetails: typeof Response.HttpResponseDetails.Type = {
@@ -2166,6 +2188,7 @@ export const HttpRequestDetails = Schema.Struct({
  *     "X-Request-Id": "req_abc123"
  *   }
  * }
+ * const result = [responseDetails.status, responseDetails.headers["X-Request-Id"]] // => [200, "req_abc123"]
  * ```
  *
  * @category schemas
@@ -2191,7 +2214,7 @@ export const HttpResponseDetails = Schema.Struct({
  *
  * **Example** (Creating a metadata part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { DateTime } from "effect"
  * import { Response } from "effect/unstable/ai"
  *
@@ -2200,10 +2223,11 @@ export const HttpResponseDetails = Schema.Struct({
  *   {
  *     id: "resp_123",
  *     modelId: "gpt-4",
- *     timestamp: DateTime.nowUnsafe(),
+ *     timestamp: DateTime.makeUnsafe("2024-01-01T00:00:00Z"),
  *     request: undefined
  *   }
  * )
+ * const result = [metadataPart.id, metadataPart.modelId] // => ["resp_123", "gpt-4"]
  * ```
  *
  * @category models
@@ -2406,7 +2430,7 @@ export class Usage extends Schema.Class<Usage>("effect/ai/AiResponse/Usage")({
  *
  * **Example** (Creating a finish part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const finishPart: Response.FinishPart = Response.makePart("finish", {
@@ -2426,6 +2450,7 @@ export class Usage extends Schema.Class<Usage>("effect/ai/AiResponse/Usage")({
  *   }),
  *   response: undefined
  * })
+ * const result = [finishPart.reason, finishPart.usage.inputTokens.total] // => ["stop", 50]
  * ```
  *
  * @category models
@@ -2522,12 +2547,13 @@ export const FinishPart: Schema.Struct<{
  *
  * **Example** (Creating an error part)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Response } from "effect/unstable/ai"
  *
  * const errorPart: Response.ErrorPart = Response.makePart("error", {
  *   error: new Error("boom")
  * })
+ * const result = [errorPart.type, errorPart.error instanceof Error] // => ["error", true]
  * ```
  *
  * @category models

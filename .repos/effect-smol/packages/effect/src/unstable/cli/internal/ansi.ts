@@ -79,9 +79,9 @@ export const combine = (...styles: Array<string>): Array<string> => styles
 /** @internal */
 export const cursorTo = (column: number, row?: number): string => {
   if (row === undefined) {
-    return `\x1b${Math.max(column + 1, 0)} G`
+    return `${ESC}${Math.max(column + 1, 0)}G`
   }
-  return `\x1b${row + 1}${SEP}${Math.max(column + 1, 0)} H`
+  return `${ESC}${row + 1}${SEP}${Math.max(column + 1, 0)}H`
 }
 
 /** @internal */

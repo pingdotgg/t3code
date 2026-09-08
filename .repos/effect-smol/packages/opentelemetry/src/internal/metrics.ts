@@ -65,6 +65,10 @@ export class MetricProducerImpl implements MetricProducer {
     this.previousSummaryState = new Map()
   }
 
+  fork(): MetricProducerImpl {
+    return new MetricProducerImpl(this.resource, this.context, this.temporality)
+  }
+
   startTimeFor(name: string, hrTime: HrTime) {
     if (this.startTimes.has(name)) {
       return this.startTimes.get(name)!

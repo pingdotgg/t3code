@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema } from "effect"
+import { Schema, type SchemaRepresentation } from "effect"
 
 describe("Schema.toJsonSchemaDocument", () => {
   it("uses the encoded side for representations and JSON Schema", () => {
@@ -16,6 +16,59 @@ describe("Schema.toJsonSchemaDocument", () => {
     })
   })
 
+  it("inlines repeated anonymous schemas by default", () => {
+    const shared = Schema.Struct({ value: Schema.String })
+
+    assert.deepStrictEqual(
+      Schema.toJsonSchemaDocument(Schema.Struct({ first: shared, second: shared })),
+      {
+        dialect: "draft-2020-12",
+        schema: {
+          type: "object",
+          properties: {
+            first: {
+              type: "object",
+              properties: { value: { type: "string" } },
+              required: ["value"],
+              additionalProperties: false
+            },
+            second: {
+              type: "object",
+              properties: { value: { type: "string" } },
+              required: ["value"],
+              additionalProperties: false
+            }
+          },
+          required: ["first", "second"],
+          additionalProperties: false
+        },
+        definitions: {}
+      }
+    )
+  })
+
+  it("forwards the reference policy to representation and JSON Schema generation", () => {
+    const shared = Schema.String.annotate({ identifier: "Shared" })
+    const options = { referencePolicy: () => undefined }
+
+    assert.deepStrictEqual(Schema.toRepresentation(shared, options).references, {})
+    assert.deepStrictEqual(Schema.toJsonSchemaDocument(shared, options), {
+      dialect: "draft-2020-12",
+      schema: { type: "string" },
+      definitions: {}
+    })
+
+    const inputs: Array<SchemaRepresentation.ReferencePolicyInput> = []
+    Schema.toJsonSchemaDocument(Schema.Date.annotate({ identifier: "Date" }), {
+      referencePolicy: (input) => {
+        inputs.push(input)
+        return undefined
+      }
+    })
+    assert.strictEqual(inputs[0].ast._tag, "String")
+    assert.strictEqual(inputs[0].identifier, "DateEncoded")
+  })
+
   it("projects encoded tuple elements for JSON Schema", () => {
     assert.deepStrictEqual(Schema.toJsonSchemaDocument(Schema.Tuple([Schema.NumberFromString])).schema, {
       type: "array",
@@ -25,17 +78,14 @@ describe("Schema.toJsonSchemaDocument", () => {
     })
   })
 
-  it("preserves Number checks on the finite encoded branch", () => {
+  it("does not project checks through an artificial JSON encoding", () => {
     assert.deepStrictEqual(
       Schema.toJsonSchemaDocument(Schema.Number.check(Schema.isGreaterThan(0))),
       {
         dialect: "draft-2020-12",
         schema: {
           anyOf: [
-            {
-              type: "number",
-              allOf: [{ exclusiveMinimum: 0 }]
-            },
+            { type: "number" },
             {
               type: "string",
               enum: ["Infinity", "-Infinity", "NaN"]
@@ -45,6 +95,37 @@ describe("Schema.toJsonSchemaDocument", () => {
         definitions: {}
       }
     )
+  })
+
+  it("preserves checks when no artificial JSON encoding is needed", () => {
+    assert.deepStrictEqual(
+      Schema.toJsonSchemaDocument(Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0))),
+      {
+        dialect: "draft-2020-12",
+        schema: {
+          type: "number",
+          exclusiveMinimum: 0
+        },
+        definitions: {}
+      }
+    )
+  })
+
+  it("does not project annotations through an artificial JSON encoding", () => {
+    const schema = Schema.Number.annotate({ description: "source description" })
+    const expected = {
+      dialect: "draft-2020-12" as const,
+      schema: {
+        anyOf: [
+          { type: "number" },
+          { type: "string", enum: ["Infinity", "-Infinity", "NaN"] }
+        ]
+      },
+      definitions: {}
+    }
+
+    assert.deepStrictEqual(Schema.toJsonSchemaDocument(schema), expected)
+    assert.deepStrictEqual(Schema.toJsonSchemaDocument(Schema.toCodecJson(schema)), expected)
   })
 
   it("preserves output, references and generation options", () => {
@@ -106,7 +187,7 @@ describe("Schema.toJsonSchemaDocument", () => {
       dialect: "draft-2020-12",
       schema: {
         type: "string",
-        allOf: [{ minLength: 2 }]
+        minLength: 2
       },
       definitions: {}
     })

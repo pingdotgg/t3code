@@ -12,17 +12,16 @@
  * @since 4.0.0
  */
 
-import { format } from "./Formatter.ts"
-import { identity, memoize } from "./Function.ts"
+import { dual, identity } from "./Function.ts"
 import * as InternalRecord from "./internal/record.ts"
 import * as Option from "./Option.ts"
 import * as Predicate from "./Predicate.ts"
 import * as Result from "./Result.ts"
 import type * as Schema from "./Schema.ts"
 import * as SchemaAST from "./SchemaAST.ts"
-import type * as SchemaIssue from "./SchemaIssue.ts"
+import * as SchemaIssue from "./SchemaIssue.ts"
 import * as Struct from "./Struct.ts"
-import type { IsUnion } from "./Types.ts"
+import type { IsUnion, NoInfer } from "./Types.ts"
 
 /**
  * A lossless, reversible conversion between types `S` and `A`.
@@ -42,7 +41,7 @@ import type { IsUnion } from "./Types.ts"
  *
  * **Example** (Converting between Celsius and Fahrenheit)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic } from "effect"
  *
  * const fahrenheit = Optic.makeIso<number, number>(
@@ -50,18 +49,16 @@ import type { IsUnion } from "./Types.ts"
  *   (f) => (f - 32) * 5 / 9
  * )
  *
- * console.log(fahrenheit.get(100))
- * // Output: 212
+ * fahrenheit.get(100) // => 212
  *
- * console.log(fahrenheit.set(32))
- * // Output: 0
+ * fahrenheit.set(32) // => 0
  * ```
  *
  * @see {@link makeIso} — constructor
  * @see {@link Lens} — when you only need a one-directional focus into a whole
  * @see {@link Prism} — when the focus may not be present
  *
- * @category Iso
+ * @category models
  * @since 4.0.0
  */
 export interface Iso<in out S, in out A> extends Lens<S, A>, Prism<S, A> {}
@@ -80,7 +77,7 @@ export interface Iso<in out S, in out A> extends Lens<S, A>, Prism<S, A> {}
  *
  * **Example** (Wrapping and unwrapping a branded type)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic } from "effect"
  *
  * type Meters = { readonly value: number }
@@ -89,11 +86,9 @@ export interface Iso<in out S, in out A> extends Lens<S, A>, Prism<S, A> {}
  *   (n) => ({ value: n })
  * )
  *
- * console.log(meters.get({ value: 100 }))
- * // Output: 100
+ * meters.get({ value: 100 }) // => 100
  *
- * console.log(meters.set(42))
- * // Output: { value: 42 }
+ * meters.set(42) // => { value: 42 }
  * ```
  *
  * @see {@link Iso} — the type this function returns
@@ -103,7 +98,7 @@ export interface Iso<in out S, in out A> extends Lens<S, A>, Prism<S, A> {}
  * @since 4.0.0
  */
 export function makeIso<S, A>(get: (s: S) => A, set: (a: A) => S): Iso<S, A> {
-  return make(new IsoNode(get, set))
+  return make(primitiveNode("Iso", get, set))
 }
 
 /**
@@ -124,22 +119,21 @@ export function makeIso<S, A>(get: (s: S) => A, set: (a: A) => S): Iso<S, A> {
  *
  * **Example** (Focusing on a struct field)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic } from "effect"
  *
  * type Person = { readonly name: string; readonly age: number }
  *
  * const _name = Optic.id<Person>().key("name")
  *
- * console.log(_name.get({ name: "Alice", age: 30 }))
- * // Output: "Alice"
+ * _name.get({ name: "Alice", age: 30 }) // => "Alice"
  * ```
  *
  * @see {@link makeLens} — constructor
  * @see {@link Iso} — when conversion is lossless in both directions
  * @see {@link Optional} — when reading can also fail
  *
- * @category Lens
+ * @category models
  * @since 4.0.0
  */
 export interface Lens<in out S, in out A> extends Optional<S, A> {
@@ -161,7 +155,7 @@ export interface Lens<in out S, in out A> extends Optional<S, A> {
  *
  * **Example** (Focusing on the first element of a pair)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic } from "effect"
  *
  * const _first = Optic.makeLens<readonly [string, number], string>(
@@ -169,11 +163,9 @@ export interface Lens<in out S, in out A> extends Optional<S, A> {
  *   (s, pair) => [s, pair[1]]
  * )
  *
- * console.log(_first.get(["hello", 42]))
- * // Output: "hello"
+ * _first.get(["hello", 42]) // => "hello"
  *
- * console.log(_first.replace("world", ["hello", 42]))
- * // Output: ["world", 42]
+ * _first.replace("world", ["hello", 42]) // => ["world", 42]
  * ```
  *
  * @see {@link Lens} — the type this function returns
@@ -183,7 +175,7 @@ export interface Lens<in out S, in out A> extends Optional<S, A> {
  * @since 4.0.0
  */
 export function makeLens<S, A>(get: (s: S) => A, replace: (a: A, s: S) => S): Lens<S, A> {
-  return make(new LensNode(get, replace))
+  return make(primitiveNode("Lens", get, replace))
 }
 
 /**
@@ -199,7 +191,7 @@ export function makeLens<S, A>(get: (s: S) => A, replace: (a: A, s: S) => S): Le
  * **Details**
  *
  * - `getResult(s)` returns `Result.Success<A>` when the focus matches, or
- *   `Result.Failure<string>` with an error message.
+ *   `Result.Failure<SchemaIssue.Issue>` with a structured issue.
  * - `set(a)` always succeeds and returns a new `S`.
  * - Extends {@link Optional}.
  * - Composing two Prisms produces a Prism; composing a Prism with a
@@ -207,7 +199,7 @@ export function makeLens<S, A>(get: (s: S) => A, replace: (a: A, s: S) => S): Le
  *
  * **Example** (Narrowing a tagged union)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Result } from "effect"
  *
  * type Shape =
@@ -216,18 +208,16 @@ export function makeLens<S, A>(get: (s: S) => A, replace: (a: A, s: S) => S): Le
  *
  * const _circle = Optic.id<Shape>().tag("Circle")
  *
- * console.log(Result.isSuccess(_circle.getResult({ _tag: "Circle", radius: 5 })))
- * // Output: true
+ * _circle.getResult({ _tag: "Circle", radius: 5 }) // => Result.succeed({ _tag: "Circle", radius: 5 })
  *
- * console.log(Result.isFailure(_circle.getResult({ _tag: "Rect", width: 10 })))
- * // Output: true
+ * Result.isFailure(_circle.getResult({ _tag: "Rect", width: 10 })) // => true
  * ```
  *
  * @see {@link makePrism} — constructor
  * @see {@link fromChecks} — build a Prism from schema checks
  * @see {@link Lens} — when reading always succeeds
  *
- * @category Prism
+ * @category models
  * @since 4.0.0
  */
 export interface Prism<in out S, in out A> extends Optional<S, A> {
@@ -244,26 +234,27 @@ export interface Prism<in out S, in out A> extends Optional<S, A> {
  *
  * **Details**
  *
- * - `getResult` should return `Result.fail(message)` on mismatch.
+ * - `getResult` should return `Result.fail(issue)` on mismatch.
+ * - Issues are not formatted automatically; callers choose how to render them.
  *
  * **Example** (Parsing a string to a number)
  *
- * ```ts
- * import { Optic, Result } from "effect"
+ * ```ts import.meta.vitest
+ * import { Optic, Result, SchemaIssue } from "effect"
  *
  * const numeric = Optic.makePrism<string, number>(
  *   (s) => {
  *     const n = Number(s)
- *     return Number.isNaN(n) ? Result.fail("not a number") : Result.succeed(n)
+ *     return Number.isNaN(n)
+ *       ? Result.fail(new SchemaIssue.InvalidValue({ message: "not a number" }))
+ *       : Result.succeed(n)
  *   },
  *   String
  * )
  *
- * console.log(Result.isSuccess(numeric.getResult("42")))
- * // Output: true
+ * numeric.getResult("42") // => Result.succeed(42)
  *
- * console.log(numeric.set(42))
- * // Output: "42"
+ * numeric.set(42) // => "42"
  * ```
  *
  * @see {@link Prism} — the type this function returns
@@ -272,8 +263,11 @@ export interface Prism<in out S, in out A> extends Optional<S, A> {
  * @category constructors
  * @since 4.0.0
  */
-export function makePrism<S, A>(getResult: (s: S) => Result.Result<A, string>, set: (a: A) => S): Prism<S, A> {
-  return make(new PrismNode(getResult, set))
+export function makePrism<S, A>(
+  getResult: (s: S) => Result.Result<A, SchemaIssue.Issue>,
+  set: (a: A) => S
+): Prism<S, A> {
+  return make(primitiveNode("Prism", getResult, set))
 }
 
 /**
@@ -287,13 +281,13 @@ export function makePrism<S, A>(getResult: (s: S) => Result.Result<A, string>, s
  *
  * **Details**
  *
- * - `getResult` runs all checks; fails with a combined error message when
+ * - `getResult` runs all checks and preserves their structured issues when
  *   any check fails.
  * - `set` is identity — the value passes through unchanged.
  *
  * **Example** (Creating a positive integer prism)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Result, Schema } from "effect"
  *
  * const posInt = Optic.fromChecks<number>(
@@ -301,11 +295,9 @@ export function makePrism<S, A>(getResult: (s: S) => Result.Result<A, string>, s
  *   Schema.isInt()
  * )
  *
- * console.log(Result.isSuccess(posInt.getResult(3)))
- * // Output: true
+ * posInt.getResult(3) // => Result.succeed(3)
  *
- * console.log(Result.isFailure(posInt.getResult(-1)))
- * // Output: true
+ * Result.isFailure(posInt.getResult(-1)) // => true
  * ```
  *
  * @see {@link makePrism} — constructor with custom getter/setter
@@ -315,142 +307,95 @@ export function makePrism<S, A>(getResult: (s: S) => Result.Result<A, string>, s
  * @since 4.0.0
  */
 export function fromChecks<T>(...checks: readonly [SchemaAST.Check<T>, ...Array<SchemaAST.Check<T>>]): Prism<T, T> {
-  return make(new CheckNode(checks))
+  return make([new CheckNode(checks)])
 }
 
-type Node =
-  | IdentityNode
-  | IsoNode<any, any>
-  | LensNode<any, any>
-  | PrismNode<any, any>
-  | OptionalNode<any, any>
-  | PathNode
-  | CheckNode<any>
-  | CompositionNode
+type Kind = "Iso" | "Lens" | "Prism" | "Optional"
 
-class IdentityNode {
-  readonly _tag = "IdentityNode"
+type Operation = {
+  readonly kind: Kind
+  readonly get: (s: any) => any
+  readonly set: (a: any, s?: any) => any
 }
 
-const identityNode = new IdentityNode()
-
-class CompositionNode {
-  readonly _tag = "CompositionNode"
-  readonly nodes: readonly [Node, ...Array<Node>]
-
-  constructor(nodes: readonly [Node, ...Array<Node>]) {
-    this.nodes = nodes
-  }
+type PrimitiveStep = Operation & {
+  readonly _tag: "PrimitiveNode"
 }
 
-class IsoNode<S, A> {
-  readonly _tag = "IsoNode"
-  readonly get: (s: S) => A
-  readonly set: (a: A) => S
+type Step = PrimitiveStep | PathNode | CheckNode<any>
 
-  constructor(get: (s: S) => A, set: (a: A) => S) {
-    this.get = get
-    this.set = set
-  }
+type Node = ReadonlyArray<Step>
+
+function primitiveNode(kind: Kind, get: (s: any) => any, set: (a: any, s?: any) => any): Node {
+  return [{ _tag: "PrimitiveNode", kind, get, set }]
 }
 
-class LensNode<S, A> {
-  readonly _tag = "LensNode"
-  readonly get: (s: S) => A
-  readonly set: (a: A, s: S) => S
-
-  constructor(get: (s: S) => A, set: (a: A, s: S) => S) {
-    this.get = get
-    this.set = set
-  }
-}
-
-class PrismNode<S, A> {
-  readonly _tag = "PrismNode"
-  readonly get: (s: S) => Result.Result<A, string>
-  readonly set: (a: A) => S
-
-  constructor(get: (s: S) => Result.Result<A, string>, set: (a: A) => S) {
-    this.get = get
-    this.set = set
-  }
-}
-
-class OptionalNode<S, A> {
-  readonly _tag = "OptionalNode"
-  readonly get: (s: S) => Result.Result<A, string>
-  readonly set: (a: A, s: S) => Result.Result<S, string>
-
-  constructor(get: (s: S) => Result.Result<A, string>, set: (a: A, s: S) => Result.Result<S, string>) {
-    this.get = get
-    this.set = set
-  }
+const identityOperation: Operation = {
+  kind: "Iso",
+  get: identity,
+  set: identity
 }
 
 class PathNode {
   readonly _tag = "PathNode"
+  readonly kind = "Lens"
   readonly path: ReadonlyArray<PropertyKey>
+  readonly get: (s: any) => any
+  readonly set: (a: any, s?: any) => any
 
   constructor(path: ReadonlyArray<PropertyKey>) {
     this.path = path
+    this.get = (s) => {
+      let out = s
+      for (let i = 0; i < path.length; i++) {
+        out = out[path[i]]
+      }
+      return out
+    }
+    this.set = (a, s) => {
+      const out = cloneShallow(s)
+      let current = out
+      let i = 0
+      for (; i < path.length - 1; i++) {
+        const key = path[i]
+        InternalRecord.assignProperty(current, key, cloneShallow(current[key]))
+        current = current[key]
+      }
+      InternalRecord.assignProperty(current, path[i], a)
+      return out
+    }
   }
 }
 
 class CheckNode<T> {
   readonly _tag = "CheckNode"
+  readonly kind = "Prism"
   readonly checks: readonly [SchemaAST.Check<T>, ...Array<SchemaAST.Check<T>>]
+  readonly get: (s: T) => Result.Result<T, SchemaIssue.Issue>
+  readonly set = identity
 
   constructor(checks: readonly [SchemaAST.Check<T>, ...Array<SchemaAST.Check<T>>]) {
     this.checks = checks
+    this.get = (s) => SchemaAST.runChecks(checks, s)
   }
-}
-
-// Nodes that can appear in a normalized chain (no Identity/Composition)
-type NormalizedNode = Exclude<Node, IdentityNode | CompositionNode>
-
-// Fuse with tail when possible, else push.
-function pushNormalized(acc: Array<NormalizedNode>, node: NormalizedNode): void {
-  const last = acc[acc.length - 1]
-  if (last) {
-    if (last._tag === "PathNode" && node._tag === "PathNode") {
-      // fuse Path
-      acc[acc.length - 1] = new PathNode([...last.path, ...node.path])
-      return
-    }
-    if (last._tag === "CheckNode" && node._tag === "CheckNode") {
-      // fuse Checks
-      acc[acc.length - 1] = new CheckNode<any>([...last.checks, ...node.checks])
-      return
-    }
-  }
-  acc.push(node)
-}
-
-// Collect nodes from a node into `acc`, flattening & normalizing on the fly.
-function collect(node: Node, acc: Array<NormalizedNode>): void {
-  if (node._tag === "IdentityNode") return
-  if (node._tag === "CompositionNode") {
-    // flatten without extra arrays
-    for (let i = 0; i < node.nodes.length; i++) collect(node.nodes[i], acc)
-    return
-  }
-  // primitive node
-  pushNormalized(acc, node)
 }
 
 function compose(a: Node, b: Node): Node {
-  const nodes: Array<NormalizedNode> = []
-  collect(a, nodes)
-  collect(b, nodes)
-
-  switch (nodes.length) {
-    case 0:
-      return identityNode
-    case 1:
-      return nodes[0]
-    default:
-      return new CompositionNode(nodes as [Node, ...Array<Node>])
+  if (a.length === 0) return b
+  if (b.length === 0) return a
+  const nodes = a.slice()
+  for (let i = 0; i < b.length; i++) {
+    const node = b[i]
+    const last = nodes[nodes.length - 1]
+    if (last._tag === "PathNode" && node._tag === "PathNode") {
+      nodes[nodes.length - 1] = new PathNode([...last.path, ...node.path])
+    } else if (last._tag === "CheckNode" && node._tag === "CheckNode") {
+      nodes[nodes.length - 1] = new CheckNode<any>([...last.checks, ...node.checks])
+    } else {
+      nodes.push(node)
+    }
   }
+  return nodes
 }
 
 type ForbidUnion<A, Message extends string> = IsUnion<A> extends true ? [Message] : []
@@ -467,47 +412,43 @@ type ForbidUnion<A, Message extends string> = IsUnion<A> extends true ? [Message
  *
  * **Details**
  *
- * - `getResult(s)` returns `Result.Success<A>` or `Result.Failure<string>`.
+ * - `getResult(s)` returns `Result.Success<A>` or `Result.Failure<SchemaIssue.Issue>`.
  * - `replaceResult(a, s)` returns `Result.Success<S>` or
- *   `Result.Failure<string>`.
+ *   `Result.Failure<SchemaIssue.Issue>`.
  * - `replace(a, s)` returns the original `s` on failure (never throws).
  * - `modify(f)` returns the original `s` on failure (never throws).
  * - All operations are pure; inputs are never mutated.
  *
  * **Example** (Focusing on an optional record key)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Result } from "effect"
  *
  * type Env = { [key: string]: string }
  * const _home = Optic.id<Env>().at("HOME")
  *
- * console.log(Result.isSuccess(_home.getResult({ HOME: "/root" })))
- * // Output: true
+ * _home.getResult({ HOME: "/root" }) // => Result.succeed("/root")
  *
- * console.log(Result.isFailure(_home.getResult({ PATH: "/bin" })))
- * // Output: true
+ * Result.isFailure(_home.getResult({ PATH: "/bin" })) // => true
  *
  * // replace returns original on failure
- * console.log(_home.replace("/new", { PATH: "/bin" }))
- * // Output: { PATH: "/bin" }
+ * _home.replace("/new", { PATH: "/bin" }) // => { PATH: "/bin" }
  * ```
  *
  * @see {@link makeOptional} — constructor
  * @see {@link Lens} — when reading always succeeds
  * @see {@link Prism} — when writing always succeeds
  *
- * @category Optional
+ * @category models
  * @since 4.0.0
  */
 export interface Optional<in out S, in out A> {
-  readonly node: Node
   /**
    * Attempts to read the focus `A` from the whole `S`. Returns
    * `Result.Success<A>` when the focus exists, or
-   * `Result.Failure<string>` with a descriptive error otherwise.
+   * `Result.Failure<SchemaIssue.Issue>` with a structured issue otherwise.
    */
-  readonly getResult: (s: S) => Result.Result<A, string>
+  readonly getResult: (s: S) => Result.Result<A, SchemaIssue.Issue>
   /**
    * Replaces the focus in `S` with a new `A`. Returns the original `s`
    * unchanged when the optic cannot focus (never throws).
@@ -517,20 +458,21 @@ export interface Optional<in out S, in out A> {
    * Like {@link replace}, but returns an explicit `Result` so callers can
    * detect and handle failure.
    */
-  readonly replaceResult: (a: A, s: S) => Result.Result<S, string>
+  readonly replaceResult: (a: A, s: S) => Result.Result<S, SchemaIssue.Issue>
   /**
    * Composes this optic with another. The result type is the weakest of
    * the two: Iso + Iso = Iso, Lens + Prism = Optional, etc.
    *
    * **Example** (Composing a lens with a prism)
    *
-   * ```ts
-   * import { Optic, Option } from "effect"
+   * ```ts import.meta.vitest
+   * import { Optic, Option, Result } from "effect"
    *
    * type State = { value: Option.Option<number> }
    *
    * const _inner = Optic.id<State>().key("value").compose(Optic.some())
    * // _inner is Optional<State, number>
+   * _inner.getResult({ value: Option.some(1) }) // => Result.succeed(1)
    * ```
    *
    * @see {@link id} — start a composition chain
@@ -546,15 +488,14 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Incrementing a nested field)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic } from "effect"
    *
    * type S = { readonly a: { readonly b: number } }
    * const _b = Optic.id<S>().key("a").key("b")
    *
    * const inc = _b.modify((n) => n + 1)
-   * console.log(inc({ a: { b: 1 } }))
-   * // Output: { a: { b: 2 } }
+   * inc({ a: { b: 1 } }) // => { a: { b: 2 } }
    * ```
    */
   modify(f: (a: A) => A): (s: S) => S
@@ -570,14 +511,13 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Drilling into nested structs)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic } from "effect"
    *
    * type S = { readonly a: { readonly b: number } }
    * const _b = Optic.id<S>().key("a").key("b")
    *
-   * console.log(_b.get({ a: { b: 42 } }))
-   * // Output: 42
+   * _b.get({ a: { b: 42 } }) // => 42
    * ```
    */
   key<S, A extends object, Key extends keyof A>(
@@ -602,17 +542,15 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Deleting an optional key)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic } from "effect"
    *
    * type S = { readonly a?: number }
    * const _a = Optic.id<S>().optionalKey("a")
    *
-   * console.log(_a.replace(undefined, { a: 1 }))
-   * // Output: {}
+   * _a.replace(undefined, { a: 1 }) // => {}
    *
-   * console.log(_a.replace(2, {}))
-   * // Output: { a: 2 }
+   * _a.replace(2, {}) // => { a: 2 }
    * ```
    */
   optionalKey<S, A extends object, Key extends keyof A>(
@@ -637,16 +575,14 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Focusing only on positive numbers)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Result, Schema } from "effect"
    *
    * const _pos = Optic.id<number>().check(Schema.isGreaterThan(0))
    *
-   * console.log(Result.isSuccess(_pos.getResult(5)))
-   * // Output: true
+   * _pos.getResult(5) // => Result.succeed(5)
    *
-   * console.log(Result.isFailure(_pos.getResult(-1)))
-   * // Output: true
+   * Result.isFailure(_pos.getResult(-1)) // => true
    * ```
    *
    * @see {@link fromChecks} — standalone prism from checks
@@ -668,7 +604,7 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Narrowing a union)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Result } from "effect"
    *
    * type B = { readonly _tag: "b"; readonly b: number }
@@ -679,8 +615,7 @@ export interface Optional<in out S, in out A> {
    *   { expected: `"b" tag` }
    * )
    *
-   * console.log(Result.isSuccess(_b.getResult({ _tag: "b", b: 1 })))
-   * // Output: true
+   * _b.getResult({ _tag: "b", b: 1 }) // => Result.succeed({ _tag: "b", b: 1 })
    * ```
    *
    * @see `.tag()` — shorthand for narrowing by `_tag`
@@ -705,10 +640,12 @@ export interface Optional<in out S, in out A> {
    * - On a {@link Prism}, returns a Prism.
    * - On an {@link Optional}, returns an Optional.
    * - Shorthand for `.refine(s => s._tag === tag)`.
+   * - A non-matching value fails with {@link SchemaIssue.InvalidValue} whose
+   *   `expected` annotation is `"<tag> tag"`.
    *
    * **Example** (Focusing a tagged variant)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Result } from "effect"
    *
    * type Shape =
@@ -717,11 +654,9 @@ export interface Optional<in out S, in out A> {
    *
    * const _radius = Optic.id<Shape>().tag("Circle").key("radius")
    *
-   * console.log(Result.isSuccess(_radius.getResult({ _tag: "Circle", radius: 5 })))
-   * // Output: true
+   * _radius.getResult({ _tag: "Circle", radius: 5 }) // => Result.succeed(5)
    *
-   * console.log(Result.isFailure(_radius.getResult({ _tag: "Rect", width: 10 })))
-   * // Output: true
+   * Result.isFailure(_radius.getResult({ _tag: "Rect", width: 10 })) // => true
    * ```
    *
    * @see `.refine()` — for arbitrary type guards
@@ -746,20 +681,21 @@ export interface Optional<in out S, in out A> {
    *
    * - Always returns an {@link Optional}.
    * - Does **not** work on union types (compile error).
+   * - A missing key fails with a {@link SchemaIssue.Pointer} at that key whose
+   *   inner issue is {@link SchemaIssue.MissingKey}, for both `getResult` and
+   *   `replaceResult`.
    *
    * **Example** (Accessing records safely)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Result } from "effect"
    *
    * type Env = { [key: string]: number }
    * const _x = Optic.id<Env>().at("x")
    *
-   * console.log(Result.isSuccess(_x.getResult({ x: 1 })))
-   * // Output: true
+   * _x.getResult({ x: 1 }) // => Result.succeed(1)
    *
-   * console.log(Result.isFailure(_x.getResult({ y: 2 })))
-   * // Output: true
+   * Result.isFailure(_x.getResult({ y: 2 })) // => true
    * ```
    *
    * @see `.key()` — when the key is always present
@@ -781,15 +717,14 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Picking keys)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic } from "effect"
    *
    * type S = { readonly a: string; readonly b: number; readonly c: boolean }
    *
    * const _ac = Optic.id<S>().pick(["a", "c"])
    *
-   * console.log(_ac.get({ a: "hi", b: 1, c: true }))
-   * // Output: { a: "hi", c: true }
+   * _ac.get({ a: "hi", b: 1, c: true }) // => { a: "hi", c: true }
    * ```
    *
    * @see `.omit()` — the inverse operation
@@ -816,15 +751,14 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Omitting keys)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic } from "effect"
    *
    * type S = { readonly a: string; readonly b: number; readonly c: boolean }
    *
    * const _ac = Optic.id<S>().omit(["b"])
    *
-   * console.log(_ac.get({ a: "hi", b: 1, c: true }))
-   * // Output: { a: "hi", c: true }
+   * _ac.get({ a: "hi", b: 1, c: true }) // => { a: "hi", c: true }
    * ```
    *
    * @see `.pick()` — the inverse operation
@@ -848,22 +782,20 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Filtering undefined values)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Result } from "effect"
    *
    * const _defined = Optic.id<number | undefined>().notUndefined()
    *
-   * console.log(Result.isSuccess(_defined.getResult(42)))
-   * // Output: true
+   * _defined.getResult(42) // => Result.succeed(42)
    *
-   * console.log(Result.isFailure(_defined.getResult(undefined)))
-   * // Output: true
+   * Result.isFailure(_defined.getResult(undefined)) // => true
    * ```
    *
    * @since 4.0.0
    */
-  notUndefined(): Prism<S, Exclude<A, undefined>>
-  notUndefined(): Optional<S, Exclude<A, undefined>>
+  notUndefined<S, A>(this: Prism<S, A>): Prism<S, Exclude<A, undefined>>
+  notUndefined<S, A>(this: Optional<S, A>): Optional<S, Exclude<A, undefined>>
 
   /**
    * Focuses **all elements** of an array-like focus and optionally narrows
@@ -878,11 +810,13 @@ export interface Optional<in out S, in out A> {
    *   element. Non-focusable elements are skipped.
    * - **replaceResult** expects exactly as many values as were collected by
    *   `getResult` and writes them back in order. Fails with a
-   *   length-mismatch error if counts differ.
+   *   {@link SchemaIssue.InvalidValue} if counts differ. If an inner replacement
+   *   fails, its issue is wrapped in a {@link SchemaIssue.Pointer} at the element
+   *   index.
    *
    * **Example** (Incrementing liked posts)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Schema } from "effect"
    *
    * type Post = { title: string; likes: number }
@@ -895,12 +829,10 @@ export interface Optional<in out S, in out A> {
    *
    * const addLike = _likes.modifyAll((n) => n + 1)
    *
-   * console.log(
-   *   addLike({
-   *     user: { posts: [{ title: "a", likes: 0 }, { title: "b", likes: 1 }] }
-   *   })
-   * )
-   * // Output: { user: { posts: [{ title: "a", likes: 0 }, { title: "b", likes: 2 }] } }
+   * const result = addLike({
+   *   user: { posts: [{ title: "a", likes: 0 }, { title: "b", likes: 1 }] }
+   * })
+   * result.user.posts // => [{ title: "a", likes: 0 }, { title: "b", likes: 2 }]
    * ```
    *
    * @see {@link getAll} — extract all focused elements as an array
@@ -921,7 +853,7 @@ export interface Optional<in out S, in out A> {
    *
    * **Example** (Doubling all focused values)
    *
-   * ```ts
+   * ```ts import.meta.vitest
    * import { Optic, Schema } from "effect"
    *
    * type S = { readonly items: ReadonlyArray<number> }
@@ -932,8 +864,7 @@ export interface Optional<in out S, in out A> {
    *
    * const doubled = _positive.modifyAll((n) => n * 2)
    *
-   * console.log(doubled({ items: [1, -2, 3] }))
-   * // Output: { items: [2, -2, 6] }
+   * doubled({ items: [1, -2, 3] }) // => { items: [2, -2, 6] }
    * ```
    *
    * @see `.forEach()` — create a sub-traversal
@@ -952,29 +883,31 @@ export interface Optional<in out S, in out A> {
  *
  * **Details**
  *
- * - `getResult` should return `Result.fail(message)` on mismatch.
- * - `set` should return `Result.fail(message)` when the update cannot be
+ * - `getResult` should return `Result.fail(issue)` on mismatch.
+ * - `set` should return `Result.fail(issue)` when the update cannot be
  *   applied.
+ * - Issues are not formatted automatically; callers choose how to render them.
  *
  * **Example** (Accessing record keys safely)
  *
- * ```ts
- * import { Optic, Result } from "effect"
+ * ```ts import.meta.vitest
+ * import { Optic, Result, SchemaIssue } from "effect"
  *
- * const atKey = (key: string) =>
- *   Optic.makeOptional<Record<string, number>, number>(
+ * const atKey = (key: string) => {
+ *   const issue = new SchemaIssue.Pointer([key], new SchemaIssue.MissingKey(undefined))
+ *   return Optic.makeOptional<Record<string, number>, number>(
  *     (s) =>
  *       Object.hasOwn(s, key)
  *         ? Result.succeed(s[key])
- *         : Result.fail(`Key "${key}" not found`),
+ *         : Result.fail(issue),
  *     (a, s) =>
  *       Object.hasOwn(s, key)
  *         ? Result.succeed({ ...s, [key]: a })
- *         : Result.fail(`Key "${key}" not found`)
+ *         : Result.fail(issue)
  *   )
+ * }
  *
- * console.log(Result.isSuccess(atKey("x").getResult({ x: 1 })))
- * // Output: true
+ * atKey("x").getResult({ x: 1 }) // => Result.succeed(1)
  * ```
  *
  * @see {@link Optional} — the type this function returns
@@ -985,10 +918,10 @@ export interface Optional<in out S, in out A> {
  * @since 4.0.0
  */
 export function makeOptional<S, A>(
-  getResult: (s: S) => Result.Result<A, string>,
-  set: (a: A, s: S) => Result.Result<S, string>
+  getResult: (s: S) => Result.Result<A, SchemaIssue.Issue>,
+  set: (a: A, s: S) => Result.Result<S, SchemaIssue.Issue>
 ): Optional<S, A> {
-  return make(new OptionalNode(getResult, set))
+  return make(primitiveNode("Optional", getResult, set))
 }
 
 /**
@@ -1010,7 +943,7 @@ export function makeOptional<S, A>(
  *
  * **Example** (Traversing array elements with a filter)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Schema } from "effect"
  *
  * type S = { readonly items: ReadonlyArray<number> }
@@ -1021,26 +954,26 @@ export function makeOptional<S, A>(
  *
  * const getPositive = Optic.getAll(_positive)
  *
- * console.log(getPositive({ items: [1, -2, 3] }))
- * // Output: [1, 3]
+ * getPositive({ items: [1, -2, 3] }) // => [1, 3]
  * ```
  *
  * @see {@link getAll} — extract focused elements
  * @see {@link Optional} — the base type
  *
- * @category Traversal
+ * @category models
  * @since 4.0.0
  */
 export interface Traversal<in out S, in out A> extends Optional<S, ReadonlyArray<A>> {}
 
 class OptionalImpl<S, A> implements Optional<S, A> {
+  /** @internal */
   readonly node: Node
-  readonly getResult: (s: S) => Result.Result<A, string>
-  readonly replaceResult: (a: A, s: S) => Result.Result<S, string>
+  readonly getResult: (s: S) => Result.Result<A, SchemaIssue.Issue>
+  readonly replaceResult: (a: A, s: S) => Result.Result<S, SchemaIssue.Issue>
   constructor(
     node: Node,
-    getResult: (s: S) => Result.Result<A, string>,
-    replaceResult: (a: A, s: S) => Result.Result<S, string>
+    getResult: (s: S) => Result.Result<A, SchemaIssue.Issue>,
+    replaceResult: (a: A, s: S) => Result.Result<S, SchemaIssue.Issue>
   ) {
     this.node = node
     this.getResult = getResult
@@ -1056,13 +989,14 @@ class OptionalImpl<S, A> implements Optional<S, A> {
     return make(compose(this.node, that.node))
   }
   key(key: PropertyKey): any {
-    return make(compose(this.node, new PathNode([key])))
+    return make(compose(this.node, [new PathNode([key])]))
   }
   optionalKey(key: PropertyKey): any {
     return make(
       compose(
         this.node,
-        new LensNode(
+        primitiveNode(
+          "Lens",
           (s) => s[key],
           (a, s) => {
             const copy = cloneShallow(s)
@@ -1082,31 +1016,33 @@ class OptionalImpl<S, A> implements Optional<S, A> {
     )
   }
   check(...checks: readonly [SchemaAST.Check<any>, ...Array<SchemaAST.Check<any>>]): any {
-    return make(compose(this.node, new CheckNode(checks)))
+    return make(compose(this.node, [new CheckNode(checks)]))
   }
   refine<B extends A>(refinement: (a: A) => a is B, annotations?: Schema.Annotations.Filter): any {
-    return make(compose(this.node, new CheckNode([SchemaAST.makeFilterByGuard(refinement, annotations)])))
+    return make(compose(this.node, [new CheckNode([SchemaAST.makeFilterByGuard(refinement, annotations)])]))
   }
   tag(tag: string): any {
+    const err = Result.fail(new SchemaIssue.InvalidValue({ expected: `${JSON.stringify(tag)} tag` }))
     return make(
       compose(
         this.node,
-        new PrismNode(
-          (s) =>
-            s._tag === tag
-              ? Result.succeed(s)
-              : Result.fail(`Expected ${format(tag)} tag, got ${format(s._tag)}`),
+        primitiveNode(
+          "Prism",
+          (s) => s._tag === tag ? Result.succeed(s) : err,
           identity
         )
       )
     )
   }
   at(key: PropertyKey, ..._rest: Array<any>): any {
-    const err = Result.fail(`Key ${format(key)} not found`)
+    const err = Result.fail(
+      new SchemaIssue.Pointer([key], new SchemaIssue.MissingKey(undefined))
+    )
     return make(
       compose(
         this.node,
-        new OptionalNode(
+        primitiveNode(
+          "Optional",
           (s) => Object.hasOwn(s, key) ? Result.succeed(s[key]) : err,
           (a, s) => {
             if (Object.hasOwn(s, key)) {
@@ -1127,7 +1063,7 @@ class OptionalImpl<S, A> implements Optional<S, A> {
   omit(keys: any) {
     return this.compose(makeLens(Struct.omit(keys), (o, a) => ({ ...a, ...o })))
   }
-  notUndefined(): Prism<S, Exclude<A, undefined>> {
+  notUndefined(): any {
     return this.refine(Predicate.isNotUndefined, { expected: "a value other than `undefined`" })
   }
   forEach<S, A, B>(this: Traversal<S, A>, f: (iso: Iso<A, A>) => Optional<A, B>): Traversal<S, B> {
@@ -1155,7 +1091,9 @@ class OptionalImpl<S, A> implements Optional<S, A> {
           // 2) arity check
           if (bs.length !== idxs.length) {
             return Result.fail(
-              `each: replacement length mismatch: ${bs.length} !== ${idxs.length}`
+              new SchemaIssue.InvalidValue({
+                message: `each: replacement length mismatch: ${bs.length} !== ${idxs.length}`
+              })
             )
           }
 
@@ -1165,7 +1103,7 @@ class OptionalImpl<S, A> implements Optional<S, A> {
             const i = idxs[k]
             const r = inner.replaceResult(bs[k], as[i])
             if (Result.isFailure(r)) {
-              return Result.fail(`each: could not set element ${i}`)
+              return Result.fail(new SchemaIssue.Pointer([i], r.failure))
             }
             out[i] = r.success
           }
@@ -1212,7 +1150,7 @@ class LensImpl<S, A> extends OptionalImpl<S, A> implements Lens<S, A> {
 
 class PrismImpl<S, A> extends OptionalImpl<S, A> implements Prism<S, A> {
   readonly set: (a: A) => S
-  constructor(node: Node, getResult: (s: S) => Result.Result<A, string>, set: (a: A) => S) {
+  constructor(node: Node, getResult: (s: S) => Result.Result<A, SchemaIssue.Issue>, set: (a: A) => S) {
     super(node, getResult, (a, _) => Result.succeed(set(a)))
     this.set = set
   }
@@ -1225,15 +1163,23 @@ class PrismImpl<S, A> extends OptionalImpl<S, A> implements Prism<S, A> {
 }
 
 function make(node: Node): any {
-  const op = recur(node)
-  switch (op._tag) {
-    case "IsoNode":
+  let op: Operation = node[0] ?? identityOperation
+  if (node.length > 1) {
+    const kind = node.reduce<Kind>((kind, step) => composeKind(kind, step.kind), "Iso")
+    op = {
+      kind,
+      get: compileGet(node, kind),
+      set: compileSet(node, kind)
+    }
+  }
+  switch (op.kind) {
+    case "Iso":
       return new IsoImpl(node, op.get, op.set)
-    case "LensNode":
+    case "Lens":
       return new LensImpl(node, op.get, op.set)
-    case "PrismNode":
+    case "Prism":
       return new PrismImpl(node, op.get, op.set)
-    case "OptionalNode":
+    case "Optional":
       return new OptionalImpl(node, op.get, op.set)
   }
 }
@@ -1250,143 +1196,259 @@ function cloneShallow<T>(pojo: T): T {
   return pojo
 }
 
-type Op = {
-  readonly _tag: "IsoNode" | "LensNode" | "PrismNode" | "OptionalNode"
-  readonly get: (s: unknown) => any
-  readonly set: (a: unknown, s?: unknown) => any
-}
-
-const recur = memoize((node: Node): Op => {
-  switch (node._tag) {
-    case "IdentityNode":
-      return { _tag: "IsoNode", get: identity, set: identity }
-    case "IsoNode":
-    case "LensNode":
-    case "PrismNode":
-    case "OptionalNode":
-      return { _tag: node._tag, get: node.get, set: node.set }
-    case "PathNode": {
-      return {
-        _tag: "LensNode",
-        get: (s: any) => {
-          const path = node.path
-          let out: any = s
-          for (let i = 0, n = path.length; i < n; i++) {
-            out = out[path[i]]
-          }
-          return out
-        },
-        set: (a: any, s: any) => {
-          const path = node.path
-          const out = cloneShallow(s)
-
-          let current = out
-          let i = 0
-          for (; i < path.length - 1; i++) {
-            const key = path[i]
-            InternalRecord.assignProperty(current, key, cloneShallow(current[key]))
-            current = current[key]
-          }
-
-          const finalKey = path[i]
-          InternalRecord.assignProperty(current, finalKey, a)
-
-          return out
+function compileGet(nodes: Node, kind: Kind): (s: any) => any {
+  return (s) => {
+    for (let i = 0; i < nodes.length; i++) {
+      const op = nodes[i]
+      const result = op.get(s)
+      if (hasFailingGet(op.kind)) {
+        if (Result.isFailure(result)) {
+          return result
         }
+        s = result.success
+      } else {
+        s = result
       }
     }
-    case "CheckNode":
-      return {
-        _tag: "PrismNode",
-        get: (s: any) => Result.mapError(SchemaAST.runChecks(node.checks, s), String),
-        set: identity
+    return hasFailingGet(kind) ? Result.succeed(s) : s
+  }
+}
+
+function compileSet(nodes: Node, kind: Kind): (a: any, s: any) => any {
+  if (hasSourceFreeSet(kind)) {
+    return (a) => {
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        a = nodes[i].set(a)
       }
-    case "CompositionNode": {
-      const ops = node.nodes.map(recur)
-      const _tag = ops.reduce<Op["_tag"]>((tag, op) => getCompositionTag(tag, op._tag), "IsoNode")
-      return {
-        _tag,
-        get: (s: any) => {
-          for (let i = 0; i < ops.length; i++) {
-            const op = ops[i]
-            const result = op.get(s)
-            if (hasFailingGet(op._tag)) {
-              if (Result.isFailure(result)) {
-                return result
-              }
-              s = result.success
-            } else {
-              s = result
-            }
-          }
-          return hasFailingGet(_tag) ? Result.succeed(s) : s
-        },
-        set: (a: any, s: any) => {
-          const source = s
-          const len = ops.length
-          const ss = new Array(len + 1)
-          ss[0] = s
-          for (let i = 0; i < len; i++) {
-            const op = ops[i]
-            if (hasFailingGet(op._tag)) {
-              const result = op.get(s)
-              if (Result.isFailure(result)) {
-                return _tag === "OptionalNode" ? result : source
-              }
-              s = result.success
-            } else {
-              s = op.get(s)
-            }
-            ss[i + 1] = s
-          }
-          for (let i = len - 1; i >= 0; i--) {
-            const op = ops[i]
-            if (hasSet(op._tag)) {
-              a = op.set(a)
-            } else if (op._tag === "LensNode") {
-              a = op.set(a, ss[i])
-            } else {
-              const result = op.set(a, ss[i])
-              if (Result.isFailure(result)) {
-                return result
-              }
-              a = result.success
-            }
-          }
-          return _tag === "OptionalNode" ? Result.succeed(a) : a
-        }
-      }
+      return a
     }
   }
-})
-
-function hasFailingGet(tag: Op["_tag"]): boolean {
-  return tag === "PrismNode" || tag === "OptionalNode"
-}
-
-function hasSet(tag: Op["_tag"]): boolean {
-  return tag === "IsoNode" || tag === "PrismNode"
-}
-
-function getCompositionTag(a: Op["_tag"], b: Op["_tag"]): Op["_tag"] {
-  switch (a) {
-    case "IsoNode":
-      return b
-    case "LensNode":
-      return hasFailingGet(b) ? "OptionalNode" : "LensNode"
-    case "PrismNode":
-      return hasSet(b) ? "PrismNode" : "OptionalNode"
-    case "OptionalNode":
-      return "OptionalNode"
+  return (a, s) => {
+    const len = nodes.length
+    const sources = new Array(len)
+    for (let i = 0; i < len; i++) {
+      sources[i] = s
+      const op = nodes[i]
+      if (hasFailingGet(op.kind)) {
+        const result = op.get(s)
+        if (Result.isFailure(result)) {
+          return result
+        }
+        s = result.success
+      } else {
+        s = op.get(s)
+      }
+    }
+    for (let i = len - 1; i >= 0; i--) {
+      const op = nodes[i]
+      if (hasSourceFreeSet(op.kind)) {
+        a = op.set(a)
+      } else if (op.kind === "Lens") {
+        a = op.set(a, sources[i])
+      } else {
+        const result = op.set(a, sources[i])
+        if (Result.isFailure(result)) {
+          return result
+        }
+        a = result.success
+      }
+    }
+    return kind === "Optional" ? Result.succeed(a) : a
   }
+}
+
+function hasFailingGet(kind: Kind): boolean {
+  return kind === "Prism" || kind === "Optional"
+}
+
+function hasSourceFreeSet(kind: Kind): boolean {
+  return kind === "Iso" || kind === "Prism"
+}
+
+function composeKind(a: Kind, b: Kind): Kind {
+  if (a === "Iso") return b
+  if (b === "Iso" || a === b) return a
+  return "Optional"
 }
 // ---------------------------------------------
 // Derived APIs
 // ---------------------------------------------
 
 /**
- * Returns a function that extracts all elements focused by a
- * {@link Traversal} as a plain mutable array.
+ * Reads the focused value from a `Lens`.
+ *
+ * **When to use**
+ *
+ * Use when the optic always focuses exactly one value.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms.
+ *
+ * @see {@link getResult} for optics whose focus may be absent
+ *
+ * @category getters
+ * @since 4.0.0
+ */
+export const get: {
+  <S, A>(optic: Lens<S, A>): (self: NoInfer<S>) => A
+  <S, A>(self: NoInfer<S>, optic: Lens<S, A>): A
+} = dual<
+  <S, A>(optic: Lens<S, A>) => (self: NoInfer<S>) => A,
+  <S, A>(self: NoInfer<S>, optic: Lens<S, A>) => A
+>(2, (self, optic) => optic.get(self))
+
+/**
+ * Attempts to read the focused value from an `Optional`.
+ *
+ * **When to use**
+ *
+ * Use when the optic may not focus and you need the failure as a `Result`.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms.
+ *
+ * @see {@link get} for optics that always focus
+ *
+ * @category getters
+ * @since 4.0.0
+ */
+export const getResult: {
+  <S, A>(optic: Optional<S, A>): (self: NoInfer<S>) => Result.Result<A, SchemaIssue.Issue>
+  <S, A>(self: NoInfer<S>, optic: Optional<S, A>): Result.Result<A, SchemaIssue.Issue>
+} = dual<
+  <S, A>(optic: Optional<S, A>) => (self: NoInfer<S>) => Result.Result<A, SchemaIssue.Issue>,
+  <S, A>(self: NoInfer<S>, optic: Optional<S, A>) => Result.Result<A, SchemaIssue.Issue>
+>(2, (self, optic) => optic.getResult(self))
+
+/**
+ * Builds a source value from a focused value using a `Prism`.
+ *
+ * **When to use**
+ *
+ * Use when the optic can construct the source without an existing source value.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms. The focused value is `self`.
+ *
+ * @see {@link replace} for updates that use an existing source
+ *
+ * @category transforming
+ * @since 4.0.0
+ */
+export const set: {
+  <S, A>(optic: Prism<S, A>): (self: NoInfer<A>) => S
+  <S, A>(self: NoInfer<A>, optic: Prism<S, A>): S
+} = dual<
+  <S, A>(optic: Prism<S, A>) => (self: NoInfer<A>) => S,
+  <S, A>(self: NoInfer<A>, optic: Prism<S, A>) => S
+>(2, (self, optic) => optic.set(self))
+
+/**
+ * Replaces the focused value in a source.
+ *
+ * **When to use**
+ *
+ * Use when a failed focus should leave the source unchanged.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms.
+ *
+ * @see {@link replaceResult} for an explicit replacement failure
+ *
+ * @category transforming
+ * @since 4.0.0
+ */
+export const replace: {
+  <S, A>(optic: Optional<S, A>, value: NoInfer<A>): (self: NoInfer<S>) => S
+  <S, A>(self: NoInfer<S>, optic: Optional<S, A>, value: NoInfer<A>): S
+} = dual<
+  <S, A>(optic: Optional<S, A>, value: NoInfer<A>) => (self: NoInfer<S>) => S,
+  <S, A>(self: NoInfer<S>, optic: Optional<S, A>, value: NoInfer<A>) => S
+>(3, (self, optic, value) => optic.replace(value, self))
+
+/**
+ * Attempts to replace the focused value in a source.
+ *
+ * **When to use**
+ *
+ * Use when you need an explicit `Result` for a replacement failure.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms.
+ *
+ * @see {@link replace} for returning the original source on failure
+ *
+ * @category transforming
+ * @since 4.0.0
+ */
+export const replaceResult: {
+  <S, A>(
+    optic: Optional<S, A>,
+    value: NoInfer<A>
+  ): (self: NoInfer<S>) => Result.Result<S, SchemaIssue.Issue>
+  <S, A>(
+    self: NoInfer<S>,
+    optic: Optional<S, A>,
+    value: NoInfer<A>
+  ): Result.Result<S, SchemaIssue.Issue>
+} = dual<
+  <S, A>(
+    optic: Optional<S, A>,
+    value: NoInfer<A>
+  ) => (self: NoInfer<S>) => Result.Result<S, SchemaIssue.Issue>,
+  <S, A>(
+    self: NoInfer<S>,
+    optic: Optional<S, A>,
+    value: NoInfer<A>
+  ) => Result.Result<S, SchemaIssue.Issue>
+>(3, (self, optic, value) => optic.replaceResult(value, self))
+
+/**
+ * Transforms the focused value in a source.
+ *
+ * **When to use**
+ *
+ * Use when you want to update a focus with a function.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms. A failed focus leaves the
+ * source unchanged.
+ *
+ * @see {@link modifyAll} for transforming every value in a traversal
+ *
+ * @category transforming
+ * @since 4.0.0
+ */
+export const modify: {
+  <S, A>(
+    optic: Optional<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ): (self: NoInfer<S>) => S
+  <S, A>(
+    self: NoInfer<S>,
+    optic: Optional<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ): S
+} = dual<
+  <S, A>(
+    optic: Optional<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ) => (self: NoInfer<S>) => S,
+  <S, A>(
+    self: NoInfer<S>,
+    optic: Optional<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ) => S
+>(3, (self, optic, f) => optic.modify(f)(self))
+
+/**
+ * Extracts all values focused by a `Traversal` as a plain mutable array.
  *
  * **When to use**
  *
@@ -1397,10 +1459,11 @@ function getCompositionTag(a: Op["_tag"], b: Op["_tag"]): Op["_tag"] {
  *
  * - Returns an empty array when the traversal cannot focus.
  * - Always returns a fresh array (safe to mutate).
+ * - Supports both data-first and data-last forms.
  *
  * **Example** (Collecting positive numbers)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Schema } from "effect"
  *
  * type S = { readonly values: ReadonlyArray<number> }
@@ -1411,31 +1474,73 @@ function getCompositionTag(a: Op["_tag"], b: Op["_tag"]): Op["_tag"] {
  *
  * const getPositive = Optic.getAll(_pos)
  *
- * console.log(getPositive({ values: [3, -1, 5] }))
- * // Output: [3, 5]
+ * getPositive({ values: [3, -1, 5] }) // => [3, 5]
  *
- * console.log(getPositive({ values: [-1, -2] }))
- * // Output: []
+ * getPositive({ values: [-1, -2] }) // => []
  * ```
  *
  * @see {@link Traversal} — the optic type this operates on
  *
- * @category Traversal
+ * @category getters
  * @since 4.0.0
  */
-export function getAll<S, A>(traversal: Traversal<S, A>): (s: S) => Array<A> {
-  return (s) =>
-    Result.match(traversal.getResult(s), {
-      onFailure: () => [],
-      onSuccess: (as) => [...as]
-    })
-}
+export const getAll: {
+  <S, A>(traversal: Traversal<S, A>): (self: NoInfer<S>) => Array<A>
+  <S, A>(self: NoInfer<S>, traversal: Traversal<S, A>): Array<A>
+} = dual<
+  <S, A>(traversal: Traversal<S, A>) => (self: NoInfer<S>) => Array<A>,
+  <S, A>(self: NoInfer<S>, traversal: Traversal<S, A>) => Array<A>
+>(2, (self, traversal) =>
+  Result.match(traversal.getResult(self), {
+    onFailure: () => [],
+    onSuccess: (as) => [...as]
+  }))
+
+/**
+ * Transforms every value focused by a `Traversal`.
+ *
+ * **When to use**
+ *
+ * Use when you want to update each value selected by a traversal.
+ *
+ * **Details**
+ *
+ * Supports both data-first and data-last forms. A failed traversal leaves the
+ * source unchanged.
+ *
+ * @see {@link modify} for transforming the focus as a whole
+ * @see {@link getAll} for reading every focused value
+ *
+ * @category transforming
+ * @since 4.0.0
+ */
+export const modifyAll: {
+  <S, A>(
+    traversal: Traversal<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ): (self: NoInfer<S>) => S
+  <S, A>(
+    self: NoInfer<S>,
+    traversal: Traversal<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ): S
+} = dual<
+  <S, A>(
+    traversal: Traversal<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ) => (self: NoInfer<S>) => S,
+  <S, A>(
+    self: NoInfer<S>,
+    traversal: Traversal<S, A>,
+    f: (value: NoInfer<A>) => NoInfer<A>
+  ) => S
+>(3, (self, traversal, f) => traversal.modifyAll(f)(self))
 
 // ---------------------------------------------
 // Built-in Optics
 // ---------------------------------------------
 
-const identityIso = make(identityNode)
+const identityIso = make([])
 
 /**
  * Iso that focuses on the whole value unchanged.
@@ -1452,20 +1557,19 @@ const identityIso = make(identityNode)
  *
  * **Example** (Starting an optic chain)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic } from "effect"
  *
  * type S = { readonly x: number }
  *
  * const _x = Optic.id<S>().key("x")
  *
- * console.log(_x.get({ x: 42 }))
- * // Output: 42
+ * _x.get({ x: 42 }) // => 42
  * ```
  *
  * @see {@link Iso} — the type this function returns
  *
- * @category Iso
+ * @category constructors
  * @since 4.0.0
  */
 export function id<S>(): Iso<S, S> {
@@ -1489,7 +1593,7 @@ export function id<S>(): Iso<S, S> {
  *
  * **Example** (Traversing record values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Schema } from "effect"
  *
  * const _positiveValues = Optic.entries<number>()
@@ -1497,18 +1601,17 @@ export function id<S>(): Iso<S, S> {
  *
  * const inc = _positiveValues.modifyAll((n) => n + 1)
  *
- * console.log(inc({ a: 0, b: 3, c: -1 }))
- * // Output: { a: 0, b: 4, c: -1 }
+ * inc({ a: 0, b: 3, c: -1 }) // => { a: 0, b: 4, c: -1 }
  * ```
  *
  * @see {@link Iso} — the type this function returns
  * @see {@link id} — identity iso
  *
- * @category Iso
+ * @category constructors
  * @since 4.0.0
  */
 export function entries<A>(): Iso<Record<string, A>, ReadonlyArray<readonly [string, A]>> {
-  return make(new IsoNode(Object.entries, Object.fromEntries))
+  return make(primitiveNode("Iso", Object.entries, Object.fromEntries))
 }
 
 /**
@@ -1521,40 +1624,33 @@ export function entries<A>(): Iso<Record<string, A>, ReadonlyArray<readonly [str
  *
  * **Details**
  *
- * - `getResult` fails with an error message when the option is `None`.
+ * - `getResult` fails with a structured issue when the option is `None`.
  * - `set(a)` wraps `a` in `Option.some(a)`.
  *
  * **Example** (Accessing Some value)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Option, Result } from "effect"
  *
  * const _some = Optic.id<Option.Option<number>>().compose(Optic.some())
  *
- * console.log(Result.isSuccess(_some.getResult(Option.some(42))))
- * // Output: true
+ * _some.getResult(Option.some(42)) // => Result.succeed(42)
  *
- * console.log(Result.isFailure(_some.getResult(Option.none())))
- * // Output: true
+ * Result.isFailure(_some.getResult(Option.none())) // => true
  *
- * console.log(_some.set(10))
- * // Output: { _tag: "Some", value: 10 }
+ * _some.set(10) // => Option.some(10)
  * ```
  *
  * @see {@link none} — focuses on `None` instead
  * @see {@link Prism} — the type this function returns
  *
- * @category Prism
+ * @category constructors
  * @since 4.0.0
  */
 export function some<A>(): Prism<Option.Option<A>, A> {
   const run = runRefinement(Option.isSome, { expected: "a Some value" })
   return makePrism(
-    (s) =>
-      Result.mapBoth(run(s), {
-        onFailure: String,
-        onSuccess: (s) => s.value
-      }),
+    (s) => Result.map(run(s), (s) => s.value),
     Option.some
   )
 }
@@ -1574,32 +1670,26 @@ export function some<A>(): Prism<Option.Option<A>, A> {
  *
  * **Example** (Matching None)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Option, Result } from "effect"
  *
  * const _none = Optic.id<Option.Option<number>>().compose(Optic.none())
  *
- * console.log(Result.isSuccess(_none.getResult(Option.none())))
- * // Output: true
+ * _none.getResult(Option.none()) // => Result.succeed(undefined)
  *
- * console.log(Result.isFailure(_none.getResult(Option.some(1))))
- * // Output: true
+ * Result.isFailure(_none.getResult(Option.some(1))) // => true
  * ```
  *
  * @see {@link some} — focuses on `Some` instead
  * @see {@link Prism} — the type this function returns
  *
- * @category Prism
+ * @category constructors
  * @since 4.0.0
  */
 export function none<A>(): Prism<Option.Option<A>, undefined> {
   const run = runRefinement(Option.isNone, { expected: "a None value" })
   return makePrism(
-    (s) =>
-      Result.mapBoth(run(s), {
-        onFailure: String,
-        onSuccess: () => undefined
-      }),
+    (s) => Result.map(run(s), () => undefined),
     () => Option.none()
   )
 }
@@ -1619,32 +1709,26 @@ export function none<A>(): Prism<Option.Option<A>, undefined> {
  *
  * **Example** (Accessing success)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Result } from "effect"
  *
  * const _ok = Optic.id<Result.Result<number, string>>().compose(Optic.success())
  *
- * console.log(Result.isSuccess(_ok.getResult(Result.succeed(42))))
- * // Output: true
+ * _ok.getResult(Result.succeed(42)) // => Result.succeed(42)
  *
- * console.log(Result.isFailure(_ok.getResult(Result.fail("err"))))
- * // Output: true
+ * Result.isFailure(_ok.getResult(Result.fail("err"))) // => true
  * ```
  *
  * @see {@link failure} — focuses on the failure side
  * @see {@link Prism} — the type this function returns
  *
- * @category Prism
+ * @category constructors
  * @since 4.0.0
  */
 export function success<A, E>(): Prism<Result.Result<A, E>, A> {
   const run = runRefinement(Result.isSuccess, { expected: "a Result.Success value" })
   return makePrism(
-    (s) =>
-      Result.mapBoth(run(s), {
-        onFailure: String,
-        onSuccess: (s) => s.success
-      }),
+    (s) => Result.map(run(s), (s) => s.success),
     Result.succeed
   )
 }
@@ -1664,32 +1748,26 @@ export function success<A, E>(): Prism<Result.Result<A, E>, A> {
  *
  * **Example** (Accessing failure)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Optic, Result } from "effect"
  *
  * const _err = Optic.id<Result.Result<number, string>>().compose(Optic.failure())
  *
- * console.log(Result.isSuccess(_err.getResult(Result.fail("oops"))))
- * // Output: true
+ * _err.getResult(Result.fail("oops")) // => Result.succeed("oops")
  *
- * console.log(Result.isFailure(_err.getResult(Result.succeed(42))))
- * // Output: true
+ * Result.isFailure(_err.getResult(Result.succeed(42))) // => true
  * ```
  *
  * @see {@link success} — focuses on the success side
  * @see {@link Prism} — the type this function returns
  *
- * @category Prism
+ * @category constructors
  * @since 4.0.0
  */
 export function failure<A, E>(): Prism<Result.Result<A, E>, E> {
   const run = runRefinement(Result.isFailure, { expected: "a Result.Failure value" })
   return makePrism(
-    (s) =>
-      Result.mapBoth(run(s), {
-        onFailure: String,
-        onSuccess: (s) => s.failure
-      }),
+    (s) => Result.map(run(s), (s) => s.failure),
     Result.fail
   )
 }

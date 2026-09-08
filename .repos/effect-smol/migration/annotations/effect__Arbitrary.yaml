@@ -1,0 +1,17 @@
+"effect/Arbitrary#ArbitraryAnnotation":
+  replacement: "Schema.Annotations.ToArbitrary.Declaration"
+  note: "Arbitrary derivation annotations now live in Schema.Annotations and use the toArbitrary key."
+"effect/Arbitrary#ArbitraryGenerationContext":
+  replacement: "Schema.Annotations.ToArbitrary.Context"
+  note: "Use the v4 arbitrary-derivation context type from Schema.Annotations."
+"effect/Arbitrary#LazyArbitrary":
+  replacement: "Schema.Arbitrary"
+  note: "The arbitrary factory type moved onto Schema."
+"effect/Arbitrary#make":
+  replacement: "Schema.toArbitrary"
+  note: "Arbitrary derivation is now exposed directly by Schema."
+  example: "Schema.toArbitrary(schema)(FastCheck)"
+"effect/Arbitrary#makeLazy":
+  replacement: "Schema.toArbitrary"
+  note: "Lazy arbitrary derivation is now exposed directly by Schema."
+  example: "Schema.toArbitrary(schema)"

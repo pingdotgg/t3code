@@ -1,6 +1,6 @@
 import { describe, it } from "@effect/vitest"
 import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Deferred, Effect, Exit, Fiber, pipe, SynchronizedRef } from "effect"
+import { Deferred, Effect, Exit, Fiber, Option, pipe, SynchronizedRef } from "effect"
 
 const current = "value"
 const update = "new value"
@@ -101,5 +101,12 @@ describe("SynchronizedRef", () => {
       yield* Fiber.interrupt(fiber)
       const result = yield* SynchronizedRef.updateAndGetEffect(ref, (_) => Effect.succeed(Closed))
       deepStrictEqual(result, Closed)
+    }))
+  it.effect("getAndUpdateSome updates the backing ref", () =>
+    Effect.gen(function*() {
+      const ref = yield* SynchronizedRef.make(1)
+      const previous = yield* SynchronizedRef.getAndUpdateSome(ref, (n) => Option.some(n + 1))
+      strictEqual(previous, 1)
+      strictEqual(yield* SynchronizedRef.get(ref), 2)
     }))
 })

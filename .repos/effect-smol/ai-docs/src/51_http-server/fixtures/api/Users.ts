@@ -10,7 +10,10 @@ export class UsersApiGroup extends HttpApiGroup.make("users")
       query: {
         search: Schema.optional(Schema.String)
       },
-      success: Schema.Array(User)
+      // Use the `json` variant of the model for API responses. It shares the
+      // field declarations with the database variants, but can encode values
+      // differently where needed.
+      success: Schema.Array(User.json)
     }),
     HttpApiEndpoint.get("search", "/search", {
       // For get requests, payload uses the query string
@@ -18,7 +21,7 @@ export class UsersApiGroup extends HttpApiGroup.make("users")
         search: Schema.String
       },
       success: [
-        Schema.Array(User),
+        Schema.Array(User.json),
         Schema.String.pipe(HttpApiSchema.asText({
           contentType: "text/csv"
         }))
@@ -39,13 +42,12 @@ export class UsersApiGroup extends HttpApiGroup.make("users")
     }),
     HttpApiEndpoint.get("getById", "/:id", {
       params: {
-        // Path parameter schemas need to be able to decode from strings.
-        // Schema.decodeTo can be used to "bridge" between schemas
-        id: Schema.FiniteFromString.pipe(
-          Schema.decodeTo(UserId)
-        )
+        // Path parameter values are automatically coerced from their string
+        // form using `Schema.toCodecStringTree`, so schemas that decode from
+        // other types (like numbers) work here as well.
+        id: UserId
       },
-      success: User,
+      success: User.json,
       error: UserNotFound.pipe(
         // If you want an error to return no content, you can use
         // `HttpApiSchema.asNoContent` and provide a decoder that transforms the
@@ -59,14 +61,28 @@ export class UsersApiGroup extends HttpApiGroup.make("users")
       // For post requests, payload uses the request body. It defaults to JSON,
       // but you can specify other content types as well using
       // `HttpApiSchema.asText`, `HttpApiSchema.asMultipart`, etc.
-      payload: Schema.Struct({
-        name: Schema.String,
-        email: Schema.String
-      }),
-      success: User
+      //
+      // The `jsonCreate` variant only exposes the fields clients are allowed
+      // to provide, so the generated id and timestamps cannot be set here.
+      payload: User.jsonCreate,
+      success: User.json
+    }),
+    HttpApiEndpoint.patch("update", "/:id", {
+      params: {
+        id: UserId
+      },
+      // The `jsonUpdate` variant similarly excludes the id and the managed
+      // timestamps from the update payload.
+      payload: User.jsonUpdate,
+      success: User.json,
+      error: UserNotFound.pipe(
+        HttpApiSchema.asNoContent({
+          decode: () => new UserNotFound()
+        })
+      )
     }),
     HttpApiEndpoint.get("me", "/me", {
-      success: User,
+      success: User.json,
       error: UserNotFound.pipe(HttpApiSchema.status(404))
     })
   )

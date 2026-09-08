@@ -1,10 +1,20 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Context, Effect, Stream } from "effect"
-import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/unstable/http"
+import { HttpBody, HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/unstable/http"
 
 const TestValue = Context.Reference<number>("test/TestValue", { defaultValue: () => 0 })
 
 describe("HttpServerResponse", () => {
+  it("setHeader overrides body-derived content headers", () => {
+    const response = HttpServerResponse.text("body").pipe(
+      HttpServerResponse.setHeader("content-type", "text/custom"),
+      HttpServerResponse.setHeader("content-length", "1")
+    )
+
+    assert.strictEqual(response.headers["content-type"], "text/custom")
+    assert.strictEqual(response.headers["content-length"], "1")
+  })
+
   it.effect("fromClientResponse preserves status, headers, cookies, and json", () =>
     Effect.gen(function*() {
       const request = HttpClientRequest.get("http://localhost:3000/todos/1")
@@ -75,4 +85,20 @@ describe("HttpServerResponse", () => {
       assert.strictEqual(response.status, 200)
       assert.strictEqual(yield* roundTrip.text, "")
     }))
+
+  it("synchronizes body metadata headers for empty and replaced bodies", () => {
+    const emptyBytes = HttpServerResponse.uint8Array(new Uint8Array())
+    assert.strictEqual(emptyBytes.headers["content-length"], "0")
+
+    const replaced = HttpServerResponse.setBody(HttpServerResponse.text("abc"), HttpBody.empty)
+    assert.notProperty(replaced.headers, "content-type")
+    assert.notProperty(replaced.headers, "content-length")
+
+    const streamed = HttpServerResponse.setBody(
+      HttpServerResponse.text("abc"),
+      HttpBody.stream(Stream.empty, "application/octet-stream")
+    )
+    assert.strictEqual(streamed.headers["content-type"], "application/octet-stream")
+    assert.notProperty(streamed.headers, "content-length")
+  })
 })

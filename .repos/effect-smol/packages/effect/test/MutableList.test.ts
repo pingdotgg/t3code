@@ -3,6 +3,22 @@ import { deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { MutableList } from "effect"
 
 describe("MutableList", () => {
+  it("preserves a prepended element when appending to the list", () => {
+    const list = MutableList.make<number>()
+    MutableList.prepend(list, 1)
+    MutableList.append(list, 2)
+
+    strictEqual(MutableList.toArray(list).join(","), "1,2")
+    strictEqual(list.length, 2)
+  })
+
+  it("returns an empty snapshot for a negative bound", () => {
+    const list = MutableList.make<number>()
+    MutableList.append(list, 1)
+
+    deepStrictEqual(MutableList.toArrayN(list, -1), [])
+  })
+
   it("appendAll returns 0 and leaves an empty list empty", () => {
     const list = MutableList.make<number>()
 

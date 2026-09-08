@@ -13,13 +13,24 @@ concurrency:
 permissions: {}
 
 jobs:
+  approval-gate:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    environment: fork
+    steps:
+      - run: echo "Fork PR approved by maintainer."
+
   snapshot:
     name: Snapshot
-    if: github.repository_owner == 'Effect-Ts'
+    needs: [approval-gate]
+    if: >-
+      !cancelled()
+      && (needs.approval-gate.result == 'success' || needs.approval-gate.result == 'skipped')
+      && github.repository_owner == 'Effect-Ts'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install dependencies
         uses: ./.github/actions/setup
       - name: Set strip internals config
@@ -31,4 +42,4 @@ jobs:
         run: pnpm build
       - name: Create snapshot
         id: snapshot
-        run: pnpx pkg-pr-new@0.0.78 publish --pnpm --comment=off ./packages/* ./packages/atom/* ./packages/ai/* ./packages/sql/* ./packages/tools/*
+        run: pnpm exec pkg-pr-new publish --pnpm --comment=off ./packages/* ./packages/atom/* ./packages/ai/* ./packages/platform/* ./packages/sql/* ./packages/tools/*

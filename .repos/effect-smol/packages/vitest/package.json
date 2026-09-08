@@ -1,6 +1,6 @@
 {
   "name": "@effect/vitest",
-  "version": "4.0.0-beta.102",
+  "version": "4.0.0-rc.112",
   "type": "module",
   "license": "MIT",
   "description": "A set of helpers for testing Effects with vitest",
@@ -19,6 +19,7 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts",
     "./internal/*": null,
+    "./index": null,
     "./*/index": null
   },
   "files": [
@@ -26,7 +27,10 @@
     "dist/**/*.js",
     "dist/**/*.js.map",
     "dist/**/*.d.ts",
-    "dist/**/*.d.ts.map"
+    "dist/**/*.d.ts.map",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "ai-docs/**/*"
   ],
   "publishConfig": {
     "access": "public",
@@ -36,24 +40,22 @@
       ".": "./dist/index.js",
       "./*": "./dist/*.js",
       "./internal/*": null,
+      "./index": null,
       "./*/index": null
     }
   },
   "scripts": {
     "build": "tsc -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
-    "check": "tsc -b tsconfig.json",
-    "test": "vitest",
-    "coverage": "vitest --coverage"
+    "check": "tsc -b tsconfig.json"
   },
   "peerDependencies": {
     "effect": "workspace:^",
-    "vitest": "^3.0.0 || ^4.0.0"
+    "vitest": ">=4.1.0 <5.0.0"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
-    "@vitest/runner": "4.1.10",
+    "@types/node": "^26.2.0",
     "effect": "workspace:^",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }

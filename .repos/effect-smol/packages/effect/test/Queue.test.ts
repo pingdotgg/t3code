@@ -319,6 +319,28 @@ describe("Queue", () => {
       assert.isNotNull(fiber.pollUnsafe())
     }))
 
+  it.effect("end preserves Done for take and excludes it from await", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<never, Cause.Done>()
+      const takeFiber = yield* Queue.take(queue).pipe(Effect.forkChild)
+      const awaitFiber = yield* Queue.await(queue).pipe(Effect.forkChild)
+      yield* Effect.yieldNow
+      yield* Queue.end(queue)
+
+      assert.deepStrictEqual(yield* Fiber.await(takeFiber), Exit.fail(Cause.Done()))
+      assert.strictEqual(yield* Fiber.join(awaitFiber), void 0)
+    }))
+
+  it.effect("await preserves non-Done failures", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.unbounded<number, string>()
+      const fiber = yield* Queue.await(queue).pipe(Effect.exit, Effect.forkChild)
+      yield* Effect.yieldNow
+      yield* Queue.fail(queue, "boom")
+
+      assert.deepStrictEqual(yield* Fiber.join(fiber), Exit.fail("boom"))
+    }))
+
   it.effect("bounded 0 capacity", () =>
     Effect.gen(function*() {
       const queue = yield* Queue.bounded<number>(0)

@@ -36,8 +36,8 @@ import * as References from "./References.ts"
  *
  * **Example** (Using log levels)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, References } from "effect"
  *
  * // Using log levels with Effect logging
  * const program = Effect.gen(function*() {
@@ -52,6 +52,13 @@ import * as References from "./References.ts"
  * // Type-safe log level variables
  * const errorLevel = "Error" // LogLevel
  * const debugLevel = "Debug" // LogLevel
+ *
+ * await Effect.runPromise(
+ *   Effect.provideService(program, References.MinimumLogLevel, "None")
+ * )
+ *
+ * const levels = [errorLevel, debugLevel]
+ * levels // => ["Error", "Debug"]
  * ```
  *
  * @category models
@@ -101,7 +108,7 @@ export type Severity = "Fatal" | "Error" | "Warn" | "Info" | "Debug" | "Trace"
  * @see {@link Severity} for the concrete message severity type that excludes `All` and `None`
  * @see {@link Order} for comparing these levels by severity order
  *
- * @category models
+ * @category constants
  * @since 4.0.0
  */
 export const values: ReadonlyArray<LogLevel> = ["All", "Fatal", "Error", "Warn", "Info", "Debug", "Trace", "None"]
@@ -120,13 +127,12 @@ export const values: ReadonlyArray<LogLevel> = ["All", "Fatal", "Error", "Warn",
  *
  * **Example** (Ordering log levels)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { LogLevel } from "effect"
  *
- * // Compare log levels using Order
- * console.log(LogLevel.Order("Error", "Info")) // 1 (Error > Info)
- * console.log(LogLevel.Order("Debug", "Error")) // -1 (Debug < Error)
- * console.log(LogLevel.Order("Info", "Info")) // 0 (Info == Info)
+ * LogLevel.Order("Error", "Info") // => 1
+ * LogLevel.Order("Debug", "Error") // => -1
+ * LogLevel.Order("Info", "Info") // => 0
  * ```
  *
  * @category ordering
@@ -148,11 +154,11 @@ export const Order: Ord.Order<LogLevel> = effect.LogLevelOrder
  *
  * **Example** (Comparing log levels)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { LogLevel } from "effect"
  *
- * console.log(LogLevel.Equivalence("Error", "Error")) // true
- * console.log(LogLevel.Equivalence("Error", "Info")) // false
+ * LogLevel.Equivalence("Error", "Error") // => true
+ * LogLevel.Equivalence("Error", "Info") // => false
  * ```
  *
  * @see {@link Order} for severity ordering rather than exact level equality
@@ -204,25 +210,24 @@ export const getOrdinal = (self: LogLevel): number => effect.logLevelToOrder(sel
  *
  * **Example** (Checking higher severity)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { LogLevel } from "effect"
  *
- * // Check if Error is more severe than Info
- * console.log(LogLevel.isGreaterThan("Error", "Info")) // true
- * console.log(LogLevel.isGreaterThan("Debug", "Error")) // false
+ * LogLevel.isGreaterThan("Error", "Info") // => true
+ * LogLevel.isGreaterThan("Debug", "Error") // => false
  *
  * // Use with filtering
  * const isFatal = LogLevel.isGreaterThan("Fatal", "Warn")
  * const isError = LogLevel.isGreaterThan("Error", "Warn")
  * const isDebug = LogLevel.isGreaterThan("Debug", "Warn")
- * console.log(isFatal) // true
- * console.log(isError) // true
- * console.log(isDebug) // false
+ * isFatal // => true
+ * isError // => true
+ * isDebug // => false
  *
  * // Curried usage
  * const isMoreSevereThanInfo = LogLevel.isGreaterThan("Info")
- * console.log(isMoreSevereThanInfo("Error")) // true
- * console.log(isMoreSevereThanInfo("Debug")) // false
+ * isMoreSevereThanInfo("Error") // => true
+ * isMoreSevereThanInfo("Debug") // => false
  * ```
  *
  * @category ordering
@@ -247,33 +252,15 @@ export const isGreaterThan: {
  *
  * **Example** (Filtering by minimum log level)
  *
- * ```ts
- * import { Logger, LogLevel } from "effect"
+ * ```ts import.meta.vitest
+ * import { LogLevel } from "effect"
  *
- * // Check if level meets minimum threshold
- * console.log(LogLevel.isGreaterThanOrEqualTo("Error", "Error")) // true
- * console.log(LogLevel.isGreaterThanOrEqualTo("Error", "Info")) // true
- * console.log(LogLevel.isGreaterThanOrEqualTo("Debug", "Info")) // false
+ * LogLevel.isGreaterThanOrEqualTo("Error", "Error") // => true
+ * LogLevel.isGreaterThanOrEqualTo("Error", "Info") // => true
+ * LogLevel.isGreaterThanOrEqualTo("Debug", "Info") // => false
  *
- * // Create a logger that only logs Info and above
- * const infoLogger = Logger.make((options) => {
- *   if (LogLevel.isGreaterThanOrEqualTo(options.logLevel, "Info")) {
- *     console.log(`[${options.logLevel}] ${options.message}`)
- *   }
- * })
- *
- * // Production logger - only Error and Fatal
- * const productionLogger = Logger.make((options) => {
- *   if (LogLevel.isGreaterThanOrEqualTo(options.logLevel, "Error")) {
- *     console.error(
- *       `${options.date.toISOString()} [${options.logLevel}] ${options.message}`
- *     )
- *   }
- * })
- *
- * // Curried usage for filtering
  * const isInfoOrAbove = LogLevel.isGreaterThanOrEqualTo("Info")
- * const shouldLog = isInfoOrAbove("Error") // true
+ * isInfoOrAbove("Error") // => true
  * ```
  *
  * @category ordering
@@ -297,25 +284,24 @@ export const isGreaterThanOrEqualTo: {
  *
  * **Example** (Checking lower severity)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { LogLevel } from "effect"
  *
- * // Check if Debug is less severe than Info
- * console.log(LogLevel.isLessThan("Debug", "Info")) // true
- * console.log(LogLevel.isLessThan("Error", "Info")) // false
+ * LogLevel.isLessThan("Debug", "Info") // => true
+ * LogLevel.isLessThan("Error", "Info") // => false
  *
  * // Filter out verbose logs
  * const isFatalVerbose = LogLevel.isLessThan("Fatal", "Info")
  * const isErrorVerbose = LogLevel.isLessThan("Error", "Info")
  * const isTraceVerbose = LogLevel.isLessThan("Trace", "Info")
- * console.log(isFatalVerbose) // false (Fatal is not verbose)
- * console.log(isErrorVerbose) // false (Error is not verbose)
- * console.log(isTraceVerbose) // true (Trace is verbose)
+ * isFatalVerbose // => false
+ * isErrorVerbose // => false
+ * isTraceVerbose // => true
  *
  * // Curried usage
  * const isLessSevereThanError = LogLevel.isLessThan("Error")
- * console.log(isLessSevereThanError("Info")) // true
- * console.log(isLessSevereThanError("Fatal")) // false
+ * isLessSevereThanError("Info") // => true
+ * isLessSevereThanError("Fatal") // => false
  * ```
  *
  * @category ordering
@@ -340,31 +326,15 @@ export const isLessThan: {
  *
  * **Example** (Filtering by maximum log level)
  *
- * ```ts
- * import { Logger, LogLevel } from "effect"
+ * ```ts import.meta.vitest
+ * import { LogLevel } from "effect"
  *
- * // Check if level is at or below threshold
- * console.log(LogLevel.isLessThanOrEqualTo("Info", "Info")) // true
- * console.log(LogLevel.isLessThanOrEqualTo("Debug", "Info")) // true
- * console.log(LogLevel.isLessThanOrEqualTo("Error", "Info")) // false
+ * LogLevel.isLessThanOrEqualTo("Info", "Info") // => true
+ * LogLevel.isLessThanOrEqualTo("Debug", "Info") // => true
+ * LogLevel.isLessThanOrEqualTo("Error", "Info") // => false
  *
- * // Create a logger that suppresses verbose logs
- * const quietLogger = Logger.make((options) => {
- *   if (LogLevel.isLessThanOrEqualTo(options.logLevel, "Info")) {
- *     console.log(`[${options.logLevel}] ${options.message}`)
- *   }
- * })
- *
- * // Development logger - suppress trace logs
- * const devLogger = Logger.make((options) => {
- *   if (LogLevel.isLessThanOrEqualTo(options.logLevel, "Debug")) {
- *     console.log(`[${options.logLevel}] ${options.message}`)
- *   }
- * })
- *
- * // Curried usage for filtering
  * const isInfoOrBelow = LogLevel.isLessThanOrEqualTo("Info")
- * const shouldLog = isInfoOrBelow("Debug") // true
+ * isInfoOrBelow("Debug") // => true
  * ```
  *
  * @category ordering
@@ -390,22 +360,24 @@ export const isLessThanOrEqualTo: {
  *
  * **Example** (Checking current fiber log level)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, LogLevel, References } from "effect"
  *
  * const program = Effect.gen(function*() {
  *   const debugEnabled = yield* LogLevel.isEnabled("Debug")
  *   const errorEnabled = yield* LogLevel.isEnabled("Error")
  *
- *   console.log({ debugEnabled, errorEnabled })
+ *   return { debugEnabled, errorEnabled }
  * })
  *
  * const warnOnly = program.pipe(
  *   Effect.provideService(References.MinimumLogLevel, "Warn")
  * )
+ *
+ * await Effect.runPromise(warnOnly) // => { debugEnabled: false, errorEnabled: true }
  * ```
  *
- * @category filtering
+ * @category predicates
  * @since 4.0.0
  */
 export const isEnabled = (self: LogLevel): Effect.Effect<boolean> =>

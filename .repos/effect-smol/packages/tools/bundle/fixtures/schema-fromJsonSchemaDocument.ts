@@ -1,6 +1,6 @@
 import * as SchemaRepresentation from "effect/SchemaRepresentation"
 
-SchemaRepresentation.fromJsonSchemaDocument({
+export const schema = SchemaRepresentation.fromJsonSchemaDocument({
   "dialect": "draft-2020-12",
   "schema": {
     "type": "object",

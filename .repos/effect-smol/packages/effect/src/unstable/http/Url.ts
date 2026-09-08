@@ -88,7 +88,7 @@ const baseUrl = (): string | undefined => {
  *
  * **Example** (Parsing absolute and relative URLs)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Result } from "effect"
  * import { Url } from "effect/unstable/http"
  *
@@ -98,22 +98,12 @@ const baseUrl = (): string | undefined => {
  * //      ▼
  * const parsed = Url.fromString("https://example.com/path")
  *
- * if (Result.isSuccess(parsed)) {
- *   console.log("Parsed URL:", parsed.success.toString())
- * } else {
- *   console.log("Error:", parsed.failure.message)
- * }
- * // Output: Parsed URL: https://example.com/path
+ * Result.map(parsed, (url) => url.toString()) // => Result.succeed("https://example.com/path")
  *
  * // Parse a relative URL with a base
  * const relativeParsed = Url.fromString("/relative-path", "https://example.com")
  *
- * if (Result.isSuccess(relativeParsed)) {
- *   console.log("Parsed relative URL:", relativeParsed.success.toString())
- * } else {
- *   console.log("Error:", relativeParsed.failure.message)
- * }
- * // Output: Parsed relative URL: https://example.com/relative-path
+ * Result.map(relativeParsed, (url) => url.toString()) // => Result.succeed("https://example.com/relative-path")
  * ```
  *
  * @category constructors
@@ -133,7 +123,7 @@ export const fromString: {
  *
  * **Example** (Mutating URL credentials)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Url } from "effect/unstable/http"
  *
  * const myUrl = new URL("https://example.com")
@@ -143,11 +133,10 @@ export const fromString: {
  *   url.password = "pass"
  * })
  *
- * console.log("Mutated:", mutatedUrl.toString())
- * // Output: Mutated: https://user:pass@example.com/
+ * mutatedUrl.toString() // => "https://user:pass@example.com/"
  * ```
  *
- * @category modifiers
+ * @category transforming
  * @since 4.0.0
  */
 export const mutate: {
@@ -295,7 +284,7 @@ export const setUsername: {
  *
  * **Example** (Replacing query parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Url, UrlParams } from "effect/unstable/http"
  *
  * const myUrl = new URL("https://example.com?foo=bar")
@@ -306,8 +295,7 @@ export const setUsername: {
  *   UrlParams.fromInput([["key", "value"]])
  * )
  *
- * console.log(updatedUrl.toString())
- * // Output: https://example.com/?key=value
+ * updatedUrl.toString() // => "https://example.com/?key=value"
  * ```
  *
  * @category setters
@@ -332,16 +320,15 @@ export const setUrlParams: {
  *
  * **Example** (Reading query parameters)
  *
- * ```ts
- * import { Url } from "effect/unstable/http"
+ * ```ts import.meta.vitest
+ * import { Url, UrlParams } from "effect/unstable/http"
  *
  * const myUrl = new URL("https://example.com?foo=bar")
  *
  * // Read parameters
  * const params = Url.urlParams(myUrl)
  *
- * console.log(params)
- * // Output: [ [ 'foo', 'bar' ] ]
+ * UrlParams.toString(params) // => "foo=bar"
  * ```
  *
  * @category getters
@@ -361,18 +348,17 @@ export const urlParams = (url: URL): UrlParams.UrlParams => UrlParams.fromInput(
  *
  * **Example** (Modifying query parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Url, UrlParams } from "effect/unstable/http"
  *
  * const myUrl = new URL("https://example.com?foo=bar")
  *
  * const changedUrl = Url.modifyUrlParams(myUrl, UrlParams.append("key", "value"))
  *
- * console.log(changedUrl.toString())
- * // Output: https://example.com/?foo=bar&key=value
+ * changedUrl.toString() // => "https://example.com/?foo=bar&key=value"
  * ```
  *
- * @category modifiers
+ * @category transforming
  * @since 4.0.0
  */
 export const modifyUrlParams: {

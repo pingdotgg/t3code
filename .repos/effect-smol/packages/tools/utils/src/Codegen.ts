@@ -118,7 +118,7 @@ export interface BarrelFile {
 /**
  * Service interface for discovering annotated barrel files and regenerating their export contents.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface BarrelGenerator {

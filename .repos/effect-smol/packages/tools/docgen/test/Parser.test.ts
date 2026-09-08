@@ -212,6 +212,32 @@ Since v1.0.0`
   })
 
   describe("parseFunctions", () => {
+    it.effect("omits internal properties from signatures", () =>
+      Effect.gen(function*() {
+        yield* expectMarkdown(
+          Parser.parseFunctions,
+          `/**
+           * @since 1.0.0
+           */
+          export const myfunc: (options: {
+            readonly visible?: string
+            /** @internal */
+            readonly internal?: boolean
+          }) => void = () => {}`,
+          `## myfunc
+
+**Signature**
+
+\`\`\`ts
+declare const myfunc: (options: { readonly visible?: string; }) => void
+\`\`\`
+
+[Source](https://github.com/effect-ts/docgen/blob/main/src/test.ts#L4)
+
+Since v1.0.0`
+        )
+      }))
+
     it.effect(`should remove all metadata from typedcript code blocks when the theme is ${Configuration.DEFAULT_THEME}`, () =>
       Effect.gen(function*() {
         yield* expectMarkdown(

@@ -19,7 +19,7 @@ import type { Scope } from "./Scope.ts"
 /**
  * Represents a console interface for logging, debugging, timing, and grouping output.
  *
- * @category models
+ * @category services
  * @since 2.0.0
  */
 export interface Console {
@@ -58,19 +58,26 @@ export interface Console {
  *
  * **Example** (Accessing the current console)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   log: (...args: ReadonlyArray<unknown>) => messages.push(...args)
+ * })
  * const program = Console.consoleWith((console) =>
  *   Effect.sync(() => {
  *     console.log("Hello from current console!")
  *   })
  * )
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * messages // => ["Hello from current console!"]
  * ```
  *
  * @see {@link consoleWith} for using the current console service inside an effect
  *
- * @category references
+ * @category services
  * @since 2.0.0
  */
 export const Console: Context.Reference<Console> = effect.ConsoleRef
@@ -80,15 +87,23 @@ export const Console: Context.Reference<Console> = effect.ConsoleRef
  *
  * **Example** (Accessing the current console service)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   log: (...args: ReadonlyArray<unknown>) => messages.push(...args),
+ *   error: (...args: ReadonlyArray<unknown>) => messages.push(...args)
+ * })
  * const program = Console.consoleWith((console) =>
  *   Effect.sync(() => {
  *     console.log("Hello, world!")
  *     console.error("This is an error message")
  *   })
  * )
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * messages // => ["Hello, world!", "This is an error message"]
  * ```
  *
  * @category constructors
@@ -102,13 +117,22 @@ export const consoleWith = <A, E, R>(f: (console: Console) => Effect.Effect<A, E
  *
  * **Example** (Logging failed assertions)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const errors: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   assert: (condition: boolean, ...args: ReadonlyArray<unknown>) => {
+ *     if (!condition) errors.push(...args)
+ *   }
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.assert(2 + 2 === 4, "Math is working correctly")
  *   yield* Console.assert(2 + 2 === 5, "This will be logged as an error")
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * errors // => ["This will be logged as an error"]
  * ```
  *
  * @category accessors
@@ -136,14 +160,22 @@ export const assert = (condition: boolean, ...args: ReadonlyArray<any>): Effect.
  *
  * **Example** (Clearing console output)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const operations: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   log: (message: string) => operations.push(`log:${message}`),
+ *   clear: () => operations.push("clear")
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.log("This will be cleared")
  *   yield* Console.clear
  *   yield* Console.log("This appears after clearing")
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * operations // => ["log:This will be cleared", "clear", "log:This appears after clearing"]
  * ```
  *
  * @category accessors
@@ -160,14 +192,26 @@ export const clear: Effect.Effect<void> = consoleWith((console) =>
  *
  * **Example** (Counting repeated calls)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const counters = new Map<string, number>()
+ * const messages: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   count: (label = "default") => {
+ *     const count = (counters.get(label) ?? 0) + 1
+ *     counters.set(label, count)
+ *     messages.push(`${label}: ${count}`)
+ *   }
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.count("my-counter")
- *   yield* Console.count("my-counter") // Will show: my-counter: 2
- *   yield* Console.count() // Default counter
+ *   yield* Console.count("my-counter")
+ *   yield* Console.count()
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * messages // => ["my-counter: 1", "my-counter: 2", "default: 1"]
  * ```
  *
  * @category accessors
@@ -185,15 +229,28 @@ export const count = (label?: string): Effect.Effect<void> =>
  *
  * **Example** (Resetting a counter)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const counters = new Map<string, number>()
+ * const messages: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   count: (label = "default") => {
+ *     const count = (counters.get(label) ?? 0) + 1
+ *     counters.set(label, count)
+ *     messages.push(`${label}: ${count}`)
+ *   },
+ *   countReset: (label = "default") => counters.set(label, 0)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.count("my-counter")
- *   yield* Console.count("my-counter") // Will show: my-counter: 2
+ *   yield* Console.count("my-counter")
  *   yield* Console.countReset("my-counter")
- *   yield* Console.count("my-counter") // Will show: my-counter: 1
+ *   yield* Console.count("my-counter")
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * messages // => ["my-counter: 1", "my-counter: 2", "my-counter: 1"]
  * ```
  *
  * @category accessors
@@ -217,13 +274,20 @@ export const countReset = (label?: string): Effect.Effect<void> =>
  *
  * **Example** (Writing debug messages)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<ReadonlyArray<unknown>> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   debug: (...args: ReadonlyArray<unknown>) => messages.push(args)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.debug("Debug info:", { userId: 123, action: "login" })
  *   yield* Console.debug("Processing step", 1, "of", 5)
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * messages // => [["Debug info:", { userId: 123, action: "login" }], ["Processing step", 1, "of", 5]]
  * ```
  *
  * @category accessors
@@ -241,14 +305,25 @@ export const debug = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Inspecting an object)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const inspected: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   dir: (item: unknown, options?: unknown) => inspected.push([item, options])
+ * })
  * const program = Effect.gen(function*() {
  *   const obj = { name: "John", age: 30, nested: { city: "New York" } }
  *   yield* Console.dir(obj)
- *   yield* Console.dir(obj, { depth: 2, colors: true })
+ *   yield* Console.dir(obj, { depth: 2 })
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   [{ name: "John", age: 30, nested: { city: "New York" } }, undefined],
+ *   [{ name: "John", age: 30, nested: { city: "New York" } }, { depth: 2 }]
+ * ]
+ * inspected // => expected
  * ```
  *
  * @category accessors
@@ -266,15 +341,19 @@ export const dir = (item: any, options?: any): Effect.Effect<void> =>
  *
  * **Example** (Inspecting XML-like data)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   dirxml: (...args: ReadonlyArray<unknown>) => messages.push(...args)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.dirxml("<user id=\"1\">Ada</user>")
  * })
  *
- * Effect.runSync(program)
- * // <user id="1">Ada</user>
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * messages // => ["<user id=\"1\">Ada</user>"]
  * ```
  *
  * @category accessors
@@ -293,9 +372,13 @@ export const dirxml = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Writing error messages)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<ReadonlyArray<unknown>> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   error: (...args: ReadonlyArray<unknown>) => messages.push(args)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.error("Something went wrong!")
  *   yield* Console.error("Error details:", {
@@ -303,6 +386,13 @@ export const dirxml = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *     message: "Internal Server Error"
  *   })
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   ["Something went wrong!"],
+ *   ["Error details:", { code: 500, message: "Internal Server Error" }]
+ * ]
+ * messages // => expected
  * ```
  *
  * @category accessors
@@ -320,9 +410,15 @@ export const error = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Grouping scoped output)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const operations: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   group: (label?: string) => operations.push(`group:${label}`),
+ *   groupEnd: () => operations.push("groupEnd"),
+ *   log: (message: string) => operations.push(`log:${message}`)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Effect.scoped(
  *     Effect.gen(function*() {
@@ -333,6 +429,16 @@ export const error = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *     })
  *   )
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   "group:User Processing",
+ *   "log:Loading user data...",
+ *   "log:Validating user...",
+ *   "log:User processed successfully",
+ *   "groupEnd"
+ * ]
+ * operations // => expected
  * ```
  *
  * @category accessors
@@ -363,9 +469,13 @@ export const group = (
  *
  * **Example** (Writing informational messages)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<ReadonlyArray<unknown>> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   info: (...args: ReadonlyArray<unknown>) => messages.push(args)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.info("Application started successfully")
  *   yield* Console.info("Server configuration:", {
@@ -373,6 +483,13 @@ export const group = (
  *     env: "development"
  *   })
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   ["Application started successfully"],
+ *   ["Server configuration:", { port: 3000, env: "development" }]
+ * ]
+ * messages // => expected
  * ```
  *
  * @category accessors
@@ -390,14 +507,26 @@ export const info = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Writing log messages)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<ReadonlyArray<unknown>> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   log: (...args: ReadonlyArray<unknown>) => messages.push(args)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.log("Hello, world!")
  *   yield* Console.log("User data:", { name: "John", age: 30 })
  *   yield* Console.log("Processing", 42, "items")
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   ["Hello, world!"],
+ *   ["User data:", { name: "John", age: 30 }],
+ *   ["Processing", 42, "items"]
+ * ]
+ * messages // => expected
  * ```
  *
  * @category accessors
@@ -415,8 +544,15 @@ export const log = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Displaying tabular data)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
+ *
+ * const calls: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   table: (data: ReadonlyArray<unknown>, properties?: ReadonlyArray<string>) => {
+ *     calls.push({ rows: data.length, properties })
+ *   }
+ * })
  *
  * const program = Effect.gen(function*() {
  *   const users = [
@@ -427,6 +563,9 @@ export const log = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *   yield* Console.table(users)
  *   yield* Console.table(users, ["name", "age"]) // Only show specific columns
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * calls // => [{ rows: 3, properties: undefined }, { rows: 3, properties: ["name", "age"] }]
  * ```
  *
  * @category accessors
@@ -444,19 +583,28 @@ export const table = (tabularData: any, properties?: ReadonlyArray<string>): Eff
  *
  * **Example** (Timing scoped work)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
+ *
+ * const operations: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   time: (label?: string) => operations.push(`start:${label}`),
+ *   timeEnd: (label?: string) => operations.push(`end:${label}`),
+ *   log: (message: string) => operations.push(`log:${message}`)
+ * })
  *
  * const program = Effect.gen(function*() {
  *   yield* Effect.scoped(
  *     Effect.gen(function*() {
  *       yield* Console.time("operation-timer")
- *       yield* Effect.sleep("1 second")
  *       yield* Console.log("Operation completed")
  *       // Timer ends automatically when scope closes
  *     })
  *   )
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * operations // => ["start:operation-timer", "log:Operation completed", "end:operation-timer"]
  * ```
  *
  * @category accessors
@@ -480,20 +628,28 @@ export const time = (label?: string | undefined): Effect.Effect<void, never, Sco
  *
  * **Example** (Logging timer progress)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
+ *
+ * const operations: Array<unknown> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   time: (label?: string) => operations.push(["start", label]),
+ *   timeLog: (label?: string, ...args: ReadonlyArray<unknown>) => operations.push(["log", label, ...args]),
+ *   timeEnd: (label?: string) => operations.push(["end", label])
+ * })
  *
  * const program = Effect.gen(function*() {
  *   yield* Effect.scoped(
  *     Effect.gen(function*() {
  *       yield* Console.time("long-operation")
- *       yield* Effect.sleep("500 millis")
  *       yield* Console.timeLog("long-operation", "Halfway done")
- *       yield* Effect.sleep("500 millis")
  *       // Timer ends when scope closes
  *     })
  *   )
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * operations // => [["start", "long-operation"], ["log", "long-operation", "Halfway done"], ["end", "long-operation"]]
  * ```
  *
  * @category accessors
@@ -512,13 +668,21 @@ export const timeLog = (label?: string, ...args: ReadonlyArray<any>): Effect.Eff
  *
  * **Example** (Writing stack traces)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
+ *
+ * const traces: Array<ReadonlyArray<unknown>> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   trace: (...args: ReadonlyArray<unknown>) => traces.push(args)
+ * })
  *
  * const program = Effect.gen(function*() {
  *   yield* Console.trace("Debug trace point")
  *   yield* Console.trace("Function call:", { functionName: "processData" })
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * traces // => [["Debug trace point"], ["Function call:", { functionName: "processData" }]]
  * ```
  *
  * @category accessors
@@ -537,15 +701,26 @@ export const trace = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Writing warning messages)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const messages: Array<ReadonlyArray<unknown>> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   warn: (...args: ReadonlyArray<unknown>) => messages.push(args)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.warn("This feature is deprecated")
  *   yield* Console.warn("Performance warning:", {
  *     slowQuery: "SELECT * FROM large_table"
  *   })
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   ["This feature is deprecated"],
+ *   ["Performance warning:", { slowQuery: "SELECT * FROM large_table" }]
+ * ]
+ * messages // => expected
  * ```
  *
  * @category accessors
@@ -563,9 +738,15 @@ export const warn = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *
  * **Example** (Wrapping an effect in a group)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
  *
+ * const operations: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   group: (label?: string) => operations.push(`group:${label}`),
+ *   groupEnd: () => operations.push("groupEnd"),
+ *   log: (message: string) => operations.push(`log:${message}`)
+ * })
  * const program = Effect.gen(function*() {
  *   yield* Console.withGroup(
  *     Effect.gen(function*() {
@@ -576,6 +757,16 @@ export const warn = (...args: ReadonlyArray<any>): Effect.Effect<void> =>
  *     { label: "Processing Steps", collapsed: false }
  *   )
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * const expected = [
+ *   "group:Processing Steps",
+ *   "log:Step 1: Initialize",
+ *   "log:Step 2: Process",
+ *   "log:Step 3: Complete",
+ *   "groupEnd"
+ * ]
+ * operations // => expected
  * ```
  *
  * @category accessors
@@ -618,18 +809,27 @@ export const withGroup = dual<
  *
  * **Example** (Timing an effect)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Console, Effect } from "effect"
+ *
+ * const operations: Array<string> = []
+ * const testConsole: Console.Console = Object.assign(Object.create(console), {
+ *   time: (label?: string) => operations.push(`start:${label}`),
+ *   timeEnd: (label?: string) => operations.push(`end:${label}`),
+ *   log: (message: string) => operations.push(`log:${message}`)
+ * })
  *
  * const program = Effect.gen(function*() {
  *   yield* Console.withTime(
  *     Effect.gen(function*() {
- *       yield* Effect.sleep("1 second")
  *       yield* Console.log("Operation completed")
  *     }),
  *     "my-operation"
  *   )
  * })
+ *
+ * Effect.runSync(Effect.provideService(program, Console.Console, testConsole))
+ * operations // => ["start:my-operation", "log:Operation completed", "end:my-operation"]
  * ```
  *
  * @category accessors

@@ -1,7 +1,14 @@
-# `@effect/atom-vue`
+# @effect/atom-vue
 
-Vue bindings for the Effect Atom modules.
+[Vue](https://vuejs.org) bindings for Atom, the reactive state management modules for Effect.
+
+## Installation
+
+```sh
+npm install effect@rc @effect/atom-vue@rc
+```
 
 ## Documentation
 
-- **API Reference**: [View the full documentation](https://effect-ts.github.io/effect/docs/atom-vue).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/atom-vue)

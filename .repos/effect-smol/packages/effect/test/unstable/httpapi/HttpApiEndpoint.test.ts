@@ -178,17 +178,16 @@ describe("HttpApiEndpoint streaming success schemas", () => {
     )
   })
 
-  it("two streaming successes for distinct statuses are allowed", () => {
+  it("two streaming successes for distinct statuses throw", () => {
     const stream = HttpApiSchema.status(206)(sse())
     const bytes = HttpApiSchema.status(200)(
       HttpApiSchema.StreamUint8Array({ contentType: "application/custom-stream" })
     )
-    const endpoint = HttpApiEndpoint.get("events", "/events", {
-      success: [stream, bytes]
-    })
 
-    assert.isTrue(endpoint.success.has(stream))
-    assert.isTrue(endpoint.success.has(bytes))
+    assert.throws(
+      () => HttpApiEndpoint.get("events", "/events", { success: [stream, bytes] }),
+      "Multiple streaming success responses are not supported"
+    )
   })
 
   it("statically detectable SSE reserved failure event name throws", () => {
@@ -205,5 +204,267 @@ describe("HttpApiEndpoint streaming success schemas", () => {
         success: stream
       })
     )
+  })
+})
+
+describe("HttpApiEndpoint WithHeaders schemas", () => {
+  it("rejects a WithHeaders success sharing its status and content type", () => {
+    assert.throws(
+      () =>
+        HttpApiEndpoint.get("get", "/", {
+          success: [
+            Schema.Struct({ plain: Schema.String }),
+            HttpApiSchema.WithHeaders(
+              Schema.Struct({ wrapped: Schema.String }),
+              { "x-trace-id": Schema.String }
+            )
+          ]
+        }),
+      "Cannot combine a response with headers with another response for status 200 and content-type: application/json"
+    )
+  })
+
+  it("rejects an encodeToWithHeaders error sharing its status and content type", () => {
+    const ErrorWithHeaders = Schema.String.pipe(
+      HttpApiSchema.encodeToWithHeaders({
+        body: Schema.Struct({ wrapped: Schema.String }),
+        headers: { "x-trace-id": Schema.String }
+      }, {
+        decode: ({ body }) => body.wrapped,
+        encode: (message) => ({ body: { wrapped: message }, headers: { "x-trace-id": "trace" } })
+      })
+    )
+
+    assert.throws(
+      () =>
+        HttpApiEndpoint.get("get", "/", {
+          error: [
+            Schema.Struct({ plain: Schema.String }),
+            ErrorWithHeaders
+          ]
+        }),
+      "Cannot combine a response with headers with another response for status 500 and content-type: application/json"
+    )
+  })
+
+  it("rejects two WithHeaders successes sharing a status across content types", () => {
+    assert.throws(
+      () =>
+        HttpApiEndpoint.get("get", "/", {
+          success: [
+            HttpApiSchema.WithHeaders(
+              Schema.Struct({ value: Schema.String }),
+              { "x-json": Schema.String }
+            ),
+            HttpApiSchema.WithHeaders(
+              Schema.String.pipe(HttpApiSchema.asText()),
+              { "x-text": Schema.String }
+            )
+          ]
+        }),
+      "Cannot declare multiple responses with headers for status 200"
+    )
+  })
+
+  it("rejects two encodeToWithHeaders errors sharing a status", () => {
+    const JsonError = Schema.String.pipe(
+      HttpApiSchema.encodeToWithHeaders({
+        body: Schema.Struct({ message: Schema.String }),
+        headers: { "x-json": Schema.String }
+      }, {
+        decode: ({ body }) => body.message,
+        encode: (message) => ({ body: { message }, headers: { "x-json": "json" } })
+      })
+    )
+    const TextError = Schema.String.pipe(
+      HttpApiSchema.encodeToWithHeaders({
+        body: Schema.String.pipe(HttpApiSchema.asText()),
+        headers: { "x-text": Schema.String }
+      }, {
+        decode: ({ body }) => body,
+        encode: (message) => ({ body: message, headers: { "x-text": "text" } })
+      })
+    )
+
+    assert.throws(
+      () => HttpApiEndpoint.get("get", "/", { error: [JsonError, TextError] }),
+      "Cannot declare multiple responses with headers for status 500"
+    )
+  })
+
+  it("rejects mixed WithHeaders and encodeToWithHeaders responses sharing a status", () => {
+    const AnnotatedError = Schema.String.pipe(
+      HttpApiSchema.encodeToWithHeaders({
+        body: Schema.String.pipe(HttpApiSchema.status(429), HttpApiSchema.asText()),
+        headers: { "retry-after": Schema.String }
+      }, {
+        decode: ({ body }) => body,
+        encode: (message) => ({ body: message, headers: { "retry-after": "30" } })
+      })
+    )
+
+    assert.throws(
+      () =>
+        HttpApiEndpoint.get("get", "/", {
+          error: [
+            HttpApiSchema.WithHeaders(
+              Schema.Struct({ message: Schema.String }).pipe(HttpApiSchema.status(429)),
+              { "x-trace-id": Schema.String }
+            ),
+            AnnotatedError
+          ]
+        }),
+      "Cannot declare multiple responses with headers for status 429"
+    )
+  })
+
+  it("allows one response with headers and a plain response for the same status across content types", () => {
+    const endpoint = HttpApiEndpoint.get("get", "/", {
+      success: [
+        HttpApiSchema.WithHeaders(
+          Schema.Struct({ value: Schema.String }),
+          { "x-trace-id": Schema.String }
+        ),
+        Schema.String.pipe(HttpApiSchema.asText())
+      ]
+    })
+
+    assert.strictEqual(endpoint.success.size, 2)
+  })
+
+  it("allows responses with headers on distinct statuses", () => {
+    const endpoint = HttpApiEndpoint.get("get", "/", {
+      success: [
+        HttpApiSchema.WithHeaders(
+          Schema.Struct({ value: Schema.String }),
+          { "x-trace-id": Schema.String }
+        ),
+        HttpApiSchema.WithHeaders(
+          Schema.Struct({ created: Schema.Boolean }).pipe(HttpApiSchema.status(201)),
+          { location: Schema.String }
+        )
+      ]
+    })
+
+    assert.strictEqual(endpoint.success.size, 2)
+  })
+
+  it("keeps the wrapper in the success set with codec-transformed parts", () => {
+    const endpoint = HttpApiEndpoint.get("list", "/users", {
+      success: HttpApiSchema.WithHeaders(Schema.Struct({ a: Schema.String }), {
+        "x-count": Schema.Int
+      })
+    })
+
+    const [schema] = Array.from(endpoint.success)
+    assert.isTrue(HttpApiSchema.isWithHeaders(schema))
+    if (HttpApiSchema.isWithHeaders(schema)) {
+      assert.deepStrictEqual(
+        Schema.encodeSync(schema.headers as any)({ "x-count": 3 }),
+        { "x-count": "3" }
+      )
+    }
+  })
+
+  it("leaves the wrapper untouched when codecs are disabled", () => {
+    const wrapped = HttpApiSchema.WithHeaders(Schema.Struct({ a: Schema.String }), {
+      "x-count": Schema.Int
+    })
+    const endpoint = HttpApiEndpoint.get("list", "/users", {
+      disableCodecs: true,
+      success: wrapped
+    })
+
+    assert.isTrue(endpoint.success.has(wrapped))
+  })
+
+  it("keeps a wrapped stream schema as the inner schema", () => {
+    const stream = sse()
+    const endpoint = HttpApiEndpoint.get("events", "/events", {
+      success: HttpApiSchema.WithHeaders(stream, { "x-count": Schema.Int })
+    })
+
+    const [schema] = Array.from(endpoint.success)
+    assert.isTrue(HttpApiSchema.isWithHeaders(schema))
+    if (HttpApiSchema.isWithHeaders(schema)) {
+      assert.strictEqual(schema.schema, stream)
+    }
+  })
+
+  it("preserves wrapper annotations through endpoint construction", () => {
+    const endpoint = HttpApiEndpoint.get("list", "/users", {
+      success: HttpApiSchema.WithHeaders(Schema.Struct({ a: Schema.String }), {
+        "x-count": Schema.Int
+      }).pipe(HttpApiSchema.status(201))
+    })
+
+    const [schema] = Array.from(endpoint.success)
+    assert.strictEqual(HttpApiSchema.getStatusSuccessSchema(schema), 201)
+  })
+
+  it("validates a wrapped stream like a bare stream", () => {
+    assert.throws(() =>
+      HttpApiEndpoint.get("events", "/events", {
+        success: [
+          HttpApiSchema.WithHeaders(sse(), { "x-count": Schema.Int }),
+          HttpApiSchema.StreamUint8Array({ contentType: "application/custom-stream" })
+        ]
+      })
+    )
+    assert.throws(() =>
+      HttpApiEndpoint.head("events", "/events", {
+        success: HttpApiSchema.WithHeaders(sse(), { "x-count": Schema.Int }) as any
+      })
+    )
+  })
+
+  it("rejects wrapped and bare streams at distinct statuses", () => {
+    assert.throws(
+      () =>
+        HttpApiEndpoint.get("events", "/events", {
+          success: [
+            HttpApiSchema.status(206)(
+              HttpApiSchema.StreamUint8Array({ contentType: "application/custom-bytes" })
+            ),
+            HttpApiSchema.WithHeaders(
+              HttpApiSchema.status(201)(
+                HttpApiSchema.StreamUint8Array({ contentType: "application/other-bytes" })
+              ),
+              { "x-source": Schema.String }
+            )
+          ]
+        }),
+      "Multiple streaming success responses are not supported"
+    )
+
+    assert.throws(
+      () =>
+        HttpApiEndpoint.get("events", "/events", {
+          success: [
+            HttpApiSchema.WithHeaders(sse(), { "x-count": Schema.Int }),
+            sse()
+          ]
+        }),
+      "Multiple streaming success responses are not supported"
+    )
+  })
+
+  it("keeps WithHeaders in the error set with codec-transformed parts", () => {
+    const endpoint = HttpApiEndpoint.get("list", "/users", {
+      error: HttpApiSchema.WithHeaders(
+        Schema.Struct({ message: Schema.String }).pipe(HttpApiSchema.status(429)),
+        { "retry-after": Schema.Int }
+      )
+    })
+
+    const [schema] = Array.from(endpoint.error)
+    assert.isTrue(HttpApiSchema.isWithHeaders(schema))
+    assert.strictEqual(HttpApiSchema.getStatusErrorSchema(schema), 429)
+    if (HttpApiSchema.isWithHeaders(schema)) {
+      assert.deepStrictEqual(
+        Schema.encodeSync(schema.headers as any)({ "retry-after": 30 }),
+        { "retry-after": "30" }
+      )
+    }
   })
 })

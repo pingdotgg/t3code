@@ -84,7 +84,6 @@ export class ModelName extends Context.Service<ModelName, string>()(
 ) {}
 
 const Proto = {
-  ...PipeInspectableProto,
   [TypeId]: TypeId,
   ["~effect/Layer"]: {
     _ROut: identity,
@@ -97,6 +96,7 @@ const Proto = {
       Effect.succeed(Layer.provide(self, Layer.succeedContext(context)))
     )
   },
+  ...PipeInspectableProto,
   toJSON(this: Model<any, any, any>): unknown {
     return {
       _id: "effect/ai/Model",
@@ -110,29 +110,18 @@ const Proto = {
  *
  * **Example** (Providing model metadata)
  *
- * ```ts
- * import { Effect } from "effect"
- * import type { Layer } from "effect"
- * import { LanguageModel, Model } from "effect/unstable/ai"
+ * ```ts import.meta.vitest
+ * import { Effect, Layer } from "effect"
+ * import { Model } from "effect/unstable/ai"
  *
- * declare const bedrockLayer: Layer.Layer<LanguageModel.LanguageModel>
- *
- * // Model automatically provides ProviderName and ModelName services
- * const checkProviderAndGenerate = Effect.gen(function*() {
+ * const model = Model.make("amazon-bedrock", "claude-3-5-haiku", Layer.empty)
+ * const program = Effect.gen(function*() {
  *   const provider = yield* Model.ProviderName
  *   const modelName = yield* Model.ModelName
+ *   return { provider, modelName }
+ * }).pipe(Effect.provide(model))
  *
- *   console.log(`Generating with: ${provider}/${modelName}`)
- *
- *   return yield* LanguageModel.generateText({
- *     prompt: `Hello from ${provider}!`
- *   })
- * })
- *
- * const program = checkProviderAndGenerate.pipe(
- *   Effect.provide(Model.make("amazon-bedrock", "claude-3-5-haiku", bedrockLayer))
- * )
- * // Will log: "Generating with: amazon-bedrock/claude-3-5-haiku"
+ * await Effect.runPromise(program) // => { provider: "amazon-bedrock", modelName: "claude-3-5-haiku" }
  * ```
  *
  * @category constructors

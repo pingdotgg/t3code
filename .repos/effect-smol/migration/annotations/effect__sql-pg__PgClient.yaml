@@ -1,0 +1,12 @@
+"@effect/sql-pg/PgClient#layerFromPool":
+  replacement: "PgClient.layerFrom(PgClient.fromPool(options))"
+  note: "Compose fromPool with layerFrom; layerFrom now accepts an Effect acquiring a PgClient rather than pool options."
+"@effect/sql-pg/PgClient#PgClient":
+  replacement: "@effect/sql-pg/PgClient#PgClient"
+  note: "Retained; the service value is now a Context.Service."
+"@effect/sql-pg/PgClient#PgClientConfig":
+  replacement: "@effect/sql-pg/PgClient#PgClientConfig / PgPoolConfig"
+  note: "Use PgClientConfig for base settings and PgPoolConfig for make/layer; pool sizing, idle timeout, and connection TTL moved to PgPoolConfig."
+"@effect/sql-pg/PgClient#PgClientFromPoolOptions":
+  replacement: "Parameters<typeof PgClient.fromPool>[0]"
+  note: "The named type was removed; derive the inline fromPool option type. PgPoolConfig is for creating a managed pool and is not equivalent."

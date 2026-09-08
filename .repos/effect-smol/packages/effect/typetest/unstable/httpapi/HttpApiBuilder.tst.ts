@@ -21,7 +21,7 @@ import { describe, expect, it } from "tstyche"
 describe("HttpApiBuilder", () => {
   describe("group", () => {
     it("does not require unknown services for status annotations piped onto errors", () => {
-      class NotFound extends Schema.TaggedErrorClass<NotFound>()("NotFound", {}) {}
+      class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {}) {}
       const Api = HttpApi.make("api").add(
         HttpApiGroup.make("group").add(
           HttpApiEndpoint.get("get", "/", {
@@ -325,12 +325,10 @@ describe("HttpApiBuilder", () => {
             })
         )
 
-        type Requirements =
+        expect<Layer.Services<typeof handlers>>().type.toBe<
           | HttpRouterRequest<"Requires", UserRepository>
           | HttpRouterRequest<"Requires", UserPreferences>
-
-        expect<Layer.Services<typeof handlers>>().type.toBeAssignableTo<Requirements>()
-        expect<Layer.Services<typeof handlers>>().type.toBeAssignableFrom<Requirements>()
+        >()
       })
     })
 

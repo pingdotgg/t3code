@@ -17,7 +17,7 @@ export const SqlClientLayer: Layer.Layer<
   url: Config.redacted("DATABASE_URL")
 })
 
-export class UserRespositoryError extends Schema.TaggedErrorClass<UserRespositoryError>()("UserRespositoryError", {
+export class UserRespositoryError extends Schema.TaggedError<UserRespositoryError>()("UserRespositoryError", {
   reason: SqlError.SqlError
 }) {}
 

@@ -184,7 +184,8 @@ const makeTracerEffect = Effect.gen(function*() {
   return Tracer.make({
     span(options) {
       const span = currentTracer.span(options)
-      client.sendUnsafe(span)
+      // the span is mutated in place, so send a snapshot of its current state
+      client.sendUnsafe({ ...span })
       const oldEvent = span.event
       span.event = function(this: Tracer.Span, name, startTime, attributes) {
         client.sendUnsafe({
@@ -201,7 +202,7 @@ const makeTracerEffect = Effect.gen(function*() {
       const oldEnd = span.end
       span.end = function(this: Tracer.Span, endTime, exit) {
         oldEnd.call(this, endTime, exit)
-        client.sendUnsafe(span)
+        client.sendUnsafe({ ...span })
       }
 
       return span

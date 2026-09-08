@@ -15,7 +15,7 @@
  * ```ts
  * // User declares:
  * const config = {
- *   verbose: Flag.boolean("verbose"),
+ *   verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
  *   server: {
  *     host: Flag.string("host"),
  *     port: Flag.integer("port")

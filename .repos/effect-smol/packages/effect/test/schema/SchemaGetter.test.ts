@@ -1,12 +1,14 @@
 import { assert, describe, it } from "@effect/vitest"
-import { DateTime, Effect, Option, Result, SchemaGetter } from "effect"
+import { DateTime, Effect, Option, Result, SchemaGetter, SchemaIssue } from "effect"
 import { assertSome, deepStrictEqual } from "../utils/assert.ts"
+
+const formatIssue = SchemaIssue.makeFormatterDefault()
 
 function makeAsserts<T, E>(getter: SchemaGetter.Getter<T, E>) {
   return async (input: E, expected: T) => {
     const r = await Effect.runPromise(
       getter.run(Option.some(input), {}).pipe(
-        Effect.mapError((issue) => issue.toString()),
+        Effect.mapError(formatIssue),
         Effect.result
       )
     )

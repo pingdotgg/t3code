@@ -479,7 +479,7 @@ export const verifySessionAuthPayload = (
 /**
  * Generates a random session authentication challenge using `globalThis.crypto`.
  *
- * @category challenge
+ * @category constructors
  * @since 4.0.0
  */
 export const makeSessionAuthChallenge: Effect.Effect<

@@ -8,8 +8,10 @@
     "**/docs",
     "**/.tsbuildinfo",
     "packages/effect/typeperf/**/*",
+    "packages/effect/src/StandardSchema.ts",
     "packages/**/CHANGELOG.md",
     "!scratchpad/**/*",
+    ".changeset/**/*",
     ".agents/**/*",
     ".context/**/*",
     ".specs/**/*"

@@ -239,7 +239,7 @@ export abstract class ReasonBase<Tag extends string> implements Cause.Cause.Reas
 }
 
 /** @internal */
-export const constEmptyAnnotations = new Map<string, unknown>()
+export const constEmptyAnnotations: ReadonlyMap<string, unknown> = new Map<string, unknown>()
 
 /** @internal */
 export class Fail<E> extends ReasonBase<"Fail"> implements Cause.Fail<E> {
@@ -471,12 +471,12 @@ export const makeExit = <
   ) => Primitive | Yield
 }): Fn => {
   const Proto = {
-    ...makePrimitiveProto(options),
     [ExitTypeId]: ExitTypeId,
     _tag: options.op,
     get [options.prop](): any {
       return (this as any)[args]
     },
+    ...makePrimitiveProto(options),
     toString(this: any) {
       return `${options.op}(${format(this[args])})`
     },

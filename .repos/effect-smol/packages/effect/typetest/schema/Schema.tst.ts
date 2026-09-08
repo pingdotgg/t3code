@@ -1,4 +1,3 @@
-import type { SchemaAST } from "effect"
 import {
   Brand,
   Context,
@@ -7,7 +6,9 @@ import {
   Option,
   Predicate,
   Schema,
+  type SchemaAST,
   SchemaGetter,
+  type SchemaIssue,
   SchemaTransformation,
   Struct,
   Tuple
@@ -19,13 +20,19 @@ type Make<In, Out> = (input: In, options?: Schema.MakeOptions | undefined) => Ou
 type MakeEffect<In, Out> = (
   input: In,
   options?: Schema.MakeOptions | undefined
-) => Effect.Effect<Out, Schema.SchemaError>
+) => Effect.Effect<Out, SchemaIssue.Issue>
 
 const revealClass = <Self, S extends Schema.Struct<Schema.Struct.Fields>, Inherited>(
   klass: Schema.Class<Self, S, Inherited>
 ): Schema.Class<Self, S, Inherited> => klass
 
 describe("Schema", () => {
+  it("RedactedFromValue", () => {
+    const schema = Schema.RedactedFromValue(Schema.String)
+    expect(schema).type.toBe<Schema.RedactedFromValue<Schema.String>>()
+    expect(schema.from).type.toBe<Schema.String>()
+  })
+
   describe("variance", () => {
     it("Type", () => {
       const f1 = hole<
@@ -332,16 +339,16 @@ describe("Schema", () => {
       })
     })
 
-    describe("ErrorClass", () => {
+    describe("Error", () => {
       it("make with void input", () => {
-        class E extends Schema.ErrorClass<E>("E")({}) {}
+        class E extends Schema.Error<E>("E")({}) {}
         expect(E.make).type.toBe<Make<void | {}, E>>()
       })
     })
 
-    describe("TaggedErrorClass", () => {
+    describe("TaggedError", () => {
       it("make with void input", () => {
-        class E extends Schema.TaggedErrorClass<E>()("E", {}) {}
+        class E extends Schema.TaggedError<E>()("E", {}) {}
         expect(E.make).type.toBe<Make<void | { readonly _tag?: "E" }, E>>()
       })
     })
@@ -369,6 +376,11 @@ describe("Schema", () => {
       expect(schema.make).type.toBe<
         Make<ReadonlyArray<number & Brand.Brand<"a">>, ReadonlyArray<number & Brand.Brand<"a">>>
       >()
+    })
+
+    it("JsonObject", () => {
+      const schema = Schema.JsonObject
+      expect(schema).type.toBe<Schema.$Record<Schema.String, Schema.Codec<Schema.Json>>>()
     })
 
     it("NonEmptyArray", () => {
@@ -1435,7 +1447,7 @@ describe("Schema", () => {
 
     describe("Error", () => {
       it("extend Fields", () => {
-        class E extends Schema.ErrorClass<E>("E")({
+        class E extends Schema.Error<E>("E")({
           a: Schema.String
         }) {}
 
@@ -1449,7 +1461,7 @@ describe("Schema", () => {
       })
 
       it("extend Struct", () => {
-        class E extends Schema.ErrorClass<E>("E")(Schema.Struct({
+        class E extends Schema.Error<E>("E")(Schema.Struct({
           a: Schema.String
         })) {}
 
@@ -1463,7 +1475,7 @@ describe("Schema", () => {
       })
 
       it("should reject non existing props", () => {
-        class E extends Schema.ErrorClass<E>("E")({
+        class E extends Schema.Error<E>("E")({
           a: Schema.String
         }) {}
 
@@ -1472,7 +1484,7 @@ describe("Schema", () => {
       })
 
       it("mutable field", () => {
-        class E extends Schema.ErrorClass<E>("E")({
+        class E extends Schema.Error<E>("E")({
           a: Schema.String.pipe(Schema.mutableKey)
         }) {}
 
@@ -1500,15 +1512,15 @@ describe("Schema", () => {
         )
       })
 
-      it("ErrorClass", () => {
-        expect(Schema.ErrorClass("A")({})).type.toBe(
-          "Missing `Self` generic - use `class Self extends Schema.ErrorClass<Self>(...)`"
+      it("Error", () => {
+        expect(Schema.Error("A")({})).type.toBe(
+          "Missing `Self` generic - use `class Self extends Schema.Error<Self>(...)`"
         )
       })
 
-      it("TaggedErrorClass", () => {
-        expect(Schema.TaggedErrorClass("A")("A", {})).type.toBe(
-          "Missing `Self` generic - use `class Self extends Schema.TaggedErrorClass<Self>(...)`"
+      it("TaggedError", () => {
+        expect(Schema.TaggedError("A")("A", {})).type.toBe(
+          "Missing `Self` generic - use `class Self extends Schema.TaggedError<Self>(...)`"
         )
       })
     })

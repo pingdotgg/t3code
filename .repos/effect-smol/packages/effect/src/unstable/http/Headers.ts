@@ -42,7 +42,7 @@ export type TypeId = typeof TypeId
 /**
  * Returns `true` if the provided value is a `Headers` value.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isHeaders = (u: unknown): u is Headers => Predicate.hasProperty(u, TypeId)
@@ -417,13 +417,42 @@ export const redact: {
 )
 
 /**
+ * Checks whether a header name matches one of the redaction patterns.
+ *
+ * **Details**
+ *
+ * String patterns are compared case-insensitively against the header name;
+ * regular expressions are tested against it. Use to avoid the record copy of
+ * `redact` when only a membership check is needed.
+ *
+ * @category combinators
+ * @since 4.0.0
+ */
+export const isRedactedName = (
+  name: string,
+  patterns: ReadonlyArray<string | RegExp>
+): boolean => {
+  for (let i = 0; i < patterns.length; i++) {
+    const pattern = patterns[i]
+    if (typeof pattern === "string") {
+      if (pattern.toLowerCase() === name) {
+        return true
+      }
+    } else if (pattern.test(name)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
  * Context reference listing header names or patterns that should be redacted when `Headers` are inspected or rendered.
  *
  * **Details**
  *
  * Defaults include `authorization`, `cookie`, `set-cookie`, and `x-api-key`.
  *
- * @category fiber refs
+ * @category services
  * @since 4.0.0
  */
 export const CurrentRedactedNames = Context.Reference<

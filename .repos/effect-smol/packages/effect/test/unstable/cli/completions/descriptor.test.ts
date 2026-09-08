@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
+import { Schema } from "effect"
 import { Argument, Command, Flag } from "effect/unstable/cli"
 import { fromCommand } from "effect/unstable/cli/internal/completions/descriptor"
 
@@ -66,6 +67,33 @@ describe("CommandDescriptor", () => {
       assert.deepStrictEqual(inputFlag.type, { _tag: "Path", pathType: "file" })
       assert.deepStrictEqual(outDirFlag.type, { _tag: "Path", pathType: "directory" })
       assert.deepStrictEqual(configFlag.type, { _tag: "Path", pathType: "either" })
+    })
+
+    it("retains path semantics when a path has a custom metavar", () => {
+      const command = Command.make("app", {
+        directory: Flag.path("directory", { pathType: "directory", typeName: "DIR" }),
+        file: Argument.path("file", { pathType: "file" }).pipe(Argument.withMetavar("INPUT"))
+      })
+      const descriptor = fromCommand(command)
+
+      assert.deepStrictEqual(descriptor.flags[0].type, { _tag: "Path", pathType: "directory" })
+      assert.deepStrictEqual(descriptor.arguments[0].type, { _tag: "Path", pathType: "file" })
+    })
+
+    it("classifies file-backed flags and arguments as file paths", () => {
+      const command = Command.make("app", {
+        flagText: Flag.fileText("flag-text"),
+        flagParse: Flag.fileParse("flag-parse"),
+        flagSchema: Flag.fileSchema("flag-schema", Schema.Unknown),
+        argumentText: Argument.fileText("argument-text"),
+        argumentParse: Argument.fileParse("argument-parse"),
+        argumentSchema: Argument.fileSchema("argument-schema", Schema.Unknown)
+      })
+      const descriptor = fromCommand(command)
+      const fileType = { _tag: "Path", pathType: "file" } as const
+
+      assert.deepStrictEqual(descriptor.flags.map((flag) => flag.type), [fileType, fileType, fileType])
+      assert.deepStrictEqual(descriptor.arguments.map((argument) => argument.type), [fileType, fileType, fileType])
     })
 
     it("extracts choice flags with values", () => {

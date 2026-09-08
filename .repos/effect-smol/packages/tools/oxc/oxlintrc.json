@@ -21,7 +21,6 @@
     "effect/no-js-extension-imports": "error",
     "effect/no-opaque-instance-fields": "error",
     "effect/no-unused-internal": "error",
-    "effect/jsdocs": "error",
     // Tune native rules
     // Import rules
     "typescript/consistent-type-imports": ["error", {
@@ -60,7 +59,7 @@
     "unicorn/require-post-message-target-origin": "off",
     "unicorn/prefer-add-event-listener": "off",
     "unicorn/prefer-set-has": "off",
-    "no-dangling-underscore": "off",
+    "no-underscore-dangle": "off",
     "typescript/no-explicit-any": "off",
     "typescript/no-empty-interface": "off",
     "typescript/ban-ts-comment": "off",

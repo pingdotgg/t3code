@@ -1,6 +1,6 @@
 {
   "name": "@effect/atom-vue",
-  "version": "4.0.0-beta.102",
+  "version": "4.0.0-rc.112",
   "type": "module",
   "license": "MIT",
   "description": "Vue bindings for the Effect Atom modules",
@@ -29,6 +29,7 @@
     ".": "./src/index.ts",
     "./*": "./src/*.ts",
     "./internal/*": null,
+    "./index": null,
     "./*/index": null
   },
   "files": [
@@ -36,7 +37,10 @@
     "dist/**/*.js",
     "dist/**/*.js.map",
     "dist/**/*.d.ts",
-    "dist/**/*.d.ts.map"
+    "dist/**/*.d.ts.map",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "ai-docs/**/*"
   ],
   "publishConfig": {
     "access": "public",
@@ -46,22 +50,21 @@
       ".": "./dist/index.js",
       "./*": "./dist/*.js",
       "./internal/*": null,
+      "./index": null,
       "./*/index": null
     }
   },
   "scripts": {
     "build": "tsc -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
-    "check": "tsc -b tsconfig.json",
-    "test": "vitest",
-    "coverage": "vitest --coverage"
+    "check": "tsc -b tsconfig.json"
   },
   "devDependencies": {
     "effect": "workspace:^",
-    "vue": "^3.5.39"
+    "vue": "^3.5.41"
   },
   "peerDependencies": {
     "effect": "workspace:^",
-    "vue": "^3.5.0"
+    "vue": ">=3.5.39 <4.0.0"
   }
 }

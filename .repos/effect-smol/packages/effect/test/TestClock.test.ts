@@ -61,6 +61,76 @@ describe("TestClock", () => {
       assert.strictEqual(testClock.currentTimeNanosUnsafe(), 199023438000000n)
     }))
 
+  it.effect("setTime - preserves wall-clock nanoseconds for large timestamps", () =>
+    Effect.gen(function*() {
+      const testClock = yield* TestClock.make()
+      const timestamp = 1_000_000_000_001
+      yield* testClock.setTime(timestamp)
+      assert.strictEqual(testClock.currentTimeNanosUnsafe(), BigInt(timestamp) * 1_000_000n)
+    }))
+
+  it.effect("adjust - advances wall and monotonic time", () =>
+    Effect.gen(function*() {
+      const testClock = yield* TestClock.make()
+      yield* testClock.adjust("1 second")
+      assert.strictEqual(testClock.currentTimeMillisUnsafe(), 1_000)
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe(), 1_000_000_000n)
+      assert.strictEqual(yield* testClock.monotonicTimeNanos, 1_000_000_000n)
+    }))
+
+  it.effect("adjust - preserves precision for nanosecond durations beyond Number.MAX_SAFE_INTEGER", () =>
+    Effect.gen(function*() {
+      const testClock = yield* TestClock.make()
+      const nanos = 999_999_999_999_999_000n
+      yield* testClock.adjust(Duration.nanos(nanos))
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe(), nanos)
+      assert.strictEqual(testClock.currentTimeNanosUnsafe(), nanos)
+    }))
+
+  it.effect("adjust - keeps nanosecond access total after infinite durations", () =>
+    Effect.gen(function*() {
+      for (const duration of [Duration.infinity, Duration.negativeInfinity]) {
+        const testClock = yield* TestClock.make()
+        yield* testClock.adjust(duration)
+        assert.strictEqual(typeof (yield* testClock.currentTimeNanos), "bigint")
+      }
+    }))
+
+  it.effect("setTime - advances monotonic time only when moving forward", () =>
+    Effect.gen(function*() {
+      const testClock = yield* TestClock.make()
+      yield* testClock.setTime(2_000)
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe(), 2_000_000_000n)
+      yield* testClock.setTime(500)
+      assert.strictEqual(testClock.currentTimeMillisUnsafe(), 500)
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe(), 2_000_000_000n)
+      yield* testClock.setTime(1_000)
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe(), 2_500_000_000n)
+    }))
+
+  it.effect("setTime - preserves nanosecond precision for far-future timestamps", () =>
+    Effect.gen(function*() {
+      const testClock = yield* TestClock.make()
+      const farFuture = 1_000_000_000_000
+      yield* testClock.setTime(farFuture)
+      const before = testClock.monotonicTimeNanosUnsafe()
+      yield* testClock.setTime(farFuture + 1)
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe() - before, 1_000_000n)
+    }))
+
+  it.effect("adjust - advances monotonic time to intermediate sleep deadlines", () =>
+    Effect.gen(function*() {
+      const testClock = yield* TestClock.make()
+      let observed = 0n
+      yield* Effect.gen(function*() {
+        yield* testClock.sleep(Duration.seconds(1))
+        observed = yield* testClock.monotonicTimeNanos
+      }).pipe(Effect.forkChild)
+      yield* testClock.adjust("2 seconds")
+      assert.strictEqual(observed, 1_000_000_000n)
+      assert.strictEqual(testClock.monotonicTimeNanosUnsafe(), 2_000_000_000n)
+    }))
+
   // `it.effect` and `it.live` provide an ambient Scope, defeating the #2244 regression guard.
   it("layer - can adjust when provided without an ambient Scope", () =>
     Effect.gen(function*() {

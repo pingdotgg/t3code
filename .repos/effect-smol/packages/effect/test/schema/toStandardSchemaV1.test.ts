@@ -1,6 +1,6 @@
 import { assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import type { StandardSchemaV1 } from "@standard-schema/spec"
 import { Context, Effect, Option, Predicate, Schema, SchemaGetter, SchemaIssue } from "effect"
+import type { StandardSchemaV1 } from "effect/StandardSchema"
 import { describe, it } from "vitest"
 
 function validate<I, A>(
@@ -120,13 +120,13 @@ describe("toStandardSchemaV1", () => {
     expectSyncSuccess(standardSchema, "a", "a")
     expectSyncFailure(standardSchema, null, [
       {
-        message: "Expected string, got null",
+        message: "Expected string",
         path: []
       }
     ])
     expectSyncFailure(standardSchema, "", [
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: []
       }
     ])
@@ -138,13 +138,13 @@ describe("toStandardSchemaV1", () => {
     await expectAsyncSuccess(standardSchema, "a", "a")
     expectSyncFailure(standardSchema, null, [
       {
-        message: "Expected string, got null",
+        message: "Expected string",
         path: []
       }
     ])
     await expectAsyncFailure(standardSchema, "", [
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: []
       }
     ])
@@ -204,29 +204,29 @@ describe("toStandardSchemaV1", () => {
     expectSyncSuccess(standardSchema, { a: "a", b: "b" }, { a: "a", b: "b" })
     expectSyncFailure(standardSchema, null, [
       {
-        message: "Expected object, got null",
+        message: "Expected object",
         path: []
       }
     ])
     expectSyncFailure(standardSchema, { a: "a", b: "" }, [
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: ["b"]
       }
     ])
     expectSyncFailure(standardSchema, { a: "", b: "b" }, [
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: ["a"]
       }
     ])
     expectSyncFailure(standardSchema, { a: "", b: "" }, [
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: ["a"]
       },
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: ["b"]
       }
     ])
@@ -240,7 +240,7 @@ describe("toStandardSchemaV1", () => {
     const standardSchema = Schema.toStandardSchemaV1(schema, { parseOptions: { errors: "first" } })
     expectSyncFailure(standardSchema, { a: "", b: "" }, [
       {
-        message: `Expected a value with a length of at least 1, got ""`,
+        message: `Expected a value with a length of at least 1`,
         path: ["a"]
       }
     ])
@@ -275,7 +275,7 @@ describe("toStandardSchemaV1", () => {
         const standardSchema = Schema.toStandardSchemaV1(schema)
         expectSyncFailure(standardSchema, null, [
           {
-            message: "Expected string, got null",
+            message: "Expected string",
             path: []
           }
         ])
@@ -292,7 +292,7 @@ describe("toStandardSchemaV1", () => {
         const standardSchema = Schema.toStandardSchemaV1(schema)
         expectSyncFailure(standardSchema, null, [
           {
-            message: "Expected string, got null",
+            message: "Expected string",
             path: []
           }
         ])
@@ -456,7 +456,7 @@ describe("toStandardSchemaV1", () => {
       })
       expectSyncFailure(standardSchema, null, [
         {
-          message: "Expected string, got null",
+          message: "Expected string",
           path: []
         }
       ])
@@ -469,7 +469,7 @@ describe("toStandardSchemaV1", () => {
       })
       expectSyncFailure(standardSchema, "", [
         {
-          message: `Expected a value with a length of at least 1, got ""`,
+          message: `Expected a value with a length of at least 1`,
           path: []
         }
       ])

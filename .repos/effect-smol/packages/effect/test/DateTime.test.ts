@@ -1,5 +1,5 @@
 import { describe, it } from "@effect/vitest"
-import { assertNone, assertSome, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
+import { assertNone, assertSome, deepStrictEqual, strictEqual, throws } from "@effect/vitest/utils"
 import { DateTime, Duration, Effect, Option } from "effect"
 import { TestClock } from "effect/testing"
 
@@ -381,6 +381,32 @@ describe("DateTime", () => {
     })
   })
 
+  describe("toEpochSeconds", () => {
+    it("returns epoch seconds", () => {
+      const dt = DateTime.makeUnsafe("2024-01-01T00:00:00Z")
+      strictEqual(DateTime.toEpochSeconds(dt), 1704067200)
+    })
+
+    it("floors to nearest second", () => {
+      const dt = DateTime.makeUnsafe("2024-01-01T00:00:00.999Z")
+      strictEqual(DateTime.toEpochSeconds(dt), 1704067200)
+    })
+  })
+
+  describe("fromEpochSeconds", () => {
+    it("creates DateTime from epoch seconds", () => {
+      const dt = DateTime.fromEpochSeconds(1704067200)
+      strictEqual(dt.toJSON(), "2024-01-01T00:00:00.000Z")
+    })
+
+    it("roundtrips with toEpochSeconds", () => {
+      const original = DateTime.makeUnsafe("2024-06-15T12:30:00Z")
+      const seconds = DateTime.toEpochSeconds(original)
+      const restored = DateTime.fromEpochSeconds(seconds)
+      strictEqual(DateTime.toEpochSeconds(restored), seconds)
+    })
+  })
+
   describe("makeZonedFromString", () => {
     it.effect("parses an instant with an offset and IANA zone", () =>
       Effect.gen(function*() {
@@ -455,7 +481,19 @@ describe("DateTime", () => {
       }))
   })
 
+  describe("make", () => {
+    it("rejects invalid object instants", () => {
+      assertNone(DateTime.make({ epochMilliseconds: NaN }))
+      assertNone(DateTime.make({ epochMilliseconds: 8_640_000_000_000_001 }))
+    })
+  })
+
   describe("makeUnsafe", () => {
+    it("throws for invalid object instants", () => {
+      throws(() => DateTime.makeUnsafe({ epochMilliseconds: NaN }))
+      throws(() => DateTime.makeUnsafe({ epochMilliseconds: 8_640_000_000_000_001 }))
+    })
+
     it("treats strings without zone info as UTC", () => {
       const dt = DateTime.makeUnsafe("2024-01-01 01:00:00")
       strictEqual(dt.toJSON(), "2024-01-01T01:00:00.000Z")

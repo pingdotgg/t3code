@@ -145,6 +145,7 @@ export const addMany: {
       const key = PrimaryKey.value(node)
       const entry = self.nodes.get(key)
       if (entry) {
+        entry[0] = node
         if (entry[1] === weight) continue
         toRemove ??= new Set()
         toRemove.add(key)

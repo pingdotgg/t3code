@@ -26,14 +26,41 @@ import * as HttpServerResponse from "./HttpServerResponse.ts"
  *
  * **Example** (Serving files from a directory)
  *
- * ```ts
- * import { Effect } from "effect"
- * import { HttpStaticServer } from "effect/unstable/http"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path } from "effect"
+ * import {
+ *   HttpEffect,
+ *   HttpPlatform,
+ *   HttpServerResponse,
+ *   HttpStaticServer
+ * } from "effect/unstable/http"
+ *
+ * const TestFileSystem = FileSystem.layerNoop({
+ *   stat: () =>
+ *     Effect.succeed({
+ *       type: "File",
+ *       size: FileSystem.Size(20)
+ *     } as FileSystem.File.Info)
+ * })
+ * const TestHttpPlatform = Layer.succeed(
+ *   HttpPlatform.HttpPlatform,
+ *   HttpPlatform.HttpPlatform.of({
+ *     platform: "web",
+ *     fileResponse: (path) => Effect.succeed(HttpServerResponse.text(`Serving ${path}`)),
+ *     fileWebResponse: () => Effect.die("unused")
+ *   })
+ * )
+ * const TestServices = Layer.mergeAll(Path.layer, TestFileSystem, TestHttpPlatform)
  *
  * const program = Effect.gen(function*() {
- *   const app = yield* HttpStaticServer.make({ root: "./public" })
- *   return app
- * })
+ *   const app = yield* HttpStaticServer.make({ root: "/public" })
+ *   const handler = HttpEffect.toWebHandler(app)
+ *   const response = yield* Effect.promise(() => handler(new Request("http://localhost/guide.txt")))
+ *   const body = yield* Effect.promise(() => response.text())
+ *   return body
+ * }).pipe(Effect.provide(TestServices))
+ *
+ * await Effect.runPromise(program) // => "Serving /public/guide.txt"
  * ```
  *
  * @category constructors
@@ -179,7 +206,7 @@ export const make: (options: {
  *
  * **Example** (Mounting static files on a router)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Layer } from "effect"
  * import { HttpRouter, HttpServerResponse, HttpStaticServer } from "effect/unstable/http"
  *
@@ -191,6 +218,7 @@ export const make: (options: {
  * })
  *
  * const AppLayer = Layer.mergeAll(ApiLayer, StaticFilesLayer)
+ * Layer.isLayer(AppLayer) // => true
  * ```
  *
  * @category layers

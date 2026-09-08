@@ -49,7 +49,7 @@ export const fetchJobsPage = Stream.paginate(
   })
 )
 
-class LetterError extends Schema.TaggedErrorClass<LetterError>()("LetterError", {
+class LetterError extends Schema.TaggedError<LetterError>()("LetterError", {
   cause: Schema.Defect()
 }) {}
 
@@ -88,7 +88,7 @@ export const callbackStream = Stream.callback<PointerEvent>(Effect.fn(function*(
   )
 }))
 
-export class NodeStreamError extends Schema.TaggedErrorClass<NodeStreamError>()("NodeStreamError", {
+export class NodeStreamError extends Schema.TaggedError<NodeStreamError>()("NodeStreamError", {
   cause: Schema.Defect()
 }) {}
 

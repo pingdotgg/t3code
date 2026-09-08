@@ -142,7 +142,7 @@ const ResultProto = {
 /**
  * Returns whether an `AsyncResult` is currently waiting for an asynchronous computation or refresh to finish.
  *
- * @category refinements
+ * @category predicates
  * @since 4.0.0
  */
 export const isWaiting = <A, E>(result: AsyncResult<A, E>): boolean => result.waiting
@@ -194,7 +194,7 @@ export const waitingFrom = <A, E>(previous: Option.Option<AsyncResult<A, E>>): A
 /**
  * Returns `true` when an `AsyncResult` is in the `Initial` state.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isInitial = <A, E>(result: AsyncResult<A, E>): result is Initial<A, E> => result._tag === "Initial"
@@ -202,7 +202,7 @@ export const isInitial = <A, E>(result: AsyncResult<A, E>): result is Initial<A,
 /**
  * Returns `true` when an `AsyncResult` is either `Success` or `Failure`.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isNotInitial = <A, E>(result: AsyncResult<A, E>): result is Success<A, E> | Failure<A, E> =>
@@ -236,7 +236,7 @@ export interface Success<A, E = never> extends AsyncResult.Proto<A, E> {
 /**
  * Returns `true` when an `AsyncResult` is a `Success`.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isSuccess = <A, E>(result: AsyncResult<A, E>): result is Success<A, E> => result._tag === "Success"
@@ -274,7 +274,7 @@ export interface Failure<A, E = never> extends AsyncResult.Proto<A, E> {
 /**
  * Returns `true` when an `AsyncResult` is a `Failure`.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isFailure = <A, E>(result: AsyncResult<A, E>): result is Failure<A, E> => result._tag === "Failure"
@@ -282,7 +282,7 @@ export const isFailure = <A, E>(result: AsyncResult<A, E>): result is Failure<A,
 /**
  * Returns `true` when an `AsyncResult` is a `Failure` whose cause contains only interruptions.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isInterrupted = <A, E>(result: AsyncResult<A, E>): result is Failure<A, E> =>
@@ -725,7 +725,7 @@ export const builder = <A extends AsyncResult<any, any>>(self: A): Builder<
 /**
  * Type marker used by `Builder` to track whether defect failures still need to be handled.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export interface Defect {
@@ -735,7 +735,7 @@ export interface Defect {
 /**
  * Type marker used by `Builder` to track whether interrupt failures still need to be handled.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export interface Interrupt {
@@ -961,7 +961,7 @@ export const Schema = <
     [success_, Schema_.Cause(error, Schema_.Defect())],
     ([value, cause]) => (input, ast, options) => {
       if (!isAsyncResult(input)) {
-        return Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input)))
+        return Effect.fail(new SchemaIssue.InvalidType(ast, input, options))
       }
       switch (input._tag) {
         case "Initial":
@@ -971,8 +971,7 @@ export const Schema = <
             SchemaParser.decodeUnknownEffect(value)(input.value, options),
             {
               onSuccess: (value) => success(value, input),
-              onFailure: (issue) =>
-                new SchemaIssue.Composite(ast, Option.some(input), [new SchemaIssue.Pointer(["value"], issue)])
+              onFailure: (issue) => SchemaIssue.makeCompositeAtKey(ast, "value", issue, input, options)
             }
           )
         case "Failure": {
@@ -983,9 +982,14 @@ export const Schema = <
                 {
                   onSuccess: (value) => Option.some(success<A["Type"], E["Type"]>(value, ps)),
                   onFailure: (issue) =>
-                    new SchemaIssue.Composite(ast, Option.some(input), [
-                      new SchemaIssue.Pointer(["previousSuccess", "value"], issue)
-                    ])
+                    new SchemaIssue.Composite(
+                      ast,
+                      [
+                        new SchemaIssue.Pointer(["previousSuccess", "value"], issue)
+                      ],
+                      input,
+                      options
+                    )
                 }
               )
             ),
@@ -993,7 +997,7 @@ export const Schema = <
           )
           const causeEffect = Effect.mapErrorEager(
             SchemaParser.decodeUnknownEffect(cause)(input.cause, options),
-            (issue) => new SchemaIssue.Composite(ast, Option.some(input), [new SchemaIssue.Pointer(["cause"], issue)])
+            (issue) => SchemaIssue.makeCompositeAtKey(ast, "cause", issue, input, options)
           )
           return Effect.flatMapEager(
             prevSuccessEffect,

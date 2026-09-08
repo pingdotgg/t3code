@@ -34,20 +34,6 @@ type LazyOption<T> = (
   recursionStack: RecursionStack
 ) => FastCheck.Arbitrary<T> | undefined
 
-export interface MutableReport {
-  readonly warnings: Array<Schema.Annotations.ToArbitrary.Warning>
-}
-
-/** @internal */
-export function makeReport(): MutableReport {
-  return { warnings: [] }
-}
-
-/** @internal */
-export function toReport(report: MutableReport): Schema.Annotations.ToArbitrary.Report {
-  return { warnings: report.warnings.slice() }
-}
-
 function arbitraryError(what: string) {
   return new Error(`Unable to derive an arbitrary for ${what}`)
 }
@@ -394,64 +380,6 @@ function finiteNumberContext(ctx: Context): Context {
   }
 }
 
-function reportChecks(report: MutableReport, checks: SchemaAST.Checks | undefined, path: ReadonlyArray<PropertyKey>) {
-  function visit(check: SchemaAST.Check<any>, covered: boolean) {
-    const arbitrary = check.annotations?.arbitrary
-    const nextCovered = covered || arbitrary?.constraint !== undefined || arbitrary?.candidate !== undefined
-    if (check._tag !== "Filter") {
-      for (const child of check.checks) {
-        visit(child, nextCovered)
-      }
-    } else if (!nextCovered) {
-      const description = check.annotations?.representation?.id ?? check.annotations?.identifier ??
-        check.annotations?.expected
-      report.warnings.push({ _tag: "OpaqueFilter", path, ...(description === undefined ? {} : { description }) })
-    }
-  }
-  checks?.forEach((check) => visit(check, false))
-}
-
-/** @internal */
-export function collectReport(ast: SchemaAST.AST, report: MutableReport) {
-  const stack = new WeakSet<SchemaAST.AST>()
-  function visit(ast: SchemaAST.AST, path: ReadonlyArray<PropertyKey>) {
-    if (stack.has(ast)) {
-      return
-    }
-    stack.add(ast)
-    reportChecks(report, ast.checks, path)
-    switch (ast._tag) {
-      case "Declaration":
-        ast.typeParameters.forEach((tp) => visit(tp, path))
-        break
-      case "Arrays": {
-        for (const [i, type] of [...ast.elements, ...ast.rest].entries()) {
-          visit(type, [...path, i])
-        }
-        break
-      }
-      case "Objects":
-        ast.propertySignatures.forEach((ps) => visit(ps.type, [...path, ps.name]))
-        ast.indexSignatures.forEach((is) => {
-          visit(is.parameter, path)
-          visit(is.type, path)
-        })
-        break
-      case "Union":
-        ast.types.forEach((type) => visit(type, path))
-        break
-      case "TemplateLiteral":
-        ast.parts.forEach((part, i) => visit(SchemaAST.toEncoded(part), [...path, i]))
-        break
-      case "Suspend":
-        visit(ast.thunk(), path)
-        break
-    }
-    stack.delete(ast)
-  }
-  visit(ast, [])
-}
-
 function applyCandidates(
   fc: typeof FastCheck,
   ctx: Context,
@@ -717,7 +645,9 @@ function base(ast: SchemaAST.AST, path: ReadonlyArray<PropertyKey>): LazyArbitra
               : out.map(Option.some)
           }
         )
-        let out = fc.tuple(...elementArbitraries).map(Array.getSomes)
+        let out = fc.tuple(...elementArbitraries).map((elements) =>
+          Array.getSomes(Array.takeWhile(elements, Option.isSome))
+        )
         // ---------------------------------------------
         // handle rest element
         // ---------------------------------------------

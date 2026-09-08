@@ -35,7 +35,7 @@ export class AnthropicConfig extends Context.Service<
    */
   static readonly getOrUndefined: Effect.Effect<typeof AnthropicConfig.Service | undefined> = Effect.map(
     Effect.context<never>(),
-    (services) => services.mapUnsafe.get(AnthropicConfig.key)
+    Context.getOrUndefined(AnthropicConfig)
   )
 }
 
@@ -52,7 +52,7 @@ export declare namespace AnthropicConfig {
    *
    * Use `transformClient` to wrap or replace the `HttpClient` used by generated Anthropic API requests.
    *
-   * @category models
+   * @category services
    * @since 4.0.0
    */
   export interface Service {

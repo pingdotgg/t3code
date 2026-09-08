@@ -1,7 +1,14 @@
 import { AnthropicClient, AnthropicLanguageModel, AnthropicTool } from "@effect/ai-anthropic"
 import { assert, describe, it } from "@effect/vitest"
 import { Effect, Layer, Redacted, Schema, Stream } from "effect"
-import { AnthropicStructuredOutput, LanguageModel, Tool, Toolkit } from "effect/unstable/ai"
+import {
+  AnthropicStructuredOutput,
+  LanguageModel,
+  Prompt,
+  Response as AiResponse,
+  Tool,
+  Toolkit
+} from "effect/unstable/ai"
 import { HttpClient, type HttpClientError, type HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 
 describe("AnthropicLanguageModel", () => {
@@ -111,6 +118,122 @@ describe("AnthropicLanguageModel", () => {
         assert.strictEqual(toolCall.name, "GlobTool")
         assert.deepStrictEqual(toolCall.params, toolParams)
       }))
+
+    const codeExecutionCases = [
+      {
+        providerName: "bash_code_execution",
+        toolParams: { command: "pwd" },
+        expectedParams: { type: "bash_code_execution", command: "pwd" }
+      },
+      {
+        providerName: "text_editor_code_execution",
+        toolParams: { command: "view", path: "/tmp/example.txt" },
+        expectedParams: {
+          type: "text_editor_code_execution",
+          command: "view",
+          path: "/tmp/example.txt"
+        }
+      }
+    ] as const
+
+    for (const { expectedParams, providerName, toolParams } of codeExecutionCases) {
+      it.effect(`emits valid JSON for streamed ${providerName} parameters`, () =>
+        Effect.gen(function*() {
+          const toolkit = Toolkit.make(AnthropicTool.CodeExecution_20250522())
+          const layer = AnthropicClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+            Layer.provide(Layer.succeed(
+              HttpClient.HttpClient,
+              makeHttpClient((request) =>
+                Effect.succeed(sseResponse(request, [
+                  {
+                    type: "message_start",
+                    message: {
+                      id: "msg_test_1",
+                      type: "message",
+                      role: "assistant",
+                      model: "claude-sonnet-4-20250514",
+                      content: [],
+                      stop_reason: null,
+                      stop_sequence: null,
+                      usage: {
+                        cache_creation: null,
+                        cache_creation_input_tokens: null,
+                        cache_read_input_tokens: null,
+                        inference_geo: null,
+                        input_tokens: 1,
+                        output_tokens: 0,
+                        service_tier: null
+                      }
+                    }
+                  },
+                  {
+                    type: "content_block_start",
+                    index: 0,
+                    content_block: {
+                      type: "server_tool_use",
+                      id: "srvtoolu_test_1",
+                      name: providerName,
+                      input: {}
+                    }
+                  },
+                  {
+                    type: "content_block_delta",
+                    index: 0,
+                    delta: {
+                      type: "input_json_delta",
+                      partial_json: JSON.stringify(toolParams)
+                    }
+                  },
+                  {
+                    type: "content_block_stop",
+                    index: 0
+                  },
+                  {
+                    type: "message_delta",
+                    delta: {
+                      stop_reason: "tool_use",
+                      stop_sequence: null
+                    },
+                    usage: {
+                      cache_creation_input_tokens: null,
+                      cache_read_input_tokens: null,
+                      input_tokens: null,
+                      output_tokens: 1
+                    }
+                  },
+                  {
+                    type: "message_stop"
+                  }
+                ]))
+              )
+            ))
+          )
+
+          const partsChunk = yield* LanguageModel.streamText({
+            prompt: "run pwd",
+            toolkit,
+            disableToolCallResolution: true
+          }).pipe(
+            Stream.runCollect,
+            Effect.provide(AnthropicLanguageModel.model("claude-sonnet-4-20250514")),
+            Effect.provide(layer)
+          )
+
+          const parts = globalThis.Array.from(partsChunk)
+
+          const delta = parts.find((part) => part.type === "tool-params-delta")
+          assert.isDefined(delta)
+          if (delta?.type === "tool-params-delta") {
+            assert.deepStrictEqual(JSON.parse(delta.delta), expectedParams)
+          }
+
+          const toolCall = parts.find((part) => part.type === "tool-call")
+          assert.isDefined(toolCall)
+          if (toolCall?.type === "tool-call") {
+            assert.deepStrictEqual(toolCall.params, expectedParams)
+          }
+        }))
+    }
 
     // `Model` is an open enum in Anthropic's spec (`anyOf: [{ type: string }, ...consts]`), and it is
     // $ref'd by response schemas. Responses must therefore decode for model ids that are newer than the
@@ -276,12 +399,163 @@ describe("AnthropicLanguageModel", () => {
         assert.strictEqual(dynamicTool.description, "A dynamic tool")
         assert.deepStrictEqual(dynamicTool.input_schema, inputSchema)
       }))
+
+    it.effect("serializes provider-executed web_search parts from the assistant message", () =>
+      Effect.gen(function*() {
+        let capturedRequest: HttpClientRequest.HttpClientRequest | undefined = undefined
+        const layer = AnthropicClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) => {
+              capturedRequest = request
+              return Effect.succeed(jsonResponse(request, {
+                id: "msg_test_2",
+                type: "message",
+                role: "assistant",
+                model: "claude-sonnet-4-20250514",
+                content: [{ type: "text", text: "You're welcome" }],
+                stop_reason: "end_turn",
+                stop_sequence: null,
+                usage: {
+                  cache_creation: null,
+                  cache_creation_input_tokens: null,
+                  cache_read_input_tokens: null,
+                  inference_geo: null,
+                  input_tokens: 10,
+                  output_tokens: 5,
+                  service_tier: null
+                }
+              }))
+            })
+          ))
+        )
+
+        const searchResults = [{
+          type: "web_search_result",
+          url: "https://example.com/gold",
+          title: "Gold price",
+          encrypted_content: "encrypted",
+          page_age: null
+        }]
+
+        const history = Prompt.fromResponseParts([
+          AiResponse.makePart("tool-call", {
+            id: "srvtoolu_1",
+            name: "AnthropicWebSearch",
+            params: { query: "gold price today" },
+            providerExecuted: true
+          }),
+          AiResponse.makePart("tool-result", {
+            id: "srvtoolu_1",
+            name: "AnthropicWebSearch",
+            isFailure: false,
+            result: searchResults,
+            encodedResult: searchResults,
+            preliminary: false,
+            providerExecuted: true
+          }),
+          AiResponse.makePart("text", { text: "Gold is around $4,000." })
+        ])
+
+        const prompt = Prompt.concat(
+          Prompt.concat(Prompt.make("what is the gold price?"), history),
+          Prompt.make("thanks")
+        )
+
+        yield* LanguageModel.generateText({
+          prompt,
+          toolkit: Toolkit.make(AnthropicTool.WebSearch_20250305({})),
+          disableToolCallResolution: true
+        }).pipe(
+          Effect.provide(AnthropicLanguageModel.model("claude-sonnet-4-20250514")),
+          Effect.provide(layer)
+        )
+
+        assert.isDefined(capturedRequest)
+        if (capturedRequest === undefined) {
+          return
+        }
+
+        const body = yield* getRequestBody(capturedRequest)
+        const assistantMessage = body.messages.find((message: any) => message.role === "assistant")
+        assert.isDefined(assistantMessage)
+
+        const serverToolUse = assistantMessage.content.find((block: any) => block.type === "server_tool_use")
+        assert.isDefined(serverToolUse)
+        assert.strictEqual(serverToolUse.id, "srvtoolu_1")
+        assert.strictEqual(serverToolUse.name, "web_search")
+
+        const searchResult = assistantMessage.content.find((block: any) => block.type === "web_search_tool_result")
+        assert.isDefined(searchResult)
+        assert.strictEqual(searchResult.tool_use_id, "srvtoolu_1")
+
+        const clientToolResults = body.messages.flatMap((message: any) =>
+          Array.isArray(message.content)
+            ? message.content.filter((block: any) => block.type === "tool_result")
+            : []
+        )
+        assert.strictEqual(clientToolResults.length, 0)
+      }))
+
+    it.effect("encodes plaintext bytes as UTF-8 text", () =>
+      Effect.gen(function*() {
+        let body: any
+        const client = AnthropicClient.layer({ apiKey: Redacted.make("test") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.makeWith(
+              Effect.fnUntraced(function*(requestEffect) {
+                const request = yield* requestEffect
+                body = JSON.parse(new TextDecoder().decode((request.body as any).body))
+                return HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      id: "msg_1",
+                      type: "message",
+                      role: "assistant",
+                      model: "claude-sonnet-4-20250514",
+                      content: [{ type: "text", text: "ok" }],
+                      stop_reason: "end_turn",
+                      stop_sequence: null,
+                      usage: {
+                        cache_creation: null,
+                        cache_creation_input_tokens: null,
+                        cache_read_input_tokens: null,
+                        inference_geo: null,
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        service_tier: null
+                      }
+                    }),
+                    { status: 200 }
+                  )
+                )
+              }),
+              Effect.succeed as HttpClient.HttpClient.Preprocess<HttpClientError.HttpClientError, never>
+            )
+          ))
+        )
+
+        yield* LanguageModel.generateText({
+          prompt: Prompt.make([{
+            role: "user",
+            content: [Prompt.filePart({ mediaType: "text/plain", data: new TextEncoder().encode("hello") })]
+          }])
+        }).pipe(
+          Effect.provide(AnthropicLanguageModel.model("claude-sonnet-4-20250514")),
+          Effect.provide(client)
+        )
+
+        assert.strictEqual(body.messages[0].content[0].source.data, "hello")
+      }))
   })
 
   describe("generateObject", () => {
-    // A model that supports native structured output requests it via `output_config.format` (json_schema)
-    // rather than falling back to a forced JSON tool.
-    const assertNativeStructuredOutput = (model: string) =>
+    const getRequest = (
+      model: string,
+      config?: { readonly structuredOutputs?: boolean | undefined }
+    ) =>
       Effect.gen(function*() {
         let capturedRequest: HttpClientRequest.HttpClientRequest | undefined = undefined
         const layer = AnthropicClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
@@ -316,25 +590,60 @@ describe("AnthropicLanguageModel", () => {
           prompt: "Give me a person",
           schema: Schema.Struct({ name: Schema.String, age: Schema.Number })
         }).pipe(
-          Effect.provide(AnthropicLanguageModel.model(model)),
+          Effect.provide(AnthropicLanguageModel.model(model, config)),
           Effect.provide(layer),
           Effect.ignore
         )
 
         assert.isDefined(capturedRequest)
         if (capturedRequest === undefined) {
-          return
+          return yield* Effect.die(new Error("Expected a captured request"))
         }
 
-        const body = yield* getRequestBody(capturedRequest)
-        assert.strictEqual(body.output_config?.format?.type, "json_schema")
+        return yield* getRequestBody(capturedRequest)
       })
 
-    it.effect("uses native json_schema output for claude-opus-4-6", () =>
-      assertNativeStructuredOutput("claude-opus-4-6"))
+    it.effect("uses native structured output and 128K for Claude 4.6", () =>
+      Effect.gen(function*() {
+        const body = yield* getRequest("claude-opus-4-6")
 
-    it.effect("uses native json_schema output for claude-sonnet-4-6", () =>
-      assertNativeStructuredOutput("claude-sonnet-4-6"))
+        assert.strictEqual(body.max_tokens, 128000)
+        assert.strictEqual(body.output_config?.format?.type, "json_schema")
+      }))
+
+    it.effect("uses optimistic modern defaults for an unknown future model", () =>
+      Effect.gen(function*() {
+        const body = yield* getRequest("claude-sonnet-6-0")
+
+        assert.strictEqual(body.max_tokens, 128000)
+        assert.strictEqual(body.output_config?.format?.type, "json_schema")
+      }))
+
+    it.effect("preserves frozen legacy model exceptions", () =>
+      Effect.gen(function*() {
+        const body = yield* getRequest("claude-sonnet-4-20250514")
+
+        assert.strictEqual(body.max_tokens, 64000)
+        assert.isUndefined(body.output_config)
+      }))
+
+    it.effect("can disable structured outputs for a modern model", () =>
+      Effect.gen(function*() {
+        const body = yield* getRequest("claude-sonnet-6-0", { structuredOutputs: false })
+
+        assert.strictEqual(body.max_tokens, 128000)
+        assert.isUndefined(body.output_config)
+        assert.notProperty(body, "structuredOutputs")
+      }))
+
+    it.effect("can enable structured outputs for a legacy model", () =>
+      Effect.gen(function*() {
+        const body = yield* getRequest("claude-sonnet-4-20250514", { structuredOutputs: true })
+
+        assert.strictEqual(body.max_tokens, 64000)
+        assert.strictEqual(body.output_config?.format?.type, "json_schema")
+        assert.notProperty(body, "structuredOutputs")
+      }))
   })
 
   // The packaged `Memory_20250818` tool ships `customName: "AnthropicMemory"` /
