@@ -393,7 +393,7 @@ export function ProjectDefaultsSettings({
       <DeviceHostsSettings
         key={environmentId ?? "all"}
         environmentId={environmentId && targets.length === 1 ? environmentId : null}
-        hosts={serverSettings.deviceHosts}
+        hosts={serverSettings.deviceHosts ?? []}
       />
       <SettingsSection title="Checkout">
         <SettingsRow
