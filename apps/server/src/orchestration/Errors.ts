@@ -126,34 +126,11 @@ export type OrchestrationEngineError =
   | OrchestrationCommandJsonParseError
   | OrchestrationCommandDecodeError;
 
-export function toOrchestrationCommandDecodeError(error: Schema.SchemaError) {
-  return new OrchestrationCommandDecodeError({
-    issue: SchemaIssue.makeFormatterDefault()(error.issue),
-    cause: error,
-  });
-}
-
 export function toProjectorDecodeError(eventType: string) {
   return (error: Schema.SchemaError): OrchestrationProjectorDecodeError =>
     new OrchestrationProjectorDecodeError({
       eventType,
       issue: SchemaIssue.makeFormatterDefault()(error.issue),
       cause: error,
-    });
-}
-
-export function toOrchestrationJsonParseError(cause: unknown) {
-  return new OrchestrationCommandJsonParseError({
-    detail: `Failed to parse orchestration command JSON`,
-    cause,
-  });
-}
-
-export function toListenerCallbackError(listener: "read-model" | "domain-event") {
-  return (cause: unknown): OrchestrationListenerCallbackError =>
-    new OrchestrationListenerCallbackError({
-      listener,
-      detail: `Failed to invoke orchestration ${listener} listener`,
-      cause,
     });
 }
