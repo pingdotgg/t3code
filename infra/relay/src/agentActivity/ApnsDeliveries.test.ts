@@ -486,6 +486,9 @@ describe("ApnsDeliveries", () => {
       Effect.provide(
         makeLayer({
           attempts,
+          currentTargets: [
+            { ...target, bundle_id: "com.t3tools.t3code.preview", aps_environment: "sandbox" },
+          ],
           config: signingConfig,
           execute,
         }),
@@ -1971,4 +1974,70 @@ describe("fast completion delivery", () => {
       expect(queuedJobs[0]?.payload.alert).toBeUndefined();
     }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
   });
+});
+
+describe("signed APNs registration metadata", () => {
+  for (const kind of ["live_activity_update", "push_notification"] as const) {
+    for (const changed of ["bundle", "environment"] as const) {
+      it.effect(`skips ${kind} when the ${changed} changes without token rotation`, () => {
+        const attempts: DeliveryAttempts.DeliveryAttemptInput[] = [];
+        let sent = 0;
+        const payload = makeApnsDeliveryJobPayload({
+          kind,
+          userId: target.user_id,
+          deviceId: target.device_id,
+          token: "unchanged-token",
+          bundleId: "com.t3tools.t3code.dev",
+          apsEnvironment: "sandbox",
+          aggregate: kind === "live_activity_update" ? aggregate : null,
+          ...(kind === "push_notification"
+            ? {
+                notification: {
+                  title: "Thread",
+                  body: "Input: Project",
+                  environmentId: "env",
+                  threadId: "thread",
+                  deepLink: "/",
+                },
+              }
+            : {}),
+          createdAt: "1970-01-01T00:00:00.000Z",
+          expiresAt: "1970-01-01T00:10:00.000Z",
+          jobId: `metadata-${kind}-${changed}`,
+        });
+        const signed = signApnsDeliveryJob({
+          secret: config.apnsDeliveryJobSigningSecret,
+          payload,
+        });
+        return Effect.gen(function* () {
+          const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+          const result = yield* deliveries.processSignedJob(signed);
+          expect(sent).toBe(0);
+          expect(result.apnsReason).toBe("Stale APNs delivery job skipped.");
+        }).pipe(
+          Effect.provide(
+            makeLayer({
+              attempts,
+              config: signingConfig,
+              currentTargets: [
+                {
+                  ...target,
+                  push_token: "unchanged-token",
+                  activity_push_token: "unchanged-token",
+                  bundle_id:
+                    changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev",
+                  aps_environment: changed === "environment" ? "production" : "sandbox",
+                },
+              ],
+              execute: (request) =>
+                Effect.sync(() => {
+                  sent++;
+                  return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+                }),
+            }),
+          ),
+        );
+      });
+    }
+  }
 });

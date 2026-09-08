@@ -666,7 +666,9 @@ export const make = Effect.gen(function* () {
       Effect.map((targets) => {
         const currentTarget = targets.find((row) => row.device_id === input.target.device_id);
         return currentTarget &&
-          expectedCurrentToken({ target: currentTarget, kind: input.kind }) === input.token
+          expectedCurrentToken({ target: currentTarget, kind: input.kind }) === input.token &&
+          currentTarget.bundle_id === input.target.bundle_id &&
+          currentTarget.aps_environment === input.target.aps_environment
           ? currentTarget
           : null;
       }),
