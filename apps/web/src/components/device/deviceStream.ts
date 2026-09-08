@@ -111,6 +111,15 @@ export function parseSemuPacket(raw: ArrayBuffer): {
   return { data: bytes, isKey: null, timestamp: null };
 }
 
+const isVideoSessionMessage = (text: string) => {
+  try {
+    const message = JSON.parse(text) as { type?: unknown };
+    return message.type === "video-session";
+  } catch {
+    return false;
+  }
+};
+
 /** Walk an Annex-B access unit for its keyframe flag and SPS bytes. */
 export function scanAccessUnit(buf: Uint8Array): { isKey: boolean; sps: Uint8Array | null } {
   let isKey = false;
@@ -533,6 +542,12 @@ export function createDeviceStreamClient(
       events.onInputConnected(true);
     };
     ws.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        // The encoder restarts at a new size when the device rotates; the
+        // next keyframe carries a fresh SPS, so the decoder is rebuilt from it.
+        if (isVideoSessionMessage(event.data)) closeDecoder();
+        return;
+      }
       if (!(event.data instanceof ArrayBuffer)) return;
       const packet = parseSemuPacket(event.data);
       const needsScan =
