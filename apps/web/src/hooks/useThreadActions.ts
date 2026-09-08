@@ -43,6 +43,7 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
+import * as ThreadPinAction from "./threadPinAction";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
@@ -577,13 +578,18 @@ export function useThreadActions() {
       const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
         ? (opts.orderKey ?? topOfPinnedRunOrderKey())
         : undefined;
-      return pinThreadMutation({
-        environmentId: target.environmentId,
-        input: {
-          threadId: target.threadId,
-          ...(orderKey !== undefined ? { orderKey } : {}),
-        },
-      });
+      const action = ThreadPinAction.begin(scopedThreadKey(target));
+      try {
+        return await pinThreadMutation({
+          environmentId: target.environmentId,
+          input: {
+            threadId: target.threadId,
+            ...(orderKey !== undefined ? { orderKey } : {}),
+          },
+        });
+      } finally {
+        action.finish();
+      }
     },
     [pinThreadMutation],
   );
@@ -602,15 +608,16 @@ export function useThreadActions() {
       }
       const thread = readThreadShell(target);
       const orderKey = thread?.pinOrderKey ?? undefined;
+      const action = ThreadPinAction.begin(scopedThreadKey(target));
       const result = await unpinThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
-      if (result._tag === "Success") {
+      if (result._tag === "Success" && action.isCurrent()) {
         let undoStarted = false;
         // Reuses the app's Base UI toast action: https://base-ui.com/react/components/toast
-        const toastId = toastManager.add(
-          stackedThreadToast({
+        const toastId = toastManager.add({
+          ...stackedThreadToast({
             type: "success",
             title: "Thread unpinned",
             description: thread?.title,
@@ -618,7 +625,7 @@ export function useThreadActions() {
             actionProps: {
               children: "Undo",
               onClick: () => {
-                if (undoStarted) return;
+                if (undoStarted || !action.isCurrent()) return;
                 undoStarted = true;
                 toastManager.close(toastId);
                 void pinThread(target, orderKey === undefined ? {} : { orderKey }).then(
@@ -639,7 +646,10 @@ export function useThreadActions() {
               },
             },
           }),
-        );
+          onClose: action.finish,
+        });
+      } else {
+        action.finish();
       }
       return result;
     },
@@ -681,10 +691,15 @@ export function useThreadActions() {
           ),
         );
       }
-      return reorderPinnedThreadMutation({
-        environmentId: target.environmentId,
-        input: { threadId: target.threadId, orderKey },
-      });
+      const action = ThreadPinAction.begin(scopedThreadKey(target));
+      try {
+        return await reorderPinnedThreadMutation({
+          environmentId: target.environmentId,
+          input: { threadId: target.threadId, orderKey },
+        });
+      } finally {
+        action.finish();
+      }
     },
     [reorderPinnedThreadMutation],
   );
