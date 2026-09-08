@@ -88,14 +88,21 @@ enum NewTaskWorkspaceDefaults {
             ?? branches.first
     }
 
+    private static func checkoutComparisonPath(_ value: String) -> String {
+        let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ProjectCreationPath.isWindowsAbsolutePath(path) {
+            return ProjectCreationPath.normalizedForComparison(path)
+        }
+        return URL(fileURLWithPath: value).standardizedFileURL.path
+    }
+
     static func normalizedWorktreePath(
         for branch: FeatureWorkspaceBranch?,
         projectPath: String
     ) -> String? {
         guard let path = branch?.worktreePath?.trimmingCharacters(in: .whitespacesAndNewlines),
               !path.isEmpty,
-              URL(fileURLWithPath: path).standardizedFileURL.path
-                != URL(fileURLWithPath: projectPath).standardizedFileURL.path else {
+              checkoutComparisonPath(path) != checkoutComparisonPath(projectPath) else {
             return nil
         }
         return path
