@@ -2572,12 +2572,12 @@ function OpenCommandPaletteDialog(props: {
         setHighlightedItemValue(typeof value === "string" ? value : null);
       }}
       onValueChange={handleQueryChange}
-      panelClassName="max-h-[min(28rem,70vh)]"
+      panelClassName="flex max-h-[min(28rem,70vh)] min-h-0 flex-col"
       showBackHint={isSubmenu}
       value={query}
     >
       {remoteProjectContext ? (
-        <div className="p-2 pb-0">
+        <div className="shrink-0 p-2 pb-0">
           <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
           <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
             {remoteProjectContext.icon}
