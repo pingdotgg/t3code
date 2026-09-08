@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools
 import type { Project, Thread } from "../types";
 import {
   buildBrowseGroups,
+  buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
@@ -52,6 +53,100 @@ describe("linked pull request thread navigation", () => {
     expect(items[0]?.description).toBe("Archived thread");
     await items[0]?.run();
     expect(runThread).toHaveBeenCalledWith({ environmentId, id });
+  });
+});
+
+describe("buildCommandPaletteProjectMetadata", () => {
+  const localEnvironmentId = EnvironmentId.make("environment-local");
+  const remoteEnvironmentId = EnvironmentId.make("environment-build-box");
+  const locations = new Map([
+    [localEnvironmentId, { kind: "local" as const, label: "Local", machine: "laptop" as const }],
+    [
+      remoteEnvironmentId,
+      { kind: "remote" as const, label: "Build box", machine: "server" as const },
+    ],
+  ]);
+
+  it("makes every member environment and path searchable", () => {
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: localEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/Users/theo/Projects/t3code",
+        },
+        {
+          environmentId: remoteEnvironmentId,
+          title: "t3code",
+          workspaceRoot: "/srv/t3code",
+        },
+      ],
+      locationByEnvironmentId: locations,
+    });
+
+    expect(metadata.searchTerms).toEqual([
+      "T3 Code",
+      "/Users/theo/Projects/t3code",
+      "Local",
+      "t3code",
+      "/srv/t3code",
+      "Build box",
+    ]);
+    expect(metadata.environmentLabels).toEqual(["Local", "Build box"]);
+
+    const [filteredGroup] = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "build box",
+      isInSubmenu: false,
+      projectSearchItems: [
+        {
+          kind: "action",
+          value: "project:t3code",
+          title: "T3 Code",
+          searchTerms: metadata.searchTerms,
+          icon: null,
+          run: async () => undefined,
+        },
+      ],
+      threadSearchItems: [],
+    });
+    expect(filteredGroup?.items).toHaveLength(1);
+  });
+
+  it("deduplicates grouped checkouts by environment", () => {
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/srv/t3code",
+        },
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code worktree",
+          workspaceRoot: "/srv/t3code-feature",
+        },
+      ],
+      locationByEnvironmentId: locations,
+    });
+
+    expect(metadata.environmentLabels).toEqual(["Build box"]);
+  });
+
+  it("uses a human-readable fallback when presentation data is unavailable", () => {
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/srv/t3code",
+        },
+      ],
+      locationByEnvironmentId: new Map(),
+    });
+
+    expect(metadata.searchTerms).toContain("Remote");
+    expect(metadata.environmentLabels).toEqual(["Remote"]);
   });
 });
 

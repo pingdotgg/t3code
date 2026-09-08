@@ -1,6 +1,7 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
+  type EnvironmentId,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
   THREAD_JUMP_KEYBINDING_COMMANDS,
@@ -184,6 +185,24 @@ export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-b
 // as the real project title: the automatic project icon is derived from it, and
 // every other surface uses the real title, so overriding it desyncs the icon.
 export type CommandPaletteProject = Project & { readonly displayName: string };
+
+export function buildCommandPaletteProjectMetadata(input: {
+  readonly projects: ReadonlyArray<Pick<Project, "environmentId" | "title" | "workspaceRoot">>;
+  readonly locationByEnvironmentId: ReadonlyMap<EnvironmentId, { readonly label: string }>;
+}) {
+  const searchTerms: string[] = [];
+  const environmentLabelById = new Map<EnvironmentId, string>();
+
+  for (const project of input.projects) {
+    const label = input.locationByEnvironmentId.get(project.environmentId)?.label ?? "Remote";
+    searchTerms.push(project.title, project.workspaceRoot, label);
+    if (!environmentLabelById.has(project.environmentId)) {
+      environmentLabelById.set(project.environmentId, label);
+    }
+  }
+
+  return { searchTerms, environmentLabels: [...environmentLabelById.values()] };
+}
 
 export function buildProjectActionItems(input: {
   projects: ReadonlyArray<CommandPaletteProject>;
