@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -16,11 +17,13 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { decodeScanCache } from "./usageScanCache.ts";
 import * as UsageService from "./UsageService.ts";
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
@@ -36,6 +39,11 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
     },
   })}\n`;
 }
+
+/** The scan cache file is JSON of a shape `usageScanCache` narrows by hand. */
+const decodeJsonDocument = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>),
+);
 
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -156,6 +164,44 @@ describe("UsageService", () => {
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps transcripts older than the bounded retention cached after an all-time scan", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      // Well past the 90-day retention that bounded windows prune to.
+      const nowMs = yield* Clock.currentTimeMillis;
+      const staleMtimeSeconds = (nowMs - 200 * 24 * 60 * 60 * 1000) / 1000;
+      yield* Effect.promise(() => NodeFSP.utimes(transcript, staleMtimeSeconds, staleMtimeSeconds));
+      const allTime: UsageSummaryInput = { ...WINDOW, sinceDay: UsageDay.make("2020-01-01") };
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const service = yield* UsageService.make;
+
+        const first = yield* service.readSummary(allTime);
+        assert.strictEqual(totalOutputTokens(first), 5);
+
+        // The bounded window skips the file by mtime; it used to evict the
+        // entry too, turning the next all-time view into a cold re-parse.
+        const bounded = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(bounded), 0);
+        const cachePath = NodePath.join(config.stateDir, "usage-scan-cache.json");
+        const persisted = yield* fileSystem.readFileString(cachePath);
+        assert.isTrue(decodeScanCache(decodeJsonDocument(persisted)).has(transcript));
+
+        // A restarted server learns the horizon from what it loads, so its
+        // first bounded scan keeps the entry as well.
+        const restarted = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(WINDOW)), 0);
+        const afterRestart = yield* fileSystem.readFileString(cachePath);
+        assert.isTrue(decodeScanCache(decodeJsonDocument(afterRestart)).has(transcript));
+      }).pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-all-time-test", home, settings })),
+      );
     }).pipe(Effect.scoped),
   );
 

@@ -76,7 +76,12 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** Longest window the UI offers, plus slack. Older entries are pruned. */
+/**
+ * Longest bounded window the UI offers, plus slack. Older entries are pruned
+ * until an all-time scan runs; from then on everything it walked is kept, so
+ * switching between periods never re-parses years of transcripts. See
+ * `retentionHorizonMs`.
+ */
 const CACHE_RETENTION_DAYS = 90;
 
 /** On-disk shape of the rate snapshot. */
@@ -142,6 +147,11 @@ export const make = Effect.gen(function* () {
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
+  // Oldest window start any scan asked for. Survives restarts without being
+  // stored: an entry older than the bounded retention can only be in the
+  // loaded cache because an all-time scan put it there, so the oldest loaded
+  // entry is the horizon.
+  let retentionHorizonMs = Number.POSITIVE_INFINITY;
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -285,7 +295,10 @@ export const make = Effect.gen(function* () {
         Effect.catchCause(() => Effect.succeed(null)),
       );
       if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      for (const [path, entry] of decodeScanCache(document)) {
+        fileCache.set(path, entry);
+        retentionHorizonMs = Math.min(retentionHorizonMs, entry.mtimeMs);
+      }
     }),
   );
 
@@ -529,11 +542,15 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    retentionHorizonMs = Math.min(retentionHorizonMs, windowStartMs);
     const pruned = pruneScanCache(fileCache, {
       livePaths,
       walkedRoots,
       windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      retentionCutoffMs: Math.min(
+        startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+        retentionHorizonMs,
+      ),
     });
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();

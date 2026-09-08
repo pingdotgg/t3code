@@ -26,7 +26,7 @@ import { serverEnvironment } from "../../state/server";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  enumerateDays,
+  enumerateChartDays,
   enumerateHourStarts,
   formatCount,
   formatDateTimeShort,
@@ -35,7 +35,10 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  groupDailyByWeek,
   makeWindow,
+  MAX_DAILY_CHART_DAYS,
+  type UsageWindowSpan,
 } from "@t3tools/shared/usageFormat";
 import { Button } from "../ui/button";
 import {
@@ -84,10 +87,13 @@ const WINDOW_OPTIONS = [
   { days: 7, label: "7 days" },
   { days: 30, label: "30 days" },
   { days: 90, label: "90 days" },
-] as const;
+  { days: "all", label: "All time" },
+] as const satisfies readonly { days: UsagePagePreferences["windowDays"]; label: string }[];
 
-function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
-  return WINDOW_OPTIONS.some((option) => option.days === value);
+function parseUsageWindow(value: string): UsagePagePreferences["windowDays"] | null {
+  const span: UsageWindowSpan = value === "all" ? "all" : Number(value);
+  const option = WINDOW_OPTIONS.find((candidate) => candidate.days === span);
+  return option === undefined ? null : option.days;
 }
 
 export function UsagePage() {
@@ -118,9 +124,15 @@ export function UsagePage() {
     reportFailure: false,
   });
 
-  const days = useMemo(
-    () => enumerateDays(window.sinceDay, window.untilDay),
-    [window.sinceDay, window.untilDay],
+  const days = useMemo(() => enumerateChartDays(window, merged.daily), [window, merged.daily]);
+  // Long spans roll up into weeks so the chart stays legible; the breakdown
+  // table below keeps its per-day rows.
+  const weekly = useMemo(
+    () =>
+      !isPast24Hours && days.length > MAX_DAILY_CHART_DAYS
+        ? groupDailyByWeek(days, merged.daily)
+        : null,
+    [days, isPast24Hours, merged.daily],
   );
   const hours = useMemo(
     () =>
@@ -147,8 +159,9 @@ export function UsagePage() {
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
-  const selectWindow = (days: number) => {
-    if (!isUsageWindowDays(days)) return;
+  const selectWindow = (value: string) => {
+    const days = parseUsageWindow(value);
+    if (days === null) return;
     const nextPreferences = { metric, windowDays: days };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
@@ -197,10 +210,11 @@ export function UsagePage() {
       setIsRefreshing(false);
     });
   };
+  // All time starts at the first active day rather than the request floor.
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
       ? `${formatDateTimeShort(window.sinceTime, window.timeZone)} to ${formatDateTimeShort(window.untilTime, window.timeZone)}`
-      : `${formatDayShort(window.sinceDay)} to ${formatDayShort(window.untilDay)}`;
+      : `${formatDayShort(days[0] ?? window.untilDay)} to ${formatDayShort(window.untilDay)}`;
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 py-2 xl:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="col-span-2 min-w-0">
@@ -251,7 +265,7 @@ export function UsagePage() {
           disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
-            if (value) selectWindow(Number(value));
+            if (value) selectWindow(value);
           }}
         >
           {WINDOW_OPTIONS.map((option) => (
@@ -299,7 +313,9 @@ export function UsagePage() {
         <Select
           value={String(windowDays)}
           disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
+          onValueChange={(value) => {
+            if (value !== null) selectWindow(value);
+          }}
         >
           <SelectTrigger
             aria-label="Usage period"
@@ -416,18 +432,18 @@ export function UsagePage() {
 
                   <div className="flex min-w-0 flex-col gap-3">
                     <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                      {isPast24Hours ? "Hourly" : weekly === null ? "Daily" : "Weekly"}{" "}
                       {metric === "tokens" ? "processed tokens" : "cost"}
                     </h2>
                     <UsageProviderChart
                       providers={activeProviders}
-                      days={days}
-                      daily={merged.daily}
+                      days={weekly?.periods ?? days}
+                      daily={weekly?.totals ?? merged.daily}
                       hours={hours}
                       hourly={merged.hourly}
                       metric={metric}
                       referenceTime={window.untilTime}
-                      resolution={isPast24Hours ? "hour" : "day"}
+                      resolution={isPast24Hours ? "hour" : weekly === null ? "day" : "week"}
                       timeZone={window.timeZone}
                     />
                   </div>

@@ -28,12 +28,15 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
   });
 
-  it.each([1, 7, 30, 90] as const)("round-trips every metric with a %i-day range", (windowDays) => {
-    for (const metric of ["cost", "tokens", "limits"] as const) {
-      saveUsagePagePreferences({ metric, windowDays });
-      expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
-    }
-  });
+  it.each([1, 7, 30, 90, "all"] as const)(
+    "round-trips every metric with a %s range",
+    (windowDays) => {
+      for (const metric of ["cost", "tokens", "limits"] as const) {
+        saveUsagePagePreferences({ metric, windowDays });
+        expect(readUsagePagePreferences()).toEqual({ metric, windowDays });
+      }
+    },
+  );
 
   it.each([
     "not-json",

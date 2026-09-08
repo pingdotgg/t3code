@@ -6,7 +6,7 @@ import {
   type MergedUsage,
 } from "@t3tools/shared/usageMerge";
 import {
-  enumerateDays,
+  enumerateChartDays,
   enumerateHourStarts,
   formatCount,
   formatDayShort,
@@ -14,7 +14,10 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  groupDailyByWeek,
   makeWindow,
+  MAX_DAILY_CHART_DAYS,
+  type UsageWindowSpan,
 } from "@t3tools/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
@@ -49,7 +52,12 @@ const WINDOW_OPTIONS = [
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
   { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
-] as const;
+  { value: "all", label: "All", accessibilityLabel: "All time" },
+] as const satisfies readonly {
+  value: UsageWindowSpan;
+  label: string;
+  accessibilityLabel: string;
+}[];
 
 const METRIC_OPTIONS = [
   { value: "cost", label: "Cost" },
@@ -68,7 +76,7 @@ export function UsageRouteScreen() {
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<UsageTab>("usage");
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
+    days: 30 as UsageWindowSpan,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
@@ -82,16 +90,21 @@ export function UsageRouteScreen() {
   );
   const limits = useRefreshLimits(selectedEnvironmentIds);
 
-  const days = useMemo(
-    () => enumerateDays(window.sinceDay, window.untilDay),
-    [window.sinceDay, window.untilDay],
+  const days = useMemo(() => enumerateChartDays(window, merged.daily), [window, merged.daily]);
+  // Long spans roll up into weeks: a bar per day would be thinner than a pixel.
+  const weekly = useMemo(
+    () =>
+      !isPast24Hours && days.length > MAX_DAILY_CHART_DAYS
+        ? groupDailyByWeek(days, merged.daily)
+        : null,
+    [days, isPast24Hours, merged.daily],
   );
   const chartDays = useMemo(
     () =>
       isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
         ? enumerateHourStarts(window.sinceTime, window.untilTime)
-        : days,
-    [days, isPast24Hours, window.sinceTime, window.untilTime],
+        : (weekly?.periods ?? days),
+    [days, isPast24Hours, weekly, window.sinceTime, window.untilTime],
   );
   const chartTotals = useMemo(
     (): readonly DailyTotals[] =>
@@ -102,14 +115,14 @@ export function UsageRouteScreen() {
             totalTokens: hour.totalTokens,
             byProvider: hour.byProvider,
           }))
-        : merged.daily,
-    [isPast24Hours, merged.daily, merged.hourly],
+        : (weekly?.totals ?? merged.daily),
+    [isPast24Hours, merged.daily, merged.hourly, weekly],
   );
 
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
-  const selectWindow = (days: number) => {
+  const selectWindow = (days: UsageWindowSpan) => {
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
@@ -300,7 +313,7 @@ export function UsageRouteScreen() {
                     days={chartDays}
                     daily={chartTotals}
                     metric={metric}
-                    sinceDay={window.sinceDay}
+                    sinceDay={days[0] ?? window.untilDay}
                     untilDay={window.untilDay}
                     isPast24Hours={isPast24Hours}
                     timeZone={window.timeZone}

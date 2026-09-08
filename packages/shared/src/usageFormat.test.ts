@@ -1,13 +1,78 @@
 // @effect-diagnostics globalDate:off -- A fixed instant keeps calendar-window assertions deterministic.
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import type { DailyTotals } from "./usageMerge.ts";
 import {
+  enumerateChartDays,
   enumerateHourStarts,
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  groupDailyByWeek,
   makeWindow,
+  USAGE_ALL_TIME_SINCE_DAY,
+  weekStart,
 } from "./usageFormat.ts";
+
+function dayTotals(day: string, codex: number, claude = 0): DailyTotals {
+  return {
+    day,
+    costUsd: codex + claude,
+    totalTokens: (codex + claude) * 10,
+    byProvider: new Map([
+      ["codex", { costUsd: codex, totalTokens: codex * 10 }],
+      ...(claude === 0 ? [] : [["claude", { costUsd: claude, totalTokens: claude * 10 }] as const]),
+    ]),
+  };
+}
+
+describe("all-time usage windows", () => {
+  it("requests everything from the fixed floor day", () => {
+    const window = makeWindow("all", new Date("2026-08-11T12:37:42.123Z"));
+
+    expect(window.sinceDay).toBe(USAGE_ALL_TIME_SINCE_DAY);
+    expect(window.untilDay).toBe("2026-08-11");
+    expect(window.resolution).toBe("day");
+  });
+
+  it("charts an all-time window from its first active day, and a bounded one in full", () => {
+    const window = makeWindow("all", new Date("2026-08-11T12:37:42.123Z"));
+    const daily = [dayTotals("2026-08-09", 1), dayTotals("2026-08-10", 2)];
+
+    expect(enumerateChartDays(window, daily)).toEqual(["2026-08-09", "2026-08-10", "2026-08-11"]);
+    expect(enumerateChartDays(window, [])).toEqual(["2026-08-11"]);
+    expect(enumerateChartDays(makeWindow(3, new Date("2026-08-11T12:37:42.123Z")), [])).toEqual([
+      "2026-08-09",
+      "2026-08-10",
+      "2026-08-11",
+    ]);
+  });
+});
+
+describe("weekly chart buckets", () => {
+  it("starts weeks on Monday", () => {
+    expect(weekStart("2026-08-10")).toBe("2026-08-10");
+    expect(weekStart("2026-08-16")).toBe("2026-08-10");
+    expect(weekStart("2026-08-09")).toBe("2026-08-03");
+  });
+
+  it("sums days into their week and zero-fills quiet weeks between", () => {
+    const days = ["2026-08-05", "2026-08-06", "2026-08-07", "2026-08-25"];
+    const { periods, totals } = groupDailyByWeek(days, [
+      dayTotals("2026-08-05", 1, 2),
+      dayTotals("2026-08-07", 3),
+      dayTotals("2026-08-25", 5),
+    ]);
+
+    expect(periods).toEqual(["2026-08-03", "2026-08-10", "2026-08-17", "2026-08-24"]);
+    expect(totals.map((week) => [week.day, week.costUsd])).toEqual([
+      ["2026-08-03", 6],
+      ["2026-08-24", 5],
+    ]);
+    expect(totals[0]?.byProvider.get("codex")).toEqual({ costUsd: 4, totalTokens: 40 });
+    expect(totals[0]?.byProvider.get("claude")).toEqual({ costUsd: 2, totalTokens: 20 });
+  });
+});
 
 describe("hourly usage formatting", () => {
   it("enumerates 24 fixed buckets across a rolling window", () => {
