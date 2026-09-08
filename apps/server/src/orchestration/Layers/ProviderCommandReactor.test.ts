@@ -173,6 +173,8 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
+    readonly turnStartAcknowledgementDispatchFailures?: number;
+    readonly startupTurnStartFailureDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly turnStartBeforeStart?: "one" | "two";
     readonly failPendingTurnStartSnapshot?: boolean;
@@ -458,6 +460,8 @@ describe("ProviderCommandReactor", () => {
       (sequence: number) => input?.awaitCheckpointSequenceEffect?.(sequence) ?? Effect.void,
     );
     let titleRegenerationCompletionDispatchAttempts = 0;
+    let turnStartAcknowledgementDispatchAttempts = 0;
+    let startupTurnStartFailureDispatchAttempts = 0;
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
       Effect.gen(function* () {
@@ -467,6 +471,30 @@ describe("ProviderCommandReactor", () => {
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
+            if (command.type === "thread.turn.start.acknowledge") {
+              return Effect.suspend(() => {
+                turnStartAcknowledgementDispatchAttempts += 1;
+                if (
+                  turnStartAcknowledgementDispatchAttempts <=
+                  (input?.turnStartAcknowledgementDispatchFailures ?? 0)
+                ) {
+                  return Effect.die(new Error("Injected turn start acknowledgement failure"));
+                }
+                return engine.dispatch(command);
+              });
+            }
+            if (
+              command.type === "thread.activity.append" &&
+              command.activity.kind === "provider.turn.start.failed"
+            ) {
+              startupTurnStartFailureDispatchAttempts += 1;
+              if (
+                startupTurnStartFailureDispatchAttempts <=
+                (input?.startupTurnStartFailureDispatchFailures ?? 0)
+              ) {
+                return Effect.die(new Error("Injected startup turn failure dispatch failure"));
+              }
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -699,6 +727,12 @@ describe("ProviderCommandReactor", () => {
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
+      get turnStartAcknowledgementDispatchAttempts() {
+        return turnStartAcknowledgementDispatchAttempts;
+      },
+      get startupTurnStartFailureDispatchAttempts() {
+        return startupTurnStartFailureDispatchAttempts;
+      },
     };
   }
 
@@ -740,6 +774,43 @@ describe("ProviderCommandReactor", () => {
       expect(harness.awaitCheckpointSequence).toHaveBeenCalledWith(expect.any(Number));
       expect(barrierPassed).toBe(true);
       expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  effectIt.effect("retries an accepted turn until its acknowledgement is durable", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ turnStartAcknowledgementDispatchFailures: 2 }),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-with-retried-acknowledgement"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-turn-with-retried-acknowledgement"),
+          role: "user",
+          text: "Keep the accepted provider turn durable",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(() => harness.turnStartAcknowledgementDispatchAttempts === 3),
+      );
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const placeholders = await harness.readTurnStartPlaceholders();
+          return placeholders[0]?.state === "submitted";
+        }),
+      );
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([
+        { messageId: "message-turn-with-retried-acknowledgement", state: "submitted" },
+      ]);
     }),
   );
 
@@ -1969,6 +2040,31 @@ describe("ProviderCommandReactor", () => {
           activity.payload.detail.includes("server restarted"),
       ),
     ).toBe(true);
+  });
+
+  it("continues clearing startup turn starts after one failure dispatch fails", async () => {
+    const harness = await createHarness({
+      turnStartBeforeStart: "two",
+      startupTurnStartFailureDispatchFailures: 1,
+    });
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(harness.startupTurnStartFailureDispatchAttempts).toBe(2);
+    expect(await harness.readTurnStartPlaceholders()).toEqual([
+      { messageId: "message-turn-start-before-reactor-start-1", state: "pending" },
+    ]);
+    const readModel = await harness.readModel();
+    expect(
+      readModel.threads[0]?.activities.flatMap((activity) =>
+        activity.kind === "provider.turn.start.failed" &&
+        typeof activity.payload === "object" &&
+        activity.payload !== null &&
+        "requestId" in activity.payload &&
+        typeof activity.payload.requestId === "string"
+          ? [activity.payload.requestId]
+          : [],
+      ),
+    ).toEqual(["message-turn-start-before-reactor-start-2"]);
   });
 
   it("fails reactor startup when pending turn starts cannot be read", async () => {

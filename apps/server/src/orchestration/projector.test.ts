@@ -856,6 +856,71 @@ describe("orchestration projector", () => {
     }),
   );
 
+  effectIt.effect("clears only the submitted start correlated to a provider failure", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T04:30:00.000Z";
+      const threadId = "thread-correlated-submitted-failure";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `correlated-submitted-failure-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Correlated submitted failure",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const [sequence, messageId, turnId] of [
+        [2, "request-a", "turn-a"],
+        [3, "request-b", "turn-b"],
+      ] as const) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: now,
+          }),
+        );
+      }
+
+      model = yield* projectEvent(
+        model,
+        event(4, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "request-a-failed",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { requestId: "request-a" },
+            turnId: "turn-a",
+            createdAt: now,
+          },
+        }),
+      );
+
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-b", turnId: "turn-b" },
+      ]);
+    }),
+  );
+
   effectIt.effect("does not enroll legacy turn history in submission rendezvous state", () =>
     Effect.gen(function* () {
       const now = "2026-09-08T01:55:00.000Z";

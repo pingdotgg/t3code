@@ -1043,6 +1043,12 @@ export function projectEvent(
             ? null
             : (thread.pendingTurnStartMessageId ?? null);
           const clearedRequestId = turnStartRequestIdClearedByActivity(payload.activity);
+          const submittedTurnStarts =
+            clearedRequestId === null
+              ? (thread.submittedTurnStarts ?? [])
+              : (thread.submittedTurnStarts ?? []).filter(
+                  (entry) => entry.messageId !== clearedRequestId,
+                );
           const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
           const remainingRequests =
             clearedRequestId === null
@@ -1070,6 +1076,7 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               pendingTurnStartMessageId,
+              submittedTurnStarts,
               turnStartSubmissionRendezvous,
               pendingCheckpointRevertMessageIds,
               pendingCheckpointRevertCount:

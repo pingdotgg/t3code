@@ -733,6 +733,12 @@ export function applyThreadDetailEvent(
         ? null
         : (thread.pendingTurnStartMessageId ?? null);
       const clearedRequestId = turnStartRequestIdClearedByActivity(activity);
+      const submittedTurnStarts =
+        clearedRequestId === null
+          ? (thread.submittedTurnStarts ?? [])
+          : (thread.submittedTurnStarts ?? []).filter(
+              (entry) => entry.messageId !== clearedRequestId,
+            );
       const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
       const remainingRequests =
         clearedRequestId === null
@@ -768,6 +774,7 @@ export function applyThreadDetailEvent(
             ...thread,
             activities,
             pendingTurnStartMessageId,
+            submittedTurnStarts,
             turnStartSubmissionRendezvous,
             updatedAt: event.occurredAt,
           },
@@ -795,6 +802,7 @@ export function applyThreadDetailEvent(
           ...thread,
           activities,
           pendingTurnStartMessageId,
+          submittedTurnStarts,
           turnStartSubmissionRendezvous,
           updatedAt: event.occurredAt,
         },

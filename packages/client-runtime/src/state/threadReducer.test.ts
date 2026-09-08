@@ -618,6 +618,47 @@ describe("applyThreadDetailEvent", () => {
       expect(thread.turnStartSubmissionRendezvous).toBeNull();
     });
 
+    it("clears only the submitted start correlated to a provider failure", () => {
+      const messageA = MessageId.make("message-submitted-failure-a");
+      const messageB = MessageId.make("message-submitted-failure-b");
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          submittedTurnStarts: [
+            { messageId: messageA, turnId: TurnId.make("turn-submitted-failure-a") },
+            { messageId: messageB, turnId: TurnId.make("turn-submitted-failure-b") },
+          ],
+        },
+        {
+          ...baseEventFields,
+          sequence: 11,
+          occurredAt: "2026-04-01T05:15:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.activity-appended",
+          payload: {
+            threadId: baseThread.id,
+            activity: {
+              id: EventId.make("activity-submitted-failure-a"),
+              tone: "error",
+              kind: "provider.turn.start.failed",
+              summary: "Provider turn start failed",
+              payload: { requestId: messageA },
+              turnId: TurnId.make("turn-submitted-failure-a"),
+              createdAt: "2026-04-01T05:15:00.000Z",
+            },
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.submittedTurnStarts).toEqual([
+          { messageId: messageB, turnId: TurnId.make("turn-submitted-failure-b") },
+        ]);
+      }
+    });
+
     it("recognizes a reused running turn when its steering acknowledgement is late", () => {
       const turnId = TurnId.make("turn-steering-late-ack");
       const messageId = MessageId.make("message-steering-late-ack");

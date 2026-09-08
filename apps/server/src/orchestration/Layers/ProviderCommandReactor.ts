@@ -1198,26 +1198,21 @@ const make = Effect.gen(function* () {
       };
       const dispatch = orchestrationEngine.dispatch(command).pipe(Effect.asVoid);
       yield* dispatch.pipe(
-        Effect.catchCause((cause) => {
-          if (Cause.hasInterruptsOnly(cause)) {
-            return Effect.failCause(cause);
-          }
-          return Effect.logWarning("provider command reactor retrying turn start acknowledgement", {
-            threadId: input.threadId,
-            messageId: input.messageId,
-            cause: Cause.pretty(cause),
-          }).pipe(Effect.andThen(dispatch));
+        Effect.sandbox,
+        Effect.tapError((cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Effect.logWarning("provider command reactor retrying turn start acknowledgement", {
+                threadId: input.threadId,
+                messageId: input.messageId,
+                cause: Cause.pretty(cause),
+              }),
+        ),
+        Effect.retry({
+          while: (cause) => !Cause.hasInterrupts(cause),
+          schedule: Schedule.exponential("100 millis"),
         }),
-        Effect.catchCause((cause) => {
-          if (Cause.hasInterruptsOnly(cause)) {
-            return Effect.failCause(cause);
-          }
-          return Effect.logError("provider command reactor failed to acknowledge turn start", {
-            threadId: input.threadId,
-            messageId: input.messageId,
-            cause: Cause.pretty(cause),
-          });
-        }),
+        Effect.catch((cause) => Effect.failCause(cause)),
       );
     },
   );
@@ -1880,7 +1875,20 @@ const make = Effect.gen(function* () {
           turnId: null,
           createdAt: pending.requestedAt,
           requestId: pending.messageId,
-        }),
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning(
+                  "provider command reactor failed to clear interrupted turn start",
+                  {
+                    threadId: pending.threadId,
+                    messageId: pending.messageId,
+                    cause: Cause.pretty(cause),
+                  },
+                ),
+          ),
+        ),
       { concurrency: 1, discard: true },
     );
     const clearInterrupted = Effect.all(

@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   type ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
@@ -603,6 +604,46 @@ export const reconcileProviderSessions = Effect.gen(function* () {
                 ),
           ),
         );
+
+        const submittedStartCleanup = yield* Effect.forEach(
+          thread.submittedTurnStarts ?? [],
+          (submitted) =>
+            Effect.gen(function* () {
+              const createdAt = DateTime.formatIso(yield* DateTime.now);
+              const commandId = CommandId.make(yield* crypto.randomUUIDv4);
+              const eventId = EventId.make(yield* crypto.randomUUIDv4);
+              yield* orchestrationEngine.dispatch({
+                type: "thread.activity.append",
+                commandId,
+                threadId: thread.id,
+                activity: {
+                  id: eventId,
+                  tone: "error",
+                  kind: "provider.turn.start.failed",
+                  summary: "Provider turn start failed",
+                  payload: {
+                    detail:
+                      "The server restarted after the provider accepted this turn but before it started.",
+                    requestId: submitted.messageId,
+                  },
+                  turnId: submitted.turnId,
+                  createdAt,
+                },
+                createdAt,
+              });
+            }),
+          { concurrency: 1, discard: true },
+        ).pipe(Effect.exit);
+        if (Exit.isFailure(submittedStartCleanup)) {
+          if (Cause.hasInterrupts(submittedStartCleanup.cause)) {
+            return yield* Effect.failCause(submittedStartCleanup.cause);
+          }
+          yield* Effect.logWarning(
+            "failed to clear an acknowledged turn start during orphan reconciliation",
+            { threadId: thread.id, cause: submittedStartCleanup.cause },
+          );
+          return;
+        }
 
         yield* Effect.gen(function* () {
           const reconciledAt = DateTime.formatIso(yield* DateTime.now);

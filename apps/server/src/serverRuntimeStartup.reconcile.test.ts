@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type OrchestrationCommand,
   type OrchestrationSessionStatus,
+  MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSendTurnInput,
@@ -584,6 +585,104 @@ it.effect("reconciles multiple active and archived orphans but skips live sessio
           );
           assert.deepStrictEqual(binding.resumeCursor, { cursor: binding.threadId });
         }
+      }),
+    ),
+  );
+});
+
+it.effect("clears acknowledged starts when orphan reconciliation abandons the session", () => {
+  const messageId = MessageId.make("message-acknowledged-before-restart");
+  const turnId = TurnId.make("turn-acknowledged-before-restart");
+  const thread = {
+    ...makeThread("thread-acknowledged-before-restart", "starting"),
+    submittedTurnStarts: [{ messageId, turnId }],
+  };
+  const dispatched: OrchestrationCommand[] = [];
+
+  return runReconciliation({
+    threads: [thread],
+    directory: {
+      getBinding: () => Effect.succeed(Option.none()),
+      upsert: () => Effect.void,
+      recordImportedTranscript: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    },
+    dispatch: (command) =>
+      Effect.sync(() => dispatched.push(command)).pipe(Effect.as({ sequence: dispatched.length })),
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(
+          dispatched.map((command) =>
+            command.type === "thread.session.set"
+              ? { type: command.type, status: command.session.status }
+              : command.type === "thread.activity.append"
+                ? {
+                    type: command.type,
+                    kind: command.activity.kind,
+                    requestId:
+                      typeof command.activity.payload === "object" &&
+                      command.activity.payload !== null &&
+                      "requestId" in command.activity.payload
+                        ? command.activity.payload.requestId
+                        : null,
+                  }
+                : { type: command.type },
+          ),
+          [
+            {
+              type: "thread.activity.append",
+              kind: "provider.turn.start.failed",
+              requestId: messageId,
+            },
+            { type: "thread.session.set", status: "error" },
+          ],
+        );
+      }),
+    ),
+  );
+});
+
+it.effect("keeps an orphaned acknowledged start retryable when cleanup cannot persist", () => {
+  const messageId = MessageId.make("message-cleanup-fails");
+  const thread = {
+    ...makeThread("thread-cleanup-fails", "starting"),
+    submittedTurnStarts: [{ messageId, turnId: TurnId.make("turn-cleanup-fails") }],
+  };
+  const dispatched: OrchestrationCommand[] = [];
+
+  return runReconciliation({
+    threads: [thread],
+    directory: {
+      getBinding: () => Effect.succeed(Option.none()),
+      upsert: () => Effect.void,
+      recordImportedTranscript: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    },
+    dispatch: (command) =>
+      Effect.sync(() => dispatched.push(command)).pipe(
+        Effect.flatMap(() =>
+          command.type === "thread.activity.append"
+            ? Effect.fail(
+                new OrchestrationCommandInvariantError({
+                  commandType: command.type,
+                  detail: "cleanup failed",
+                }),
+              )
+            : Effect.succeed({ sequence: dispatched.length }),
+        ),
+      ),
+  }).pipe(
+    Effect.tap(() =>
+      Effect.sync(() => {
+        assert.deepStrictEqual(
+          dispatched.map((command) => command.type),
+          ["thread.activity.append"],
+        );
       }),
     ),
   );
