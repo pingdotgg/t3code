@@ -25,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -2160,8 +2161,70 @@ export function makeOpenCodeAdapter(
           if (context.turnTokenUsage) {
             context.turnTokenUsage.complete = false;
           }
+          const admission = context.promptAdmission;
           yield* schedulePromptAdmissionRecovery(context, event);
-          if (context.activeTurnId !== undefined && context.promptAdmission === undefined) {
+          if (admission) {
+            const recoveryFiber = admission.recoveryFiber;
+            yield* Effect.gen(function* () {
+              if (recoveryFiber) {
+                yield* Fiber.await(recoveryFiber);
+              }
+              const isCurrentPrompt = () =>
+                context.activeTurnId === admission.turnId &&
+                context.promptGeneration === admission.generation &&
+                context.promptAdmission === undefined;
+              if (!isCurrentPrompt()) {
+                return;
+              }
+              let warned = false;
+              // A user message alone can precede the session loop. An assistant
+              // reply proves this prompt started, so idle can recover a missed completion.
+              const response = yield* Effect.gen(function* () {
+                if (!isCurrentPrompt()) {
+                  return yield* Effect.interrupt;
+                }
+                return yield* runOpenCodeSdk("session.messages", (signal) =>
+                  context.client.session.messages(
+                    { sessionID: context.openCodeSessionId, limit: 1 },
+                    { signal },
+                  ),
+                ).pipe(Effect.timeout("1 second"), Effect.retry({ times: 1 }));
+              }).pipe(
+                Effect.tapError((cause) =>
+                  Effect.gen(function* () {
+                    if (warned || !isCurrentPrompt()) return;
+                    warned = true;
+                    yield* emit({
+                      ...(yield* buildEventBase({
+                        threadId: context.session.threadId,
+                        turnId: admission.turnId,
+                      })),
+                      type: "runtime.warning",
+                      payload: {
+                        message: "OpenCode turn completion is waiting for message history.",
+                        detail: openCodeRuntimeErrorDetail(cause),
+                      },
+                    });
+                  }),
+                ),
+                Effect.retry({
+                  while: isCurrentPrompt,
+                  schedule: Schedule.min([
+                    Schedule.exponential("250 millis"),
+                    Schedule.spaced("5 seconds"),
+                  ]),
+                }),
+              );
+              const message = response.data?.at(-1)?.info;
+              if (
+                message?.role === "assistant" &&
+                message.parentID === admission.messageId &&
+                isCurrentPrompt()
+              ) {
+                yield* scheduleIdleReconciliation(context, admission.turnId, event);
+              }
+            }).pipe(Effect.ignore({ log: true }), Effect.forkIn(context.sessionScope));
+          } else if (context.activeTurnId !== undefined) {
             yield* scheduleIdleReconciliation(context, context.activeTurnId, event);
           }
         }
