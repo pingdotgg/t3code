@@ -50,12 +50,27 @@
     "packages/alchemy/bin/**/*.js*": true,
     "packages/alchemy/bin/**/*.d*": true
   },
+  // The client watcher feeds the tsgo LSP (workspace/didChangeWatchedFiles);
+  // every unexcluded change storm forces a session-snapshot clone + program
+  // update (8-18s on the alchemy projects). Exclude everything that is not a
+  // program input: agent worktrees (.claude is ~69GB incl. nested
+  // node_modules), vendored submodules, test logs/tmp bundles, and installs.
   "files.watcherExclude": {
-    "**/distilled/**": true
+    "**/distilled/**": true,
+    "**/.claude/**": true,
+    "**/.vendor/**": true,
+    "**/.alchemy/**": true,
+    "**/node_modules/**": true,
+    "**/.git/**": true
   },
   "search.exclude": {
-    "**/distilled/**": true
+    "**/distilled/**": true,
+    "**/.claude/**": true,
+    "**/.vendor/**": true,
+    "**/.alchemy/**": true
   },
+  // Keep the 200MB generated distilled surface out of the auto-import index.
+  "typescript.preferences.autoImportFileExcludePatterns": ["**/distilled/**"],
   "[typescript]": {
     "editor.indentSize": 2,
     "editor.defaultFormatter": "oxc.oxc-vscode"

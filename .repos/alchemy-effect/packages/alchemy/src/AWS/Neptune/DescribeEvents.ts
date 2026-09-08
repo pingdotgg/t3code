@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * for the account's Neptune clusters and instances — the audit trail for
  * operational tooling. Provide the implementation with
  * `Effect.provide(AWS.Neptune.DescribeEventsHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example List a Cluster's Recent Events
+ * ### Monitoring Clusters
+ * **Example:** List a Cluster's Recent Events
  * ```typescript
  * const describeEvents = yield* AWS.Neptune.DescribeEvents();
  *
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const messages = page.Events?.map((e) => e.Message);
  * ```
+ *
+ * @binding
  */
 export interface DescribeEvents extends Binding.Service<
   DescribeEvents,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * The binding takes no arguments and grants the action on `*` (the action
  * has no resource-level IAM).
  *
- * @binding
- * @section Real-Time Analysis
- * @example Score Text Segments for Toxicity
+ * ### Real-Time Analysis
+ * **Example:** Score Text Segments for Toxicity
  * ```typescript
  * // init
  * const detectToxicContent = yield* AWS.Comprehend.DetectToxicContent();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.ResultList[0].Toxicity ~ 0.01
  * ```
+ *
+ * @binding
  */
 export interface DetectToxicContent extends Binding.Service<
   DetectToxicContent,

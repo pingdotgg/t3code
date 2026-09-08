@@ -10,9 +10,8 @@ import type { ResolverEndpoint } from "./ResolverEndpoint.ts";
  *
  * Provide `Route53Resolver.GetResolverEndpointHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Reading Endpoint State
- * @example Read the Endpoint Status
+ * ### Reading Endpoint State
+ * **Example:** Read the Endpoint Status
  * ```typescript
  * // init — grants route53resolver:GetResolverEndpoint on the endpoint
  * const getEndpoint = yield* AWS.Route53Resolver.GetResolverEndpoint(endpoint);
@@ -21,6 +20,8 @@ import type { ResolverEndpoint } from "./ResolverEndpoint.ts";
  * const { ResolverEndpoint } = yield* getEndpoint();
  * console.log(ResolverEndpoint?.Status, ResolverEndpoint?.IpAddressCount);
  * ```
+ *
+ * @binding
  */
 export interface GetResolverEndpoint extends Binding.Service<
   GetResolverEndpoint,

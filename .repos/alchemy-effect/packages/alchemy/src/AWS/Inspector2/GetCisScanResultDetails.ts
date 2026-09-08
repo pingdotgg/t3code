@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.GetCisScanResultDetailsHttp)`.
- * @binding
- * @section CIS Scan Results
- * @example CIS Result Details for an Instance
+ * ### CIS Scan Results
+ * **Example:** CIS Result Details for an Instance
  * ```typescript
  * // init
  * const getCisScanResultDetails = yield* AWS.Inspector2.GetCisScanResultDetails();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   targetResourceId: instanceId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetCisScanResultDetails extends Binding.Service<
   GetCisScanResultDetails,

@@ -48,14 +48,11 @@ export const ChromiumKeyFailure = Schema.Literals([
 ]);
 export type ChromiumKeyFailure = typeof ChromiumKeyFailure.Type;
 
-export class ChromiumKeyError extends Schema.TaggedErrorClass<ChromiumKeyError>()(
-  "ChromiumKeyError",
-  {
-    reason: ChromiumKeyFailure,
-    /** Kept for the log; never surfaced to the user. */
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
+export class ChromiumKeyError extends Schema.TaggedError<ChromiumKeyError>()("ChromiumKeyError", {
+  reason: ChromiumKeyFailure,
+  /** Kept for the log; never surfaced to the user. */
+  cause: Schema.optional(Schema.Defect()),
+}) {
   override get message(): string {
     return `Could not obtain the Chromium cookie key: ${this.reason}.`;
   }

@@ -422,6 +422,8 @@ function ArchivedThreadRow(props: {
   );
   return (
     <ThreadSwipeable
+      resetKey={`${props.thread.environmentId}:${props.thread.id}`}
+      threadKey={`${props.thread.environmentId}:${props.thread.id}`}
       backgroundColor={cardColor}
       // Round + clip the swipeable container so the group's corners stay
       // rounded while rows swipe; the row itself stays square inside.

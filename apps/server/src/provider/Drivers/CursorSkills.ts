@@ -42,7 +42,7 @@ interface CursorSkillScanBudget {
   incomplete: boolean;
 }
 
-class CursorSkillsProbeError extends Schema.TaggedErrorClass<CursorSkillsProbeError>()(
+class CursorSkillsProbeError extends Schema.TaggedError<CursorSkillsProbeError>()(
   "CursorSkillsProbeError",
   {
     reason: Schema.Literals(["scan-budget-exhausted", "filesystem-error"]),

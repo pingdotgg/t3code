@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.DeleteUserHttp)`.
  *
- * @binding
- * @section User Search
- * @example Delete a User
+ * ### User Search
+ * **Example:** Delete a User
  * ```typescript
  * // init
  * const deleteUser = yield* AWS.Rekognition.DeleteUser();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   Effect.catchTag("ResourceNotFoundException", () => Effect.void),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DeleteUser extends Binding.Service<
   DeleteUser,

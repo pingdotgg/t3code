@@ -178,7 +178,7 @@ export class InternalError extends Data.TaggedError("InternalError")<{
 /**
  * Returns `true` when the supplied value is an `HttpServerError`.
  *
- * @category predicates
+ * @category guards
  * @since 4.0.0
  */
 export const isHttpServerError = (u: unknown): u is HttpServerError => hasProperty(u, TypeId)
@@ -249,7 +249,7 @@ export class ServeError extends Data.TaggedError("ServeError")<{
  * `causeResponse` uses this annotation to map a pure client abort to a `499`
  * response instead of a server abort response.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export class ClientAbort extends Context.Service<ClientAbort, true>()("effect/http/HttpServerError/ClientAbort") {

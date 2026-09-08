@@ -1,8 +1,14 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import {
+  questionAttachmentDraftKey,
+  questionAttachmentDraftPrefix,
+} from "../state/question-attachments";
+vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
 
 import {
   composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
   createComposerAttachmentUploadQueue,
@@ -216,6 +222,26 @@ describe("composer attachment upload queue", () => {
 });
 
 describe("draft upload scope and offline submission", () => {
+  it("uploads question drafts in their environment without matching other thread prefixes", () => {
+    const requestId = ApprovalRequestId.make("request:1");
+    for (const environment of [environmentId, EnvironmentId.make("remote:server")]) {
+      const threadId = ThreadId.make("thread:1");
+      const prefix = questionAttachmentDraftPrefix(environment, threadId);
+      const key = questionAttachmentDraftKey(environment, threadId, requestId, "question:1");
+      expect(composerDraftEnvironmentId(key, [])).toBe(environment);
+      expect(key.startsWith(prefix)).toBe(true);
+      for (const suffix of ["-extra", ":extra", "/extra", "%extra"]) {
+        const otherKey = questionAttachmentDraftKey(
+          environment,
+          ThreadId.make(`${threadId}${suffix}`),
+          requestId,
+          "question:1",
+        );
+        expect(otherKey.startsWith(prefix)).toBe(false);
+        expect(composerDraftEnvironmentId(otherKey, [])).toBe(environment);
+      }
+    }
+  });
   it("resolves thread, new-task, and queued-task drafts without crossing environments", () => {
     expect(composerDraftEnvironmentId("environment-1:thread", [])).toBe(environmentId);
     expect(composerDraftEnvironmentId("new-task:environment-1:project", [])).toBe(environmentId);
@@ -230,7 +256,25 @@ describe("draft upload scope and offline submission", () => {
     );
   });
 
-  it("allows offline queuing while a connected composer waits for upload or retry", () => {
+  it("reads an id-keyed new-task draft's environment from its project stamp", () => {
+    const stamped = {
+      project: {
+        environmentId,
+        projectId: "project" as never,
+        createdAt: "2026-09-05T00:00:00.000Z",
+      },
+    };
+    expect(composerDraftEnvironmentId("new-task:abc123-def456", [], stamped)).toBe(environmentId);
+    // An id-keyed draft that lost its stamp belongs to nobody: uploads must
+    // not start and sign-out must not sweep it into some other environment.
+    expect(composerDraftEnvironmentId("new-task:abc123-def456", [])).toBeNull();
+    // The stamp wins over a legacy-looking key when both are present.
+    expect(composerDraftEnvironmentId("new-task:environment-2:project", [], stamped)).toBe(
+      environmentId,
+    );
+  });
+
+  it("only a failed upload blocks sending; an in-flight one queues instead", () => {
     const key = composerAttachmentUploadKey(environmentId, "file");
     const input = {
       environmentId,
@@ -243,7 +287,16 @@ describe("draft upload scope and offline submission", () => {
       },
       states: {},
     };
-    expect(composerAttachmentUploadBlockReason(input)).toBe("Attachment still uploading");
+    // Not started yet and mid-transfer both let the send through as a queued
+    // message; the outbox drain finishes (or redoes) the upload.
+    expect(composerAttachmentUploadBlockReason(input)).toBeNull();
+    expect(composerAttachmentsStillUploading(input)).toBe(true);
+    expect(
+      composerAttachmentsStillUploading({
+        ...input,
+        states: { [key]: { status: "uploading", progress: 0.6 } },
+      }),
+    ).toBe(true);
     expect(composerAttachmentUploadBlockReason({ ...input, connected: false })).toBeNull();
     expect(
       composerAttachmentUploadBlockReason({
@@ -252,7 +305,18 @@ describe("draft upload scope and offline submission", () => {
       }),
     ).toBe("Retry or remove the failed attachment");
     expect(
+      composerAttachmentsStillUploading({
+        ...input,
+        states: { [key]: { status: "failed", reason: "Offline" } },
+      }),
+    ).toBe(false);
+    expect(
       composerAttachmentUploadBlockReason({ ...input, states: { [key]: { status: "ready" } } }),
     ).toBeNull();
+    expect(
+      composerAttachmentsStillUploading({ ...input, states: { [key]: { status: "ready" } } }),
+    ).toBe(false);
+    // Attachments the environment cannot accept never count as uploading.
+    expect(composerAttachmentsStillUploading({ ...input, serverConfig: null })).toBe(false);
   });
 });

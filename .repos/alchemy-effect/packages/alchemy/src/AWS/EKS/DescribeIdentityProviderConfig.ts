@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:DescribeIdentityProviderConfig` is granted on the cluster's sub-resource ARNs.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeIdentityProviderConfigHttp)`.
- * @binding
- * @section Identity Provider Configs
- * @example Read an OIDC Identity Provider Config
+ * ### Identity Provider Configs
+ * **Example:** Read an OIDC Identity Provider Config
  * ```typescript
  * // init
  * const describeIdentityProviderConfig =
@@ -24,6 +23,8 @@ import type { Cluster } from "./Cluster.ts";
  * });
  * const issuer = identityProviderConfig?.oidc?.issuerUrl;
  * ```
+ *
+ * @binding
  */
 export interface DescribeIdentityProviderConfig extends Binding.Service<
   DescribeIdentityProviderConfig,

@@ -738,6 +738,42 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("resolves a custom stop-thread shortcut", () => {
+    const keybindings = compile([{ shortcut: modShortcut("escape"), command: "thread.stop" }]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Escape", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "thread.stop",
+    );
+  });
+
+  it("honors preview conditions for a stop-thread shortcut", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("escape"),
+        command: "thread.stop",
+        whenAst: whenIdentifier("previewFocus"),
+      },
+    ]);
+    const input = event({ key: "Escape", metaKey: true });
+
+    assert.isNull(
+      resolveShortcutCommand(input, keybindings, {
+        platform: "MacIntel",
+        context: { previewFocus: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(input, keybindings, {
+        platform: "MacIntel",
+        context: { previewFocus: true },
+      }),
+      "thread.stop",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
@@ -803,6 +839,42 @@ describe("resolveShortcutCommand", () => {
         },
       ),
       "thread.next",
+    );
+  });
+
+  it("matches punctuation shortcuts by physical key across keyboard layouts", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("'", { shiftKey: true }), command: "diff.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "@", code: "Quote", metaKey: true, shiftKey: true }),
+        keybindings,
+        { platform: "MacIntel" },
+      ),
+      "diff.toggle",
+    );
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: '"', code: "Digit2", metaKey: true, shiftKey: true }),
+        keybindings,
+        { platform: "MacIntel" },
+      ),
+    );
+  });
+
+  it("does not let a punctuation position shadow a Latin layout key", () => {
+    const keybindings = compile([
+      { shortcut: modShortcut("m"), command: "diff.toggle" },
+      { shortcut: modShortcut(";"), command: "sidebar.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "m", code: "Semicolon", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "diff.toggle",
     );
   });
 

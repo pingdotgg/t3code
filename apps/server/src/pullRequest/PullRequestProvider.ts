@@ -42,7 +42,7 @@ import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t
  * provider for the whole workspace, a rate limit pauses its host, and anything else is specific
  * to the request.
  */
-export class PullRequestProviderError extends Schema.TaggedErrorClass<PullRequestProviderError>()(
+export class PullRequestProviderError extends Schema.TaggedError<PullRequestProviderError>()(
   "PullRequestProviderError",
   {
     provider: SourceControlProviderKindSchema,

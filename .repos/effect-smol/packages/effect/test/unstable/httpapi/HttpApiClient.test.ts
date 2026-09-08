@@ -110,6 +110,138 @@ describe("HttpApiClient", () => {
         assert.deepStrictEqual(first.map((chunk) => Array.from(chunk)), [[1, 2]])
       }))
 
+    it.effect("decodes WithHeaders StreamUint8Array bodies and headers", () =>
+      Effect.gen(function*() {
+        const Api = HttpApi.make("Api").add(
+          HttpApiGroup.make("test").add(
+            HttpApiEndpoint.get("download", "/download", {
+              success: HttpApiSchema.WithHeaders(
+                HttpApiSchema.StreamUint8Array(),
+                { "x-count": Schema.Int }
+              )
+            })
+          )
+        )
+        const client = yield* HttpApiClient.makeWith(Api, {
+          baseUrl: "http://test",
+          httpClient: clientFromResponse(() =>
+            new Response(byteStream([new Uint8Array([1, 2]), new Uint8Array([3])]), {
+              status: 200,
+              headers: { "x-count": "2" }
+            })
+          )
+        })
+
+        const value = yield* client.test.download({})
+        const first = yield* value.body.pipe(Stream.take(1), Stream.runCollect)
+
+        assert.deepStrictEqual(value.headers, { "x-count": 2 })
+        assert.deepStrictEqual(first.map((chunk) => Array.from(chunk)), [[1, 2]])
+      }))
+
+    it.effect("decodes WithHeaders StreamSse bodies and headers", () =>
+      Effect.gen(function*() {
+        const Api = HttpApi.make("Api").add(
+          HttpApiGroup.make("test").add(
+            HttpApiEndpoint.get("events", "/events", {
+              success: HttpApiSchema.WithHeaders(
+                HttpApiSchema.StreamSse({
+                  data: Schema.Struct({ text: Schema.String }),
+                  error: StreamError
+                }),
+                { "x-count": Schema.Int }
+              )
+            })
+          )
+        )
+        const client = yield* HttpApiClient.makeWith(Api, {
+          baseUrl: "http://test",
+          httpClient: clientFromResponse(() =>
+            new Response(textStream([`data: {"text":"hello"}\n\n`]), {
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream",
+                "x-count": "1"
+              }
+            })
+          )
+        })
+
+        const value = yield* client.test.events({})
+        const events = yield* Stream.runCollect(value.body)
+
+        assert.deepStrictEqual(value.headers, { "x-count": 1 })
+        assert.deepStrictEqual(events, [{ text: "hello" }])
+      }))
+
+    it.effect("fails invalid WithHeaders stream headers before returning the body", () =>
+      Effect.gen(function*() {
+        const Api = HttpApi.make("Api").add(
+          HttpApiGroup.make("test").add(
+            HttpApiEndpoint.get("download", "/download", {
+              success: HttpApiSchema.WithHeaders(
+                HttpApiSchema.StreamUint8Array(),
+                { "x-count": Schema.Int }
+              )
+            })
+          )
+        )
+        const client = yield* HttpApiClient.makeWith(Api, {
+          baseUrl: "http://test",
+          httpClient: clientFromResponse(() =>
+            new Response(byteStream([new Uint8Array([1])]), {
+              status: 200,
+              headers: { "x-count": "invalid" }
+            })
+          )
+        })
+
+        const exit = yield* Effect.exit(client.test.download({}))
+
+        assert.strictEqual(exit._tag, "Failure")
+        if (exit._tag === "Failure") {
+          assert.strictEqual((Cause.squash(exit.cause) as { readonly _tag?: string })._tag, "SchemaError")
+        }
+      }))
+
+    it.effect("selects a WithHeaders stream from a mixed buffered success by content type", () =>
+      Effect.gen(function*() {
+        const Api = HttpApi.make("Api").add(
+          HttpApiGroup.make("test").add(
+            HttpApiEndpoint.get("chat", "/chat", {
+              success: [
+                Schema.Struct({ message: Schema.String }),
+                HttpApiSchema.WithHeaders(
+                  HttpApiSchema.StreamSse({ data: Schema.Struct({ text: Schema.String }) }),
+                  { "x-count": Schema.Int }
+                )
+              ]
+            })
+          )
+        )
+        const client = yield* HttpApiClient.makeWith(Api, {
+          baseUrl: "http://test",
+          httpClient: clientFromResponse(() =>
+            new Response(textStream([`data: {"text":"hello"}\n\n`]), {
+              status: 200,
+              headers: {
+                "content-type": "text/event-stream; charset=utf-8",
+                "x-count": "1"
+              }
+            })
+          )
+        })
+
+        const value = yield* client.test.chat({})
+        if (!(HttpApiSchema.WithHeadersValueTypeId in value)) {
+          throw new Error("Expected WithHeaders response")
+        }
+        const events = yield* Stream.runCollect(value.body)
+
+        assert.deepStrictEqual(value.headers, { "x-count": 1 })
+        assert.deepStrictEqual(events, [{ text: "hello" }])
+      }))
+
     it.effect("decodes StreamSse successes at the annotated status", () =>
       Effect.gen(function*() {
         const client = yield* HttpApiClient.makeWith(AnnotatedStreamingApi, {
@@ -288,6 +420,48 @@ describe("HttpApiClient", () => {
 
         const error = yield* Effect.flip(client.test.equivalentJson({}))
         assert.deepStrictEqual(error, { _tag: "SecondJsonError", message: "bad request" })
+      }))
+  })
+
+  describe("response headers", () => {
+    it.effect("fails response decoding when a declared header is invalid", () =>
+      Effect.gen(function*() {
+        const Api = HttpApi.make("Api").add(
+          HttpApiGroup.make("test").add(
+            HttpApiEndpoint.get("created", "/created", {
+              success: HttpApiSchema.WithHeaders(
+                Schema.Struct({ id: Schema.Int }),
+                { "x-count": Schema.Int }
+              )
+            })
+          )
+        )
+        const decodeFailure = Effect.fnUntraced(function*(body: unknown, count: string) {
+          const client = yield* HttpApiClient.makeWith(Api, {
+            baseUrl: "http://test",
+            httpClient: clientFromResponse(() =>
+              new Response(JSON.stringify(body), {
+                status: 200,
+                headers: {
+                  "content-type": "application/json",
+                  "x-count": count
+                }
+              })
+            )
+          })
+          const exit = yield* Effect.exit(client.test.created({}))
+          assert.strictEqual(exit._tag, "Failure")
+          if (exit._tag === "Success") {
+            throw new Error("Expected response decoding to fail")
+          }
+          return Cause.squash(exit.cause) as { readonly _tag?: string }
+        })
+
+        const bodyError = yield* decodeFailure({ id: "invalid" }, "1")
+        const headerError = yield* decodeFailure({ id: 1 }, "invalid")
+
+        assert.strictEqual(bodyError._tag, "SchemaError")
+        assert.strictEqual(headerError._tag, bodyError._tag)
       }))
   })
 
@@ -552,7 +726,7 @@ const Events = Schema.Struct({
   data: Schema.String
 })
 
-class EndpointError extends Schema.TaggedErrorClass<EndpointError>()("EndpointError", {
+class EndpointError extends Schema.TaggedError<EndpointError>()("EndpointError", {
   message: Schema.String
 }, { httpApiStatus: 400 }) {}
 

@@ -159,12 +159,28 @@ describe("Array", () => {
         return String(n)
       })
     )).type.toBe<Record<string, [number, ...Array<number>]>>()
+    const bySingleKey = Array.groupBy([1, 2, 3], () => "key" as const)
+    expect(bySingleKey).type.toBe<Partial<Record<"key", [number, ...Array<number>]>>>()
+    expect(bySingleKey.key).type.toBe<[number, ...Array<number>] | undefined>()
+    // @ts-expect-error Property 'other' does not exist
+    void bySingleKey.other
+    const bySign = Array.groupBy(
+      [1, 2, 3],
+      (n) => n > 0 ? "positive" as const : "negative" as const
+    )
+    expect(bySign).type.toBe<Partial<Record<"positive" | "negative", [number, ...Array<number>]>>>()
     expect(
-      Array.groupBy([1, 2, 3], (n) => n > 0 ? "positive" as const : "negative" as const)
-    ).type.toBe<Record<string, [number, ...Array<number>]>>()
+      pipe(
+        [1, 2, 3],
+        Array.groupBy((n) => n > 0 ? "positive" as const : "negative" as const)
+      )
+    ).type.toBe<Partial<Record<"positive" | "negative", [number, ...Array<number>]>>>()
     expect(Array.groupBy(["a", "b"], Symbol.for)).type.toBe<Record<symbol, [string, ...Array<string>]>>()
     expect(Array.groupBy(["a", "b"], (s) => s === "a" ? symA : s === "b" ? symB : symC)).type.toBe<
-      Record<symbol, [string, ...Array<string>]>
+      Partial<Record<typeof symA | typeof symB | typeof symC, [string, ...Array<string>]>>
+    >()
+    expect(Array.groupBy(["a", "b"], (s) => s === "a" ? "a" as const : symA)).type.toBe<
+      Partial<Record<"a" | typeof symA, [string, ...Array<string>]>>
     >()
   })
 

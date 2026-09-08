@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.GetDiscoveredResourceCountsHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Discovering Resources
- * @example Count Discovered Resources
+ * ### Discovering Resources
+ * **Example:** Count Discovered Resources
  * ```typescript
  * // init — grants config:GetDiscoveredResourceCounts
  * const getDiscoveredResourceCounts = yield* AWS.Config.GetDiscoveredResourceCounts();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* getDiscoveredResourceCounts();
  * console.log(result.totalDiscoveredResources, result.resourceCounts);
  * ```
+ *
+ * @binding
  */
 export interface GetDiscoveredResourceCounts extends Binding.Service<
   GetDiscoveredResourceCounts,

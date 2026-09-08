@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * {@link Connect}'s `GetCredentials` flow. The response `token` decodes to
  * `Redacted<string>`. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.GetIdentityCenterAuthTokenHttp)`.
- * @binding
- * @section Connecting to a Workgroup
- * @example Mint an Identity Center Token
+ * ### Connecting to a Workgroup
+ * **Example:** Mint an Identity Center Token
  * ```typescript
  * // init — resolve the runtime client
  * const getToken = yield* AWS.RedshiftServerless.GetIdentityCenterAuthToken();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   workgroupNames: [workgroupName],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetIdentityCenterAuthToken extends Binding.Service<
   GetIdentityCenterAuthToken,

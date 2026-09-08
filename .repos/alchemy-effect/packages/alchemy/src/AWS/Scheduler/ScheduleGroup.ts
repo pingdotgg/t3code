@@ -29,9 +29,8 @@ export interface ScheduleGroupProps {
  *
  * Schedule groups provide a namespace for schedules so higher-level helpers can
  * organize recurring jobs separately from one-shot or operational schedules.
- * @resource
- * @section Creating Schedule Groups
- * @example Basic Group
+ * ### Creating Schedule Groups
+ * **Example:** Basic Group
  * ```typescript
  * const group = yield* ScheduleGroup("Operations", {
  *   tags: {
@@ -39,6 +38,8 @@ export interface ScheduleGroupProps {
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export interface ScheduleGroup extends Resource<
   "AWS.Scheduler.ScheduleGroup",

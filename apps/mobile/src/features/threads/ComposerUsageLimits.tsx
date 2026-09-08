@@ -42,6 +42,9 @@ export function ComposerUsageLimits({
         style={{ maxHeight: Math.round(height * 0.4) }}
       >
         {report.accounts.map((account, index) => {
+          const resetCreditInput =
+            account.resetCreditInput ??
+            (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
           return (
             <AccountLimits
@@ -65,11 +68,11 @@ export function ComposerUsageLimits({
               now={now}
               trailing={index === 0 ? close : undefined}
               footer={
-                account.instanceId && account.limits.resetCredits ? (
+                resetCreditInput && account.limits.resetCredits ? (
                   <ResetCredits
                     dense
                     environmentId={environmentId}
-                    instanceId={account.instanceId}
+                    input={resetCreditInput}
                     credits={account.limits.resetCredits}
                     now={now}
                   />

@@ -36,6 +36,28 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("copies text to the system clipboard", () =>
+    Effect.gen(function* () {
+      writeTextMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("https://example.com/path");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["https://example.com/path"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not fail when the clipboard write rejects", () =>
+    Effect.gen(function* () {
+      writeTextMock.mockRejectedValue(new Error("write failed"));
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("https://example.com/path");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["https://example.com/path"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("opens the Full Disk Access settings anchor", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);

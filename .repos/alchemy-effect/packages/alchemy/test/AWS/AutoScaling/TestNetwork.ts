@@ -9,6 +9,38 @@ class DefaultSubnetNotVisible extends Data.TaggedError(
 )<{}> {}
 
 /**
+ * Resolve the newest Amazon Linux 2023 AMI id out-of-band via distilled
+ * `ec2.describeImages`, for launch templates created directly with the raw
+ * SDK (outside `stack.deploy`, where the `amazonLinux2023()` Output would be
+ * resolved by the engine). Launch templates do not validate the AMI at
+ * creation time, so fall back to a syntactically valid id when the lookup
+ * returns nothing.
+ */
+export const getTestAmiId: Effect.Effect<string, any, any> = ec2
+  .describeImages({
+    Owners: ["amazon"],
+    Filters: [
+      { Name: "name", Values: ["al2023-ami-2023.*"] },
+      { Name: "architecture", Values: ["x86_64"] },
+      { Name: "state", Values: ["available"] },
+      { Name: "root-device-type", Values: ["ebs"] },
+      { Name: "virtualization-type", Values: ["hvm"] },
+    ],
+  })
+  .pipe(
+    Effect.map(
+      (response) =>
+        (response.Images ?? [])
+          .slice()
+          .sort((a, b) =>
+            String(b.CreationDate ?? "").localeCompare(
+              String(a.CreationDate ?? ""),
+            ),
+          )[0]?.ImageId ?? "ami-00000000000000000",
+    ),
+  );
+
+/**
  * Resolve one deterministic subnet from the standing default VPC. The account
  * nuke may remove that VPC, and CreateDefaultVpc can return before its default
  * subnets are queryable, so restore it and wait for subnet readiness boundedly.

@@ -14,9 +14,8 @@ export interface CreateSubscriptionRequestRequest extends Omit<
  * Requests a subscription to a published listing in the bound domain on behalf of a project. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.CreateSubscriptionRequestHttp)`.
- * @binding
- * @section Subscription Workflows
- * @example Request Access to a Listing
+ * ### Subscription Workflows
+ * **Example:** Request Access to a Listing
  * ```typescript
  * // init — bind the operation to the domain
  * const createSubscriptionRequest = yield* AWS.DataZone.CreateSubscriptionRequest(domain);
@@ -28,6 +27,8 @@ export interface CreateSubscriptionRequestRequest extends Omit<
  *   requestReason: "nightly enrichment job needs read access",
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateSubscriptionRequest extends Binding.Service<
   CreateSubscriptionRequest,

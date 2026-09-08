@@ -126,9 +126,8 @@ export interface NetworkConnector extends Resource<
  * reaches `ACTIVE`. The connector name is immutable, so renaming it replaces the
  * connector; the VPC configuration and operator role can be updated in place.
  *
- * @resource
- * @section Creating a Network Connector
- * @example VPC Egress Connector
+ * ### Creating a Network Connector
+ * **Example:** VPC Egress Connector
  * ```typescript
  * const connector = yield* AWS.Lambda.NetworkConnector("Egress", {
  *   subnetIds: [subnetA.subnetId, subnetB.subnetId],
@@ -137,8 +136,8 @@ export interface NetworkConnector extends Resource<
  * });
  * ```
  *
- * @section Dual-Stack Networking
- * @example IPv4 + IPv6 Egress
+ * ### Dual-Stack Networking
+ * **Example:** IPv4 + IPv6 Egress
  * ```typescript
  * const connector = yield* AWS.Lambda.NetworkConnector("DualStack", {
  *   subnetIds: [subnet.subnetId],
@@ -147,11 +146,11 @@ export interface NetworkConnector extends Resource<
  * });
  * ```
  *
- * @section Using a Connector with MicroVMs
+ * ### Using a Connector with MicroVMs
  * A connector is the producer; a {@link MicrovmImage} (or a per-run
  * `RunMicrovm` call) is the consumer. Reference it by ARN in
  * `egressNetworkConnectors`.
- * @example Image-level Egress
+ * **Example:** Image-level Egress
  * ```typescript
  * const image = yield* AWS.Lambda.MicrovmImage("Sandbox", {
  *   main: import.meta.filename,
@@ -159,6 +158,8 @@ export interface NetworkConnector extends Resource<
  *   egressNetworkConnectors: [connector.networkConnectorArn],
  * });
  * ```
+ *
+ * @resource
  */
 export const NetworkConnector = Resource<NetworkConnector>(
   "AWS.Lambda.NetworkConnector",
