@@ -21,6 +21,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ServerSettings,
   type ProviderDriverKind,
+  type PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
   type T3ProjectFileScript,
   type ThreadEnvMode,
@@ -79,6 +80,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -480,6 +482,19 @@ function ProjectDetail({
     setBooleanOverride("projectAgentBrowserAccessOverrides", enabled);
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
+  const mergeMethodOverrides = useClientSettings(
+    (settings) => settings.pullRequestMergeMethodOverrides,
+  );
+  const projectMergeMethod = mergeMethodOverrides[group.projectKey];
+  const setProjectMergeMethod = (method: PullRequestMergeMethod | null) => {
+    const nextOverrides = { ...mergeMethodOverrides };
+    if (method === null) {
+      delete nextOverrides[group.projectKey];
+    } else {
+      nextOverrides[group.projectKey] = method;
+    }
+    updateClientSettings({ pullRequestMergeMethodOverrides: nextOverrides });
+  };
 
   const faviconPath = representative.faviconPath ?? null;
   const projectIcon = representative.projectIcon ?? null;
@@ -981,6 +996,42 @@ function ProjectDetail({
                   Choose file
                 </Button>
               </div>
+            }
+          />
+          <SettingsRow
+            title="Default merge method"
+            description="Pull requests in this project start with this method. It overrides the last method selected."
+            resetAction={
+              projectMergeMethod !== undefined ? (
+                <SettingResetButton
+                  label="project merge method"
+                  onClick={() => setProjectMergeMethod(null)}
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={projectMergeMethod ?? "inherit"}
+                onValueChange={(value) =>
+                  setProjectMergeMethod(
+                    value === "inherit" ? null : (value as PullRequestMergeMethod),
+                  )
+                }
+              >
+                <SelectTrigger aria-label="Default pull request merge method">
+                  <SelectValue>
+                    {projectMergeMethod === undefined
+                      ? "Last selected"
+                      : PULL_REQUEST_MERGE_METHOD_LABELS[projectMergeMethod]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="inherit">Last selected</SelectItem>
+                  <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
+                  <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
+                  <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
+                </SelectPopup>
+              </Select>
             }
           />
           <SettingsRow
