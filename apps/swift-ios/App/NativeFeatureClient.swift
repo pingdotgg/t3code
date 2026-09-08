@@ -5282,6 +5282,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -5366,6 +5367,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsPinning: environment.descriptor?.capabilities.threadPinning,
             supportsTitleRegeneration: environment.descriptor?.capabilities.threadTitleRegeneration,
             supportsPullRequestLinking: environment.descriptor?.capabilities.threadPullRequestLinking,
+            isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
                 session: thread.session
@@ -6127,6 +6129,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         from shell: OrchestrationThreadShell,
         to thread: inout FeatureThread
     ) {
+        // The shell is the freshest source for the title. A cached detail can
+        // still carry the pre-regeneration title after the server renamed it.
+        thread.title = shell.title
+        thread.isRegeneratingTitle = shell.titleRegeneration != nil
         thread.isSettled = isSettled(shell.settledOverride, settledAt: shell.settledAt)
         thread.keepsActive = shell.settledOverride == "active"
         thread.settledAt = shell.settledAt.flatMap(parseValidDate)

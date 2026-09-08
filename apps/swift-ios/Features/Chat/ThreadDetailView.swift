@@ -399,8 +399,12 @@ public struct ThreadDetailView: View {
                     Button {
                         Task { await model.regenerateThreadTitle(thread.id) }
                     } label: {
-                        Label("Regenerate title", systemImage: "sparkles")
+                        Label(
+                            currentThread.isRegeneratingTitle ? "Regenerating title…" : "Regenerate title",
+                            systemImage: "sparkles"
+                        )
                     }
+                    .disabled(currentThread.isRegeneratingTitle)
                 }
                 Menu {
                     if !FeatureRuntimeMode.allCases.contains(currentThread.runtimeMode) {

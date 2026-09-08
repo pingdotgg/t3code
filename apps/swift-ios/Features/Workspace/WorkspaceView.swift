@@ -1100,6 +1100,7 @@ struct FeatureThreadRow: View {
                 .font(T3Typography.homeTitle)
                 .tracking(-0.14)
                 .foregroundStyle(T3Colors.textPrimary)
+                .opacity(titleOpacity)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
                 .padding(.top, 4)
 
@@ -1156,6 +1157,7 @@ struct FeatureThreadRow: View {
             Text(thread.title)
                 .font(T3Typography.homeTitle)
                 .foregroundStyle(T3Colors.textSecondary)
+                .opacity(titleOpacity)
                 .lineLimit(allowsMultilineTitle ? 2 : 1)
             Spacer(minLength: 8)
             if let pullRequest {
@@ -1196,6 +1198,11 @@ struct FeatureThreadRow: View {
         }
         .font(T3Typography.status)
         .foregroundStyle(statusColor)
+    }
+
+    /// Same dimming the web sidebar uses while a title is being regenerated.
+    private var titleOpacity: Double {
+        thread.isRegeneratingTitle ? 0.55 : 1
     }
 
     private var statusIcon: String? {
@@ -1374,6 +1381,9 @@ struct FeatureThreadRow: View {
         }
         if isConnectionStale {
             values.append("last known state")
+        }
+        if thread.isRegeneratingTitle {
+            values.append("Regenerating title")
         }
         return values.joined(separator: ". ")
     }

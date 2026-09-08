@@ -560,7 +560,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
                 coordinator.parent.onRename(thread)
             }]
 
-            if thread.supportsTitleRegeneration == true {
+            if thread.supportsTitleRegeneration == true, !thread.isRegeneratingTitle {
                 actions.append(accessibilityAction("Regenerate title", systemImage: "sparkles") { coordinator in
                     coordinator.parent.onRegenerateTitle(thread)
                 })
@@ -680,14 +680,14 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
             var titleActions: [UIMenuElement] = [rename]
             if thread.supportsTitleRegeneration == true {
-                titleActions.append(
-                    UIAction(
-                        title: "Regenerate title",
-                        image: UIImage(systemName: "sparkles")
-                    ) { [weak self] _ in
-                        self?.parent.onRegenerateTitle(thread)
-                    }
-                )
+                let regenerate = UIAction(
+                    title: thread.isRegeneratingTitle ? "Regenerating title…" : "Regenerate title",
+                    image: UIImage(systemName: "sparkles")
+                ) { [weak self] _ in
+                    self?.parent.onRegenerateTitle(thread)
+                }
+                regenerate.attributes = thread.isRegeneratingTitle ? .disabled : []
+                titleActions.append(regenerate)
             }
             let copyActions = ThreadCopyModel.menuActions(
                 for: thread,

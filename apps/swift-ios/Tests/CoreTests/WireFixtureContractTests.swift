@@ -128,6 +128,32 @@ final class WireFixtureContractTests: XCTestCase {
         XCTAssertEqual(threadSnapshot.thread.linkedPullRequest?.repository, "pingdotgg/t3code")
     }
 
+    func testThreadSnapshotsDecodeTitleRegenerationState() throws {
+        let regeneration: [String: Any] = [
+            "requestId": "command-regenerate-title",
+            "startedAt": "2026-08-07T12:01:00.000Z",
+        ]
+        var shell = try XCTUnwrap(try fixtureObject("shell-snapshot") as? [String: Any])
+        var shellThread = try XCTUnwrap((shell["threads"] as? [[String: Any]])?.first)
+        shellThread["titleRegeneration"] = regeneration
+        shell["threads"] = [shellThread]
+        let snapshot = try JSONDecoder.t3.decode(
+            OrchestrationShellSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: shell)
+        )
+        XCTAssertEqual(snapshot.threads.first?.titleRegeneration?.requestId, "command-regenerate-title")
+
+        var detail = try XCTUnwrap(try fixtureObject("thread-detail-snapshot") as? [String: Any])
+        var detailThread = try XCTUnwrap(detail["thread"] as? [String: Any])
+        detailThread["titleRegeneration"] = regeneration
+        detail["thread"] = detailThread
+        let threadSnapshot = try JSONDecoder.t3.decode(
+            OrchestrationThreadDetailSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: detail)
+        )
+        XCTAssertEqual(threadSnapshot.thread.titleRegeneration?.startedAt, "2026-08-07T12:01:00.000Z")
+    }
+
     func testReopenTimestampsRoundTripAndRemainOptionalForOlderServers() throws {
         var shell = try decodeFixture("shell-snapshot", as: OrchestrationShellSnapshot.self)
         var detail = try decodeFixture("thread-detail-snapshot", as: OrchestrationThreadDetailSnapshot.self)

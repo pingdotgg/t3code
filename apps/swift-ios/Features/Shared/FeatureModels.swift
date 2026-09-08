@@ -292,6 +292,9 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsPinning: Bool?
     public var supportsTitleRegeneration: Bool?
     public var supportsPullRequestLinking: Bool?
+    /// True while the server is generating a new title. Derived from the wire
+    /// snapshot only, the same way the web and React Native clients do it.
+    public var isRegeneratingTitle: Bool
     public var attentionAt: Date?
     public var workingStartedAt: Date?
     public var latestTurnCompletedAt: Date?
@@ -334,6 +337,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsPinning: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
         supportsPullRequestLinking: Bool? = nil,
+        isRegeneratingTitle: Bool = false,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
         latestTurnCompletedAt: Date? = nil,
@@ -375,6 +379,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsPinning = supportsPinning
         self.supportsTitleRegeneration = supportsTitleRegeneration
         self.supportsPullRequestLinking = supportsPullRequestLinking
+        self.isRegeneratingTitle = isRegeneratingTitle
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
         self.latestTurnCompletedAt = latestTurnCompletedAt

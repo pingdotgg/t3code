@@ -424,6 +424,42 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testNewerShellTitleAndRegenerationStateBeatStaleDetail() async throws {
+        let fixture = try await Self.makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(
+            multiEnvironmentShell(
+                projectID: "project-two",
+                threadID: "thread-two",
+                title: "Regenerated title",
+                snapshotSequence: 100,
+                titleRegeneration: ThreadTitleRegeneration(
+                    requestId: "command-regenerate",
+                    startedAt: "2026-07-31T12:01:00.000Z"
+                )
+            ),
+            host: "two.example"
+        )
+        await fixture.transport.setDetail(
+            multiEnvironmentDetail(
+                projectID: "project-two",
+                threadID: "thread-two",
+                snapshotSequence: 90
+            ),
+            host: "two.example"
+        )
+
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
+        XCTAssertTrue(thread.isRegeneratingTitle)
+
+        // The detail fixture still carries the pre-regeneration title.
+        let detail = try await fixture.client.loadThread(id: thread.id)
+        XCTAssertEqual(detail.thread.title, "Regenerated title")
+        XCTAssertTrue(detail.thread.isRegeneratingTitle)
+        await fixture.client.disconnect()
+    }
+
     func testSnapshotKeepsRepositoryIdentityForCrossComputerProjectGrouping() async throws {
         let identity = RepositoryIdentity(
             canonicalKey: "github.com/t3/example",
@@ -1772,7 +1808,8 @@ func multiEnvironmentShell(
     backgroundLiveness: OrchestrationBackgroundLiveness? = nil,
     snapshotSequence: Int = 1,
     settledOverride: String? = nil,
-    settledAt: String? = nil
+    settledAt: String? = nil,
+    titleRegeneration: ThreadTitleRegeneration? = nil
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
@@ -1810,6 +1847,7 @@ func multiEnvironmentShell(
                 snoozedUntil: nil,
                 snoozedAt: nil,
                 pinnedAt: nil,
+                titleRegeneration: titleRegeneration,
                 session: nil,
                 latestUserMessageAt: nil,
                 hasPendingApprovals: false,
