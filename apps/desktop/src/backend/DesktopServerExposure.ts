@@ -205,7 +205,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
   return endpoints;
 };
 
-export class DesktopServerExposureNoNetworkAddressError extends Schema.TaggedErrorClass<DesktopServerExposureNoNetworkAddressError>()(
+export class DesktopServerExposureNoNetworkAddressError extends Schema.TaggedError<DesktopServerExposureNoNetworkAddressError>()(
   "DesktopServerExposureNoNetworkAddressError",
   {
     port: Schema.Number,
@@ -216,7 +216,7 @@ export class DesktopServerExposureNoNetworkAddressError extends Schema.TaggedErr
   }
 }
 
-export class DesktopServerExposureModePersistenceError extends Schema.TaggedErrorClass<DesktopServerExposureModePersistenceError>()(
+export class DesktopServerExposureModePersistenceError extends Schema.TaggedError<DesktopServerExposureModePersistenceError>()(
   "DesktopServerExposureModePersistenceError",
   {
     mode: DesktopServerExposureModeSchema,
@@ -228,7 +228,7 @@ export class DesktopServerExposureModePersistenceError extends Schema.TaggedErro
   }
 }
 
-export class DesktopTailscaleServePersistenceError extends Schema.TaggedErrorClass<DesktopTailscaleServePersistenceError>()(
+export class DesktopTailscaleServePersistenceError extends Schema.TaggedError<DesktopTailscaleServePersistenceError>()(
   "DesktopTailscaleServePersistenceError",
   {
     enabled: Schema.Boolean,

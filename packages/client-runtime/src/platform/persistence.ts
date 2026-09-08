@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import type { ConnectionRegistration } from "../connection/catalog.ts";
 import type { ConnectionTarget } from "../connection/model.ts";
 
-export class ConnectionPersistenceError extends Schema.TaggedErrorClass<ConnectionPersistenceError>()(
+export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPersistenceError>()(
   "ConnectionPersistenceError",
   {
     operation: Schema.Literals([

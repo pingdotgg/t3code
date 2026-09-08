@@ -25,7 +25,7 @@ import {
 } from "./apnsDeliveryJobs.ts";
 import * as RelayConfiguration from "../Config.ts";
 
-export class ApnsDeliveryQueueSendError extends Schema.TaggedErrorClass<ApnsDeliveryQueueSendError>()(
+export class ApnsDeliveryQueueSendError extends Schema.TaggedError<ApnsDeliveryQueueSendError>()(
   "ApnsDeliveryQueueSendError",
   {
     operation: Schema.Literals(["generate-job-id", "send"]),

@@ -1,7 +1,7 @@
 import * as React from "react";
 import * as Schema from "effect/Schema";
 
-export class ClipboardApiUnavailableError extends Schema.TaggedErrorClass<ClipboardApiUnavailableError>()(
+export class ClipboardApiUnavailableError extends Schema.TaggedError<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
   {
     target: Schema.String,
@@ -12,7 +12,7 @@ export class ClipboardApiUnavailableError extends Schema.TaggedErrorClass<Clipbo
   }
 }
 
-export class ClipboardWriteError extends Schema.TaggedErrorClass<ClipboardWriteError>()(
+export class ClipboardWriteError extends Schema.TaggedError<ClipboardWriteError>()(
   "ClipboardWriteError",
   {
     target: Schema.String,
@@ -24,7 +24,7 @@ export class ClipboardWriteError extends Schema.TaggedErrorClass<ClipboardWriteE
   }
 }
 
-export class ClipboardReadUnavailableError extends Schema.TaggedErrorClass<ClipboardReadUnavailableError>()(
+export class ClipboardReadUnavailableError extends Schema.TaggedError<ClipboardReadUnavailableError>()(
   "ClipboardReadUnavailableError",
   {
     target: Schema.String,
@@ -35,7 +35,7 @@ export class ClipboardReadUnavailableError extends Schema.TaggedErrorClass<Clipb
   }
 }
 
-export class ClipboardReadError extends Schema.TaggedErrorClass<ClipboardReadError>()(
+export class ClipboardReadError extends Schema.TaggedError<ClipboardReadError>()(
   "ClipboardReadError",
   {
     target: Schema.String,

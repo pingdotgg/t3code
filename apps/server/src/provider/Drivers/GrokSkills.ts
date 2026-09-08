@@ -26,7 +26,7 @@ import { spawnAndCollect } from "../providerSnapshot.ts";
 
 const GROK_SKILLS_PROBE_TIMEOUT_MS = 4_000;
 
-class GrokSkillsProbeError extends Schema.TaggedErrorClass<GrokSkillsProbeError>()(
+class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   "GrokSkillsProbeError",
   {
     stage: Schema.Literals(["spawn", "timeout", "exit", "decode"]),

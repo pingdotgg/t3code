@@ -41,7 +41,7 @@ export function resolveReadyManagedEndpoint(input: {
   return managedEndpointForHostname(input.allocation.hostname);
 }
 
-export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedErrorClass<ManagedEndpointAllocationPersistenceError>()(
+export class ManagedEndpointAllocationPersistenceError extends Schema.TaggedError<ManagedEndpointAllocationPersistenceError>()(
   "ManagedEndpointAllocationPersistenceError",
   {
     operation: Schema.Literals([

@@ -42,7 +42,7 @@ export function pinnedRuntimePaths(
   };
 }
 
-export class PinnedRuntimeInstallError extends Schema.TaggedErrorClass<PinnedRuntimeInstallError>()(
+export class PinnedRuntimeInstallError extends Schema.TaggedError<PinnedRuntimeInstallError>()(
   "PinnedRuntimeInstallError",
   {
     step: Schema.String,
@@ -59,7 +59,7 @@ export class PinnedRuntimeInstallError extends Schema.TaggedErrorClass<PinnedRun
   }
 }
 
-export class PinnedRuntimePreflightBlockedError extends Schema.TaggedErrorClass<PinnedRuntimePreflightBlockedError>()(
+export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<PinnedRuntimePreflightBlockedError>()(
   "PinnedRuntimePreflightBlockedError",
   {
     version: Schema.String,

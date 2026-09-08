@@ -59,7 +59,7 @@ type InstalledRelease = typeof InstalledRelease.Type;
 const encodeActiveRelease = Schema.encodeEffect(Schema.fromJsonString(ActiveRelease));
 const encodeInstalledRelease = Schema.encodeEffect(Schema.fromJsonString(InstalledRelease));
 
-export class AntigravityInstallationError extends Schema.TaggedErrorClass<AntigravityInstallationError>()(
+export class AntigravityInstallationError extends Schema.TaggedError<AntigravityInstallationError>()(
   "AntigravityInstallationError",
   {
     operation: Schema.String,

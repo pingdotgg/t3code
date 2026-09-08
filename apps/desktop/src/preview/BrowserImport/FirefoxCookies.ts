@@ -25,7 +25,7 @@ import { cookieScope, snapshotCookieDatabase, type ImportedCookie } from "./Cook
  * plaintext database would not open — and the tag already says which engine it
  * was. `BrowserImport` supplies the user-facing reason when it maps the union.
  */
-export class FirefoxCookieReadError extends Schema.TaggedErrorClass<FirefoxCookieReadError>()(
+export class FirefoxCookieReadError extends Schema.TaggedError<FirefoxCookieReadError>()(
   "FirefoxCookieReadError",
   {
     /**

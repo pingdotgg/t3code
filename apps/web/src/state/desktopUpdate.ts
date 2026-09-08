@@ -11,7 +11,7 @@ type DesktopUpdateBridge = Pick<DesktopBridge, "getUpdateState" | "onUpdateState
 
 const INITIAL_STATE_READ_ATTEMPT_COUNT = 3;
 
-export class DesktopUpdateStateReadError extends Schema.TaggedErrorClass<DesktopUpdateStateReadError>()(
+export class DesktopUpdateStateReadError extends Schema.TaggedError<DesktopUpdateStateReadError>()(
   "DesktopUpdateStateReadError",
   {
     attemptCount: Schema.Number,

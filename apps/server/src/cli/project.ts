@@ -51,7 +51,7 @@ type ProjectCliDispatchCommand = Extract<
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
-export class ProjectCommandIdGenerationError extends Schema.TaggedErrorClass<ProjectCommandIdGenerationError>()(
+export class ProjectCommandIdGenerationError extends Schema.TaggedError<ProjectCommandIdGenerationError>()(
   "ProjectCommandIdGenerationError",
   {
     operation: Schema.Literal("generateProjectCommandId"),
@@ -63,7 +63,7 @@ export class ProjectCommandIdGenerationError extends Schema.TaggedErrorClass<Pro
   }
 }
 
-export class ProjectLiveServerDeclaredResponseError extends Schema.TaggedErrorClass<ProjectLiveServerDeclaredResponseError>()(
+export class ProjectLiveServerDeclaredResponseError extends Schema.TaggedError<ProjectLiveServerDeclaredResponseError>()(
   "ProjectLiveServerDeclaredResponseError",
   {
     operation: Schema.Literal("callLiveServer"),
@@ -77,7 +77,7 @@ export class ProjectLiveServerDeclaredResponseError extends Schema.TaggedErrorCl
   }
 }
 
-export class ProjectLiveServerUndeclaredStatusError extends Schema.TaggedErrorClass<ProjectLiveServerUndeclaredStatusError>()(
+export class ProjectLiveServerUndeclaredStatusError extends Schema.TaggedError<ProjectLiveServerUndeclaredStatusError>()(
   "ProjectLiveServerUndeclaredStatusError",
   {
     operation: Schema.Literal("callLiveServer"),
@@ -90,7 +90,7 @@ export class ProjectLiveServerUndeclaredStatusError extends Schema.TaggedErrorCl
   }
 }
 
-export class ProjectLiveServerRequestError extends Schema.TaggedErrorClass<ProjectLiveServerRequestError>()(
+export class ProjectLiveServerRequestError extends Schema.TaggedError<ProjectLiveServerRequestError>()(
   "ProjectLiveServerRequestError",
   {
     operation: Schema.Literal("callLiveServer"),
@@ -102,7 +102,7 @@ export class ProjectLiveServerRequestError extends Schema.TaggedErrorClass<Proje
   }
 }
 
-export class ProjectTitleEmptyError extends Schema.TaggedErrorClass<ProjectTitleEmptyError>()(
+export class ProjectTitleEmptyError extends Schema.TaggedError<ProjectTitleEmptyError>()(
   "ProjectTitleEmptyError",
   {
     operation: Schema.Literal("validateProjectTitle"),
@@ -114,7 +114,7 @@ export class ProjectTitleEmptyError extends Schema.TaggedErrorClass<ProjectTitle
   }
 }
 
-export class ProjectIdentifierEmptyError extends Schema.TaggedErrorClass<ProjectIdentifierEmptyError>()(
+export class ProjectIdentifierEmptyError extends Schema.TaggedError<ProjectIdentifierEmptyError>()(
   "ProjectIdentifierEmptyError",
   {
     operation: Schema.Literal("resolveProjectTarget"),
@@ -126,7 +126,7 @@ export class ProjectIdentifierEmptyError extends Schema.TaggedErrorClass<Project
   }
 }
 
-export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
+export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
   "ProjectNotFoundError",
   {
     operation: Schema.Literal("resolveProjectTarget"),
@@ -141,7 +141,7 @@ export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoun
   }
 }
 
-export class ProjectAlreadyExistsError extends Schema.TaggedErrorClass<ProjectAlreadyExistsError>()(
+export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlreadyExistsError>()(
   "ProjectAlreadyExistsError",
   {
     operation: Schema.Literal("addProject"),

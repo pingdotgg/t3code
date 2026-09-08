@@ -33,7 +33,7 @@ function decodedFilesystemBrowseErrorMessage(props: object): string | undefined 
   return typeof props.message === "string" ? props.message : undefined;
 }
 
-export class FilesystemBrowseError extends Schema.TaggedErrorClass<FilesystemBrowseError>()(
+export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseError>()(
   "FilesystemBrowseError",
   {
     partialPath: Schema.optional(TrimmedNonEmptyString),

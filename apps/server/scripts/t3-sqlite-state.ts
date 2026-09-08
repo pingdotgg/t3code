@@ -19,7 +19,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
 
-export class SqliteStateMultipleSqlSourcesError extends Schema.TaggedErrorClass<SqliteStateMultipleSqlSourcesError>()(
+export class SqliteStateMultipleSqlSourcesError extends Schema.TaggedError<SqliteStateMultipleSqlSourcesError>()(
   "SqliteStateMultipleSqlSourcesError",
   {},
 ) {
@@ -28,7 +28,7 @@ export class SqliteStateMultipleSqlSourcesError extends Schema.TaggedErrorClass<
   }
 }
 
-export class SqliteStateMissingSqlSourceError extends Schema.TaggedErrorClass<SqliteStateMissingSqlSourceError>()(
+export class SqliteStateMissingSqlSourceError extends Schema.TaggedError<SqliteStateMissingSqlSourceError>()(
   "SqliteStateMissingSqlSourceError",
   {},
 ) {
@@ -37,7 +37,7 @@ export class SqliteStateMissingSqlSourceError extends Schema.TaggedErrorClass<Sq
   }
 }
 
-export class SqliteStateEmptySqlError extends Schema.TaggedErrorClass<SqliteStateEmptySqlError>()(
+export class SqliteStateEmptySqlError extends Schema.TaggedError<SqliteStateEmptySqlError>()(
   "SqliteStateEmptySqlError",
   {},
 ) {
@@ -46,7 +46,7 @@ export class SqliteStateEmptySqlError extends Schema.TaggedErrorClass<SqliteStat
   }
 }
 
-export class SqliteStateDatabaseMissingError extends Schema.TaggedErrorClass<SqliteStateDatabaseMissingError>()(
+export class SqliteStateDatabaseMissingError extends Schema.TaggedError<SqliteStateDatabaseMissingError>()(
   "SqliteStateDatabaseMissingError",
   {
     databasePath: Schema.String,
@@ -57,7 +57,7 @@ export class SqliteStateDatabaseMissingError extends Schema.TaggedErrorClass<Sql
   }
 }
 
-export class SqliteStateSharedHomeMutationError extends Schema.TaggedErrorClass<SqliteStateSharedHomeMutationError>()(
+export class SqliteStateSharedHomeMutationError extends Schema.TaggedError<SqliteStateSharedHomeMutationError>()(
   "SqliteStateSharedHomeMutationError",
   {},
 ) {
@@ -66,7 +66,7 @@ export class SqliteStateSharedHomeMutationError extends Schema.TaggedErrorClass<
   }
 }
 
-export class SqliteStateSqlFileError extends Schema.TaggedErrorClass<SqliteStateSqlFileError>()(
+export class SqliteStateSqlFileError extends Schema.TaggedError<SqliteStateSqlFileError>()(
   "SqliteStateSqlFileError",
   {
     filePath: Schema.String,
@@ -78,7 +78,7 @@ export class SqliteStateSqlFileError extends Schema.TaggedErrorClass<SqliteState
   }
 }
 
-export class SqliteStateDatabaseError extends Schema.TaggedErrorClass<SqliteStateDatabaseError>()(
+export class SqliteStateDatabaseError extends Schema.TaggedError<SqliteStateDatabaseError>()(
   "SqliteStateDatabaseError",
   {
     operation: SqliteStateOperation,

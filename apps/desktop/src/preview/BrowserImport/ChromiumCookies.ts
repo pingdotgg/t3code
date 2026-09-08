@@ -56,7 +56,7 @@ export const ChromiumCookieReadReason = Schema.Literals([
 ]);
 export type ChromiumCookieReadReason = typeof ChromiumCookieReadReason.Type;
 
-export class ChromiumCookieReadError extends Schema.TaggedErrorClass<ChromiumCookieReadError>()(
+export class ChromiumCookieReadError extends Schema.TaggedError<ChromiumCookieReadError>()(
   "ChromiumCookieReadError",
   {
     reason: ChromiumCookieReadReason,

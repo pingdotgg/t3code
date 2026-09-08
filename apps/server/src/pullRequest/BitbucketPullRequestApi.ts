@@ -41,7 +41,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class BitbucketPullRequestReadError extends Schema.TaggedErrorClass<BitbucketPullRequestReadError>()(
+export class BitbucketPullRequestReadError extends Schema.TaggedError<BitbucketPullRequestReadError>()(
   "BitbucketPullRequestReadError",
   {
     operation: Schema.String,
@@ -58,7 +58,7 @@ export class BitbucketPullRequestReadError extends Schema.TaggedErrorClass<Bitbu
 }
 
 /** Not a decode failure: Bitbucket answered, the account it answered for just has no handle. */
-export class BitbucketViewerUnavailableError extends Schema.TaggedErrorClass<BitbucketViewerUnavailableError>()(
+export class BitbucketViewerUnavailableError extends Schema.TaggedError<BitbucketViewerUnavailableError>()(
   "BitbucketViewerUnavailableError",
   {},
 ) {
@@ -72,7 +72,7 @@ export class BitbucketViewerUnavailableError extends Schema.TaggedErrorClass<Bit
 }
 
 /** A repository that is not `workspace/slug`, which is the only form Bitbucket addresses. */
-export class BitbucketRepositoryUnsupportedError extends Schema.TaggedErrorClass<BitbucketRepositoryUnsupportedError>()(
+export class BitbucketRepositoryUnsupportedError extends Schema.TaggedError<BitbucketRepositoryUnsupportedError>()(
   "BitbucketRepositoryUnsupportedError",
   {
     repository: Schema.String,
@@ -88,7 +88,7 @@ export class BitbucketRepositoryUnsupportedError extends Schema.TaggedErrorClass
 }
 
 /** Not a decode failure: the reader named a commit that is not a sha this repository could hold. */
-export class BitbucketDiffCommitError extends Schema.TaggedErrorClass<BitbucketDiffCommitError>()(
+export class BitbucketDiffCommitError extends Schema.TaggedError<BitbucketDiffCommitError>()(
   "BitbucketDiffCommitError",
   {},
 ) {

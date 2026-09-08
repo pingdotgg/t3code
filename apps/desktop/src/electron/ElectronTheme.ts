@@ -7,7 +7,7 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-export class ElectronThemeSetSourceError extends Schema.TaggedErrorClass<ElectronThemeSetSourceError>()(
+export class ElectronThemeSetSourceError extends Schema.TaggedError<ElectronThemeSetSourceError>()(
   "ElectronThemeSetSourceError",
   {
     source: DesktopThemeSchema,

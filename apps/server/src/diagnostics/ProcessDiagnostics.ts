@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
 
-export class ProcessSignalFailed extends Schema.TaggedErrorClass<ProcessSignalFailed>()(
+export class ProcessSignalFailed extends Schema.TaggedError<ProcessSignalFailed>()(
   "ProcessSignalFailed",
   {
     pid: Schema.Number,

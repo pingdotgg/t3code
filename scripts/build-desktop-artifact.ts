@@ -182,7 +182,7 @@ const getDefaultArch = Effect.fn("getDefaultArch")(function* (platform: typeof B
   return yield* getDefaultBuildArch(platform, config);
 });
 
-export class MacPasskeySigningConfigurationResolutionError extends Schema.TaggedErrorClass<MacPasskeySigningConfigurationResolutionError>()(
+export class MacPasskeySigningConfigurationResolutionError extends Schema.TaggedError<MacPasskeySigningConfigurationResolutionError>()(
   "MacPasskeySigningConfigurationResolutionError",
   {
     cause: Schema.Defect(),
@@ -201,7 +201,7 @@ export class MacPasskeySigningConfigurationResolutionError extends Schema.Tagged
   }
 }
 
-export class KeyringNativePackageMissingError extends Schema.TaggedErrorClass<KeyringNativePackageMissingError>()(
+export class KeyringNativePackageMissingError extends Schema.TaggedError<KeyringNativePackageMissingError>()(
   "KeyringNativePackageMissingError",
   {
     packageName: Schema.String,
@@ -217,7 +217,7 @@ export class KeyringNativePackageMissingError extends Schema.TaggedErrorClass<Ke
   }
 }
 
-export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedErrorClass<ClerkPasskeyNativePackageMissingError>()(
+export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedError<ClerkPasskeyNativePackageMissingError>()(
   "ClerkPasskeyNativePackageMissingError",
   {
     packageName: Schema.String,
@@ -233,7 +233,7 @@ export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedErrorCla
   }
 }
 
-export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<UnsupportedHostBuildPlatformError>()(
+export class UnsupportedHostBuildPlatformError extends Schema.TaggedError<UnsupportedHostBuildPlatformError>()(
   "UnsupportedHostBuildPlatformError",
   {
     hostPlatform: Schema.String,
@@ -244,7 +244,7 @@ export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<U
   }
 }
 
-export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildArchitectureError>()(
+export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedError<UnsupportedDesktopBuildArchitectureError>()(
   "UnsupportedDesktopBuildArchitectureError",
   {
     platform: BuildPlatform,
@@ -263,7 +263,7 @@ const InvalidMockUpdateServerPortReason = Schema.Literals([
   "out-of-range",
 ]);
 
-export class InvalidMockUpdateServerPortError extends Schema.TaggedErrorClass<InvalidMockUpdateServerPortError>()(
+export class InvalidMockUpdateServerPortError extends Schema.TaggedError<InvalidMockUpdateServerPortError>()(
   "InvalidMockUpdateServerPortError",
   {
     reason: InvalidMockUpdateServerPortReason,
@@ -284,7 +284,7 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedErrorClass<In
   }
 }
 
-export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildCommandFailedError>()(
+export class BuildCommandFailedError extends Schema.TaggedError<BuildCommandFailedError>()(
   "BuildCommandFailedError",
   {
     command: Schema.String,
@@ -317,7 +317,7 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
   { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
 ] as const;
 
-export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<LinuxDesktopBuildPrerequisitesMissingError>()(
+export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<LinuxDesktopBuildPrerequisitesMissingError>()(
   "LinuxDesktopBuildPrerequisitesMissingError",
   {
     missing: Schema.Array(Schema.String),
@@ -364,7 +364,7 @@ const MAC_DESKTOP_BUILD_PREREQUISITES = [
   { id: "lipo", description: "Xcode universal-binary tool (lipo)" },
 ] as const;
 
-export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<MacDesktopBuildPrerequisitesMissingError>()(
+export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<MacDesktopBuildPrerequisitesMissingError>()(
   "MacDesktopBuildPrerequisitesMissingError",
   {
     missing: Schema.Array(Schema.String),
@@ -401,7 +401,7 @@ const WINDOWS_DESKTOP_BUILD_PREREQUISITES = [
   { id: "tar", description: "tar for the bundled WSL runtime" },
 ] as const;
 
-export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<WindowsDesktopBuildPrerequisitesMissingError>()(
+export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<WindowsDesktopBuildPrerequisitesMissingError>()(
   "WindowsDesktopBuildPrerequisitesMissingError",
   {
     missing: Schema.Array(Schema.String),
@@ -428,7 +428,7 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
   }
 }
 
-export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorClass<ResourceMonitorBuildOutputMissingError>()(
+export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedError<ResourceMonitorBuildOutputMissingError>()(
   "ResourceMonitorBuildOutputMissingError",
   {
     binaryPath: Schema.String,
@@ -448,7 +448,7 @@ const desktopIconPlatformNames = {
   win: "Windows",
 } satisfies Record<typeof BuildPlatform.Type, string>;
 
-export class LinuxBrowserSecretHostError extends Schema.TaggedErrorClass<LinuxBrowserSecretHostError>()(
+export class LinuxBrowserSecretHostError extends Schema.TaggedError<LinuxBrowserSecretHostError>()(
   "LinuxBrowserSecretHostError",
   { hostPlatform: Schema.String },
 ) {
@@ -457,7 +457,7 @@ export class LinuxBrowserSecretHostError extends Schema.TaggedErrorClass<LinuxBr
   }
 }
 
-export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<DesktopIconSourceMissingError>()(
+export class DesktopIconSourceMissingError extends Schema.TaggedError<DesktopIconSourceMissingError>()(
   "DesktopIconSourceMissingError",
   {
     platform: BuildPlatform,
@@ -469,7 +469,7 @@ export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
-export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorClass<DesktopDmgBackgroundSourceMissingError>()(
+export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedError<DesktopDmgBackgroundSourceMissingError>()(
   "DesktopDmgBackgroundSourceMissingError",
   {
     channel: Schema.Literals(["latest", "nightly"]),
@@ -481,7 +481,7 @@ export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorCl
   }
 }
 
-export class BundledClientAssetsMissingError extends Schema.TaggedErrorClass<BundledClientAssetsMissingError>()(
+export class BundledClientAssetsMissingError extends Schema.TaggedError<BundledClientAssetsMissingError>()(
   "BundledClientAssetsMissingError",
   {
     indexPath: Schema.String,
@@ -495,7 +495,7 @@ export class BundledClientAssetsMissingError extends Schema.TaggedErrorClass<Bun
   }
 }
 
-export class UnsupportedDesktopBuildPlatformError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildPlatformError>()(
+export class UnsupportedDesktopBuildPlatformError extends Schema.TaggedError<UnsupportedDesktopBuildPlatformError>()(
   "UnsupportedDesktopBuildPlatformError",
   {
     platform: Schema.String,
@@ -517,7 +517,7 @@ const DependencyResolutionKind = Schema.Literals([
   "desktop-runtime",
 ]);
 
-export class DesktopBuildDependencyResolutionError extends Schema.TaggedErrorClass<DesktopBuildDependencyResolutionError>()(
+export class DesktopBuildDependencyResolutionError extends Schema.TaggedError<DesktopBuildDependencyResolutionError>()(
   "DesktopBuildDependencyResolutionError",
   {
     kind: DependencyResolutionKind,
@@ -530,7 +530,7 @@ export class DesktopBuildDependencyResolutionError extends Schema.TaggedErrorCla
   }
 }
 
-export class MissingServerProductionDependenciesError extends Schema.TaggedErrorClass<MissingServerProductionDependenciesError>()(
+export class MissingServerProductionDependenciesError extends Schema.TaggedError<MissingServerProductionDependenciesError>()(
   "MissingServerProductionDependenciesError",
   {
     manifestPath: Schema.String,
@@ -582,7 +582,7 @@ if (!result.ok) throw new Error(result.error);
 result.value.destroy();
 `;
 
-export class ExternalizedBundleError extends Schema.TaggedErrorClass<ExternalizedBundleError>()(
+export class ExternalizedBundleError extends Schema.TaggedError<ExternalizedBundleError>()(
   "ExternalizedBundleError",
   { sentinel: Schema.String, inlinedPackageCount: Schema.Number },
 ) {
@@ -591,7 +591,7 @@ export class ExternalizedBundleError extends Schema.TaggedErrorClass<Externalize
   }
 }
 
-export class BundleNotSelfContainedError extends Schema.TaggedErrorClass<BundleNotSelfContainedError>()(
+export class BundleNotSelfContainedError extends Schema.TaggedError<BundleNotSelfContainedError>()(
   "BundleNotSelfContainedError",
   { exitCode: Schema.Number, output: Schema.String },
 ) {
@@ -601,7 +601,7 @@ ${this.output}`;
   }
 }
 
-export class InlinedNativePackageError extends Schema.TaggedErrorClass<InlinedNativePackageError>()(
+export class InlinedNativePackageError extends Schema.TaggedError<InlinedNativePackageError>()(
   "InlinedNativePackageError",
   { packages: Schema.Array(Schema.String) },
 ) {
@@ -610,7 +610,7 @@ export class InlinedNativePackageError extends Schema.TaggedErrorClass<InlinedNa
   }
 }
 
-export class InlinedExternalPackageError extends Schema.TaggedErrorClass<InlinedExternalPackageError>()(
+export class InlinedExternalPackageError extends Schema.TaggedError<InlinedExternalPackageError>()(
   "InlinedExternalPackageError",
   { packages: Schema.Array(Schema.String) },
 ) {
@@ -619,7 +619,7 @@ export class InlinedExternalPackageError extends Schema.TaggedErrorClass<Inlined
   }
 }
 
-export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<MissingDesktopBuildInputError>()(
+export class MissingDesktopBuildInputError extends Schema.TaggedError<MissingDesktopBuildInputError>()(
   "MissingDesktopBuildInputError",
   {
     artifact: DesktopBuildInputArtifact,
@@ -632,7 +632,7 @@ export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<Missi
   }
 }
 
-export class MacProvisioningProfileNotFoundError extends Schema.TaggedErrorClass<MacProvisioningProfileNotFoundError>()(
+export class MacProvisioningProfileNotFoundError extends Schema.TaggedError<MacProvisioningProfileNotFoundError>()(
   "MacProvisioningProfileNotFoundError",
   {
     provisioningProfilePath: Schema.String,
@@ -643,7 +643,7 @@ export class MacProvisioningProfileNotFoundError extends Schema.TaggedErrorClass
   }
 }
 
-export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedErrorClass<DesktopBuildDistDirectoryMissingError>()(
+export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedError<DesktopBuildDistDirectoryMissingError>()(
   "DesktopBuildDistDirectoryMissingError",
   {
     distPath: Schema.String,
@@ -656,7 +656,7 @@ export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedErrorCla
   }
 }
 
-export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClass<DesktopBuildNoArtifactsProducedError>()(
+export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<DesktopBuildNoArtifactsProducedError>()(
   "DesktopBuildNoArtifactsProducedError",
   {
     distPath: Schema.String,
@@ -669,7 +669,7 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClas
   }
 }
 
-export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslNodePtyPrebuildMissingError>()(
+export class WslNodePtyPrebuildMissingError extends Schema.TaggedError<WslNodePtyPrebuildMissingError>()(
   "WslNodePtyPrebuildMissingError",
   {
     prebuildPath: Schema.String,
@@ -680,7 +680,7 @@ export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslN
   }
 }
 
-export class WindowsServerSidecarPackError extends Schema.TaggedErrorClass<WindowsServerSidecarPackError>()(
+export class WindowsServerSidecarPackError extends Schema.TaggedError<WindowsServerSidecarPackError>()(
   "WindowsServerSidecarPackError",
   {
     asarPath: Schema.String,
@@ -692,7 +692,7 @@ export class WindowsServerSidecarPackError extends Schema.TaggedErrorClass<Windo
   }
 }
 
-export class WindowsPrimaryNativeProbeError extends Schema.TaggedErrorClass<WindowsPrimaryNativeProbeError>()(
+export class WindowsPrimaryNativeProbeError extends Schema.TaggedError<WindowsPrimaryNativeProbeError>()(
   "WindowsPrimaryNativeProbeError",
   {
     executablePath: Schema.String,
@@ -716,7 +716,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "file-limit-exceeded",
 ]);
 
-export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorClass<WindowsPackagedPayloadValidationError>()(
+export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<WindowsPackagedPayloadValidationError>()(
   "WindowsPackagedPayloadValidationError",
   {
     reason: WindowsPackagedPayloadValidationReason,
@@ -753,7 +753,7 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorCla
   }
 }
 
-export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNodePtyManifestReadError>()(
+export class WslNodePtyManifestReadError extends Schema.TaggedError<WslNodePtyManifestReadError>()(
   "WslNodePtyManifestReadError",
   {
     manifestPath: Schema.String,
@@ -765,7 +765,7 @@ export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNode
   }
 }
 
-export class LinuxIconResizeError extends Schema.TaggedErrorClass<LinuxIconResizeError>()(
+export class LinuxIconResizeError extends Schema.TaggedError<LinuxIconResizeError>()(
   "LinuxIconResizeError",
   {
     operation: Schema.Literal("resize"),
@@ -1134,7 +1134,7 @@ export const InvalidMacPasskeyRpDomainReason = Schema.Literals([
 ]);
 export type InvalidMacPasskeyRpDomainReason = typeof InvalidMacPasskeyRpDomainReason.Type;
 
-export class InvalidMacPasskeyRpDomainError extends Schema.TaggedErrorClass<InvalidMacPasskeyRpDomainError>()(
+export class InvalidMacPasskeyRpDomainError extends Schema.TaggedError<InvalidMacPasskeyRpDomainError>()(
   "InvalidMacPasskeyRpDomainError",
   {
     reason: InvalidMacPasskeyRpDomainReason,
@@ -1147,7 +1147,7 @@ export class InvalidMacPasskeyRpDomainError extends Schema.TaggedErrorClass<Inva
   }
 }
 
-export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppleTeamIdError>()(
+export class InvalidAppleTeamIdError extends Schema.TaggedError<InvalidAppleTeamIdError>()(
   "InvalidAppleTeamIdError",
   {
     teamId: Schema.String,
@@ -1158,7 +1158,7 @@ export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppl
   }
 }
 
-export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErrorClass<MissingMacPasskeyProvisioningProfileError>()(
+export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedError<MissingMacPasskeyProvisioningProfileError>()(
   "MissingMacPasskeyProvisioningProfileError",
   {},
 ) {
@@ -1167,7 +1167,7 @@ export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErro
   }
 }
 
-export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErrorClass<MissingMacPasskeyDomainConfigurationError>()(
+export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedError<MissingMacPasskeyDomainConfigurationError>()(
   "MissingMacPasskeyDomainConfigurationError",
   {},
 ) {
@@ -1176,7 +1176,7 @@ export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErro
   }
 }
 
-export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedErrorClass<InvalidMacPasskeyPublishableKeyError>()(
+export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedError<InvalidMacPasskeyPublishableKeyError>()(
   "InvalidMacPasskeyPublishableKeyError",
   {
     cause: Schema.Defect(),
@@ -1187,7 +1187,7 @@ export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedErrorClas
   }
 }
 
-export class MissingMacPasskeyRpDomainError extends Schema.TaggedErrorClass<MissingMacPasskeyRpDomainError>()(
+export class MissingMacPasskeyRpDomainError extends Schema.TaggedError<MissingMacPasskeyRpDomainError>()(
   "MissingMacPasskeyRpDomainError",
   {},
 ) {

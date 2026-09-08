@@ -33,7 +33,7 @@ const LegacyConnectionDocument = Schema.Struct({
 });
 const decodeLegacyConnectionDocument = Schema.decodeUnknownEffect(LegacyConnectionDocument);
 
-export class LegacyConnectionMigrationError extends Schema.TaggedErrorClass<LegacyConnectionMigrationError>()(
+export class LegacyConnectionMigrationError extends Schema.TaggedError<LegacyConnectionMigrationError>()(
   "LegacyConnectionMigrationError",
   {
     message: Schema.String,

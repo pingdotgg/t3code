@@ -88,7 +88,7 @@ export const SignedApnsDeliveryJob = Schema.Struct({
 });
 export type SignedApnsDeliveryJob = typeof SignedApnsDeliveryJob.Type;
 
-export class ApnsDeliveryJobQueuePayloadInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobQueuePayloadInvalid>()(
+export class ApnsDeliveryJobQueuePayloadInvalid extends Schema.TaggedError<ApnsDeliveryJobQueuePayloadInvalid>()(
   "ApnsDeliveryJobQueuePayloadInvalid",
   {
     receivedType: Schema.String,
@@ -100,7 +100,7 @@ export class ApnsDeliveryJobQueuePayloadInvalid extends Schema.TaggedErrorClass<
   }
 }
 
-export class ApnsDeliveryJobLiveActivityAggregateMissing extends Schema.TaggedErrorClass<ApnsDeliveryJobLiveActivityAggregateMissing>()(
+export class ApnsDeliveryJobLiveActivityAggregateMissing extends Schema.TaggedError<ApnsDeliveryJobLiveActivityAggregateMissing>()(
   "ApnsDeliveryJobLiveActivityAggregateMissing",
   {
     ...ApnsDeliveryJobContext,
@@ -112,7 +112,7 @@ export class ApnsDeliveryJobLiveActivityAggregateMissing extends Schema.TaggedEr
   }
 }
 
-export class ApnsDeliveryJobLiveActivityNotificationUnexpected extends Schema.TaggedErrorClass<ApnsDeliveryJobLiveActivityNotificationUnexpected>()(
+export class ApnsDeliveryJobLiveActivityNotificationUnexpected extends Schema.TaggedError<ApnsDeliveryJobLiveActivityNotificationUnexpected>()(
   "ApnsDeliveryJobLiveActivityNotificationUnexpected",
   {
     ...ApnsDeliveryJobContext,
@@ -124,7 +124,7 @@ export class ApnsDeliveryJobLiveActivityNotificationUnexpected extends Schema.Ta
   }
 }
 
-export class ApnsDeliveryJobPushNotificationMissing extends Schema.TaggedErrorClass<ApnsDeliveryJobPushNotificationMissing>()(
+export class ApnsDeliveryJobPushNotificationMissing extends Schema.TaggedError<ApnsDeliveryJobPushNotificationMissing>()(
   "ApnsDeliveryJobPushNotificationMissing",
   ApnsDeliveryJobContext,
 ) {
@@ -133,7 +133,7 @@ export class ApnsDeliveryJobPushNotificationMissing extends Schema.TaggedErrorCl
   }
 }
 
-export class ApnsDeliveryJobPushNotificationAggregateUnexpected extends Schema.TaggedErrorClass<ApnsDeliveryJobPushNotificationAggregateUnexpected>()(
+export class ApnsDeliveryJobPushNotificationAggregateUnexpected extends Schema.TaggedError<ApnsDeliveryJobPushNotificationAggregateUnexpected>()(
   "ApnsDeliveryJobPushNotificationAggregateUnexpected",
   ApnsDeliveryJobContext,
 ) {
@@ -142,7 +142,7 @@ export class ApnsDeliveryJobPushNotificationAggregateUnexpected extends Schema.T
   }
 }
 
-export class ApnsDeliveryJobCreatedAtInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobCreatedAtInvalid>()(
+export class ApnsDeliveryJobCreatedAtInvalid extends Schema.TaggedError<ApnsDeliveryJobCreatedAtInvalid>()(
   "ApnsDeliveryJobCreatedAtInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -155,7 +155,7 @@ export class ApnsDeliveryJobCreatedAtInvalid extends Schema.TaggedErrorClass<Apn
   }
 }
 
-export class ApnsDeliveryJobExpiresAtInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobExpiresAtInvalid>()(
+export class ApnsDeliveryJobExpiresAtInvalid extends Schema.TaggedError<ApnsDeliveryJobExpiresAtInvalid>()(
   "ApnsDeliveryJobExpiresAtInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -168,7 +168,7 @@ export class ApnsDeliveryJobExpiresAtInvalid extends Schema.TaggedErrorClass<Apn
   }
 }
 
-export class ApnsDeliveryJobTimeWindowInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobTimeWindowInvalid>()(
+export class ApnsDeliveryJobTimeWindowInvalid extends Schema.TaggedError<ApnsDeliveryJobTimeWindowInvalid>()(
   "ApnsDeliveryJobTimeWindowInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -182,7 +182,7 @@ export class ApnsDeliveryJobTimeWindowInvalid extends Schema.TaggedErrorClass<Ap
   }
 }
 
-export class ApnsDeliveryJobTimeWindowTooLong extends Schema.TaggedErrorClass<ApnsDeliveryJobTimeWindowTooLong>()(
+export class ApnsDeliveryJobTimeWindowTooLong extends Schema.TaggedError<ApnsDeliveryJobTimeWindowTooLong>()(
   "ApnsDeliveryJobTimeWindowTooLong",
   {
     ...ApnsDeliveryJobContext,
@@ -196,7 +196,7 @@ export class ApnsDeliveryJobTimeWindowTooLong extends Schema.TaggedErrorClass<Ap
   }
 }
 
-export class ApnsDeliveryJobSignatureInvalid extends Schema.TaggedErrorClass<ApnsDeliveryJobSignatureInvalid>()(
+export class ApnsDeliveryJobSignatureInvalid extends Schema.TaggedError<ApnsDeliveryJobSignatureInvalid>()(
   "ApnsDeliveryJobSignatureInvalid",
   {
     ...ApnsDeliveryJobContext,
@@ -222,7 +222,7 @@ export const ApnsDeliveryJobInvalid = Schema.Union([
 ]);
 export type ApnsDeliveryJobInvalid = typeof ApnsDeliveryJobInvalid.Type;
 
-export class ApnsDeliveryJobExpired extends Schema.TaggedErrorClass<ApnsDeliveryJobExpired>()(
+export class ApnsDeliveryJobExpired extends Schema.TaggedError<ApnsDeliveryJobExpired>()(
   "ApnsDeliveryJobExpired",
   {
     ...ApnsDeliveryJobContext,

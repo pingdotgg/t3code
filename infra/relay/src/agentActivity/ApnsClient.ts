@@ -53,7 +53,7 @@ export interface ApnsDeliveryResult {
   readonly apnsId: string | null;
 }
 
-export class ApnsHttpRequestError extends Schema.TaggedErrorClass<ApnsHttpRequestError>()(
+export class ApnsHttpRequestError extends Schema.TaggedError<ApnsHttpRequestError>()(
   "ApnsHttpRequestError",
   {
     requestKind: ApnsRequestKindSchema,

@@ -14,7 +14,7 @@ import { previewBridge } from "~/components/preview/previewBridge";
 const PREVIEW_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const PREVIEW_CONFIG_IDLE_TTL_MS = 10 * 60_000;
 
-export class PreviewWebviewBridgeUnavailableError extends Schema.TaggedErrorClass<PreviewWebviewBridgeUnavailableError>()(
+export class PreviewWebviewBridgeUnavailableError extends Schema.TaggedError<PreviewWebviewBridgeUnavailableError>()(
   "PreviewWebviewBridgeUnavailableError",
   { environmentId: Schema.String },
 ) {
@@ -23,7 +23,7 @@ export class PreviewWebviewBridgeUnavailableError extends Schema.TaggedErrorClas
   }
 }
 
-export class PreviewWebviewConfigLoadError extends Schema.TaggedErrorClass<PreviewWebviewConfigLoadError>()(
+export class PreviewWebviewConfigLoadError extends Schema.TaggedError<PreviewWebviewConfigLoadError>()(
   "PreviewWebviewConfigLoadError",
   {
     environmentId: Schema.String,

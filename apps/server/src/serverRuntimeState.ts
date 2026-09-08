@@ -21,7 +21,7 @@ export const PersistedServerRuntimeState = Schema.Struct({
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
-export class ServerRuntimeStateError extends Schema.TaggedErrorClass<ServerRuntimeStateError>()(
+export class ServerRuntimeStateError extends Schema.TaggedError<ServerRuntimeStateError>()(
   "ServerRuntimeStateError",
   {
     operation: Schema.Literals(["persist", "read", "decode", "clear"]),

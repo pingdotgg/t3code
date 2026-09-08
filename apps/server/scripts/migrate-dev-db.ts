@@ -40,7 +40,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<MigrateDevDbNotInWorktreeError>()(
+export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
   "MigrateDevDbNotInWorktreeError",
   {},
 ) {
@@ -49,7 +49,7 @@ export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbSharedHomeError extends Schema.TaggedErrorClass<MigrateDevDbSharedHomeError>()(
+export class MigrateDevDbSharedHomeError extends Schema.TaggedError<MigrateDevDbSharedHomeError>()(
   "MigrateDevDbSharedHomeError",
   {},
 ) {
@@ -58,7 +58,7 @@ export class MigrateDevDbSharedHomeError extends Schema.TaggedErrorClass<Migrate
   }
 }
 
-export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<MigrateDevDbSourceMissingError>()(
+export class MigrateDevDbSourceMissingError extends Schema.TaggedError<MigrateDevDbSourceMissingError>()(
   "MigrateDevDbSourceMissingError",
   {
     sourcePath: Schema.String,
@@ -69,7 +69,7 @@ export class MigrateDevDbSourceMissingError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClass<MigrateDevDbSourceIsDestinationError>()(
+export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedError<MigrateDevDbSourceIsDestinationError>()(
   "MigrateDevDbSourceIsDestinationError",
   {
     sourcePath: Schema.String,
@@ -80,7 +80,7 @@ export class MigrateDevDbSourceIsDestinationError extends Schema.TaggedErrorClas
   }
 }
 
-export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<MigrateDevDbServerRunningError>()(
+export class MigrateDevDbServerRunningError extends Schema.TaggedError<MigrateDevDbServerRunningError>()(
   "MigrateDevDbServerRunningError",
   {
     databasePath: Schema.String,
@@ -92,7 +92,7 @@ export class MigrateDevDbServerRunningError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<MigrateDevDbDestinationBusyError>()(
+export class MigrateDevDbDestinationBusyError extends Schema.TaggedError<MigrateDevDbDestinationBusyError>()(
   "MigrateDevDbDestinationBusyError",
   {
     databasePath: Schema.String,
@@ -114,7 +114,7 @@ export class MigrateDevDbDestinationBusyError extends Schema.TaggedErrorClass<Mi
  * recorded under a different name, so this checkout's migration was
  * silently skipped and its schema changes never applied.
  */
-export class MigrateDevDbSlotCollisionError extends Schema.TaggedErrorClass<MigrateDevDbSlotCollisionError>()(
+export class MigrateDevDbSlotCollisionError extends Schema.TaggedError<MigrateDevDbSlotCollisionError>()(
   "MigrateDevDbSlotCollisionError",
   {
     slot: Schema.Number,
@@ -127,7 +127,7 @@ export class MigrateDevDbSlotCollisionError extends Schema.TaggedErrorClass<Migr
   }
 }
 
-export class MigrateDevDbPhaseError extends Schema.TaggedErrorClass<MigrateDevDbPhaseError>()(
+export class MigrateDevDbPhaseError extends Schema.TaggedError<MigrateDevDbPhaseError>()(
   "MigrateDevDbPhaseError",
   {
     phase: Schema.Literals(["snapshot", "prune", "compact", "migrate", "verify"]),

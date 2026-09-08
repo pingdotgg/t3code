@@ -66,7 +66,7 @@ export type EnsureWslNodePtyResult =
       readonly retryLimit?: number;
     };
 
-export class DesktopWslDistroListError extends Schema.TaggedErrorClass<DesktopWslDistroListError>()(
+export class DesktopWslDistroListError extends Schema.TaggedError<DesktopWslDistroListError>()(
   "DesktopWslDistroListError",
   { reason: Schema.String },
 ) {

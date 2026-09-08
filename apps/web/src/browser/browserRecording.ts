@@ -10,7 +10,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
 
-export class BrowserRecordingUnavailableError extends Schema.TaggedErrorClass<BrowserRecordingUnavailableError>()(
+export class BrowserRecordingUnavailableError extends Schema.TaggedError<BrowserRecordingUnavailableError>()(
   "BrowserRecordingUnavailableError",
   {
     tabId: Schema.String,
@@ -21,7 +21,7 @@ export class BrowserRecordingUnavailableError extends Schema.TaggedErrorClass<Br
   }
 }
 
-export class BrowserRecordingConflictError extends Schema.TaggedErrorClass<BrowserRecordingConflictError>()(
+export class BrowserRecordingConflictError extends Schema.TaggedError<BrowserRecordingConflictError>()(
   "BrowserRecordingConflictError",
   {
     requestedTabId: Schema.String,
@@ -33,7 +33,7 @@ export class BrowserRecordingConflictError extends Schema.TaggedErrorClass<Brows
   }
 }
 
-export class BrowserRecordingStartCancelledError extends Schema.TaggedErrorClass<BrowserRecordingStartCancelledError>()(
+export class BrowserRecordingStartCancelledError extends Schema.TaggedError<BrowserRecordingStartCancelledError>()(
   "BrowserRecordingStartCancelledError",
   {
     tabId: Schema.String,
@@ -44,7 +44,7 @@ export class BrowserRecordingStartCancelledError extends Schema.TaggedErrorClass
   }
 }
 
-export class BrowserRecordingFormatUnavailableError extends Schema.TaggedErrorClass<BrowserRecordingFormatUnavailableError>()(
+export class BrowserRecordingFormatUnavailableError extends Schema.TaggedError<BrowserRecordingFormatUnavailableError>()(
   "BrowserRecordingFormatUnavailableError",
   { tabId: Schema.String },
 ) {
@@ -53,7 +53,7 @@ export class BrowserRecordingFormatUnavailableError extends Schema.TaggedErrorCl
   }
 }
 
-export class BrowserRecordingCaptureTimeoutError extends Schema.TaggedErrorClass<BrowserRecordingCaptureTimeoutError>()(
+export class BrowserRecordingCaptureTimeoutError extends Schema.TaggedError<BrowserRecordingCaptureTimeoutError>()(
   "BrowserRecordingCaptureTimeoutError",
   {
     tabId: Schema.String,
@@ -65,7 +65,7 @@ export class BrowserRecordingCaptureTimeoutError extends Schema.TaggedErrorClass
   }
 }
 
-export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<BrowserRecordingOperationError>()(
+export class BrowserRecordingOperationError extends Schema.TaggedError<BrowserRecordingOperationError>()(
   "BrowserRecordingOperationError",
   {
     operation: Schema.Literals([

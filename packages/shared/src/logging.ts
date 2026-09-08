@@ -10,7 +10,7 @@ export interface RotatingFileSinkOptions {
   readonly throwOnError?: boolean;
 }
 
-export class RotatingFileSinkConfigurationError extends Schema.TaggedErrorClass<RotatingFileSinkConfigurationError>()(
+export class RotatingFileSinkConfigurationError extends Schema.TaggedError<RotatingFileSinkConfigurationError>()(
   "RotatingFileSinkConfigurationError",
   {
     option: Schema.Literals(["maxBytes", "maxFiles"]),
@@ -23,7 +23,7 @@ export class RotatingFileSinkConfigurationError extends Schema.TaggedErrorClass<
   }
 }
 
-export class RotatingFileSinkError extends Schema.TaggedErrorClass<RotatingFileSinkError>()(
+export class RotatingFileSinkError extends Schema.TaggedError<RotatingFileSinkError>()(
   "RotatingFileSinkError",
   {
     operation: Schema.Literals(["initialize", "read", "write", "rotate", "prune"]),

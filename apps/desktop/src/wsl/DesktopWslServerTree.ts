@@ -31,7 +31,7 @@ const Marker = Schema.Struct({ version: Schema.String });
 const decodeMarker = Schema.decodeUnknownEffect(Schema.fromJsonString(Marker));
 const encodeMarker = Schema.encodeEffect(Schema.fromJsonString(Marker));
 
-export class DesktopWslServerTreeExtractError extends Schema.TaggedErrorClass<DesktopWslServerTreeExtractError>()(
+export class DesktopWslServerTreeExtractError extends Schema.TaggedError<DesktopWslServerTreeExtractError>()(
   "DesktopWslServerTreeExtractError",
   {
     targetDir: Schema.String,

@@ -4,7 +4,7 @@ import { decodeIncomingShareDraft, type IncomingShareDraft } from "./incoming-sh
 
 const INCOMING_SHARE_DIRECTORY = "incoming-shares";
 
-export class IncomingShareStorageError extends Schema.TaggedErrorClass<IncomingShareStorageError>()(
+export class IncomingShareStorageError extends Schema.TaggedError<IncomingShareStorageError>()(
   "IncomingShareStorageError",
   {
     operation: Schema.Literals(["load", "write", "remove"]),
