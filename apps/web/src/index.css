@@ -1604,8 +1604,9 @@ code {
 }
 
 /* Electron 44 inherits app-region. A later header child can otherwise add a
-   drag rectangle over fixed controls that already opted out. Reset children
-   in the base layer so explicit drag/no-drag utilities still take precedence. */
+   drag rectangle over fixed controls that already opted out. `none` emits no
+   rectangle, preserving the parent's drag area; `no-drag` would subtract it.
+   Use the base layer so explicit drag/no-drag utilities still take precedence. */
 @layer base {
   .drag-region > * {
     -webkit-app-region: none;
