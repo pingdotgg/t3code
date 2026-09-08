@@ -977,6 +977,7 @@ const buildAppUnderTest = (options?: {
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
+          searchThread: () => Effect.die("searchThread is not used in this test"),
           searchThreads: () => Effect.succeed({ matches: [] }),
           getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
           getProjectShellById: () => Effect.succeed(Option.none()),
@@ -8124,6 +8125,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         layers: {
           projectionSnapshotQuery: {
             getSnapshot: () => Effect.succeed(snapshot),
+            searchThread: () => Effect.die("searchThread is not used in this test"),
             searchThreads: () =>
               Effect.succeed({
                 matches: [

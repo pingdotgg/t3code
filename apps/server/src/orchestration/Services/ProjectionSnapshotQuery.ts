@@ -17,6 +17,8 @@ import type {
   OrchestrationProjectShell,
   OrchestrationReadModel,
   OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadInput,
+  OrchestrationSearchThreadResult,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
   OrchestrationThread,
@@ -126,6 +128,10 @@ export interface ProjectionSnapshotQueryShape {
    * Search active thread navigation metadata, user messages, and canonical
    * assistant outputs without hydrating thread detail snapshots.
    */
+  readonly searchThread: (
+    input: OrchestrationSearchThreadInput,
+  ) => Effect.Effect<OrchestrationSearchThreadResult, ProjectionRepositoryError>;
+
   readonly searchThreads: (
     input: OrchestrationSearchThreadsInput,
   ) => Effect.Effect<OrchestrationSearchThreadsResult, ProjectionRepositoryError>;

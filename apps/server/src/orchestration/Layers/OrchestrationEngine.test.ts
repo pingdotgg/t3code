@@ -439,6 +439,7 @@ describe("OrchestrationEngine", () => {
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+          searchThread: () => Effect.die("searchThread is not used in this test"),
           searchThreads: () => Effect.succeed({ matches: [] }),
         }),
       ),

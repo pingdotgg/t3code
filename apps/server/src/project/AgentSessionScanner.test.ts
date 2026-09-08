@@ -61,6 +61,7 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
     getTurnStartMessage: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadDetailSnapshot: () => Effect.die("unused"),
+    searchThread: () => Effect.die("searchThread is not used in this test"),
     searchThreads: () => Effect.die("unused"),
   });
 

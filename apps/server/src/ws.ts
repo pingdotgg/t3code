@@ -41,6 +41,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
+  OrchestrationSearchThreadError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
@@ -1287,6 +1288,7 @@ const makeWsRpcLayer = (
                 }),
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,
+            threadFind: true,
           };
         });
 
@@ -1406,6 +1408,20 @@ const makeWsRpcLayer = (
                 (cause) =>
                   new OrchestrationGetFullThreadDiffError({
                     message: "Failed to load full thread diff",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.searchThread]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.searchThread,
+            projectionSnapshotQuery.searchThread(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationSearchThreadError({
+                    message: "Could not search this thread. Try again.",
                     cause,
                   }),
               ),

@@ -11,7 +11,7 @@ import {
   formatElementContextSourceLabel,
   newElementContextId,
   normalizeElementContextSelection,
-} from "./elementContext";
+} from "./elementContext.ts";
 
 function makePayload(overrides?: Partial<PickedElementPayload>): PickedElementPayload {
   return {

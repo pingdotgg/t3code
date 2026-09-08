@@ -20,7 +20,8 @@ import {
   type VcsRef,
 } from "@t3tools/contracts";
 
-import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+import { inferReviewCommentFenceLanguage } from "~/reviewCommentContext";
+import { type ReviewCommentContext } from "@t3tools/shared/reviewCommentText";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge",

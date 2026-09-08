@@ -30,6 +30,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
+  searchThread: "orchestration.searchThread",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -1958,6 +1959,38 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
+/** A position in the thread's chronological, rendered-text search results. */
+export const OrchestrationSearchThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  query: TrimmedString.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  index: Schema.optionalKey(NonNegativeInt),
+});
+export type OrchestrationSearchThreadInput = typeof OrchestrationSearchThreadInput.Type;
+
+export const OrchestrationThreadFindMatch = Schema.Struct({
+  source: Schema.Literals(["message", "plan"]),
+  sourceId: TrimmedNonEmptyString,
+  turnId: Schema.NullOr(TurnId),
+  occurrence: NonNegativeInt,
+});
+export type OrchestrationThreadFindMatch = typeof OrchestrationThreadFindMatch.Type;
+
+export const OrchestrationSearchThreadResult = Schema.Struct({
+  threadSequence: NonNegativeInt,
+  totalMatches: NonNegativeInt,
+  activeIndex: NonNegativeInt,
+  match: Schema.NullOr(OrchestrationThreadFindMatch),
+  // A separate search context, never merged into contiguous conversation history.
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+});
+export type OrchestrationSearchThreadResult = typeof OrchestrationSearchThreadResult.Type;
+
+export class OrchestrationSearchThreadError extends Schema.TaggedError<OrchestrationSearchThreadError>()(
+  "OrchestrationSearchThreadError",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}
+
 export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
@@ -2022,6 +2055,10 @@ export const OrchestrationRpcSchemas = {
   getFullThreadDiff: {
     input: OrchestrationGetFullThreadDiffInput,
     output: OrchestrationGetFullThreadDiffResult,
+  },
+  searchThread: {
+    input: OrchestrationSearchThreadInput,
+    output: OrchestrationSearchThreadResult,
   },
   searchThreads: {
     input: OrchestrationSearchThreadsInput,

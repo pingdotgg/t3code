@@ -2,7 +2,7 @@ import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
+} from "@t3tools/shared/codexArtifactTemplates";
 import type {
   CodexFeedbackSubmission,
   EnvironmentThreadStatus,

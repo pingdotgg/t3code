@@ -48,11 +48,8 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
-import {
-  buildDiffReviewComment,
-  resolveDiffReviewPosition,
-  type ReviewCommentContext,
-} from "~/reviewCommentContext";
+import { buildDiffReviewComment, resolveDiffReviewPosition } from "~/reviewCommentContext";
+import { type ReviewCommentContext } from "@t3tools/shared/reviewCommentText";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";

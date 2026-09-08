@@ -305,6 +305,10 @@ describe("Open VSX themes", () => {
         "colors": {
           "editor.foreground": "#eeeeee",
           "focusBorder": "#8b5cf6",
+          "editor.findMatchBackground": "#663399",
+          "editor.findMatchForeground": "#ffffff",
+          "editor.findMatchHighlightBackground": "#445566",
+          "editor.findMatchHighlightForeground": "#ffffff",
         },
       }`,
     );
@@ -312,7 +316,10 @@ describe("Open VSX themes", () => {
       "extension/themes/demo-dark.json",
       `{
         "include": "./base.jsonc",
-        "colors": { "editor.background": "#111111" }
+        "colors": {
+          "editor.background": "#111111",
+          "editor.findMatchHighlightBackground": "#ffffff20"
+        }
       }`,
     );
     zip.file(
@@ -321,7 +328,11 @@ describe("Open VSX themes", () => {
         "colors": {
           "editor.background": "#fafafa",
           "editor.foreground": "#222222",
-          "focusBorder": "#8b5cf6"
+          "focusBorder": "#8b5cf6",
+          "editor.findMatchBackground": "#335577",
+          "editor.findMatchForeground": "#ffffff",
+          "editor.findMatchHighlightBackground": "#bbddff",
+          "editor.findMatchHighlightForeground": "#112233"
         }
       }`,
     );
@@ -410,6 +421,15 @@ describe("Open VSX themes", () => {
     expect(themeColorToHex(paired.colors.canvas)).toBe("#fafafa");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.canvas)).toBe("#111111");
     expect(themeColorToHex(getThemeColorsForMode(paired, "dark")!.text)).toBe("#eeeeee");
+    const darkColors = getThemeColorsForMode(paired, "dark")!;
+    expect(themeColorToHex(darkColors.searchMatchActiveBackground)).toBe("#663399");
+    expect(themeColorToHex(darkColors.searchMatchActiveForeground)).toBe("#ffffff");
+    expect(themeColorToHex(darkColors.searchMatchBackground)).toBe("#2f2f2f");
+    expect(themeColorToHex(darkColors.searchMatchForeground)).toBe("#ffffff");
+    expect(themeColorToHex(paired.colors.searchMatchActiveBackground)).toBe("#335577");
+    expect(themeColorToHex(paired.colors.searchMatchActiveForeground)).toBe("#ffffff");
+    expect(themeColorToHex(paired.colors.searchMatchBackground)).toBe("#bbddff");
+    expect(themeColorToHex(paired.colors.searchMatchForeground)).toBe("#112233");
 
     packagedManifest.contributes.themes[0]!.label = "Renamed Dark";
     packagedManifest.contributes.themes[1]!.label = "Renamed Light";

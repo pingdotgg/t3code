@@ -8,9 +8,9 @@ import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentContext,
   inferReviewCommentFenceLanguage,
-  parseReviewCommentMessageSegments,
   restoreDiffReviewCommentRange,
 } from "./reviewCommentContext";
+import { parseReviewCommentMessageSegments } from "@t3tools/shared/reviewCommentText";
 
 describe("review comment context parsing", () => {
   it("extracts comment metadata, user text, and fenced diff without raw wrapper text", () => {

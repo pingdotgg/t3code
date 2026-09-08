@@ -12,7 +12,7 @@ import {
   type ElementContextDraft,
   formatElementContextLabel,
   formatElementContextSourceLabel,
-} from "~/lib/elementContext";
+} from "@t3tools/shared/elementContext";
 
 interface ComposerPendingElementContextsProps {
   contexts: ReadonlyArray<ElementContextDraft>;

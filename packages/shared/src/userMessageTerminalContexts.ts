@@ -1,4 +1,4 @@
-import { formatInlineTerminalContextLabel as formatInlineTerminalContextSelectionLabel } from "~/lib/terminalContext";
+import { formatInlineTerminalContextLabel as formatInlineTerminalContextSelectionLabel } from "./terminalContext.ts";
 
 const TERMINAL_CONTEXT_HEADER_PATTERN = /^(.*?)\s+line(?:s)?\s+(\d+)(?:-(\d+))?$/i;
 
@@ -37,22 +37,29 @@ export function formatInlineTerminalContextLabel(header: string): string {
   });
 }
 
-export function textContainsInlineTerminalContextLabels(
-  text: string,
-  contexts: ReadonlyArray<{
-    header: string;
-  }>,
-): boolean {
-  let searchStartIndex = 0;
+type TerminalContextSegment<Context> =
+  | { readonly kind: "text"; readonly text: string; readonly start: number }
+  | { readonly kind: "terminal"; readonly context: Context; readonly start: number };
 
+/** Returns null when labels cannot be replaced in context order, leaving the prompt intact. */
+export function splitUserMessageTerminalContexts<Context extends { readonly header: string }>(
+  text: string,
+  contexts: ReadonlyArray<Context>,
+): TerminalContextSegment<Context>[] | null {
+  const segments: TerminalContextSegment<Context>[] = [];
+  let cursor = 0;
   for (const context of contexts) {
     const label = formatInlineTerminalContextLabel(context.header);
-    const matchIndex = text.indexOf(label, searchStartIndex);
-    if (matchIndex === -1) {
-      return false;
+    const index = text.indexOf(label, cursor);
+    if (index === -1) return null;
+    if (index > cursor) {
+      segments.push({ kind: "text", text: text.slice(cursor, index), start: cursor });
     }
-    searchStartIndex = matchIndex + label.length;
+    segments.push({ kind: "terminal", context, start: index });
+    cursor = index + label.length;
   }
-
-  return true;
+  if (cursor < text.length) {
+    segments.push({ kind: "text", text: text.slice(cursor), start: cursor });
+  }
+  return segments;
 }

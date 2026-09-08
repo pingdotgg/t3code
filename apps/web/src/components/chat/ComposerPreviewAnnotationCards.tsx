@@ -3,7 +3,10 @@ import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "luc
 import type { ReactNode } from "react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
-import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
+import {
+  formatElementContextLabel,
+  normalizeElementContextSelection,
+} from "@t3tools/shared/elementContext";
 import {
   formatAttachmentUploadProgress,
   type AttachmentUploadState,

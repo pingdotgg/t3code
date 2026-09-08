@@ -73,6 +73,8 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
 
+import { makeThreadFindQuery } from "./ThreadFindQuery.ts";
+
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
@@ -3396,6 +3398,27 @@ pending_approval_requests AS (
         ),
       );
 
+  // Unlike the detail subscription watermark, a search index must include lifecycle
+  // events: creating a previously deleted ID resets all of its projected messages.
+  const getThreadSearchSequence = SqlSchema.findOne({
+    Request: Schema.Struct({ threadId: ThreadId, maxSequence: Schema.Number }),
+    Result: Schema.Struct({ sequence: Schema.NullOr(Schema.Number) }),
+    execute: ({ threadId, maxSequence }) => sql`
+      SELECT MAX(sequence) AS sequence FROM orchestration_events
+      WHERE aggregate_kind = 'thread' AND stream_id = ${threadId}
+        AND sequence <= ${maxSequence}`,
+  });
+  const searchThread = yield* makeThreadFindQuery(
+    Effect.fn("ThreadFindQuery.sequence")(function* (threadId) {
+      const { snapshotSequence } = yield* getSnapshotSequence();
+      const row = yield* getThreadSearchSequence({
+        threadId,
+        maxSequence: snapshotSequence,
+      }).pipe(Effect.mapError(toPersistenceSqlError("searchThread:sequence")));
+      return row.sequence ?? 0;
+    }),
+  );
+
   return {
     getCommandReadModel,
     getUserInputActivity,
@@ -3403,6 +3426,7 @@ pending_approval_requests AS (
     getShellSnapshot,
     getArchivedShellSnapshot,
     searchThreads,
+    searchThread,
     getSnapshotSequence,
     getCounts,
     getEventReplayStats,

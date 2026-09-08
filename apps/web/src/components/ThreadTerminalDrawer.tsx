@@ -45,7 +45,7 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
-import { type TerminalContextSelection } from "~/lib/terminalContext";
+import { type TerminalContextSelection } from "@t3tools/shared/terminalContext";
 import {
   observeSelectionActions,
   resolveSelectionActionPosition,

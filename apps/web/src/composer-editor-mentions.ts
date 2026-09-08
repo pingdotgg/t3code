@@ -3,7 +3,7 @@ import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
-} from "./lib/terminalContext";
+} from "@t3tools/shared/terminalContext";
 import {
   collectComposerInlineTokens,
   type ComposerInlineToken,

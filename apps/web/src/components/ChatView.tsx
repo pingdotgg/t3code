@@ -1,3 +1,4 @@
+import { useThreadFind } from "./chat/useThreadFind";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
@@ -45,7 +46,7 @@ import {
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
-import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import { type CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
   parseCodexFeedbackCommand,
@@ -278,14 +279,15 @@ import {
   formatTerminalContextLabel,
   type TerminalContextDraft,
   type TerminalContextSelection,
-} from "../lib/terminalContext";
+} from "@t3tools/shared/terminalContext";
 import {
   appendElementContextsToPrompt,
   type ElementContextDraft,
   formatElementContextLabel,
-} from "../lib/elementContext";
+} from "@t3tools/shared/elementContext";
 import { appendPreviewAnnotationPrompt } from "../lib/previewAnnotation";
-import { appendReviewCommentsToPrompt, type ReviewCommentContext } from "../reviewCommentContext";
+import { appendReviewCommentsToPrompt } from "../reviewCommentContext";
+import { type ReviewCommentContext } from "@t3tools/shared/reviewCommentText";
 import { environmentCatalog } from "../connection/catalog";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
@@ -324,6 +326,7 @@ import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ThreadFindBar } from "./chat/ThreadFindBar";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
@@ -472,6 +475,7 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -1483,9 +1487,9 @@ export default function ChatView(props: ChatViewProps) {
       loading: routeThreadState.page._tag === "Some" && routeThreadState.page.value.loadingOlder,
       cursor:
         routeThreadState.page._tag === "Some" ? routeThreadState.page.value.beforeCursor : null,
-      onLoadEarlier: () => {
-        requestOlderThreadTurns(routeThreadRef.environmentId, routeThreadRef.threadId);
-      },
+      onLoadEarlier: () =>
+        routeThreadState.status === "live" &&
+        requestOlderThreadTurns(routeThreadRef.environmentId, routeThreadRef.threadId),
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
@@ -6031,6 +6035,15 @@ export default function ChatView(props: ChatViewProps) {
     terminalUiOpenByThreadRef.current[activeThreadKey] = current;
   }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
 
+  const threadFind = useThreadFind({
+    thread: activeThreadRef,
+    serverSearch: isServerThread && serverConfig?.threadFind === true,
+    content: activeThread,
+    entries: timelineEntries,
+    history: loadEarlierTurns,
+  });
+  const { isOpen: isThreadFindActive, open: openThreadFind, close: closeThreadFind } = threadFind;
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -6049,6 +6062,14 @@ export default function ChatView(props: ChatViewProps) {
       }
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) {
+        return;
+      }
+      // Dismiss find before resolving Escape's global thread.stop binding.
+      if (isThreadFindActive && event.key === "Escape") {
+        if (event.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeThreadFind();
         return;
       }
       const shortcutContext = {
@@ -6131,6 +6152,13 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleTerminalVisibility();
+        return;
+      }
+
+      if (command === "chat.find") {
+        event.preventDefault();
+        event.stopPropagation();
+        openThreadFind();
         return;
       }
 
@@ -6277,6 +6305,9 @@ export default function ChatView(props: ChatViewProps) {
     supportsSettlement,
     confirmAndUnpinThread,
     copyActiveThreadReference,
+    openThreadFind,
+    closeThreadFind,
+    isThreadFindActive,
     previewPanelOpen,
     toggleRightPanel,
     toggleRightPanelMaximized,
@@ -8114,6 +8145,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
+            findBar={<ThreadFindBar {...threadFind.barProps} />}
           />
         </WorkspacePageHeader>
 
@@ -8174,6 +8206,7 @@ export default function ChatView(props: ChatViewProps) {
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}
+                {...threadFind.timelineProps}
                 latestTurn={activeLatestTurn}
                 runningTurnId={activeRunningTurnId}
                 turnDiffSummaries={activeThread.checkpoints}
@@ -8210,7 +8243,7 @@ export default function ChatView(props: ChatViewProps) {
               />
 
               {/* scroll to end pill — shown when user has scrolled away from the live edge */}
-              {showScrollToBottom && (
+              {showScrollToBottom && threadFind.timelineProps.searchEntries === null && (
                 <div
                   className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
                   style={{ bottom: scrollToEndClearance + 4 }}

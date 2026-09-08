@@ -4860,6 +4860,7 @@ describe("agent browser access", () => {
           }).pipe(Effect.orDie),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
+        searchThread: () => Effect.die("searchThread is not used in this test"),
         searchThreads: () => Effect.die("unused"),
       });
       const providerLayer = makeProviderServiceLive({

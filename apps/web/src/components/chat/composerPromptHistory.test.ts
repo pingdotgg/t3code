@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { appendElementContextsToPrompt } from "../../lib/elementContext";
+import { appendElementContextsToPrompt } from "@t3tools/shared/elementContext";
 import {
   appendTerminalContextsToPrompt,
   materializeInlineTerminalContextPrompt,
-} from "../../lib/terminalContext";
+} from "@t3tools/shared/terminalContext";
 import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
 import { buildPlanImplementationPrompt } from "../../proposedPlan";
 import {

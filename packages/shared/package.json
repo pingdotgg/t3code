@@ -278,6 +278,66 @@
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
+    },
+    "./codexArtifactTemplates": {
+      "types": "./src/codexArtifactTemplates.ts",
+      "import": "./src/codexArtifactTemplates.ts"
+    },
+    "./codexFileCitations": {
+      "types": "./src/codexFileCitations.ts",
+      "import": "./src/codexFileCitations.ts"
+    },
+    "./codexMarkdownDirectives": {
+      "types": "./src/codexMarkdownDirectives.ts",
+      "import": "./src/codexMarkdownDirectives.ts"
+    },
+    "./markdownGithubAlerts": {
+      "types": "./src/markdownGithubAlerts.ts",
+      "import": "./src/markdownGithubAlerts.ts"
+    },
+    "./markdownListIndentation": {
+      "types": "./src/markdownListIndentation.ts",
+      "import": "./src/markdownListIndentation.ts"
+    },
+    "./elementContext": {
+      "types": "./src/elementContext.ts",
+      "import": "./src/elementContext.ts"
+    },
+    "./terminalContext": {
+      "types": "./src/terminalContext.ts",
+      "import": "./src/terminalContext.ts"
+    },
+    "./previewAnnotationText": {
+      "types": "./src/previewAnnotationText.ts",
+      "import": "./src/previewAnnotationText.ts"
+    },
+    "./visibleMessageText": {
+      "types": "./src/visibleMessageText.ts",
+      "import": "./src/visibleMessageText.ts"
+    },
+    "./userMessageTerminalContexts": {
+      "types": "./src/userMessageTerminalContexts.ts",
+      "import": "./src/userMessageTerminalContexts.ts"
+    },
+    "./proposedPlanText": {
+      "types": "./src/proposedPlanText.ts",
+      "import": "./src/proposedPlanText.ts"
+    },
+    "./markdownPipeline": {
+      "types": "./src/markdownPipeline.ts",
+      "import": "./src/markdownPipeline.ts"
+    },
+    "./threadFindText": {
+      "types": "./src/threadFindText.ts",
+      "import": "./src/threadFindText.ts"
+    },
+    "./threadSearch": {
+      "types": "./src/threadSearch.ts",
+      "import": "./src/threadSearch.ts"
+    },
+    "./reviewCommentText": {
+      "types": "./src/reviewCommentText.ts",
+      "import": "./src/reviewCommentText.ts"
     }
   },
   "scripts": {
@@ -290,12 +350,23 @@
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
     "jose": "catalog:",
+    "mdast-util-directive": "^3.1.0",
+    "micromark-extension-directive": "^4.0.0",
+    "micromark-util-character": "^2.1.1",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "unified": "^11.0.5",
     "yaml": "catalog:"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
+    "micromark-util-types": "^2.0.2",
     "vite-plus": "catalog:"
   }
 }

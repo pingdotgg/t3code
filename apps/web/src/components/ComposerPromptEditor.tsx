@@ -71,7 +71,7 @@ import {
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
-} from "~/lib/terminalContext";
+} from "@t3tools/shared/terminalContext";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {

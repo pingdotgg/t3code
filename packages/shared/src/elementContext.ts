@@ -6,7 +6,7 @@ const ELEMENT_CONTEXT_STYLES_LIMIT = 4000;
 const ELEMENT_CONTEXT_LABEL_TAG_MAX = 24;
 
 const TRAILING_ELEMENT_CONTEXT_BLOCK_PATTERN =
-  /\n*<element_context>\n([\s\S]*?)\n<\/element_context>\s*$/;
+  /\n*<element_context>\n((?:(?!\n<\/element_context>)[\s\S])*)\n<\/element_context>\s*$/;
 
 /**
  * Stable, persistable element selection captured from the in-app preview

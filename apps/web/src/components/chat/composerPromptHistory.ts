@@ -1,6 +1,6 @@
-import { extractTrailingElementContexts } from "../../lib/elementContext";
+import { extractTrailingElementContexts } from "@t3tools/shared/elementContext";
 import { extractTrailingPreviewAnnotation } from "../../lib/previewAnnotation";
-import { extractTrailingTerminalContexts } from "../../lib/terminalContext";
+import { extractTrailingTerminalContexts } from "@t3tools/shared/terminalContext";
 import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
 
 /**

@@ -7,7 +7,7 @@ import {
   renderCodexDirectivesForCopy,
   renderCodexFileCitationsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
-} from "./codexMarkdownDirectives.js";
+} from "./codexMarkdownDirectives.ts";
 
 interface TestNode {
   readonly type: string;

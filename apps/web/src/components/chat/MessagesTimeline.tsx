@@ -8,7 +8,7 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
+import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import {
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
@@ -156,38 +156,33 @@ import {
   type TimelineLatestTurn,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
+import { type ThreadFindMatch } from "./threadFind";
+import { useThreadFindHighlights } from "./threadFindHighlights";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  deriveDisplayedUserMessageState,
-  type ParsedTerminalContextEntry,
-} from "~/lib/terminalContext";
-import {
-  extractTrailingElementContexts,
-  type ParsedElementContextEntry,
-} from "~/lib/elementContext";
-import {
-  extractTrailingPreviewAnnotation,
-  type ParsedPreviewAnnotation,
-} from "~/lib/previewAnnotation";
+import { type ParsedTerminalContextEntry } from "@t3tools/shared/terminalContext";
+import { type ParsedElementContextEntry } from "@t3tools/shared/elementContext";
+import { type ParsedPreviewAnnotation } from "~/lib/previewAnnotation";
+import { deriveDisplayedUserMessageContent } from "@t3tools/shared/visibleMessageText";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import {
   buildInlineTerminalContextText,
-  formatInlineTerminalContextLabel,
-  textContainsInlineTerminalContextLabels,
-} from "./userMessageTerminalContexts";
+  splitUserMessageTerminalContexts,
+} from "@t3tools/shared/userMessageTerminalContexts";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
+} from "../../reviewCommentContext";
+import {
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
-} from "../../reviewCommentContext";
+} from "@t3tools/shared/reviewCommentText";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -209,6 +204,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
+  findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
@@ -293,6 +289,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
     layout: true,
   },
 } as const satisfies MaintainScrollAtEndOptions;
+const FIND_MATCH_VIEW_MARGIN = 96;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -353,13 +350,69 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
+  searchEntries?: ReturnType<typeof deriveTimelineEntries> | null;
+  onCloseSearch?: () => void;
+  findQuery?: string;
+  activeFindMatch?: ThreadFindMatch | null;
+  findNavigationId?: number;
 }
 
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
 // ---------------------------------------------------------------------------
 
-export const MessagesTimeline = memo(function MessagesTimeline({
+export function MessagesTimeline(props: MessagesTimelineProps) {
+  const searchListRef = useRef<LegendListRef | null>(null);
+  const searchEntries = props.searchEntries;
+  const searching = searchEntries != null;
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        className={
+          searching ? "invisible absolute inset-0 flex flex-col" : "flex min-h-0 flex-1 flex-col"
+        }
+        inert={searching}
+      >
+        <ConversationTimeline
+          {...props}
+          findQuery={searching ? "" : (props.findQuery ?? "")}
+          activeFindMatch={searching ? null : (props.activeFindMatch ?? null)}
+          liveFollowEnabled={!searching && props.liveFollowEnabled}
+        />
+      </div>
+      {searchEntries && (
+        <>
+          <div className="flex items-center gap-3 border-b bg-background px-4 py-2 text-xs text-muted-foreground">
+            <span>Search result · nearby messages</span>
+            <Button variant="ghost" size="xs" onClick={props.onCloseSearch}>
+              Return to conversation
+            </Button>
+          </div>
+          <ConversationTimeline
+            {...props}
+            listRef={searchListRef}
+            timelineEntries={searchEntries}
+            loadEarlier={null}
+            citationRequest={null}
+            anchorMessageId={null}
+            latestTurn={null}
+            runningTurnId={null}
+            turnDiffSummaries={[]}
+            supportsConversationRollback={false}
+            isWorking={false}
+            isPreparingWorktree={false}
+            isCompacting={false}
+            liveFollowEnabled={false}
+            onIsAtEndChange={NOOP_OPEN_AGENTS}
+            onContentOverflowChange={NOOP_OPEN_AGENTS}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -400,6 +453,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  findQuery = "",
+  activeFindMatch = null,
+  findNavigationId = 0,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
@@ -419,6 +475,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
+  const normalizedFindQuery = findQuery.trim();
+  const findActive = normalizedFindQuery.length > 0;
+
   useEffect(() => {
     return () => {
       if (disclosureSettleFrameRef.current !== null) {
@@ -531,6 +590,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
   }, [latestTurn]);
 
+  const activeFindTurnId = activeFindMatch?.turnId;
+  const visibleExpandedTurnIds = useMemo(() => {
+    if (!activeFindTurnId || expandedTurnIds.has(activeFindTurnId)) {
+      return expandedTurnIds;
+    }
+    return new Set(expandedTurnIds).add(activeFindTurnId);
+  }, [activeFindTurnId, expandedTurnIds]);
+
   const rowsProjectionRef = useRef<{
     threadKey: string;
     workspaceRoot: string | undefined;
@@ -543,7 +610,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         timelineEntries,
         latestTurn,
         runningTurnId,
-        expandedTurnIds,
+        expandedTurnIds: visibleExpandedTurnIds,
         expandedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
@@ -563,7 +630,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelineEntries,
     latestTurn,
     runningTurnId,
-    expandedTurnIds,
+    visibleExpandedTurnIds,
     expandedWorkGroupIds,
     isWorking,
     activeTurnStartedAt,
@@ -735,6 +802,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      findActive,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -759,6 +827,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onUseArtifactTemplate,
+      findActive,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -781,6 +850,63 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [isCompacting, isRevertingCheckpoint, isWorking, isPreparingWorktree, latestTurn?.turnId],
   );
+
+  const activeFindMatchKey = activeFindMatch
+    ? `${findNavigationId}:${normalizedFindQuery}:${activeFindMatch.entryId}:${activeFindMatch.occurrence}`
+    : null;
+  const revealActiveFindRange = useCallback(
+    (range: Range | null) => {
+      if (!range) return;
+
+      const matchRect = range.getBoundingClientRect();
+      const viewportRect = timelineViewportElement?.getBoundingClientRect();
+      if (!viewportRect || matchRect.height === 0) return;
+
+      const topBoundary = viewportRect.top + FIND_MATCH_VIEW_MARGIN;
+      const bottomBoundary =
+        viewportRect.bottom - FIND_MATCH_VIEW_MARGIN - contentInsetEndAdjustment;
+      let delta = 0;
+      if (matchRect.top < topBoundary) delta = matchRect.top - topBoundary;
+      else if (matchRect.bottom > bottomBoundary) delta = matchRect.bottom - bottomBoundary;
+      if (Math.abs(delta) < 1) return;
+
+      const currentScroll = listRef.current?.getState?.().scroll;
+      if (typeof currentScroll === "number") {
+        listRef.current?.scrollToOffset({ offset: currentScroll + delta, animated: false });
+      }
+    },
+    [contentInsetEndAdjustment, listRef, timelineViewportElement],
+  );
+
+  const navigatedFindMatchKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!activeFindMatch || !activeFindMatchKey) {
+      navigatedFindMatchKeyRef.current = null;
+      return;
+    }
+
+    const rowIndex = rows.findIndex((row) => row.id === activeFindMatch.entryId);
+    if (rowIndex === -1) return;
+
+    if (navigatedFindMatchKeyRef.current === activeFindMatchKey) return;
+    navigatedFindMatchKeyRef.current = activeFindMatchKey;
+
+    onManualNavigation();
+    void listRef.current?.scrollToIndex({
+      index: rowIndex,
+      animated: false,
+      viewOffset: FIND_MATCH_VIEW_MARGIN,
+    });
+  }, [activeFindMatch, activeFindMatchKey, listRef, onManualNavigation, rows]);
+
+  useThreadFindHighlights({
+    container: timelineViewportElement,
+    query: normalizedFindQuery,
+    activeRowId: activeFindMatch?.entryId ?? null,
+    activeOccurrence: activeFindMatch?.occurrence ?? 0,
+    onActiveRange: revealActiveFindRange,
+  });
 
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
@@ -1323,21 +1449,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-  const terminalContexts = displayedUserMessage.contexts;
-  const previewAnnotations: ParsedPreviewAnnotation[] = [];
-  let visibleText = displayedUserMessage.visibleText;
-  while (true) {
-    const extracted = extractTrailingPreviewAnnotation(visibleText);
-    if (!extracted.annotation) break;
-    previewAnnotations.unshift(extracted.annotation);
-    visibleText = extracted.promptText;
-  }
-  const elementContextState = extractTrailingElementContexts(visibleText);
-  const elementContexts = [
-    ...displayedUserMessage.elementContexts,
-    ...elementContextState.contexts,
-  ];
+  const displayedUserMessage = deriveDisplayedUserMessageContent(row.message.text);
+  const terminalContexts = displayedUserMessage.terminalContexts;
+  const previewAnnotations = displayedUserMessage.previewAnnotations;
+  const elementContexts = displayedUserMessage.elementContexts;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
@@ -1493,10 +1608,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ) : null}
         <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
+          text={displayedUserMessage.visibleText}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
+          expandForFind={ctx.findActive}
         />
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
@@ -1575,24 +1691,26 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <AssistantCitationSource
-          messageId={row.message.id}
-          {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-          itemKey={row.id}
-          request={ctx.citationRequest}
-          listRef={ctx.listRef}
-        >
-          <ChatMarkdown
-            text={messageText}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            isStreaming={Boolean(row.message.streaming)}
-            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-            skills={ctx.skills}
-            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-            onImageExpand={ctx.onImageExpand}
-          />
-        </AssistantCitationSource>
+        <div data-thread-find-text="true">
+          <AssistantCitationSource
+            messageId={row.message.id}
+            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+            itemKey={row.id}
+            request={ctx.citationRequest}
+            listRef={ctx.listRef}
+          >
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onImageExpand={ctx.onImageExpand}
+            />
+          </AssistantCitationSource>
+        </div>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
@@ -1711,6 +1829,7 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        expandForFind={ctx.findActive}
       />
     </div>
   );
@@ -2272,7 +2391,11 @@ const UserMessageTerminalContextInlineLabel = memo(
         ? `${props.context.header}\n${props.context.body}`
         : props.context.header;
 
-    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
+    return (
+      <span data-thread-find-ignore="true">
+        <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />
+      </span>
+    );
   },
 );
 
@@ -2369,15 +2492,17 @@ function shouldCollapseUserMessage(text: string): boolean {
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
-  terminalContexts: ParsedTerminalContextEntry[];
+  terminalContexts: ReadonlyArray<ParsedTerminalContextEntry>;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
+  expandForFind?: boolean;
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
+  const isCollapsed = canCollapse && !expanded && !props.expandForFind;
+  const showCollapseControl = canCollapse && !props.expandForFind;
 
   return (
     <div>
@@ -2385,6 +2510,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
         <div
           className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
           data-user-message-body="true"
+          data-thread-find-text="true"
           data-user-message-collapsed={isCollapsed ? "true" : "false"}
           data-user-message-collapsible={canCollapse ? "true" : "false"}
           data-user-message-fade={isCollapsed ? "true" : "false"}
@@ -2405,15 +2531,15 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           />
         </div>
       ) : null}
-      {canCollapse || props.footer ? (
+      {showCollapseControl || props.footer ? (
         <div
           className={cn(
             "mt-1.5 flex items-center gap-2",
-            canCollapse && props.footer ? "justify-between" : "justify-end",
+            showCollapseControl && props.footer ? "justify-between" : "justify-end",
           )}
           data-user-message-footer="true"
         >
-          {canCollapse ? (
+          {showCollapseControl ? (
             <Button
               type="button"
               size="xs"
@@ -2437,7 +2563,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
-  terminalContexts: ParsedTerminalContextEntry[];
+  terminalContexts: ReadonlyArray<ParsedTerminalContextEntry>;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
 }) {
@@ -2498,58 +2624,26 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   }
 
   if (props.terminalContexts.length > 0) {
-    const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
-      props.text,
-      props.terminalContexts,
-    );
-    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
-    const inlineNodes: ReactNode[] = [];
-
-    if (hasEmbeddedInlineLabels) {
-      let cursor = 0;
-
-      for (const context of props.terminalContexts) {
-        const label = formatInlineTerminalContextLabel(context.header);
-        const matchIndex = props.text.indexOf(label, cursor);
-        if (matchIndex === -1) {
-          inlineNodes.length = 0;
-          break;
-        }
-        if (matchIndex > cursor) {
-          inlineNodes.push(
-            renderInlineMarkdownSegment(
-              props.text.slice(cursor, matchIndex),
-              `user-terminal-context-inline-before:${context.header}:${cursor}`,
+    const segments = splitUserMessageTerminalContexts(props.text, props.terminalContexts);
+    if (segments !== null) {
+      return (
+        <div className="whitespace-pre-wrap wrap-break-word text-message-foreground text-sm leading-relaxed">
+          {segments.map((segment) =>
+            segment.kind === "text" ? (
+              renderInlineMarkdownSegment(segment.text, `text:${segment.start}`)
+            ) : (
+              <UserMessageTerminalContextInlineLabel
+                key={`terminal:${segment.start}`}
+                context={segment.context}
+              />
             ),
-          );
-        }
-        inlineNodes.push(
-          <UserMessageTerminalContextInlineLabel
-            key={`user-terminal-context-inline:${context.header}`}
-            context={context}
-          />,
-        );
-        cursor = matchIndex + label.length;
-      }
-
-      if (inlineNodes.length > 0) {
-        if (cursor < props.text.length) {
-          inlineNodes.push(
-            renderInlineMarkdownSegment(
-              props.text.slice(cursor),
-              `user-message-terminal-context-inline-rest:${cursor}`,
-            ),
-          );
-        }
-
-        return (
-          <div className="whitespace-pre-wrap wrap-break-word text-message-foreground text-sm leading-relaxed">
-            {inlineNodes}
-          </div>
-        );
-      }
+          )}
+        </div>
+      );
     }
 
+    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+    const inlineNodes: ReactNode[] = [];
     for (const context of props.terminalContexts) {
       inlineNodes.push(
         <UserMessageTerminalContextInlineLabel
@@ -2615,7 +2709,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
 
   return (
     <div className="space-y-2 rounded-lg border border-border/70 bg-background/70 p-3">
-      <div className="space-y-1">
+      <div className="space-y-1" data-thread-find-ignore>
         <div className="text-message-foreground text-xs font-medium">
           {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
@@ -2628,36 +2722,38 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           <SkillInlineText text={comment.text} skills={ctx.skills} />
         </div>
       )}
-      {fenceLanguage !== "diff" && comment.diff.trim().length > 0 && (
-        <ChatMarkdown
-          text={formatReviewCommentFence(fenceLanguage, comment.diff)}
-          cwd={ctx.markdownCwd}
-          threadRef={ctx.threadRef ?? undefined}
-          skills={ctx.skills}
-          className="text-message-foreground"
-        />
-      )}
-      {renderablePatch?.kind === "files" && (
-        <DiffWorkerPoolProvider>
-          {renderablePatch.files.map((fileDiff) => (
-            <FileDiff
-              key={resolveFileDiffPath(fileDiff)}
-              fileDiff={fileDiff}
-              options={{
-                collapsed: false,
-                diffStyle: "unified",
-                theme: resolveDiffThemeName(ctx.resolvedTheme),
-                preferredHighlighter: PREFERRED_HIGHLIGHTER,
-              }}
-            />
-          ))}
-        </DiffWorkerPoolProvider>
-      )}
-      {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
-          {renderablePatch.text}
-        </pre>
-      )}
+      <div className="space-y-2 empty:hidden" data-thread-find-ignore>
+        {fenceLanguage !== "diff" && comment.diff.trim().length > 0 && (
+          <ChatMarkdown
+            text={formatReviewCommentFence(fenceLanguage, comment.diff)}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            skills={ctx.skills}
+            className="text-message-foreground"
+          />
+        )}
+        {renderablePatch?.kind === "files" && (
+          <DiffWorkerPoolProvider>
+            {renderablePatch.files.map((fileDiff) => (
+              <FileDiff
+                key={resolveFileDiffPath(fileDiff)}
+                fileDiff={fileDiff}
+                options={{
+                  collapsed: false,
+                  diffStyle: "unified",
+                  theme: resolveDiffThemeName(ctx.resolvedTheme),
+                  preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                }}
+              />
+            ))}
+          </DiffWorkerPoolProvider>
+        )}
+        {renderablePatch?.kind === "raw" && (
+          <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
+            {renderablePatch.text}
+          </pre>
+        )}
+      </div>
     </div>
   );
 }

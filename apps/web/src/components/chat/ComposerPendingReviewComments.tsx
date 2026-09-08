@@ -7,7 +7,7 @@ import {
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
 } from "../composerInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { ReviewCommentContext } from "~/reviewCommentContext";
+import type { ReviewCommentContext } from "@t3tools/shared/reviewCommentText";
 import { cn } from "~/lib/utils";
 
 interface ComposerPendingReviewCommentsProps {

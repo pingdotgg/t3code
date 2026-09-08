@@ -2,7 +2,7 @@ import {
   type TerminalContextDraft,
   formatTerminalContextLabel,
   isTerminalContextExpired,
-} from "~/lib/terminalContext";
+} from "@t3tools/shared/terminalContext";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 
 interface ComposerPendingTerminalContextChipProps {

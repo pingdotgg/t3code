@@ -12,11 +12,8 @@ import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react"
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { fnv1a32 } from "~/lib/diffRendering";
-import {
-  buildDiffReviewComment,
-  restoreDiffReviewCommentRange,
-  type ReviewCommentContext,
-} from "~/reviewCommentContext";
+import { buildDiffReviewComment, restoreDiffReviewCommentRange } from "~/reviewCommentContext";
+import { type ReviewCommentContext } from "@t3tools/shared/reviewCommentText";
 
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";

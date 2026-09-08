@@ -2165,6 +2165,19 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         )
       `;
 
+      const withinThread = yield* snapshotQuery.searchThread({
+        threadId: ThreadId.make("thread-active"),
+        query: "interim needle",
+      });
+      assert.equal(withinThread.totalMatches, 1);
+      assert.equal(withinThread.match?.source, "message");
+      assert.equal(
+        (yield* snapshotQuery.searchThread({
+          threadId: ThreadId.make("thread-active"),
+          query: "system needle",
+        })).totalMatches,
+        0,
+      );
       const literalPercent = yield* snapshotQuery.searchThreads({ query: "100%" });
       assert.deepStrictEqual(
         literalPercent.matches.map((match) => [match.threadId, match.source]),
@@ -3256,6 +3269,39 @@ projectionSnapshotLayer("ProjectionSnapshotQuery imported sources", (it) => {
         WHERE thread_id = ${imported.threadId}
       `;
       assert.deepEqual(yield* query.getImportedAgentSessionSources(projectId), [imported, valid]);
+    }),
+  );
+});
+
+projectionSnapshotLayer("ThreadFindLifecycle", (it) => {
+  it.effect("invalidates search when a deleted thread ID is recreated", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("recreated-search-thread");
+      const at = "2026-06-01T00:00:00.000Z";
+      yield* sql`DELETE FROM orchestration_events`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, created_at, updated_at)
+        VALUES (${threadId}, 'project', 'Find', '{"provider":"codex","model":"gpt-5"}', ${at}, ${at})`;
+      yield* sql`INSERT INTO projection_thread_messages (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+        VALUES ('recreated-message', ${threadId}, 'assistant', 'needle', 0, ${at}, ${at})`;
+      const event = (sequence: number, type: string) => sql`INSERT INTO orchestration_events
+        (sequence, event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json)
+        VALUES (${sequence}, ${`search-event-${sequence}`}, 'thread', ${threadId}, ${sequence}, ${type}, ${at}, 'client', '{}', '{}')`;
+      yield* event(1, "thread.message-sent");
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at) VALUES (${projector}, 1, ${at})`;
+      }
+      assert.equal((yield* query.searchThread({ threadId, query: "needle" })).totalMatches, 1);
+      yield* event(2, "thread.deleted");
+      yield* event(3, "thread.created");
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+      yield* sql`UPDATE projection_state SET last_applied_sequence = 3`;
+      const result = yield* query.searchThread({ threadId, query: "needle" });
+      assert.equal(result.threadSequence, 3);
+      assert.equal(result.totalMatches, 0);
+      assert.equal(result.match, null);
     }),
   );
 });

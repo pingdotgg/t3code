@@ -33,6 +33,7 @@ import {
   IRIS_THEME,
   OCEAN_THEME,
   updateCustomTheme,
+  updateThemeColorFamily,
   CUSTOM_THEMES_STORAGE_KEY,
   createVividThemeColors,
   getDefaultThemeColors,
@@ -90,6 +91,68 @@ describe("theme files", () => {
     }
   });
 
+  it("keeps built-in and standard search pairs readable and distinct", () => {
+    const palettes = [
+      getStandardThemeColors("light"),
+      getStandardThemeColors("dark"),
+      ...BUILT_IN_THEMES.flatMap((theme) => [theme.colors, ...Object.values(theme.variants ?? {})]),
+    ];
+    for (const colors of palettes) {
+      expect(
+        contrastRatio(colors.searchMatchForeground, colors.searchMatchBackground),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(colors.searchMatchActiveForeground, colors.searchMatchActiveBackground),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(asHex(colors.searchMatchBackground)).not.toBe(
+        asHex(colors.searchMatchActiveBackground),
+      );
+    }
+  });
+
+  it("round-trips custom search colours and fills them in for older theme files", () => {
+    const legacy = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Legacy",
+      appearance: "dark",
+      colors: { canvas: "#101010" },
+    });
+    expect(legacy.colors.searchMatchBackground).toBe(
+      getDefaultThemeColors("dark").searchMatchBackground,
+    );
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Search",
+      appearance: "dark",
+      colors: {
+        searchMatchBackground: "#224466",
+        searchMatchForeground: "#ffffff",
+        searchMatchActiveBackground: "#aaddff",
+        searchMatchActiveForeground: "#112233",
+      },
+      variants: { light: { searchMatchBackground: "#ddeeff", searchMatchForeground: "#112233" } },
+    });
+    const restored = parseThemeFile(JSON.parse(serializeThemeFile(theme)));
+    expect(restored.colors).toEqual(theme.colors);
+    expect(restored.variants).toEqual(theme.variants);
+  });
+
+  it.each(["searchMatchBackground", "searchMatchActiveBackground"] as const)(
+    "editing %s derives readable text without changing the other match or warning colours",
+    (role) => {
+      const original = getDefaultThemeColors("dark");
+      const foreground =
+        role === "searchMatchBackground" ? "searchMatchForeground" : "searchMatchActiveForeground";
+      for (const value of ["#ffffff", "#000000", "#33669980"]) {
+        const updated = updateThemeColorFamily("dark", original, role, value);
+        expect(contrastRatio(updated[foreground], updated[role])).toBeGreaterThanOrEqual(4.5);
+        for (const key of Object.keys(original) as Array<keyof typeof original>) {
+          if (key !== role && key !== foreground) expect(updated[key]).toBe(original[key]);
+        }
+      }
+    },
+  );
+
   it("keeps stock dark controls in the neutral-black surface hierarchy", () => {
     expectThemeColors(getStandardThemeColors("dark"), {
       canvas: "#0a0a0a",
@@ -140,6 +203,12 @@ describe("theme files", () => {
       );
       expect(colors.secondaryLabel).toBe(colors.textMuted);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(colors.searchMatchForeground, colors.searchMatchBackground),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(colors.searchMatchActiveForeground, colors.searchMatchActiveBackground),
+      ).toBeGreaterThanOrEqual(4.5);
       expect(
         contrastRatio(colors.messageActionForeground, colors.messageAction),
       ).toBeGreaterThanOrEqual(4.5);

@@ -46,20 +46,23 @@ import {
   type TerminalContextDraft,
   ensureInlineTerminalContextPlaceholders,
   normalizeTerminalContextText,
-} from "./lib/terminalContext";
+} from "@t3tools/shared/terminalContext";
 import {
   type ElementContextDraft,
   type ElementContextSelection,
   elementContextDedupKey,
   newElementContextId,
-} from "./lib/elementContext";
+} from "@t3tools/shared/elementContext";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
-import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
+import {
+  ReviewCommentContextSchema,
+  type ReviewCommentContext,
+} from "@t3tools/shared/reviewCommentText";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
