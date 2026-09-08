@@ -2432,7 +2432,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("composer-send-key")}
-          description={`Shift+Enter always starts a new line. Requiring ${MOD_KEY_LABEL}+Enter keeps a stray Enter from sending an unfinished prompt.`}
+          description={`Set the prompt sending key to ${MOD_KEY_LABEL}+Enter to keep a stray Enter from sending an unfinished prompt.`}
           resetAction={
             settings.composerSendKey !== DEFAULT_UNIFIED_SETTINGS.composerSendKey ? (
               <SettingResetButton
