@@ -72,6 +72,26 @@ struct NativeThreadMetadataTests {
     }
 
     @Test
+    func settlingAndMetadataUpdatesKeepAnActiveTitleRegeneration() throws {
+        var source = thread()
+        source.titleRegeneration = ThreadTitleRegeneration(
+            requestId: "command-regenerate", startedAt: "2026-09-06T19:30:00Z"
+        )
+        let settled = NativeThreadDetailReducer.apply(event(
+            type: "thread.settled",
+            payload: ["settledAt": .string("2026-09-06T20:00:00Z")]
+        ), to: source)
+        guard case let .updated(afterSettle) = settled.result else {
+            Issue.record("Expected settlement without a reload")
+            return
+        }
+        #expect(afterSettle.titleRegeneration == source.titleRegeneration)
+
+        let reordered = try reduce(["activeOrderKey": .string("nm")], thread: afterSettle)
+        #expect(reordered.titleRegeneration == source.titleRegeneration)
+    }
+
+    @Test
     func ordinaryThreadEventsPreservePRAndManualOrder() throws {
         var source = thread()
         source.branchPullRequest = reference()
