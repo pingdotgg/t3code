@@ -105,8 +105,9 @@ export function DeviceStreamView(props: {
     props.visible,
   ]);
 
+  // Displayed aspect ratio (width / height) of the device as the user sees it.
   const aspect = useMemo(() => {
-    if (!screen) return props.platform === "ios" ? "9 / 19.5" : "9 / 20";
+    if (!screen) return props.platform === "ios" ? 9 / 19.5 : 9 / 20;
     const landscape =
       screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
     const w = landscape
@@ -115,8 +116,38 @@ export function DeviceStreamView(props: {
     const h = landscape
       ? Math.min(screen.width, screen.height)
       : Math.max(screen.width, screen.height);
-    return `${w} / ${h}`;
+    return w / h;
   }, [props.platform, screen]);
+
+  // The frame is the largest box at `aspect` that fits the container, so a
+  // narrow panel shows a shorter phone rather than a squeezed one. CSS
+  // `aspect-ratio` alone cannot do this: with the height pinned to 100% the
+  // width clamp wins and distorts the drawn frame.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [host, setHost] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const element = hostRef.current;
+    if (!element) return;
+    const update = () => {
+      const rect = element.getBoundingClientRect();
+      setHost((current) =>
+        current.width === rect.width && current.height === rect.height
+          ? current
+          : { width: rect.width, height: rect.height },
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const frame = useMemo(() => {
+    if (host.width === 0 || host.height === 0) return { width: 0, height: 0 };
+    const byHeight = { width: host.height * aspect, height: host.height };
+    return byHeight.width <= host.width
+      ? byHeight
+      : { width: host.width, height: host.width / aspect };
+  }, [aspect, host]);
 
   // serve-sim streams the raw framebuffer; rotate the display for a device
   // that reports landscape while its frames stay portrait.
@@ -134,6 +165,26 @@ export function DeviceStreamView(props: {
     }
   }, [props.platform, screen]);
 
+  // A sideways rotation draws the raw portrait frame into a landscape box:
+  // the media element takes the transposed size and is rotated about the
+  // box's center.
+  const sideways = rotation === 90 || rotation === -90;
+  const mediaStyle: React.CSSProperties = sideways
+    ? {
+        width: frame.height,
+        height: frame.width,
+        left: (frame.width - frame.height) / 2,
+        top: (frame.height - frame.width) / 2,
+        transform: `rotate(${rotation}deg)`,
+      }
+    : {
+        width: frame.width,
+        height: frame.height,
+        left: 0,
+        top: 0,
+        ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
+      };
+
   const pointerActive = useRef(false);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -147,6 +198,7 @@ export function DeviceStreamView(props: {
 
   return (
     <div
+      ref={hostRef}
       className="relative flex size-full items-center justify-center overflow-hidden bg-black/90 outline-none"
       tabIndex={0}
       role="application"
@@ -161,12 +213,8 @@ export function DeviceStreamView(props: {
       }}
     >
       <div
-        className="relative max-h-full max-w-full select-none"
-        style={{
-          aspectRatio: aspect,
-          height: rotation === 0 || rotation === 180 ? "100%" : undefined,
-          width: rotation === 90 || rotation === -90 ? "100%" : undefined,
-        }}
+        className="relative select-none"
+        style={{ width: frame.width, height: frame.height }}
         onPointerDown={(event) => {
           event.currentTarget.setPointerCapture(event.pointerId);
           (event.currentTarget.parentElement as HTMLElement | null)?.focus();
@@ -194,8 +242,8 @@ export function DeviceStreamView(props: {
       >
         <canvas
           ref={canvasRef}
-          className={cn("size-full", mjpegUrl && "hidden")}
-          style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
+          className={cn("absolute", mjpegUrl && "hidden")}
+          style={mediaStyle}
         />
         {mjpegUrl ? (
           <img
@@ -203,8 +251,8 @@ export function DeviceStreamView(props: {
             src={mjpegUrl}
             alt=""
             draggable={false}
-            className="size-full object-contain"
-            style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
+            className="absolute object-contain"
+            style={mediaStyle}
           />
         ) : null}
       </div>
