@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
+  EnvironmentId,
   SourceControlCliCommand,
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
@@ -22,6 +23,7 @@ import {
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -362,14 +364,17 @@ function DiscoveryItemRow({
 }
 
 function HostingCliPathSettings({
+  environmentId,
   command,
   label,
 }: {
+  /** The executable is server-local, so it is read and written where discovery ran. */
+  readonly environmentId: EnvironmentId;
   readonly command: SourceControlCliCommand;
   readonly label: string;
 }) {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const savedPath = settings.sourceControlCliPaths[command];
   const [draft, setDraft] = useState(savedPath);
   const [lastSavedPath, setLastSavedPath] = useState(savedPath);
@@ -448,15 +453,18 @@ function HostingCliPathSettings({
   );
 }
 
-/** Only the primary environment's settings are writable from this screen. */
+/**
+ * The hosted app has no primary environment, so gating on one would leave
+ * remote-only users looking at an unavailable provider they cannot configure.
+ */
 function hostingCliPathField(
   kind: SourceControlProviderKind,
   label: string,
-  isPrimaryEnvironment: boolean,
+  environmentId: EnvironmentId | null,
 ) {
   const command = SOURCE_CONTROL_PROVIDER_CLI[kind];
-  if (!command || !isPrimaryEnvironment) return undefined;
-  return <HostingCliPathSettings command={command} label={label} />;
+  if (!command || environmentId === null) return undefined;
+  return <HostingCliPathSettings environmentId={environmentId} command={command} label={label} />;
 }
 
 function GitFetchIntervalSettings() {
@@ -718,12 +726,12 @@ export function SourceControlSettingsPanel() {
                     key={`provider:${item.kind}`}
                     item={item}
                     expandForSearchTarget={
-                      SOURCE_CONTROL_PROVIDER_CLI[item.kind] && isPrimaryEnvironment
+                      SOURCE_CONTROL_PROVIDER_CLI[item.kind] && environmentId !== null
                         ? searchableSetting("hosting-cli-path").id
                         : undefined
                     }
                   >
-                    {hostingCliPathField(item.kind, item.label, isPrimaryEnvironment)}
+                    {hostingCliPathField(item.kind, item.label, environmentId)}
                   </DiscoveryItemRow>
                 ))}
               </SettingsSection>
