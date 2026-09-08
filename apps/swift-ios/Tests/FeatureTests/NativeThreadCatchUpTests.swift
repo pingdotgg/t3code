@@ -24,6 +24,201 @@ final class NativeThreadCatchUpTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testLegacyBurstCoalescesUntilExplicitMarker() async throws {
+        for capability: Bool? in [nil, false] {
+            let clock = CatchUpPublicationClock()
+            let fixture = try await CatchUpFixture.make(
+                completionMarker: capability, detailPublicationSleep: { try await clock.wait() }
+            )
+            defer { fixture.cleanUp() }
+            do {
+                var requests = fixture.requests.makeAsyncIterator()
+                var events = fixture.client.events().makeAsyncIterator()
+                _ = try await fixture.client.loadThread(id: fixture.firstID)
+                let detail = try await nextThreadRequest(&requests)
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await detail.sendBurst(count: 100, includeMarker: true)
+                var publications = 0
+                var sawLive = false
+                var finalText: String?
+                while let event = await events.next(isolation: #isolation) {
+                    switch event {
+                    case let .detail(value), let .detailDelta(value, _):
+                        guard value.thread.id == fixture.firstID else { continue }
+                        publications += 1
+                        finalText = value.messages.last?.text
+                    case .threadSync(fixture.firstID, .live):
+                        XCTAssertEqual(publications, 1)
+                        XCTAssertEqual(finalText, String(repeating: "x", count: 100))
+                        sawLive = true
+                        break
+                    default: continue
+                    }
+                    if case .threadSync(fixture.firstID, .live) = event { break }
+                }
+                try Task.checkCancellation()
+                XCTAssertTrue(sawLive)
+                XCTAssertEqual(finalText, String(repeating: "x", count: 100))
+            } catch {
+                await clock.release()
+                await fixture.client.disconnect()
+                throw error
+            }
+            await clock.release()
+            await fixture.client.disconnect()
+        }
+    }
+
+    func testLegacyMarkerlessFinalPublishesWhenClockReleases() async throws {
+        for capability: Bool? in [nil, false] {
+            let clock = CatchUpPublicationClock()
+            let fixture = try await CatchUpFixture.make(
+                completionMarker: capability, detailPublicationSleep: { try await clock.wait() }
+            )
+            defer { fixture.cleanUp() }
+            do {
+                var requests = fixture.requests.makeAsyncIterator()
+                var events = fixture.client.events().makeAsyncIterator()
+                var entries = clock.entries.makeAsyncIterator()
+                _ = try await fixture.client.loadThread(id: fixture.firstID)
+                let detail = try await nextThreadRequest(&requests)
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await detail.sendBurst(count: 1, includeMarker: false)
+                guard await entries.next(isolation: #isolation) != nil else { throw CancellationError() }
+                await clock.release()
+                var foundFinal = false
+                while let event = await events.next(isolation: #isolation) {
+                    if case .threadSync(fixture.firstID, .live) = event {
+                        XCTFail("An already live legacy event must not emit another live status")
+                    }
+                    switch event {
+                    case let .detail(value), let .detailDelta(value, _):
+                        guard value.thread.id == fixture.firstID else { continue }
+                        XCTAssertEqual(value.messages.last?.text, "x")
+                        foundFinal = true
+                    default: continue
+                    }
+                    if foundFinal { break }
+                }
+                try Task.checkCancellation()
+                XCTAssertTrue(foundFinal)
+            } catch {
+                await clock.release()
+                await fixture.client.disconnect()
+                throw error
+            }
+            await fixture.client.disconnect()
+        }
+    }
+
+    func testLegacyBufferedFinalPrecedesShellDone() async throws {
+        for shellSequence in [3, 10] {
+            let clock = CatchUpPublicationClock()
+            let fixture = try await CatchUpFixture.make(
+                completionMarker: nil, detailPublicationSleep: { try await clock.wait() }
+            )
+            defer { fixture.cleanUp() }
+            do {
+                var requests = fixture.requests.makeAsyncIterator()
+                let shell = try await nextShellRequest(&requests)
+                var events = fixture.client.events().makeAsyncIterator()
+                var entries = clock.entries.makeAsyncIterator()
+                _ = try await fixture.client.loadThread(id: fixture.firstID)
+                let detail = try await nextThreadRequest(&requests)
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await detail.sendBurst(count: 1, includeMarker: false)
+                guard await entries.next(isolation: #isolation) != nil else { throw CancellationError() }
+                try await shell.completeShell(sequence: shellSequence, assistantMessageID: "burst-message")
+                var reachedDone = false
+                while let event = await events.next(isolation: #isolation) {
+                    switch event {
+                    case let .detail(value), let .detailDelta(value, _):
+                        guard value.thread.id == fixture.firstID else { continue }
+                        if value.thread.state == .completed {
+                            XCTAssertEqual(value.messages.last?.text, "x")
+                            reachedDone = true
+                        }
+                    default: continue
+                    }
+                    if reachedDone { break }
+                }
+                try Task.checkCancellation()
+                XCTAssertTrue(reachedDone)
+            } catch {
+                await clock.release()
+                await fixture.client.disconnect()
+                throw error
+            }
+            await clock.release()
+            await fixture.client.disconnect()
+        }
+    }
+
+    func testDelayedCompletedShellPreservesNewerRunningDetailAndBackgroundLiveness() async throws {
+        for background: String? in [nil, "working"] {
+            let receipts = AsyncStream<Int>.makeStream()
+            let fixture = try await CatchUpFixture.make(aggregateRefreshReceipt: { receipt in
+                if case let .shellApplied("one", sequence) = receipt { receipts.continuation.yield(sequence) }
+            })
+            defer { fixture.cleanUp() }
+            do {
+                var requests = fixture.requests.makeAsyncIterator()
+                var applied = receipts.stream.makeAsyncIterator()
+                let shell = try await nextShellRequest(&requests)
+                try await shell.completeShell(sequence: 10, assistantMessageID: nil)
+                while let sequence = await applied.next(isolation: #isolation) {
+                    if sequence == 10 { break }
+                }
+                try Task.checkCancellation()
+                var events = fixture.client.events().makeAsyncIterator()
+                _ = try await fixture.client.loadThread(id: fixture.firstID)
+                let detail = try await nextThreadRequest(&requests)
+                try await detail.synchronize()
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await detail.runningTurnSnapshot(sequence: 12)
+                var latest: FeatureThreadDetail?
+                while let event = await events.next(isolation: #isolation) {
+                    switch event {
+                    case let .detail(value), let .detailDelta(value, _): latest = value
+                    case .threadSync(fixture.firstID, .live): break
+                    default: continue
+                    }
+                    if case .threadSync(fixture.firstID, .live) = event { break }
+                }
+                XCTAssertEqual(latest?.thread.state, .working)
+                let startedAt = try XCTUnwrap(latest?.thread.workingStartedAt)
+                try await shell.completeShell(
+                    sequence: 11, assistantMessageID: nil, backgroundLiveness: background
+                )
+                while let sequence = await applied.next(isolation: #isolation) {
+                    if sequence == 11 { break }
+                }
+                try Task.checkCancellation()
+                // The applied shell receipt orders this explicit detail marker
+                // after any detail publication caused by the delayed shell.
+                try await detail.synchronize()
+                while let event = await events.next(isolation: #isolation) {
+                    switch event {
+                    case let .detail(value), let .detailDelta(value, _):
+                        latest = value
+                        XCTAssertEqual(value.thread.state, .working)
+                        XCTAssertEqual(value.thread.workingStartedAt, startedAt)
+                    case .threadSync(fixture.firstID, .live): break
+                    default: continue
+                    }
+                    if case .threadSync(fixture.firstID, .live) = event { break }
+                }
+                try Task.checkCancellation()
+                XCTAssertEqual(latest?.thread.state, .working)
+                XCTAssertEqual(latest?.backgroundWorkIsActive, background == "working")
+            } catch {
+                await fixture.client.disconnect()
+                throw error
+            }
+            await fixture.client.disconnect()
+        }
+    }
+
     func testShellCompletionRepairsMissingOrStreamingFinalWithoutClosingDetailStream() async throws {
         for mode in ["missing", "streaming", "no-message-id", "no-message-id-streaming"] {
             let fixture = try await CatchUpFixture.make()
@@ -1118,8 +1313,12 @@ private struct CatchUpFixture {
     var secondID: String { FeatureScopedID.thread(environmentID: "one", wireID: "second") }
 
     static func make(
-        completionMarker: Bool = true,
+        completionMarker: Bool? = true,
         activities: [OrchestrationActivity] = [],
+        aggregateRefreshReceipt: @escaping @MainActor @Sendable (NativePassiveShellReceipt) -> Void = { _ in },
+        detailPublicationSleep: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .milliseconds(80))
+        },
         threadRetryDelay: @escaping @Sendable (Int) async throws -> Void = { _ in
             try await Task.sleep(for: .milliseconds(250))
         }
@@ -1148,7 +1347,8 @@ private struct CatchUpFixture {
             runtime: runtime, settingsStore: UserDefaults(suiteName: UUID().uuidString)!,
             fallbackPollingInitialDelay: .seconds(3_600),
             aggregateRefreshInterval: .seconds(3_600),
-            aggregateRefreshReceipt: { readiness.record($0) },
+            aggregateRefreshReceipt: { readiness.record($0); aggregateRefreshReceipt($0) },
+            detailPublicationSleep: detailPublicationSleep,
             catchUpDelay: { try await delay.wait() },
             threadRetryDelay: threadRetryDelay
         )
@@ -1275,7 +1475,7 @@ private func catchUpMessage(
 
 private struct CatchUpConnector: WebSocketConnecting {
     let requests: AsyncStream<CatchUpRequest>.Continuation
-    let completionMarker: Bool
+    let completionMarker: Bool?
     func connect(to url: URL) async throws -> any WebSocketConnection {
         CatchUpSocket(requests: requests, completionMarker: completionMarker)
     }
@@ -1291,11 +1491,12 @@ private struct CatchUpRequest: Sendable {
     let payload: JSONValue
     let socket: CatchUpSocket
 
-    func completeShell(sequence: Int, assistantMessageID: String?, activeOrderKey: String? = nil) async throws {
+    func completeShell(sequence: Int, assistantMessageID: String?, activeOrderKey: String? = nil, backgroundLiveness: String? = nil) async throws {
         let shell = multiEnvironmentShell(projectID: "project", threadID: "first", title: "First")
         var thread = try JSONValue.encode(shell.threads[0]).decode([String: JSONValue].self)
         thread["latestTurn"] = catchUpCompletedTurn(assistantMessageID: assistantMessageID)
         thread["activeOrderKey"] = activeOrderKey.map(JSONValue.string)
+        thread["backgroundLiveness"] = backgroundLiveness.map(JSONValue.string)
         let snapshot = OrchestrationShellSnapshot(
             snapshotSequence: sequence, projects: shell.projects,
             threads: [try JSONValue.object(thread).decode(OrchestrationThreadShell.self)], updatedAt: shell.updatedAt
@@ -1373,6 +1574,44 @@ private struct CatchUpRequest: Sendable {
         ])])
     }
 
+    func runningTurnSnapshot(sequence: Int) async throws {
+        let snapshot = multiEnvironmentDetail(
+            projectID: "project", threadID: payload["threadId"]!.stringValue!, snapshotSequence: sequence
+        )
+        var thread = try JSONValue.encode(snapshot.thread).decode([String: JSONValue].self)
+        thread["latestTurn"] = .object([
+            "turnId": .string("turn-2"), "state": .string("running"),
+            "requestedAt": .string("2026-09-02T12:02:00Z"),
+            "startedAt": .string("2026-09-02T12:02:00Z"),
+            "completedAt": .null, "assistantMessageId": .null,
+        ])
+        let updated = OrchestrationThreadDetailSnapshot(
+            snapshotSequence: sequence, thread: try JSONValue.object(thread).decode(OrchestrationThread.self)
+        )
+        try await socket.chunk(id: id, values: [
+            .object(["kind": .string("snapshot"), "snapshot": try .encode(updated)]),
+        ])
+    }
+
+    func sendBurst(count: Int, includeMarker: Bool) async throws {
+        var values: [JSONValue] = (1...count).map { index in
+            .object([
+                "kind": .string("event"), "event": .object([
+                    "type": .string("thread.message-sent"), "sequence": .number(Double(index + 2)),
+                    "occurredAt": .string("2026-09-02T12:00:00Z"), "payload": .object([
+                        "threadId": payload["threadId"]!, "messageId": .string("burst-message"),
+                        "role": .string("assistant"), "text": .string(index < count ? "x" : String(repeating: "x", count: count)),
+                        "streaming": .bool(index < count),
+                        "createdAt": .string("2026-09-02T12:00:00Z"),
+                        "updatedAt": .string("2026-09-02T12:00:00Z"),
+                    ]),
+                ]),
+            ])
+        }
+        if includeMarker { values.append(.object(["kind": .string("synchronized")])) }
+        try await socket.chunk(id: id, values: values)
+    }
+
     func sendMessage(text: String, sequence: Int) async throws {
         try await socket.chunk(id: id, values: [.object([
             "kind": .string("event"), "event": .object([
@@ -1390,13 +1629,13 @@ private struct CatchUpRequest: Sendable {
 
 private actor CatchUpSocket: WebSocketConnection {
     let requests: AsyncStream<CatchUpRequest>.Continuation
-    let completionMarker: Bool
+    let completionMarker: Bool?
     private(set) var assetRequestCount = 0
     private var pending: [Data] = []
     private var receiver: CheckedContinuation<Data, any Error>?
     private var closed = false
 
-    init(requests: AsyncStream<CatchUpRequest>.Continuation, completionMarker: Bool) {
+    init(requests: AsyncStream<CatchUpRequest>.Continuation, completionMarker: Bool?) {
         self.requests = requests
         self.completionMarker = completionMarker
     }
@@ -1410,11 +1649,12 @@ private actor CatchUpSocket: WebSocketConnection {
         guard let tag = request["tag"]?.stringValue, case let .number(id) = request["id"] else { return }
         if tag == RPCMethod.assetsCreateURL.rawValue { assetRequestCount += 1 }
         if tag == RPCMethod.subscribeServerConfig.rawValue {
+            var config: [String: JSONValue] = [
+                "providers": .array([]), "threadSnapshotPagination": .bool(true),
+            ]
+            if let completionMarker { config["threadResumeCompletionMarker"] = .bool(completionMarker) }
             try chunk(id: Int(id), values: [.object([
-                "type": .string("snapshot"), "config": .object([
-                    "providers": .array([]), "threadSnapshotPagination": .bool(true),
-                    "threadResumeCompletionMarker": .bool(completionMarker),
-                ]),
+                "type": .string("snapshot"), "config": .object(config),
             ])])
         }
         requests.yield(.init(tag: tag, id: Int(id), payload: request["payload"]!, socket: self))
@@ -1581,4 +1821,23 @@ private final class CatchUpBootstrapReadiness {
             }
         }
     }
+}
+
+private final class CatchUpPublicationClock: Sendable {
+    private let gate = CatchUpDelay()
+    private let receipt: AsyncStream<Void>.Continuation
+    let entries: AsyncStream<Void>
+
+    init() {
+        let pair = AsyncStream<Void>.makeStream()
+        entries = pair.stream
+        receipt = pair.continuation
+    }
+
+    func wait() async throws {
+        receipt.yield(())
+        try await gate.wait()
+    }
+
+    func release() async { await gate.release() }
 }

@@ -52,6 +52,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let aggregateRefreshSleep: @Sendable (Duration) async throws -> Void
     private let environmentShellTimeoutInterval: TimeInterval
     private let threadSnapshotTimeoutInterval: TimeInterval
+    private let detailPublicationSleep: @Sendable () async throws -> Void
     private let catchUpDelay: @Sendable () async throws -> Void
     private let threadRetryDelay: @Sendable (Int) async throws -> Void
     private let aggregateEnvironmentLoader: @Sendable (EnvironmentRuntime) async throws -> [Environment]
@@ -155,6 +156,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         },
         environmentShellTimeoutInterval: TimeInterval = 6,
         threadSnapshotTimeoutInterval: TimeInterval = 8,
+        detailPublicationSleep: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .milliseconds(80))
+        },
         catchUpDelay: @escaping @Sendable () async throws -> Void = {
             try await Task.sleep(for: .seconds(2))
         },
@@ -195,6 +199,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.aggregateRefreshSleep = aggregateRefreshSleep
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.threadSnapshotTimeoutInterval = threadSnapshotTimeoutInterval
+        self.detailPublicationSleep = detailPublicationSleep
         self.catchUpDelay = catchUpDelay
         self.threadRetryDelay = threadRetryDelay
         self.aggregateEnvironmentLoader = aggregateEnvironmentLoader
@@ -4263,7 +4268,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 scheduleDetailRefresh(threadID: route.uiID, client: route.client, force: true)
             }
         }
-        if serverConfigsByEnvironmentID[route.environmentID]?.threadResumeCompletionMarker != true {
+        if !detailWasSynchronized,
+           serverConfigsByEnvironmentID[route.environmentID]?.threadResumeCompletionMarker != true {
             markDetailSynchronized(route)
         }
     }
@@ -4275,8 +4281,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         pendingDetailRenderMutations.formUnion(mutation)
         guard detailPublishTask == nil else { return }
         let streamGeneration = detailStreamGeneration
+        let sleep = detailPublicationSleep
         detailPublishTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(80))
+            do { try await sleep() } catch { return }
             guard let self else { return }
             guard !Task.isCancelled,
                   self.detailStreamGeneration == streamGeneration,
@@ -4799,22 +4806,26 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         let backgroundLiveness = shellThread.backgroundLiveness
         let backgroundWorkIsActive = backgroundLiveness == .working
-        let sessionIsLive = shellThread.session?.status == "starting"
-            || shellThread.session?.status == "running"
-        detail.thread.state = Self.resolveThreadState(
-            latestTurn: shellThread.latestTurn,
-            session: shellThread.session,
-            hasApprovals: !detail.approvals.isEmpty,
-            hasUserInput: !detail.userInputs.isEmpty,
-            backgroundLiveness: backgroundLiveness
-        )
-        detail.thread.workingStartedAt = workingStartedAt(
-            latestTurn: shellThread.latestTurn,
-            session: shellThread.session,
-            backgroundWorkIsActive: backgroundWorkIsActive,
-            fallbackUpdatedAt: shellThread.updatedAt
-        )
-        if shell.snapshotSequence >= (activeThreadSequence ?? .min) {
+        let shellMetadataIsCurrent = shell.snapshotSequence >= (activeThreadSequence ?? .min)
+        let latestTurn = shellMetadataIsCurrent ? shellThread.latestTurn : activeRawThread?.latestTurn
+        let session = shellMetadataIsCurrent ? shellThread.session : activeRawThread?.session
+        let sessionIsLive = session?.status == "starting" || session?.status == "running"
+        if shellMetadataIsCurrent || activeRawThread != nil {
+            detail.thread.state = Self.resolveThreadState(
+                latestTurn: latestTurn,
+                session: session,
+                hasApprovals: !detail.approvals.isEmpty,
+                hasUserInput: !detail.userInputs.isEmpty,
+                backgroundLiveness: backgroundLiveness
+            )
+            detail.thread.workingStartedAt = workingStartedAt(
+                latestTurn: latestTurn,
+                session: session,
+                backgroundWorkIsActive: backgroundWorkIsActive,
+                fallbackUpdatedAt: shellThread.updatedAt
+            )
+        }
+        if shellMetadataIsCurrent {
             applyShellMetadataAuthority(from: shellThread, to: &detail.thread)
             if let compaction = detailRenderCaches[threadID]?.compaction {
                 detail.isCompacting = compaction.isActive(
@@ -4836,20 +4847,28 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         _ shellThread: OrchestrationThreadShell, sequence: Int, threadID: String
     ) {
         guard let rawThread = activeRawThread,
-              sequence > (activeThreadSequence ?? .min),
+              sequence >= (activeThreadSequence ?? .min),
               let completed = shellThread.latestTurn, completed.state == "completed",
               let route = try? threadRoute(for: threadID) else { return }
         if let messageID = completed.assistantMessageId {
             if let message = rawThread.messages.first(where: { $0.id == messageID }),
-               !message.streaming { return }
+               !message.streaming {
+                flushDetailPublish(route)
+                return
+            }
         } else if rawThread.latestTurn?.turnId == completed.turnId,
                   rawThread.latestTurn?.state == completed.state,
                   rawThread.latestTurn?.completedAt == completed.completedAt,
                   !rawThread.messages.contains(where: {
                       $0.role == "assistant" && $0.turnId == completed.turnId && $0.streaming
                   }) {
+            flushDetailPublish(route)
             return
         }
+
+        // Equal-cursor completion may flush final content, but only a newer
+        // shell can prove that detail is missing and require HTTP repair.
+        guard sequence > (activeThreadSequence ?? .min) else { return }
 
         // Keep rendered partial text while requiring a snapshot that includes
         // the shell's completion. Later detail events advance this same floor.
