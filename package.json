@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "node scripts/clean-tsgo-backups.mjs && effect-tsgo patch && vp config --no-agent",
+    "prepare": "effect-tsgo patch && vp config --no-agent",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:share": "node scripts/dev-runner.ts dev --share",
     "dev:server": "node scripts/dev-runner.ts dev:server",
@@ -51,8 +51,8 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native-preview": "catalog:",
     "knip": "6.34.0",
+    "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

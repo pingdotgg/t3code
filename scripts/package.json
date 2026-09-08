@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
@@ -20,6 +20,7 @@
     "@effect/vitest": "catalog:",
     "@types/pngjs": "6.0.5",
     "typescript": "catalog:",
+    "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"
   }
 }

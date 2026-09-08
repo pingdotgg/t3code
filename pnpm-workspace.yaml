@@ -37,7 +37,7 @@ catalog:
   "@effect/platform-node-shared": 4.0.0-beta.103
   "@effect/sql-pg": 4.0.0-beta.103
   "@effect/sql-sqlite-bun": 4.0.0-beta.103
-  "@effect/tsgo": 0.13.2
+  "@effect/tsgo": 0.41.0
   "@effect/vitest": 4.0.0-beta.103
   "@legendapp/list": 3.3.5
   "@noble/curves": 1.9.1
@@ -47,12 +47,11 @@ catalog:
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
-  "@typescript/native-preview": 7.0.0-dev.20260604.1
   effect: 4.0.0-beta.103
   jose: 6.2.2
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
-  typescript: ~6.0.3
+  typescript: 7.0.2
   vite: npm:@voidzero-dev/vite-plus-core@0.3.0
   vite-plus: 0.3.0
   yaml: ^2.9.0
@@ -94,6 +93,8 @@ minimumReleaseAgeExclude:
   - "@anthropic-ai/claude-agent-sdk@0.3.260"
 
 overrides:
+  # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
+  "@react-navigation/core": 7.21.13
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
   # registry manifest, so the edge has to be cut here as well.
   "dbus-next>usocket": "-"
