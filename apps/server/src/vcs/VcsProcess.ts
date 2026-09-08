@@ -17,6 +17,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as VcsExecutables from "./VcsExecutables.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -105,10 +106,14 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const executables = yield* VcsExecutables.VcsExecutables;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
+    // Errors and the process limiter keep reporting the logical command, so a
+    // configured path never leaks into diagnostics or changes how we throttle.
+    const executable = yield* executables.resolve(input.command);
     const baseError = {
       operation: input.operation,
       command: input.command,
@@ -118,7 +123,7 @@ export const make = Effect.gen(function* () {
 
     const result = yield* processRunner
       .run({
-        command: input.command,
+        command: executable,
         args: input.args,
         cwd: input.cwd,
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
@@ -195,4 +200,10 @@ export const make = Effect.gen(function* () {
   return VcsProcess.of({ run });
 });
 
-export const layer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+const baseLayer = Layer.effect(VcsProcess, make).pipe(Layer.provide(ProcessRunner.layer));
+
+/** Resolves every command by name on PATH. */
+export const layer = baseLayer.pipe(Layer.provide(VcsExecutables.layerPathOnly));
+
+/** Honours the hosting CLI paths configured in Source control settings. */
+export const layerWithConfiguredExecutables = baseLayer.pipe(Layer.provide(VcsExecutables.layer));

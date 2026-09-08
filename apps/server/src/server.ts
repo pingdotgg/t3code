@@ -831,7 +831,9 @@ const makeServerLayer = Layer.unwrap(
       Layer.provide(ApplicationObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
-      Layer.provide(VcsProcess.layer),
+      Layer.provide(
+        VcsProcess.layerWithConfiguredExecutables.pipe(Layer.provide(ServerSettingsLayerLive)),
+      ),
       Layer.provideMerge(PlatformServicesLive),
     );
   }),
