@@ -590,7 +590,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             credential: savedCredential
         )
         await adoptEnvironment(environment, client: managedClient)
-        startAggregateRefresh(managedClient)
         do {
             try await refresh(client: managedClient)
         } catch {
@@ -603,6 +602,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
             publish(snapshot)
         }
+        startAggregateRefresh(managedClient)
         startPolling(managedClient)
     }
 
