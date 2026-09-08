@@ -30,12 +30,15 @@ export function createReviewEnvironmentAtoms<R, E>(
     diffFilePatch: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:review:diff-file-patch",
       staleTimeMs: 5 * 60_000,
-      execute: (input: { request: ReviewDiffPreviewInput; cacheKey: string }) =>
+      execute: (input: {
+        request: ReviewDiffPreviewInput & { file: NonNullable<ReviewDiffPreviewInput["file"]> };
+        cacheKey: string;
+      }) =>
         request(WS_METHODS.reviewGetDiffPreview, input.request).pipe(
           patchReads.withPermit,
           Effect.flatMap((result) => {
             const source = result.sources.find(
-              (source) => source.kind === input.request.file?.sourceKind,
+              (source) => source.kind === input.request.file.sourceKind,
             );
             return source
               ? Effect.succeed(source)
