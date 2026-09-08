@@ -1746,7 +1746,7 @@ private actor BlockingRuntimeCloseConnection: WebSocketConnection {
 }
 
 private actor RuntimeReplacementHTTPTransport: HTTPTransport {
-    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
         guard request.url?.path == "/api/auth/websocket-ticket" else {
             throw URLError(.unsupportedURL)
         }
@@ -1934,7 +1934,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         hostsDroppingNextCreateReply.insert(host)
     }
 
-    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         let path = request.url?.path ?? ""
         if path == "/api/orchestration/shell" {
