@@ -7,6 +7,7 @@ import {
   hasDismissedResumeCompaction,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
+  shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
 
 function claudeProvider(input: {
@@ -234,5 +235,54 @@ describe("hasDismissedResumeCompaction", () => {
         { kind: "user-input.resolved", payload: { answers: ["Don't ask again"] } },
       ]),
     ).toBe(false);
+  });
+});
+
+describe("shouldReserveContextWindowMeter", () => {
+  const loadingStartedThread = {
+    meterEnabled: true,
+    detailLoading: true,
+    threadStarted: true,
+    providerReportsContextWindow: true,
+  };
+
+  it("holds the meter's slot while a started thread's detail loads", () => {
+    expect(shouldReserveContextWindowMeter(loadingStartedThread)).toBe(true);
+  });
+
+  it("reserves nothing once the detail is in", () => {
+    expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, detailLoading: false })).toBe(
+      false,
+    );
+  });
+
+  it("reserves nothing for a thread that never ran a turn", () => {
+    expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, threadStarted: false })).toBe(
+      false,
+    );
+  });
+
+  it("reserves while the thread's provider is not in the catalog yet", () => {
+    expect(
+      shouldReserveContextWindowMeter({
+        ...loadingStartedThread,
+        providerReportsContextWindow: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("reserves nothing for a provider that does not stream usage", () => {
+    expect(
+      shouldReserveContextWindowMeter({
+        ...loadingStartedThread,
+        providerReportsContextWindow: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("reserves nothing while the meter is switched off", () => {
+    expect(shouldReserveContextWindowMeter({ ...loadingStartedThread, meterEnabled: false })).toBe(
+      false,
+    );
   });
 });
