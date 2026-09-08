@@ -3,6 +3,7 @@ import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 
 import { getDriverOption } from "../settings/providerDriverMeta";
+import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import { ComposerBanner } from "./ComposerBanner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -20,6 +21,27 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
     : driver;
 }
 
+function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
+  const label = accountLabel(account);
+  return (
+    <>
+      {label.includes("@") ? (
+        <RedactedSensitiveText
+          key={label}
+          value={label}
+          ariaLabel="Toggle account label visibility"
+          revealTooltip="Click to reveal account"
+          hideTooltip="Click to hide account"
+          className="max-w-full truncate align-bottom font-sans text-xs leading-normal"
+        />
+      ) : (
+        label
+      )}
+      {account.plan ? ` · ${account.plan}` : null}
+    </>
+  );
+}
+
 /** The /usage-limits result as a composer notice: it stacks under warnings and dismisses like one. */
 export function usageLimitsBannerItem(
   id: string,
@@ -29,9 +51,11 @@ export function usageLimitsBannerItem(
 ): ComposerBannerStackItem {
   const [first] = report.accounts;
   const single = report.accounts.length === 1 && first ? first : null;
-  const summary = single
-    ? [accountLabel(single), single.plan].filter(Boolean).join(" · ")
-    : `${report.accounts.length} accounts`;
+  const summary = single ? (
+    <AccountSummary account={single} />
+  ) : (
+    `${report.accounts.length} accounts`
+  );
   return {
     id,
     variant: "info",
@@ -65,7 +89,7 @@ function UsageLimitsBannerBody({
             <div key={account.id} className="flex min-w-0 flex-col gap-1">
               {report.accounts.length > 1 ? (
                 <span className="truncate text-xs text-muted-foreground">
-                  {[accountLabel(account), account.plan].filter(Boolean).join(" · ")}
+                  <AccountSummary account={account} />
                 </span>
               ) : null}
               {notice ? (
