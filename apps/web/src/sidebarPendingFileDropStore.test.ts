@@ -4,76 +4,113 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
+  isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
   type SidebarPendingFileDrop,
 } from "./sidebarPendingFileDropStore";
 
-function makeFiles(count: number): File[] {
-  return Array.from({ length: count }, (_, index) => new File(["x"], `f${index}.png`));
+function makeFiles(...names: string[]): File[] {
+  return names.map((name) => new File(["x"], name));
 }
 
-function makeEntry(environmentId: string, threadId: string, files: File[]): SidebarPendingFileDrop {
+function makeEntry(
+  environmentId: string,
+  threadId: string,
+  files: File[],
+): Omit<SidebarPendingFileDrop, "id"> {
   return {
     threadRef: scopeThreadRef(environmentId as EnvironmentId, ThreadId.make(threadId)),
     files,
   };
 }
 
+function refOf(environmentId: string, threadId: string) {
+  return makeEntry(environmentId, threadId, []).threadRef;
+}
+
 beforeEach(() => {
-  useSidebarPendingFileDropStore.setState({ pending: null });
+  useSidebarPendingFileDropStore.setState({ pending: [] });
 });
 
 describe("sidebarPendingFileDropStore", () => {
   it("starts empty", () => {
-    expect(useSidebarPendingFileDropStore.getState().pending).toBeNull();
+    expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
   it("stashes and consumes a drop for the matching thread", () => {
-    const files = makeFiles(2);
-    const entry = makeEntry("env-1", "thread-1", files);
-    useSidebarPendingFileDropStore.getState().setPendingFileDrop(entry);
+    const files = makeFiles("a.png", "b.png");
+    const store = useSidebarPendingFileDropStore.getState();
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", files));
 
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(entry.threadRef),
+      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-1")),
     ).toEqual(files);
-    expect(useSidebarPendingFileDropStore.getState().pending).toBeNull();
+    expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
-  it("refuses to consume for a different thread without clearing the stash", () => {
-    const entry = makeEntry("env-1", "thread-1", makeFiles(1));
-    useSidebarPendingFileDropStore.getState().setPendingFileDrop(entry);
+  it("accumulates repeat drops onto the same thread instead of replacing", () => {
+    const store = useSidebarPendingFileDropStore.getState();
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
 
-    const otherThread = makeEntry("env-1", "thread-2", []).threadRef;
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(otherThread),
-    ).toBeNull();
-    expect(useSidebarPendingFileDropStore.getState().pending).toEqual(entry);
-
-    useSidebarPendingFileDropStore.getState().clearPendingFileDrop();
-    expect(useSidebarPendingFileDropStore.getState().pending).toBeNull();
+      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-1")),
+    ).toEqual(makeFiles("a.png", "b.png"));
+    expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
-  it("replaces an earlier pending drop with a newer one", () => {
-    const first = makeEntry("env-1", "thread-1", makeFiles(1));
-    const second = makeEntry("env-2", "thread-2", makeFiles(3));
-    useSidebarPendingFileDropStore.getState().setPendingFileDrop(first);
-    useSidebarPendingFileDropStore.getState().setPendingFileDrop(second);
+  it("keeps drops for other threads when consuming one thread", () => {
+    const store = useSidebarPendingFileDropStore.getState();
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-2", makeFiles("b.png")));
 
-    expect(useSidebarPendingFileDropStore.getState().pending).toEqual(second);
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(first.threadRef),
-    ).toBeNull();
+      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-2")),
+    ).toEqual(makeFiles("b.png"));
+    expect(useSidebarPendingFileDropStore.getState().pending).toHaveLength(1);
+  });
+
+  it("clears only the drop matching a stale navigation's id", () => {
+    const store = useSidebarPendingFileDropStore.getState();
+    const firstId = store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
+
+    useSidebarPendingFileDropStore.getState().clearPendingFileDrop(firstId);
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(second.threadRef),
-    ).not.toBeNull();
+      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-1")),
+    ).toEqual(makeFiles("b.png"));
+  });
+
+  it("clears every drop for a missing thread", () => {
+    const store = useSidebarPendingFileDropStore.getState();
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
+    store.queuePendingFileDrop(makeEntry("env-1", "thread-2", makeFiles("c.png")));
+
+    useSidebarPendingFileDropStore
+      .getState()
+      .clearPendingFileDropsForThread(refOf("env-1", "thread-1"));
+    expect(
+      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-2")),
+    ).toEqual(makeFiles("c.png"));
+    expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
   it("does not confuse refs whose joined keys collide on colons", () => {
-    const entry = makeEntry("a", "b:c", makeFiles(1));
-    useSidebarPendingFileDropStore.getState().setPendingFileDrop(entry);
+    const store = useSidebarPendingFileDropStore.getState();
+    store.queuePendingFileDrop(makeEntry("a", "b:c", makeFiles("a.png")));
 
-    const colliding = makeEntry("a:b", "c", []).threadRef;
-    expect(useSidebarPendingFileDropStore.getState().consumePendingFileDrop(colliding)).toBeNull();
-    expect(useSidebarPendingFileDropStore.getState().pending).toEqual(entry);
+    expect(
+      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("a:b", "c")),
+    ).toBeNull();
+    expect(useSidebarPendingFileDropStore.getState().pending).toHaveLength(1);
+  });
+});
+
+describe("isSameSidebarThreadRef", () => {
+  it("compares fields, not joined keys", () => {
+    expect(isSameSidebarThreadRef(refOf("a", "b:c"), refOf("a", "b:c"))).toBe(true);
+    expect(isSameSidebarThreadRef(refOf("a", "b:c"), refOf("a:b", "c"))).toBe(false);
+    expect(isSameSidebarThreadRef(refOf("a", "b"), refOf("a", "c"))).toBe(false);
   });
 });

@@ -12,44 +12,63 @@ export function isSameSidebarThreadRef(a: ScopedThreadRef, b: ScopedThreadRef): 
 }
 
 /**
- * Files dropped onto a sidebar thread row while another thread was open.
- * The row hands these off and navigates; ChatView attaches them through the
- * composer's normal drop path once the dropped-on thread actually becomes
- * active, so they can never land on the wrong thread's draft.
+ * One sidebar row drop. Drops queue up instead of replacing each other, so a
+ * second drop onto the same thread before it opens keeps both files; each
+ * entry carries its own id so a stale navigation can only ever clear the drop
+ * that started it.
  */
 export interface SidebarPendingFileDrop {
+  id: string;
   threadRef: ScopedThreadRef;
   files: File[];
 }
 
 interface SidebarPendingFileDropStoreState {
-  pending: SidebarPendingFileDrop | null;
-  /** Replaces any earlier pending drop: only the latest handoff matters. */
-  setPendingFileDrop: (entry: SidebarPendingFileDrop) => void;
-  clearPendingFileDrop: () => void;
+  pending: SidebarPendingFileDrop[];
   /**
-   * Returns the stashed files when `threadRef` matches the drop target and
-   * clears the entry; returns null (leaving state untouched) otherwise.
+   * Appends a drop to the queue and returns its id, for later
+   * identity-checked cleanup.
+   */
+  queuePendingFileDrop: (entry: Omit<SidebarPendingFileDrop, "id">) => string;
+  /** Removes the single drop with this id, leaving newer drops untouched. */
+  clearPendingFileDrop: (id: string) => void;
+  /** Removes every queued drop aimed at this thread (e.g. it went missing). */
+  clearPendingFileDropsForThread: (threadRef: ScopedThreadRef) => void;
+  /**
+   * Returns every queued drop's files for `threadRef`, oldest first, and
+   * removes them; returns null (leaving state untouched) when none match.
    */
   consumePendingFileDrop: (threadRef: ScopedThreadRef) => File[] | null;
 }
 
+let nextPendingFileDropId = 0;
+
 export const useSidebarPendingFileDropStore = create<SidebarPendingFileDropStoreState>()(
   (set, get) => ({
-    pending: null,
-    setPendingFileDrop: (entry) => {
-      set({ pending: entry });
+    pending: [],
+    queuePendingFileDrop: (entry) => {
+      const id = `sidebar-file-drop-${(nextPendingFileDropId += 1)}`;
+      set((state) => ({ pending: [...state.pending, { ...entry, id }] }));
+      return id;
     },
-    clearPendingFileDrop: () => {
-      set({ pending: null });
+    clearPendingFileDrop: (id) => {
+      set((state) => ({ pending: state.pending.filter((drop) => drop.id !== id) }));
+    },
+    clearPendingFileDropsForThread: (threadRef) => {
+      set((state) => ({
+        pending: state.pending.filter((drop) => !isSameSidebarThreadRef(drop.threadRef, threadRef)),
+      }));
     },
     consumePendingFileDrop: (threadRef) => {
-      const pending = get().pending;
-      if (pending === null || !isSameSidebarThreadRef(pending.threadRef, threadRef)) {
+      const matches = get().pending.filter((drop) =>
+        isSameSidebarThreadRef(drop.threadRef, threadRef),
+      );
+      if (matches.length === 0) {
         return null;
       }
-      set({ pending: null });
-      return pending.files;
+      const matchedIds = new Set(matches.map((drop) => drop.id));
+      set((state) => ({ pending: state.pending.filter((drop) => !matchedIds.has(drop.id)) }));
+      return matches.flatMap((drop) => drop.files);
     },
   }),
 );

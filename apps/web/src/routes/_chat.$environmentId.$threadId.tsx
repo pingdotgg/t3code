@@ -6,10 +6,7 @@ import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
-import {
-  isSameSidebarThreadRef,
-  useSidebarPendingFileDropStore,
-} from "../sidebarPendingFileDropStore";
+import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
   useEnvironmentThreadRefs,
@@ -70,10 +67,8 @@ function ChatThreadRouteView() {
     // passed its landing check; once the thread reads as missing it can
     // never be attached, release it even when there is nowhere to redirect.
     if (renderState === "missing") {
-      const { pending, clearPendingFileDrop } = useSidebarPendingFileDropStore.getState();
-      if (pending && isSameSidebarThreadRef(pending.threadRef, threadRef)) {
-        clearPendingFileDrop();
-      }
+      const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
+      clearPendingFileDropsForThread(threadRef);
       if (environmentHasAnyThreads) {
         void navigate({ to: "/", replace: true });
       }

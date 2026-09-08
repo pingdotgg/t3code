@@ -7581,18 +7581,20 @@ export default function ChatView(props: ChatViewProps) {
   // actually open, then take the exact same path as a workspace drop:
   // validate, compress, focus the composer, never send. Kept above the
   // no-active-thread early return so hook order never changes.
-  const pendingSidebarFileDrop = useSidebarPendingFileDropStore((state) => state.pending);
+  const pendingSidebarFileDrops = useSidebarPendingFileDropStore((state) => state.pending);
   const consumePendingFileDrop = useSidebarPendingFileDropStore(
     (state) => state.consumePendingFileDrop,
   );
   useEffect(() => {
-    if (pendingSidebarFileDrop === null) return;
+    if (pendingSidebarFileDrops.length === 0) return;
     // A promoting draft can mount this view with the server thread id while
     // its composer is still draft-keyed; finalization would discard what we
     // attach there. Only the canonical thread target may consume a drop.
     if (
       typeof composerDraftTarget === "string" ||
-      !isSameSidebarThreadRef(composerDraftTarget, pendingSidebarFileDrop.threadRef)
+      !pendingSidebarFileDrops.some((drop) =>
+        isSameSidebarThreadRef(composerDraftTarget, drop.threadRef),
+      )
     ) {
       return;
     }
@@ -7600,22 +7602,17 @@ export default function ChatView(props: ChatViewProps) {
     if (!composerRef.current) {
       const raf = window.requestAnimationFrame(() => {
         if (!composerRef.current) return;
-        const latestPending = useSidebarPendingFileDropStore.getState().pending;
-        if (latestPending === null) return;
-        if (
-          typeof composerDraftTarget === "string" ||
-          !isSameSidebarThreadRef(composerDraftTarget, latestPending.threadRef)
-        ) {
-          return;
-        }
-        const files = consumePendingFileDrop(latestPending.threadRef);
+        if (typeof composerDraftTarget === "string") return;
+        // Consume matches by target, so a newer drop that arrived meanwhile
+        // is collected too rather than orphaned.
+        const files = consumePendingFileDrop(composerDraftTarget);
         if (files !== null) {
           composerRef.current?.addDroppedFiles(files);
         }
       });
       return () => window.cancelAnimationFrame(raf);
     }
-    const files = consumePendingFileDrop(pendingSidebarFileDrop.threadRef);
+    const files = consumePendingFileDrop(composerDraftTarget);
     if (files !== null) {
       composerRef.current.addDroppedFiles(files);
     }
@@ -7624,7 +7621,7 @@ export default function ChatView(props: ChatViewProps) {
     composerDraftTarget,
     composerRef,
     consumePendingFileDrop,
-    pendingSidebarFileDrop,
+    pendingSidebarFileDrops,
   ]);
 
   // Empty state: no active thread

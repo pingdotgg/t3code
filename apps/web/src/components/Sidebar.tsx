@@ -2529,11 +2529,13 @@ export default function Sidebar() {
   // not the open thread we stash the files and let ChatView hand them over
   // once the navigation actually lands; if the route bounced (thread gone),
   // nothing will consume them, so clear instead of surprising the user later.
-  const setPendingFileDrop = useSidebarPendingFileDropStore((s) => s.setPendingFileDrop);
+  const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const handleThreadFileDrop = useCallback(
     async (threadRef: ScopedThreadRef, files: File[]) => {
-      setPendingFileDrop({ threadRef, files });
+      // Queued, not replaced: a second drop before the thread opens keeps
+      // both files, and the id lets cleanup below touch only this drop.
+      const dropId = queuePendingFileDrop({ threadRef, files });
       // Key match alone is not "already there": during draft promotion the
       // resolved route key is the server thread while the URL is still the
       // draft route, and its composer would swallow the drop then discard it.
@@ -2545,26 +2547,23 @@ export default function Sidebar() {
       if (landedBefore) return;
       try {
         await navigateToThread(threadRef);
-        // A newer drop may have replaced ours while the navigation was in
-        // flight; only clear the stash if it still belongs to this drop.
+        // A newer drop may have arrived while the navigation was in flight;
+        // clearing by id leaves those files untouched.
         const landed =
           router.buildLocation({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(threadRef),
           }).pathname === router.state.location.pathname;
-        const pending = useSidebarPendingFileDropStore.getState().pending;
-        if (!landed && pending !== null && isSameSidebarThreadRef(pending.threadRef, threadRef)) {
-          clearPendingFileDrop();
+        if (!landed) {
+          clearPendingFileDrop(dropId);
         }
       } catch {
-        // Navigation failed outright; nothing will consume this drop.
-        const pending = useSidebarPendingFileDropStore.getState().pending;
-        if (pending !== null && isSameSidebarThreadRef(pending.threadRef, threadRef)) {
-          clearPendingFileDrop();
-        }
+        // Navigation failed outright; nothing will consume this drop, but a
+        // newer drop for the same thread may still be deliverable.
+        clearPendingFileDrop(dropId);
       }
     },
-    [clearPendingFileDrop, navigateToThread, router, setPendingFileDrop],
+    [clearPendingFileDrop, navigateToThread, queuePendingFileDrop, router],
   );
 
   const navigateToDraft = useCallback(
