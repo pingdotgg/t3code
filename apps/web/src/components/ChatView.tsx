@@ -620,6 +620,14 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const GitButlerPanel = lazy(() =>
+  import("./gitButler/GitButlerPanel").then((module) => ({ default: module.GitButlerPanel })),
+);
+const GitButlerUnavailableState = lazy(() =>
+  import("./gitButler/GitButlerPanel").then((module) => ({
+    default: module.GitButlerUnavailableState,
+  })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -2600,6 +2608,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const supportsGitButlerWorkspace =
+    serverConfig?.environment.capabilities.gitButlerWorkspace === true;
   const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
   const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
   const supportsQuestionAttachments =
@@ -4557,6 +4567,17 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addGitButlerSurface = useCallback(() => {
+    if (
+      !supportsGitButlerWorkspace ||
+      !activeThreadRef ||
+      !activeProject ||
+      !activeWorkspaceRoot ||
+      !isGitRepo
+    )
+      return;
+    useRightPanelStore.getState().open(activeThreadRef, "gitbutler");
+  }, [activeProject, activeThreadRef, activeWorkspaceRoot, isGitRepo, supportsGitButlerWorkspace]);
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
@@ -9700,6 +9721,21 @@ export default function ChatView(props: ChatViewProps) {
           }}
         />
       </Suspense>
+    ) : renderedRightPanelSurface?.kind === "gitbutler" && !supportsGitButlerWorkspace ? (
+      <Suspense fallback={null}>
+        <GitButlerUnavailableState />
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "gitbutler" && activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <GitButlerPanel
+          environmentId={activeThreadRef.environmentId}
+          cwd={activeWorkspaceRoot}
+          repositoryStatus={gitStatusQuery.data}
+          workspaceMutationId={workspaceMutationId}
+          onOpenReview={supportsPullRequests ? openProjectPullRequest : undefined}
+          onOpenFile={openFileSurface}
+        />
+      </Suspense>
     ) : (renderedRightPanelSurface?.kind === "files" ||
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
@@ -10339,6 +10375,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddGitButler={addGitButlerSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddAgents={addAgentsSurface}
@@ -10347,6 +10384,12 @@ export default function ChatView(props: ChatViewProps) {
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          gitButlerAvailable={
+            supportsGitButlerWorkspace &&
+            activeProject !== null &&
+            activeWorkspaceRoot !== undefined &&
+            isGitRepo
+          }
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           agentsAvailable
@@ -10397,6 +10440,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddGitButler={addGitButlerSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddAgents={addAgentsSurface}
@@ -10405,6 +10449,12 @@ export default function ChatView(props: ChatViewProps) {
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            gitButlerAvailable={
+              supportsGitButlerWorkspace &&
+              activeProject !== null &&
+              activeWorkspaceRoot !== undefined &&
+              isGitRepo
+            }
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             agentsAvailable

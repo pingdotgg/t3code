@@ -122,6 +122,7 @@ function renderTabs(
       onAddPullRequests={() => undefined}
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
+      onAddGitButler={() => undefined}
       onAddAgents={() => undefined}
       onAddDevice={() => undefined}
       liveAgentCount={0}
@@ -129,6 +130,7 @@ function renderTabs(
       terminalAvailable={false}
       diffAvailable={false}
       filesAvailable={false}
+      gitButlerAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
       agentsAvailable={false}
@@ -166,11 +168,13 @@ describe("surface shortcuts", () => {
   const actions = [
     { shortcut: "B", available: true, label: "Browser" },
     { shortcut: "D", available: false, label: "Diff" },
+    { shortcut: "G", available: true, label: "GitButler" },
   ] as const;
 
   it("matches available surface shortcuts case-insensitively", () => {
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("g"))).toBe(actions[2]);
   });
 
   it("does not activate unavailable surfaces", () => {

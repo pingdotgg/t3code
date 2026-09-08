@@ -109,6 +109,43 @@ describe("rightPanelStore", () => {
     number: 42,
   });
 
+  it("opens GitButler as a thread-scoped singleton surface", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "gitbutler");
+    store.open(refA, "gitbutler");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "gitbutler",
+      surfaces: [{ id: "gitbutler", kind: "gitbutler" }],
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+  });
+
+  it("retains a saved GitButler surface through the v14 migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "gitbutler",
+            surfaces: [{ id: "gitbutler", kind: "gitbutler" }],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "gitbutler",
+          surfaces: [{ id: "gitbutler", kind: "gitbutler" }],
+        },
+      },
+    });
+  });
+
   it.each([
     { order: "diff-first", surface: linkedPullRequest },
     { order: "pull-request-first", surface: linkedPullRequest },

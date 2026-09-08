@@ -21,6 +21,7 @@ import {
   ChevronRight,
   FileDiff,
   Files,
+  GitBranch,
   Globe2,
   Plus,
   TerminalSquare,
@@ -113,6 +114,7 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddGitButler: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
@@ -121,6 +123,7 @@ interface RightPanelTabsProps {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  gitButlerAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
@@ -152,6 +155,7 @@ const SURFACE_DISABLED_REASONS = {
   terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
+  gitButler: "GitButler is only available for project threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
@@ -176,6 +180,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   terminal: "Available when a project is open.",
   files: "Available when a project is open.",
   diff: "Available for Git repositories.",
+  gitButler: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   agents: "Available from a thread.",
@@ -316,6 +321,7 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddGitButler: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
@@ -324,6 +330,7 @@ function RightPanelEmptyState(props: {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  gitButlerAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
@@ -368,6 +375,16 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
+      badgeCount: 0,
+    },
+    {
+      label: "GitButler",
+      description: "Inspect stacks, branches, and file ownership.",
+      icon: GitBranch,
+      shortcut: "G",
+      available: props.gitButlerAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.gitButler,
+      onClick: props.onAddGitButler,
       badgeCount: 0,
     },
     {
@@ -631,6 +648,8 @@ function surfaceTitle(
       return "Agents";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    case "gitbutler":
+      return "GitButler";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -722,6 +741,8 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    case "gitbutler":
+      return <GitBranch className="size-3 shrink-0" />;
   }
 }
 
@@ -892,6 +913,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.diffAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "GitButler",
+      icon: GitBranch,
+      shortcut: "G",
+      available: props.gitButlerAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.gitButler,
+      onClick: props.onAddGitButler,
     },
     {
       label: "Pull request",
@@ -1393,6 +1422,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddGitButler={props.onAddGitButler}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
@@ -1401,6 +1431,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
+            gitButlerAvailable={props.gitButlerAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}

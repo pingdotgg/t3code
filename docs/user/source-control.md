@@ -13,6 +13,16 @@ GitButler is optional. Install GitButler CLI 0.22.3 or newer on the machine runn
 ensure `but` is on that server's `PATH`. Settings reports whether that server has a compatible
 version. It does not set up repositories or change GitButler workspaces during discovery.
 
+## View a GitButler workspace
+
+From a project thread in a Git repository, open the right panel and choose **GitButler**. The panel
+shows the configured workspace's stacks, branch order, local commits, review references, conflicts,
+and assigned or unassigned files. Use **Refresh** to read the latest local GitButler state.
+
+This view is read-only. T3 Code does not create GitButler projects, change their target branches, or
+modify stacks. If the repository is not configured, open it in GitButler first. File ownership is
+reported per file by the GitButler CLI; hunk-level ownership is not shown.
+
 ### GitHub
 
 Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
