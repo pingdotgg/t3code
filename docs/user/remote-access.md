@@ -63,8 +63,8 @@ another link to share.
 
 ### Check available disk space
 
-Check disk space in **Settings → Connections → Disk storage** on web and desktop,
-or **Settings → Environments** on mobile. Each reading describes the disk containing
+Hover or tap the ring beside an environment in **Settings → Connections** on web
+and desktop, or tap it in **Settings → Environments** on mobile. Each reading describes the disk containing
 that server's T3 data. Projects on another drive may have different space available;
 WSL and containers report the filesystem visible to their server. Refresh the reading
 to check again. An offline or unsupported environment shows storage as unavailable.

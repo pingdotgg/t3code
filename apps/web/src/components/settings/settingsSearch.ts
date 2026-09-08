@@ -549,8 +549,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "disk-storage",
-    title: "Disk storage",
+    title: "Disk space",
     to: "/settings/connections",
+    targetId: "connections-environment",
     searchTerms: ["disk space capacity free available storage machine environment server"],
   },
   {

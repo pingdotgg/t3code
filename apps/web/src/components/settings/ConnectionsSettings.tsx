@@ -61,7 +61,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconPicker } from "./EnvironmentIconPicker";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
-import { StorageSettings } from "./StorageSettings";
+import { HostStorageIndicator } from "./HostStorageIndicator";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
 import {
@@ -1492,6 +1492,7 @@ function SavedBackendListRow({
             <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
               {environment.label}
             </h3>
+            <HostStorageIndicator environment={environment} />
           </div>
           {metadataBits.length > 0 ? (
             <p className="truncate text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
@@ -3132,10 +3133,14 @@ export function ConnectionsSettings() {
 
   return (
     <SettingsPageContainer>
-      <StorageSettings environments={environments} />
       {canManageLocalBackend ? (
         <>
-          <SettingsSection {...searchableSetting("connections-environment")}>
+          <SettingsSection
+            {...searchableSetting("connections-environment")}
+            headerAction={
+              primaryEnvironment ? <HostStorageIndicator environment={primaryEnvironment} /> : null
+            }
+          >
             {primaryVersionMismatch || primaryServerUpdateState.status !== "idle" ? (
               <SettingsRow
                 title={
@@ -3511,7 +3516,12 @@ export function ConnectionsSettings() {
           </Dialog>
         </>
       ) : (
-        <SettingsSection {...searchableSetting("connections-environment")}>
+        <SettingsSection
+          {...searchableSetting("connections-environment")}
+          headerAction={
+            primaryEnvironment ? <HostStorageIndicator environment={primaryEnvironment} /> : null
+          }
+        >
           <SettingsRow
             title="Administrative access"
             description="Pairing links and client-session management require the access:write scope for this backend."
