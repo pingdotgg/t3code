@@ -299,6 +299,55 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("re-resolves the default endpoint when interfaces change after startup", () => {
+    const interfaces: Record<string, DesktopNetworkInterfaces.NetworkInterfaces[string]> = {
+      ...multiHomedNetworkInterfaces,
+    };
+    return withHarness(
+      interfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const preferred = yield* serverExposure.setPreferredLanInterfaceName({ name: "en0" });
+        assert.equal(preferred.state.advertisedHost, "192.168.1.20");
+
+        // The harness network service returns the fixture object by
+        // reference, so removing en0 here simulates it disappearing after
+        // the exposure state was resolved at startup.
+        delete interfaces.en0;
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        const defaultEndpoint = endpoints.find(
+          (endpoint) => endpoint.id.startsWith("desktop-lan:") && endpoint.isDefault === true,
+        );
+        assert.equal(defaultEndpoint?.httpBaseUrl, "http://192.168.1.21:4173/");
+        assert.isFalse(endpoints.some((endpoint) => endpoint.httpBaseUrl.includes("192.168.1.20")));
+        const refreshed = yield* serverExposure.getState;
+        assert.equal(refreshed.advertisedHost, "192.168.1.21");
+      }),
+    );
+  });
+
+  it.effect("downgrades to loopback when only virtual interfaces exist", () =>
+    withHarness(
+      {
+        docker0: [{ address: "172.17.0.1", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const state = yield* serverExposure.getState;
+        assert.equal(state.mode, "local-only");
+        assert.equal(state.endpointUrl, null);
+      }),
+    ),
+  );
+
   it.effect("honors a preferred LAN interface", () =>
     withHarness(
       multiHomedNetworkInterfaces,

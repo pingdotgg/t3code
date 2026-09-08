@@ -3143,7 +3143,10 @@ export function ConnectionsSettings() {
     />
   );
   const renderPreferredLanInterfaceRow = () => {
-    if (!desktopBridge || desktopLanInterfaces.length < 2) {
+    if (!desktopBridge || (desktopLanInterfaces.length < 2 && preferredLanInterfaceName === null)) {
+      // With a single interface and no preference there is nothing to pick,
+      // but a stored preference whose interface disappeared must stay
+      // visible so it can be cleared.
       return null;
     }
     const selectValue = preferredLanInterfaceName ?? "auto";

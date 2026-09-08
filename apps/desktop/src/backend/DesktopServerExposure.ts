@@ -78,7 +78,7 @@ const isUsableLanIpv4Address = (address: string): boolean =>
  * nothing else exists.
  */
 const VIRTUAL_INTERFACE_NAME_PATTERN =
-  /^(?:docker\d*|br-[0-9a-f]+|virbr\d*|veth\w*|vmnet\d*|vEthernet[\s\w()]*|wg\d*|tun\d+|lo)$/iu;
+  /^(?:docker\d*|br-[0-9a-f]+|virbr\d*|veth\w*|vmnet\d*|vEthernet[\s\w()]*|wg\d*|utun\d*|tun\d+|lo)$/iu;
 
 export const isVirtualLanInterfaceName = (name: string): boolean =>
   VIRTUAL_INTERFACE_NAME_PATTERN.test(name);
@@ -147,7 +147,10 @@ const resolveLanAdvertisedHost = (
     }
   }
 
-  const fallback = candidates.find((candidate) => !candidate.virtual) ?? candidates[0];
+  const fallback = candidates.find((candidate) => !candidate.virtual);
+  // A machine whose only usable addresses sit on container/VM bridges has no
+  // reachable LAN host; returning null downgrades to loopback instead of
+  // advertising an address no other device can reach.
   return fallback ? fallback.address : null;
 };
 
@@ -663,9 +666,34 @@ export const make = Effect.gen(function* () {
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    // Re-resolve the LAN host against live interfaces: the persisted state
+    // was resolved at bootstrap (or at the last settings change), so a
+    // preferred interface that vanished or changed address afterwards must
+    // not keep advertising a dead pairing URL.
+    const advertisedHostOverride = Option.getOrUndefined(config.desktopLanHostOverride);
+    const exposure =
+      state.mode === "network-accessible"
+        ? resolveDesktopServerExposure({
+            mode: state.mode,
+            port: state.port,
+            networkInterfaces: currentNetworkInterfaces,
+            ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
+            preferredLanInterfaceName: (yield* desktopSettings.get).preferredLanInterfaceName,
+          })
+        : toResolvedExposure(state);
+    if (
+      exposure.endpointUrl !== Option.getOrNull(state.endpointUrl) ||
+      exposure.advertisedHost !== Option.getOrNull(state.advertisedHost)
+    ) {
+      yield* Ref.set(stateRef, {
+        ...state,
+        endpointUrl: Option.fromNullishOr(exposure.endpointUrl),
+        advertisedHost: Option.fromNullishOr(exposure.advertisedHost),
+      });
+    }
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
-      exposure: toResolvedExposure(state),
+      exposure,
       customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
       networkInterfaces: currentNetworkInterfaces,
       advertisedHostOverride: Option.getOrNull(config.desktopLanHostOverride),
