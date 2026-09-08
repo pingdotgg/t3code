@@ -288,10 +288,13 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
     dataChange: true,
-    // Composer inset changes must not move already-visible messages. New
-    // rows and row growth still keep live-follow pinned through the other
-    // triggers below.
-    footerLayout: false,
+    // The footer holds the composer reservation. It grows when the composer
+    // measures after the list has settled, or when banners, attachments, or
+    // a multiline draft push the composer past that reservation; following
+    // that growth keeps the last row visible above the composer. Resting and
+    // expanding the composer leave the reservation alone, so they still do
+    // not move visible messages.
+    footerLayout: true,
     itemLayout: true,
     layout: true,
   },
