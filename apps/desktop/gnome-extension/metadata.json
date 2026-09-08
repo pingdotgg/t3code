@@ -1,0 +1,8 @@
+{
+  "uuid": "snap-shot@t3.codes",
+  "name": "T3 Code SnapShots",
+  "description": "Allows T3 Code to capture the focused window, identify it for optional accessibility text, and animate it into T3 Code. Disable this extension to revoke access.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 2,
+  "url": "https://github.com/pingdotgg/t3code"
+}

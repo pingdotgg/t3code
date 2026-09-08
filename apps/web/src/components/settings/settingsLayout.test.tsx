@@ -5,10 +5,25 @@ import {
   scrollToSettingsTarget,
   SettingsRow,
   SettingsSearchTargetProvider,
+  SettingsUnavailableGroup,
 } from "./settingsLayout";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("unavailable settings", () => {
+  it("groups disabled controls under one reason", () => {
+    const markup = renderToStaticMarkup(
+      <SettingsUnavailableGroup message="Only available in the desktop app.">
+        <SettingsRow title="Window capture" description="Capture a window." />
+      </SettingsUnavailableGroup>,
+    );
+
+    expect(markup).toContain("Only available in the desktop app.");
+    expect(markup).toContain("border-border/60");
+    expect(markup).toContain("[&amp;_h3]:opacity-64");
+  });
 });
 
 describe("settings search targets", () => {

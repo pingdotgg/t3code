@@ -7,6 +7,7 @@ export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const OPEN_SYSTEM_SETTINGS_CHANNEL = "desktop:open-system-settings";
 export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
+export const SNAP_SHOT_EVENT_CHANNEL = "desktop:snap-shot-event";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";
@@ -26,6 +27,20 @@ export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
   "desktop:get-local-environment-bearer-token";
 export const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
 export const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
+export const SETUP_SNAP_SHOT_CHANNEL = "desktop:setup-snap-shot";
+export const PREVIEW_SNAP_SHOT_CONFIG_CHANNEL = "desktop:preview-snap-shot-config";
+export const APPLY_SNAP_SHOT_CONFIG_CHANNEL = "desktop:apply-snap-shot-config";
+export const REQUEST_SNAP_SHOT_PERMISSIONS_CHANNEL = "desktop:request-snap-shot-permissions";
+export const GET_SNAP_SHOT_STATE_CHANNEL = "desktop:get-snap-shot-state";
+export const CHECK_SNAP_SHOT_SHORTCUT_CHANNEL = "desktop:check-snap-shot-shortcut";
+export const SET_SNAP_SHOT_SHORTCUT_SUPPRESSED_CHANNEL =
+  "desktop:set-snap-shot-shortcut-suppressed";
+export const LIST_PENDING_SNAP_SHOTS_CHANNEL = "desktop:list-pending-snap-shots";
+export const READ_SNAP_SHOT_CHANNEL = "desktop:read-snap-shot";
+export const SET_SNAP_SHOT_ANIMATION_DESTINATION_CHANNEL =
+  "desktop:set-snap-shot-animation-destination";
+export const DISMISS_SNAP_SHOT_ANIMATION_CHANNEL = "desktop:dismiss-snap-shot-animation";
+export const ACKNOWLEDGE_SNAP_SHOT_CHANNEL = "desktop:acknowledge-snap-shot";
 export const GET_CONNECTION_CATALOG_CHANNEL = "desktop:get-connection-catalog";
 export const SET_CONNECTION_CATALOG_CHANNEL = "desktop:set-connection-catalog";
 export const CLEAR_CONNECTION_CATALOG_CHANNEL = "desktop:clear-connection-catalog";

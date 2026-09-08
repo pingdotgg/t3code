@@ -35,8 +35,8 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { Link } from "@tanstack/react-router";
-import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { MoreVertical, Plus as PlusIcon } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -90,6 +90,7 @@ import {
 } from "~/hooks/useSettings";
 
 import {
+  SettingsUnavailableGroup,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -601,32 +602,6 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
         />
       }
     />
-  );
-}
-
-/**
- * Frames the client-local preview defaults as one unavailable block.
- *
- * Disabling each control on its own left the labels and descriptions at full
- * strength, so the group still read as editable. Boxing it puts the reason at
- * the top and dims everything it covers, which is also why the explanation
- * sits outside the dimmed area — the one part that must stay readable is the
- * part saying why the rest isn't.
- *
- * Disabled rather than hidden because these are *client* settings: editing
- * them from a browser tab would write preferences belonging to a different
- * client, reading as though the desktop app had been configured when it
- * hadn't.
- */
-function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode }) {
-  return (
-    <div className="border-border/60 bg-muted/20 py-1.5">
-      <div className="flex items-start gap-2 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
-        <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-        <p>Only available in the desktop app.</p>
-      </div>
-      <div className="[&_h3]:opacity-64 [&_p]:opacity-64">{children}</div>
-    </div>
   );
 }
 
@@ -1188,7 +1163,9 @@ export function IntegrationsSettingsPanel() {
             sits outside the block covering the desktop-only defaults. */}
         <AgentBrowserAccessSetting />
         {previewDefaultsDisabled ? (
-          <DesktopOnlyBrowserDefaults>{previewDefaults}</DesktopOnlyBrowserDefaults>
+          <SettingsUnavailableGroup message="Only available in the desktop app.">
+            {previewDefaults}
+          </SettingsUnavailableGroup>
         ) : (
           previewDefaults
         )}

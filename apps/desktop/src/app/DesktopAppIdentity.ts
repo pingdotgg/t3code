@@ -131,10 +131,6 @@ export const make = Effect.gen(function* () {
       yield* electronApp.setAppUserModelId(environment.appUserModelId);
     }
 
-    if (environment.platform === "linux") {
-      yield* electronApp.setDesktopName(environment.linuxDesktopEntryName);
-    }
-
     // Unpackaged runs only. A packaged bundle already carries its icon in
     // Info.plist, so setting the dock tile again changes nothing except to
     // overwrite a custom icon the user attached to the app themselves.

@@ -42,6 +42,32 @@ describe("resolveMarkdownMediaPreview", () => {
 });
 
 describe("buildExpandedImagePreview", () => {
+  it("keeps window capture details with the expanded image", () => {
+    const source = {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-09-01T00:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "main.ts",
+      accessibleText: "const answer = 42;",
+    };
+    const preview = buildExpandedImagePreview(
+      [
+        {
+          type: "image",
+          id: "capture-1",
+          name: "window.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          previewUrl: "data:image/png;base64,AQID",
+          source,
+        },
+      ],
+      "capture-1",
+    );
+
+    expect(preview?.images[0]?.source).toEqual(source);
+  });
+
   it("builds a video preview for a local video attachment", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "demo.mp4", { type: "video/mp4" });
     const attachment: ComposerFileAttachment = {

@@ -293,12 +293,26 @@ describe("composerDraftStore addImages", () => {
       lastModified: 999,
     });
 
-    useComposerDraftStore.getState().addImage(threadRef, first);
-    useComposerDraftStore.getState().addImage(threadRef, duplicateLater);
+    expect(useComposerDraftStore.getState().addImage(threadRef, first)).toBe(true);
+    expect(useComposerDraftStore.getState().addImage(threadRef, duplicateLater)).toBe(false);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft?.images.map((image) => image.id)).toEqual(["img-a"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:b");
+  });
+
+  it("returns false when addImage receives an existing image id", () => {
+    const first = makeImage({ id: "img-same", previewUrl: "blob:first" });
+    const duplicate = makeImage({
+      id: "img-same",
+      previewUrl: "blob:duplicate",
+      name: "different.png",
+    });
+
+    expect(useComposerDraftStore.getState().addImage(threadRef, first)).toBe(true);
+    expect(useComposerDraftStore.getState().addImage(threadRef, duplicate)).toBe(false);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.images).toEqual([first]);
+    expect(revokeSpy).toHaveBeenCalledWith("blob:duplicate");
   });
 
   it("does not revoke blob URLs that are still used by an accepted duplicate image", () => {
@@ -555,9 +569,12 @@ describe("composerDraftStore file attachments", () => {
       makeFile("file-accepted"),
       { ...makeFile("file-overflow"), name: "other.pdf" },
     ]);
-    store.addImages(threadRef, [
-      makeImage({ id: "image-overflow", name: "overflow.png", previewUrl: "blob:overflow" }),
-    ]);
+    expect(
+      store.addImage(
+        threadRef,
+        makeImage({ id: "image-overflow", name: "overflow.png", previewUrl: "blob:overflow" }),
+      ),
+    ).toBe(false);
 
     const draft = store.getComposerDraft(threadRef);
     expect(draft?.images).toHaveLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS - 1);

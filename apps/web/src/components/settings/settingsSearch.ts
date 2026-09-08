@@ -6,6 +6,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/appearance"
   | "/settings/keybindings"
+  | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
@@ -52,6 +53,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": "Appearance",
   "/settings/projects": "Projects",
   "/settings/keybindings": "Keybindings",
+  "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
@@ -324,6 +326,45 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Keybindings",
     to: "/settings/keybindings",
     searchTerms: ["keyboard shortcuts hotkeys commands bindings json"],
+  },
+  {
+    id: "snap-shot-enabled",
+    title: "SnapShots",
+    searchTerms: ["window capture screenshot"],
+    to: "/settings/snap-shot",
+  },
+  {
+    id: "snap-shot-accessibility",
+    title: "Include app text",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+    searchTerms: [
+      "capture accessibility data text UI structure elements privacy omit agent context",
+    ],
+  },
+  {
+    id: "snap-shot-shortcut",
+    title: "Capture shortcut",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+  },
+  {
+    id: "snap-shot-sound",
+    title: "Capture sound",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+  },
+  {
+    id: "snap-shot-flash",
+    title: "Capture flash",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
+  },
+  {
+    id: "snap-shot-animations",
+    title: "Capture animations",
+    to: "/settings/snap-shot",
+    targetId: "snap-shot-enabled",
   },
   {
     id: "providers",

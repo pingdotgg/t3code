@@ -14,6 +14,7 @@
   "dependencies": {
     "@clerk/electron": "catalog:",
     "@clerk/electron-passkeys": "catalog:",
+    "@crowecawcaw/xa11y": "0.13.0",
     "@effect/platform-node": "catalog:",
     "@napi-rs/keyring": "^1.3.0",
     "@t3tools/client-runtime": "workspace:*",
@@ -21,10 +22,12 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
+    "dbus-next": "0.10.2",
     "effect": "catalog:",
-    "electron": "43.4.1",
+    "electron": "44.1.0",
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
+    "ffi-rs": "1.3.2",
     "playwright-core": "1.60.0",
     "react-grab": "^0.1.32"
   },

@@ -1,6 +1,5 @@
 import { useAuth } from "@clerk/react";
 import { AuthAdministrativeScopes, AuthRelayWriteScope } from "@t3tools/contracts";
-import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -12,7 +11,6 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { usePrimarySessionState } from "~/environments/primary";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { cn } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 import { Button } from "../ui/button";
@@ -28,6 +26,7 @@ import {
 } from "../ui/dialog";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
+import { WizardSteps } from "../ui/wizard-steps";
 
 /**
  * Post-sign-in onboarding wizard for T3 Connect. Opens on every in-session
@@ -225,8 +224,8 @@ function ConfiguredConnectOnboardingDialog() {
             place.
           </DialogDescription>
           {steps.length > 1 ? (
-            <OnboardingStepper
-              steps={steps}
+            <WizardSteps
+              steps={steps.map((id) => ({ id, label: STEP_LABELS[id] }))}
               currentStep={step}
               disabled={isApplying}
               onStepSelect={setStep}
@@ -286,60 +285,6 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   publish: "Publish",
   devices: "Connect devices",
 };
-
-function OnboardingStepper({
-  steps,
-  currentStep,
-  disabled,
-  onStepSelect,
-}: {
-  readonly steps: ReadonlyArray<OnboardingStep>;
-  readonly currentStep: OnboardingStep;
-  readonly disabled: boolean;
-  readonly onStepSelect: (step: OnboardingStep) => void;
-}) {
-  const currentIndex = steps.indexOf(currentStep);
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {steps.map((step, index) => (
-        <button
-          key={step}
-          type="button"
-          disabled={disabled}
-          className={cn(
-            "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
-            index === currentIndex
-              ? "border-primary bg-primary/10 ring-1 ring-primary/25"
-              : index < currentIndex
-                ? "border-border bg-background"
-                : "border-border bg-muted/40",
-          )}
-          onClick={() => onStepSelect(step)}
-        >
-          <span
-            className={cn(
-              "row-span-2 mt-0.5 grid size-4 place-items-center rounded-full border",
-              index < currentIndex
-                ? "border-primary bg-primary text-primary-foreground"
-                : index === currentIndex
-                  ? "border-primary bg-background"
-                  : "border-muted-foreground/35 bg-background",
-            )}
-            aria-hidden
-          >
-            {index < currentIndex ? <CheckIcon className="size-3" /> : null}
-          </span>
-          <span className="text-[10px] font-medium uppercase text-muted-foreground">
-            Step {index + 1}
-          </span>
-          <span className="truncate text-xs font-semibold text-foreground">
-            {STEP_LABELS[step]}
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function PublishStep({
   exposeEnvironment,

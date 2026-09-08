@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, ImageIcon, TextIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
@@ -9,6 +9,12 @@ import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
+import {
+  SnapShotAccessibilityData,
+  SnapShotContentsButton,
+  snapShotAccessibilityDetails,
+} from "./SnapShotAttachmentDetails";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ExpandedImageDialogProps {
@@ -58,6 +64,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 }: ExpandedImageDialogProps) {
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
+  const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
   const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
   const item = preview.images[index];
   const source: MediaActionSource = item?.actionsSource ?? {
@@ -127,6 +134,15 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
       <OpenMediaLink originalUrl={item.originalUrl} />
     ) : null;
+  const accessibilityDetails = item.source ? snapShotAccessibilityDetails(item.source) : undefined;
+  const showingAccessibilityDetails =
+    Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
+  const contentsLabel = showingAccessibilityDetails
+    ? "Show screenshot"
+    : accessibilityDetails?.format === "json"
+      ? "Show accessibility JSON"
+      : "Show extracted text";
+  const ContentsIcon = showingAccessibilityDetails ? ImageIcon : TextIcon;
 
   return createPortal(
     <div
@@ -168,6 +184,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           </Button>
           {item.type === "video" ? (
             <ExpandedVideo key={index} item={item} />
+          ) : showingAccessibilityDetails ? (
+            accessibilityDetails ? (
+              <SnapShotAccessibilityData
+                details={accessibilityDetails}
+                className="h-[min(86vh,40rem)] w-[min(92vw,42rem)] animate-[snap-shot-contents-enter_140ms_ease-out] rounded-lg border border-border/70 bg-background p-4 text-xs leading-5 shadow-2xl motion-reduce:animate-none"
+              />
+            ) : null
           ) : item.src === null || failedImageSrc === item.src ? (
             <ExpandedMediaFailure>
               <p>
@@ -181,15 +204,44 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             <img
               src={item.src}
               alt={item.name}
-              className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
+              className="max-h-[86vh] max-w-[92vw] animate-[snap-shot-contents-enter_140ms_ease-out] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl motion-reduce:animate-none"
               draggable={false}
               onError={() => setFailedImageSrc(item.src)}
             />
           )}
-          <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
-            {item.name}
-            {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
-          </p>
+          <div className="mt-2 flex max-w-[92vw] items-center justify-center gap-1.5 text-xs text-muted-foreground/80">
+            <span className="truncate">
+              {item.name}
+              {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
+            </span>
+            {accessibilityDetails && item.source ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label={contentsLabel}
+                      aria-pressed={showingAccessibilityDetails}
+                      className="[--control-icon-color:currentColor] hover:bg-white/10 hover:text-white"
+                      onClick={() =>
+                        setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
+                      }
+                      size="icon-micro"
+                      variant="ghost-muted"
+                    />
+                  }
+                >
+                  <ContentsIcon className="size-3" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
+              </Tooltip>
+            ) : item.source ? (
+              <SnapShotContentsButton
+                source={item.source}
+                side="top"
+                className="hover:bg-white/10 hover:text-white"
+              />
+            ) : null}
+          </div>
         </div>
       </MediaActions>
       {preview.images.length > 1 && (

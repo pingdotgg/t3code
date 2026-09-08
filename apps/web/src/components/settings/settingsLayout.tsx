@@ -213,6 +213,26 @@ export function SettingsSection({
   );
 }
 
+export function SettingsUnavailableGroup({
+  children,
+  message,
+}: {
+  children: ReactNode;
+  message?: ReactNode;
+}) {
+  if (message === undefined) return children;
+
+  return (
+    <div className="border-border/60 bg-muted/20 py-1.5">
+      <div className="flex items-start gap-2 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
+        <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+        <p>{message}</p>
+      </div>
+      <div className="[&_h3]:opacity-64 [&_p]:opacity-64">{children}</div>
+    </div>
+  );
+}
+
 /**
  * One setting. `serverScoped` marks rows whose value lives in the primary
  * environment's settings.json; where there is no primary (the hosted app)

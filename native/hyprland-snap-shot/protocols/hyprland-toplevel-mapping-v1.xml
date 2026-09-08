@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="hyprland_toplevel_mapping_v1">
+  <copyright>
+    Copyright © 2025 WhySoBad
+    All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice, this
+    list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+
+    3. Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+    OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  </copyright>
+
+  <description summary="mapping of toplevels to windows">
+    This protocol allows clients to retrieve the mapping of toplevels to hyprland window addresses.
+  </description>
+
+  <interface name="hyprland_toplevel_mapping_manager_v1" version="1">
+    <description summary="manager to request toplevel mappings">
+      This object is a manager which offers requests to retrieve a window address
+      for a toplevel.
+    </description>
+
+    <request name="get_window_for_toplevel">
+      <description summary="get window address for toplevel">
+        Get the window address for a toplevel.
+      </description>
+      <arg
+        name="handle"
+        type="new_id"
+        interface="hyprland_toplevel_window_mapping_handle_v1"
+      />
+      <arg
+        name="toplevel"
+        type="object"
+        interface="ext_foreign_toplevel_handle_v1"
+        summary="toplevel to get the window address for"
+      />
+    </request>
+
+    <request name="get_window_for_toplevel_wlr">
+      <description summary="get window address for wlr toplevel">
+        Get the window address for a wlr toplevel.
+      </description>
+      <arg
+        name="handle"
+        type="new_id"
+        interface="hyprland_toplevel_window_mapping_handle_v1"
+      />
+      <arg
+        name="toplevel"
+        type="object"
+        interface="zwlr_foreign_toplevel_handle_v1"
+        summary="wlr toplevel to get the window address for"
+      />
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        All objects created by the manager will still remain valid, until their appropriate destroy
+        request has been called.
+      </description>
+    </request>
+  </interface>
+
+  <interface name="hyprland_toplevel_window_mapping_handle_v1" version="1">
+    <description summary="toplevel to window mapping">
+      This object represents a mapping of a (wlr) toplevel to a window address.
+
+      Once created, the `window_address` event will be sent containing the address of the window
+      associated with the toplevel.
+      Should the mapping fail, the `failed` event will be sent.
+    </description>
+
+    <event name="window_address">
+      <description summary="address of the window">
+        The full 64bit window address. The `address` field contains the lower 32 bits whilst the
+        `address_hi` contains the upper 32 bits
+      </description>
+      <arg
+        name="address_hi"
+        type="uint"
+        summary="upper 32 bits of the window address"
+      />
+      <arg
+        name="address"
+        type="uint"
+        summary="lower 32 bits of the window address"
+      />
+    </event>
+
+    <event name="failed">
+      <description summary="mapping failed">
+        The mapping of the toplevel to a window address failed. Most likely the window does not
+        exist (anymore).
+      </description>
+    </event>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy handle">
+        Destroy the handle. This request can be sent at any time by the client.
+      </description>
+    </request>
+  </interface>
+</protocol>

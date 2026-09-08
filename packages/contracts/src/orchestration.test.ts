@@ -7,6 +7,7 @@ import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  type ChatImageAttachment,
   ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
@@ -29,6 +30,7 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
+  SnapShotAccessibility,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
 } from "./orchestration.ts";
@@ -65,6 +67,7 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
   Effect.gen(function* () {
@@ -371,6 +374,115 @@ it.effect("rejects malformed known attachment types instead of tolerating them",
       decode({ ...base, type: "image", mimeType: "application/pdf", sizeBytes: 12 }),
     );
     assert.strictEqual(Exit.isFailure(badMimeImage), true);
+  }),
+);
+
+it.effect("preserves window capture metadata in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-snap-shot",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-snap-shot",
+        role: "user",
+        text: "Review this window",
+        attachments: [
+          {
+            type: "image",
+            id: "snap-shot-1",
+            name: "editor.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            source: {
+              kind: "snap-shot",
+              capturedAt: "2026-08-24T11:00:00.000Z",
+              appName: "Editor",
+              windowTitle: "main.ts",
+              accessibleText: "const answer = 42;",
+              accessibility: {
+                format: "element-tree",
+                coordinateSpace: "captured-image",
+                imageSize: { width: 800, height: 600 },
+                truncated: false,
+                root: {
+                  role: "window",
+                  name: "main.ts",
+                  bounds: { x: 0, y: 0, width: 800, height: 600 },
+                  children: [
+                    {
+                      role: "text",
+                      value: "const answer = 42;",
+                      bounds: { x: 20, y: 40, width: 180, height: 20 },
+                      children: [],
+                    },
+                  ],
+                },
+              },
+              appIdentifier: "com.example.editor",
+              appIconDataUrl: "data:image/png;base64,iVBORw==",
+            },
+          },
+        ],
+      },
+      createdAt: "2026-08-24T11:00:00.000Z",
+    });
+
+    const attachment = parsed.message.attachments[0];
+    assert.strictEqual(attachment?.type, "image");
+    assert.deepStrictEqual((attachment as ChatImageAttachment).source, {
+      kind: "snap-shot",
+      capturedAt: "2026-08-24T11:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "main.ts",
+      accessibleText: "const answer = 42;",
+      accessibility: {
+        format: "element-tree",
+        coordinateSpace: "captured-image",
+        imageSize: { width: 800, height: 600 },
+        truncated: false,
+        root: {
+          role: "window",
+          name: "main.ts",
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          children: [
+            {
+              role: "text",
+              value: "const answer = 42;",
+              bounds: { x: 20, y: 40, width: 180, height: 20 },
+              children: [],
+            },
+          ],
+        },
+      },
+      appIdentifier: "com.example.editor",
+      appIconDataUrl: "data:image/png;base64,iVBORw==",
+    });
+  }),
+);
+
+it.effect("rejects accessibility trees above the serialized payload limit", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeSnapShotAccessibility({
+        format: "element-tree",
+        coordinateSpace: "captured-image",
+        imageSize: { width: 800, height: 600 },
+        truncated: false,
+        root: {
+          role: "window",
+          bounds: { x: 0, y: 0, width: 800, height: 600 },
+          children: Array.from({ length: 10 }, () => ({
+            role: "text",
+            value: "x".repeat(8_000),
+            bounds: null,
+            children: [],
+          })),
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(result), true);
   }),
 );
 

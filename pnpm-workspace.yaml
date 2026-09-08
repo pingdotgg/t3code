@@ -90,9 +90,13 @@ minimumReleaseAgeExclude:
   - expo-updates@57.0.19
   - expo@57.0.18
   - expo-widgets@57.0.15
+  - electron@44.1.0
   - "@anthropic-ai/claude-agent-sdk@0.3.260"
 
 overrides:
+  # The dbus-next patch drops usocket from the package, but pnpm resolves from the
+  # registry manifest, so the edge has to be cut here as well.
+  "dbus-next>usocket": "-"
   # The SDK always receives the user's Claude executable, so its bundled binaries are unused.
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64": "-"
@@ -137,6 +141,7 @@ overrides:
   expo-router: 57.0.17
   "expo-sharing>@expo/config-plugins": 57.0.9
   "expo-sharing>@expo/config-types": 57.0.2
+  node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
   vite: "catalog:"
@@ -166,6 +171,7 @@ patchedDependencies:
   "@react-native-ai/apple@0.12.0": patches/@react-native-ai__apple@0.12.0.patch
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
+  dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-beta.103: patches/effect@4.0.0-beta.103.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch

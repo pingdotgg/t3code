@@ -225,6 +225,7 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
             name: attachment.name,
             mimeType: parsed.mimeType.toLowerCase(),
             sizeBytes: bytes.byteLength,
+            ...(attachment.source ? { source: attachment.source } : {}),
           };
 
           const attachmentPath = resolveAttachmentPath({
