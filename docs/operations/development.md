@@ -74,11 +74,12 @@ Windows investigation while that suite is not a required gate.
 ### Unused code
 
 `vp run knip:check` checks unused files and dependencies across the repo, then
-unused runtime exports in `apps/desktop`, `apps/web`, and every internal package under
+unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
 `packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
 recognizes schema types, including aliases and schema classes; functions that create or decode
-schemas remain checked. Completely unused files remain checked too.
+schemas remain checked. Canonical Effect service construction APIs stay exported with an explicit
+`@public` annotation, which Knip recognizes. Completely unused files remain checked too.
 Named exports in web UI component modules are kept as complete component sets. Knip ignores
 unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an entire unused file.
 Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
