@@ -17,6 +17,7 @@ import {
   type DeviceActionType,
   type DeviceForegroundApp,
   DeviceOperationError,
+  DeviceActionUnavailableError,
   type DeviceOrientation,
   type DevicePlatform,
   type DeviceSettings,
@@ -83,13 +84,17 @@ export const supportsAction = (platform: DevicePlatform, input: DeviceActionInpu
   return true;
 };
 
-const fail = (operation: string, detail: string) =>
-  new DeviceOperationError({ operation, detail: detail.trim() || "command failed" });
-
 const ok = (operation: string) => (result: { code: number; stderr: string; stdout: string }) =>
   result.code === 0
     ? Effect.succeed(result.stdout)
-    : Effect.fail(fail(operation, result.stderr || result.stdout));
+    : Effect.fail(
+        new DeviceOperationError({
+          operation,
+          reason: "command_failed",
+          exitCode: result.code,
+          cause: result,
+        }),
+      );
 
 // iOS text-size categories in ascending order; the four shared steps index
 // into it. `default` is what a fresh simulator reports ("large").
@@ -181,7 +186,11 @@ export const runDeviceAction = Effect.fn("DeviceActions.run")(function* (
   input: DeviceActionInput,
 ) {
   if (!supportsAction(platform, input)) {
-    return yield* fail(input.type, `${input.type} is not supported on ${platform}.`);
+    return yield* new DeviceActionUnavailableError({
+      operation: input.type,
+      platform,
+      reason: "unsupported",
+    });
   }
   if (platform === "ios") return yield* runIos(ready, input);
   return yield* runAndroid(ready.run, input);
@@ -196,10 +205,11 @@ const axSettings = (ready: DeviceHostReady, udid: string, args: ReadonlyArray<st
   Effect.gen(function* () {
     const helper = ready.helpers.serveSimAxSettings;
     if (!helper) {
-      return yield* fail(
-        "accessibility",
-        "The bundled accessibility helper is missing from this expo-device-hub install.",
-      );
+      return yield* new DeviceActionUnavailableError({
+        operation: "accessibility",
+        platform: "ios",
+        reason: "helper_missing",
+      });
     }
     return yield* ready
       .run("xcrun", ["simctl", "spawn", udid, helper, ...args])
@@ -261,7 +271,12 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
       }
       const service =
         input.permission === "location" ? "location" : IOS_TCC_SERVICES[input.permission];
-      if (!service) return yield* fail("permission", `Unknown permission ${input.permission}.`);
+      if (!service)
+        return yield* new DeviceActionUnavailableError({
+          operation: "permission",
+          platform: "ios",
+          reason: "unsupported",
+        });
       yield* simctl(run, udid, ["privacy", input.decision, service, input.appId], "permission");
       return;
     }
@@ -278,7 +293,10 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
       const payload =
         typeof input.payload === "string" ? { aps: { alert: input.payload } } : input.payload;
       const encoded = yield* encodePushPayload(payload).pipe(
-        Effect.mapError((cause) => fail("push", String(cause))),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({ operation: "push", reason: "invalid_payload", cause }),
+        ),
       );
       yield* run("xcrun", ["simctl", "push", udid, input.appId, "-"], { stdin: encoded }).pipe(
         Effect.flatMap(ok("push")),
@@ -287,7 +305,11 @@ const runIos = Effect.fn("DeviceActions.runIos")(function* (
     }
     case "shake":
     case "setOrientation":
-      return yield* fail(input.type, `${input.type} is not supported on iOS.`);
+      return yield* new DeviceActionUnavailableError({
+        operation: input.type,
+        platform: "ios",
+        reason: "unsupported",
+      });
   }
 });
 
@@ -298,7 +320,12 @@ const serveSimPermissions = (
 ) =>
   Effect.gen(function* () {
     const cli = ready.helpers.serveSimCli;
-    if (!cli) return yield* fail("permission", "serve-sim's CLI is missing from this install.");
+    if (!cli)
+      return yield* new DeviceActionUnavailableError({
+        operation: "permission",
+        platform: "ios",
+        reason: "helper_missing",
+      });
     yield* ready
       .run(process.execPath, [
         cli,
@@ -350,7 +377,11 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         }
         return;
       }
-      return yield* fail(input.type, `${input.setting} is not supported on Android.`);
+      return yield* new DeviceActionUnavailableError({
+        operation: input.type,
+        platform: "android",
+        reason: "unsupported",
+      });
     case "setOrientation": {
       // `user-rotation lock` only rotates window content on recent images;
       // the display the encoder captures stays put. Tilting the emulator's
@@ -388,7 +419,11 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
     case "setPermission": {
       const permissions = ANDROID_PERMISSIONS[input.permission];
       if (!permissions) {
-        return yield* fail("permission", `${input.permission} has no Android equivalent.`);
+        return yield* new DeviceActionUnavailableError({
+          operation: "permission",
+          platform: "android",
+          reason: "unsupported",
+        });
       }
       const verb = input.decision === "grant" ? "grant" : "revoke";
       for (const permission of permissions) {
@@ -416,7 +451,11 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
     case "setColorFilter":
     case "shake":
     case "sendPush":
-      return yield* fail(input.type, `${input.type} is not supported on Android.`);
+      return yield* new DeviceActionUnavailableError({
+        operation: input.type,
+        platform: "android",
+        reason: "unsupported",
+      });
   }
 });
 

@@ -56,7 +56,10 @@ describe("DeviceService.stateStream", () => {
   );
 });
 
-const fixture = Effect.fn("fixture")(function* (onBoot: Effect.Effect<void> = Effect.void) {
+const fixture = Effect.fn("fixture")(function* (
+  onBoot: Effect.Effect<void> = Effect.void,
+  bootError?: string,
+) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
   const agentStarts: string[] = [];
@@ -139,7 +142,9 @@ const fixture = Effect.fn("fixture")(function* (onBoot: Effect.Effect<void> = Ef
             booted = true;
             return HttpClientResponse.fromWeb(
               request,
-              Response.json({ ok: true, serial: "emulator-5554" }),
+              Response.json(
+                bootError ? { ok: false, error: bootError } : { ok: true, serial: "emulator-5554" },
+              ),
             );
           }
           return HttpClientResponse.fromWeb(
@@ -276,3 +281,27 @@ describe("device discovery after server restart", () => {
     }).pipe(Effect.scoped),
   );
 });
+
+for (const [diagnostic, reason, message] of [
+  ["Insufficient disk space at /private/user/path", "disk_space", "not enough free disk space"],
+  ["Timed out spawning /private/user/command", "timeout", "did not become ready in time"],
+  ["Unexpected failure: secret-token", "launch_failed", "could not start"],
+] as const) {
+  it.effect(`normalizes boot failure: ${reason}`, () =>
+    Effect.gen(function* () {
+      const { service } = yield* fixture(Effect.void, diagnostic);
+      yield* service.configure({ enabled: true });
+      const error = yield* service
+        .open({
+          threadId: ThreadId.make("boot-failure"),
+          deviceId: "Pixel_API_35",
+          platform: "android",
+        })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("DeviceBootError");
+      expect(error.message).toContain(message);
+      expect(error.message).not.toContain(diagnostic);
+      expect((yield* service.state).bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+}

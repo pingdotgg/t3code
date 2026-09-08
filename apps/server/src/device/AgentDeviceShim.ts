@@ -14,10 +14,10 @@ const SHIM_DIR = "device/bin";
 export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(function* (input: {
   readonly entryPath: string;
   readonly stateDir: string;
-  readonly fs: FileSystem.FileSystem;
-  readonly path: Path.Path;
 }) {
-  const { fs, path, entryPath } = input;
+  const { entryPath } = input;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   const shimDir = path.join(input.stateDir, SHIM_DIR);
   yield* fs.makeDirectory(shimDir, { recursive: true });

@@ -935,9 +935,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const shimDir = yield* ensureAgentDeviceShim({
       entryPath: readiness.agentDevice.entryPath,
       stateDir: serverConfig.stateDir,
-      fs: fileSystem,
-      path: pathService,
-    }).pipe(Effect.orElseSucceed(() => undefined));
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.orElseSucceed(() => undefined),
+    );
     if (!shimDir) return undefined;
     return {
       PATH: shimDir,

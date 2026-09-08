@@ -346,10 +346,17 @@ export class DeviceNotFoundError extends Schema.TaggedError<DeviceNotFoundError>
 export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("DeviceBootError", {
   hostId: DeviceHostId,
   deviceId: DeviceId,
-  detail: Schema.String,
+  reason: Schema.Literals(["disk_space", "timeout", "launch_failed"]),
+  cause: Schema.Defect(),
 }) {
   override get message(): string {
-    return `Device ${this.deviceId} failed to boot: ${this.detail}`;
+    const explanation = {
+      disk_space: "There is not enough free disk space on the environment server.",
+      timeout: "The device did not become ready in time.",
+      launch_failed:
+        "The simulator or emulator could not start. Check its configuration on the environment server.",
+    }[this.reason];
+    return `Device ${this.deviceId} failed to boot: ${explanation}`;
   }
 }
 
@@ -357,11 +364,41 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
   "DeviceOperationError",
   {
     operation: Schema.String,
-    detail: Schema.String,
+    reason: Schema.Literals([
+      "command_failed",
+      "request_failed",
+      "invalid_payload",
+      "settings_failed",
+      "hub_rejected",
+    ]),
+    exitCode: Schema.optional(Schema.Number),
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Device ${this.operation} failed: ${this.detail}`;
+    const explanation = {
+      command_failed: `The device command failed${this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`}.`,
+      request_failed: "Could not communicate with device support. Try refreshing devices.",
+      invalid_payload: "The device request could not be encoded.",
+      settings_failed: "Could not read or save device settings.",
+      hub_rejected: "The device hub could not complete the request.",
+    }[this.reason];
+    return `Device ${this.operation} failed: ${explanation}`;
+  }
+}
+
+export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActionUnavailableError>()(
+  "DeviceActionUnavailableError",
+  {
+    operation: Schema.String,
+    platform: DevicePlatform,
+    reason: Schema.Literals(["unsupported", "helper_missing"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "helper_missing"
+      ? `Device ${this.operation} requires a helper missing from this install. Set up device support again.`
+      : `Device ${this.operation} is not supported on ${this.platform}.`;
   }
 }
 
@@ -371,6 +408,7 @@ export const DeviceError = Schema.Union([
   DeviceNotFoundError,
   DeviceBootError,
   DeviceOperationError,
+  DeviceActionUnavailableError,
 ]);
 export type DeviceError = typeof DeviceError.Type;
 
@@ -473,5 +511,6 @@ export const DeviceToolError = Schema.Union([
   DeviceNotFoundError,
   DeviceBootError,
   DeviceOperationError,
+  DeviceActionUnavailableError,
 ]);
 export type DeviceToolError = typeof DeviceToolError.Type;

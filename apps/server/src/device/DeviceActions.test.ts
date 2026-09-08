@@ -163,8 +163,8 @@ describe("runDeviceAction", () => {
           value: "grayscale",
         }),
       );
-      expect(error._tag).toBe("DeviceOperationError");
-      expect(error.detail).toContain("accessibility helper");
+      expect(error._tag).toBe("DeviceActionUnavailableError");
+      expect(error.message).toContain("requires a helper");
     }),
   );
 
@@ -179,7 +179,7 @@ describe("runDeviceAction", () => {
           payload: "hi",
         }),
       );
-      expect(error.detail).toContain("not supported on android");
+      expect(error.message).toContain("not supported on android");
       expect(calls).toEqual([]);
     }),
   );
@@ -191,7 +191,11 @@ describe("runDeviceAction", () => {
         runDeviceAction(ready, "ios", { type: "setAppearance", deviceId: udid, value: "dark" }),
       );
       expect(error.operation).toBe("appearance");
-      expect(error.detail).toBe("Invalid device: SIM-1");
+      expect(error.message).toContain("exit code 1");
+      expect(error.message).not.toContain("Invalid device: SIM-1");
+      expect(error._tag === "DeviceOperationError" && error.cause).toMatchObject({
+        stderr: "Invalid device: SIM-1",
+      });
     }),
   );
 

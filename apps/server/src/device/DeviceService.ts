@@ -147,7 +147,8 @@ export const make = Effect.gen(function* () {
       onboardingCompleted: value.deviceOnboardingCompleted,
     })),
     Effect.mapError(
-      (cause) => new DeviceOperationError({ operation: "settings", detail: cause.message }),
+      (cause) =>
+        new DeviceOperationError({ operation: "settings", reason: "settings_failed", cause }),
     ),
   );
   const initialSettings = yield* readDeviceSettings;
@@ -279,7 +280,6 @@ export const make = Effect.gen(function* () {
     );
 
   const hubJson = <A, I>(
-    ready: DeviceReadiness,
     request: HttpClientRequest.HttpClientRequest,
     schema: Schema.Codec<A, I>,
     operation: string,
@@ -294,14 +294,14 @@ export const make = Effect.gen(function* () {
         (cause) =>
           new DeviceOperationError({
             operation,
-            detail: `${ready.hub.origin}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            reason: "request_failed",
+            cause,
           }),
       ),
     );
 
   const fetchDevices = Effect.fn("DeviceService.fetchDevices")(function* (ready: DeviceReadiness) {
     const list = yield* hubJson(
-      ready,
       HttpClientRequest.get(`${ready.hub.origin}/api/devices`),
       HubDeviceList,
       "list",
@@ -322,7 +322,9 @@ export const make = Effect.gen(function* () {
       if (avds.code !== 0) {
         return yield* new DeviceOperationError({
           operation: "list",
-          detail: `Could not list Android virtual devices: ${avds.stderr || avds.stdout}`,
+          reason: "command_failed",
+          exitCode: avds.code,
+          cause: avds,
         });
       }
       for (const name of avds.stdout
@@ -397,7 +399,11 @@ export const make = Effect.gen(function* () {
             .pipe(
               Effect.mapError(
                 (cause) =>
-                  new DeviceOperationError({ operation: "configure", detail: cause.message }),
+                  new DeviceOperationError({
+                    operation: "configure",
+                    reason: "settings_failed",
+                    cause,
+                  }),
               ),
             );
           if (!nextEnabled) {
@@ -457,15 +463,23 @@ export const make = Effect.gen(function* () {
     const result = yield* HttpClientRequest.post(`${ready.hub.origin}/api/devices/boot`).pipe(
       HttpClientRequest.bodyJson({ platform: device.platform, id: device.id, name: device.name }),
       Effect.mapError(
-        (cause) => new DeviceOperationError({ operation: "boot", detail: String(cause) }),
+        (cause) =>
+          new DeviceOperationError({ operation: "boot", reason: "invalid_payload", cause }),
       ),
-      Effect.flatMap((request) => hubJson(ready, request, HubActionResult, "boot", BOOT_TIMEOUT)),
+      Effect.flatMap((request) => hubJson(request, HubActionResult, "boot", BOOT_TIMEOUT)),
     );
     if (!result.ok) {
       return yield* new DeviceBootError({
         hostId: ready.hostId,
         deviceId: device.id,
-        detail: result.error ?? "The device hub reported a boot failure.",
+        reason: /insufficient.*(?:disk|space)|not enough.*(?:disk|space)|no space left/i.test(
+          result.error ?? "",
+        )
+          ? "disk_space"
+          : /timed? out|timeout/i.test(result.error ?? "")
+            ? "timeout"
+            : "launch_failed",
+        cause: result,
       });
     }
     if (device.platform === "ios") {
@@ -476,10 +490,11 @@ export const make = Effect.gen(function* () {
       ).pipe(
         HttpClientRequest.bodyJson({ udid: device.id }),
         Effect.mapError(
-          (cause) => new DeviceOperationError({ operation: "boot", detail: String(cause) }),
+          (cause) =>
+            new DeviceOperationError({ operation: "boot", reason: "invalid_payload", cause }),
         ),
         Effect.flatMap((request) =>
-          hubJson(ready, request, HubActionResult, "attach stream", BOOT_TIMEOUT),
+          hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
         ),
       );
     }
@@ -528,10 +543,11 @@ export const make = Effect.gen(function* () {
       ).pipe(
         HttpClientRequest.bodyJson({ udid: device.id }),
         Effect.mapError(
-          (cause) => new DeviceOperationError({ operation: "open", detail: String(cause) }),
+          (cause) =>
+            new DeviceOperationError({ operation: "open", reason: "invalid_payload", cause }),
         ),
         Effect.flatMap((request) =>
-          hubJson(ready, request, HubActionResult, "attach stream", BOOT_TIMEOUT),
+          hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT),
         ),
       );
     }
@@ -578,16 +594,18 @@ export const make = Effect.gen(function* () {
     yield* HttpClientRequest.post(`${ready.hub.origin}/api/devices/shutdown`).pipe(
       HttpClientRequest.bodyJson({ platform, id: deviceId }),
       Effect.mapError(
-        (cause) => new DeviceOperationError({ operation: "shutdown", detail: String(cause) }),
+        (cause) =>
+          new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
       ),
-      Effect.flatMap((request) => hubJson(ready, request, HubActionResult, "shutdown")),
+      Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
       Effect.flatMap((result) =>
         result.ok
           ? Effect.void
           : Effect.fail(
               new DeviceOperationError({
                 operation: "shutdown",
-                detail: result.error ?? "The device hub reported a shutdown failure.",
+                reason: "hub_rejected",
+                cause: result,
               }),
             ),
       ),
@@ -646,7 +664,8 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new DeviceOperationError({
               operation: "screenshot",
-              detail: cause instanceof Error ? cause.message : String(cause),
+              reason: "request_failed",
+              cause,
             }),
         ),
       );

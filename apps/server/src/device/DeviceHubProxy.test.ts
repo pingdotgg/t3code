@@ -9,7 +9,13 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/unstable/http";
-import { EnvironmentAuth } from "../auth/EnvironmentAuth.ts";
+import {
+  EnvironmentAuth,
+  ServerAuthMissingCredentialError,
+  ServerAuthSessionCredentialValidationError,
+  type ServerAuthCredentialError,
+  type ServerAuthInternalError,
+} from "../auth/EnvironmentAuth.ts";
 import { DeviceService } from "./DeviceService.ts";
 import { deviceHubProxyRouteLayer } from "./DeviceHubProxy.ts";
 
@@ -18,7 +24,11 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0)) await dispose();
 });
 
-const fixture = (scopes: ReadonlyArray<AuthEnvironmentScope>, fail = false) => {
+const fixture = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  fail = false,
+  authError?: ServerAuthCredentialError | ServerAuthInternalError,
+) => {
   let finalized = 0;
   const requests: string[] = [];
   const client = HttpClient.make((request, _url, signal) =>
@@ -36,12 +46,14 @@ const fixture = (scopes: ReadonlyArray<AuthEnvironmentScope>, fail = false) => {
       Layer.provideMerge(
         Layer.succeed(EnvironmentAuth, {
           authenticateWebSocketUpgrade: () =>
-            Effect.succeed({
-              sessionId: AuthSessionId.make("test"),
-              subject: "test",
-              method: "bearer-access-token",
-              scopes,
-            }),
+            authError
+              ? Effect.fail(authError)
+              : Effect.succeed({
+                  sessionId: AuthSessionId.make("test"),
+                  subject: "test",
+                  method: "bearer-access-token",
+                  scopes,
+                }),
         } as unknown as EnvironmentAuth["Service"]),
       ),
       Layer.provideMerge(
@@ -110,4 +122,20 @@ describe("device hub proxy", () => {
     ).toBe(404);
     expect(requests).toEqual([]);
   });
+});
+
+it.each([
+  [new ServerAuthMissingCredentialError({}), 401],
+  [
+    new ServerAuthSessionCredentialValidationError({
+      cause: new Error("private credential diagnostic"),
+    }),
+    500,
+  ],
+] as const)("translates authentication failure to HTTP %s", async (error, status) => {
+  const { handler, requests } = fixture([], false, error);
+  const response = await handler(new Request("http://t3.test/api/device-hub/api/devices"));
+  expect(response.status).toBe(status);
+  expect(await response.text()).not.toContain("private credential diagnostic");
+  expect(requests).toEqual([]);
 });

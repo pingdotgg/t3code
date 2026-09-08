@@ -34,7 +34,7 @@ import {
   failEnvironmentInternal,
   failEnvironmentScopeRequired,
 } from "../auth/http.ts";
-import { DEVICE_HUB_ROUTE_PREFIX, DeviceService } from "./DeviceService.ts";
+import * as DeviceService from "./DeviceService.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/devices$/,
@@ -90,14 +90,16 @@ const authenticate = (requiredScope: AuthEnvironmentScope) =>
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
-      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-        failEnvironmentAuthInvalid(
-          EnvironmentAuth.serverAuthCredentialReason(error),
-          EnvironmentAuth.serverAuthDpopFailureReason(error),
-        ),
-      ),
-      Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-        failEnvironmentInternal("internal_error", error),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (EnvironmentAuth.isServerAuthCredentialError(error)) {
+            return yield* failEnvironmentAuthInvalid(
+              EnvironmentAuth.serverAuthCredentialReason(error),
+              EnvironmentAuth.serverAuthDpopFailureReason(error),
+            );
+          }
+          return yield* failEnvironmentInternal("internal_error", error);
+        }),
       ),
     );
     if (!session.scopes.includes(requiredScope)) {
@@ -177,7 +179,7 @@ const handler = Effect.gen(function* () {
   if (Option.isNone(url)) {
     return HttpServerResponse.text("Bad Request", { status: 400 });
   }
-  const hubPath = url.value.pathname.slice(DEVICE_HUB_ROUTE_PREFIX.length) || "/";
+  const hubPath = url.value.pathname.slice(DeviceService.DEVICE_HUB_ROUTE_PREFIX.length) || "/";
   const upgrade = isWebSocketUpgrade(request);
   const allowed = (upgrade ? ALLOWED_WS_PATHS : ALLOWED_PATHS).some((pattern) =>
     pattern.test(hubPath),
@@ -193,7 +195,7 @@ const handler = Effect.gen(function* () {
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/stream-(mode|settings)$/.test(hubPath));
   yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
-  const devices = yield* DeviceService;
+  const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness();
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
@@ -217,6 +219,6 @@ const handler = Effect.gen(function* () {
 
 export const deviceHubProxyRouteLayer = HttpRouter.add(
   "*",
-  `${DEVICE_HUB_ROUTE_PREFIX}/*`,
+  `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`,
   handler,
 );
