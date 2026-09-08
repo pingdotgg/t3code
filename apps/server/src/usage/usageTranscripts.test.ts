@@ -38,9 +38,9 @@ function claudeLine(overrides: {
 
 describe("parseClaudeLine", () => {
   it("extracts token totals and a dedupe key", () => {
-    const record = parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text" }));
+    const [record] = parseClaudeLine(claudeLine({ messageId: "msg_1", contentType: "text" }));
 
-    expect(record).not.toBeNull();
+    expect(record).toBeDefined();
     expect(record?.provider).toBe("claude");
     expect(record?.model).toBe("claude-fable-5");
     expect(record?.totals).toEqual({
@@ -56,16 +56,110 @@ describe("parseClaudeLine", () => {
   it("gives every content block of one message the same dedupe key", () => {
     // T3 Code writes one record per content block, each repeating the parent
     // message's full usage. Summing them would overcount ~2.4x on real data.
-    const text = parseClaudeLine(claudeLine({ messageId: "msg_2", contentType: "text" }));
-    const toolUse = parseClaudeLine(claudeLine({ messageId: "msg_2", contentType: "tool_use" }));
+    const [text] = parseClaudeLine(claudeLine({ messageId: "msg_2", contentType: "text" }));
+    const [toolUse] = parseClaudeLine(claudeLine({ messageId: "msg_2", contentType: "tool_use" }));
 
     expect(text?.dedupeKey).toBe(toolUse?.dedupeKey);
     expect(text?.totals).toEqual(toolUse?.totals);
   });
 
   it("ignores records that are not assistant messages", () => {
-    expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toBeNull();
-    expect(parseClaudeLine("not json")).toBeNull();
+    expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toEqual([]);
+    expect(parseClaudeLine("not json")).toEqual([]);
+  });
+
+  it("separates advisor calls without counting executor iterations twice", () => {
+    const records = parseClaudeLine(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-07T04:05:13.944Z",
+        sessionId: "session",
+        requestId: "request",
+        costUSD: 0.5,
+        message: {
+          id: "message",
+          model: "claude-sonnet-5",
+          usage: {
+            input_tokens: 30,
+            output_tokens: 10,
+            iterations: [
+              { type: "message", input_tokens: 10, output_tokens: 4 },
+              {
+                type: "advisor_message",
+                model: "claude-opus-5",
+                input_tokens: 100,
+                cache_read_input_tokens: 50,
+                cache_creation_input_tokens: 20,
+                output_tokens: 40,
+              },
+              { type: "message", input_tokens: 20, output_tokens: 6 },
+              {
+                type: "advisor_message",
+                model: "claude-opus-5",
+                input_tokens: 200,
+                output_tokens: 60,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(records.map((record) => record.model)).toEqual([
+      "claude-sonnet-5",
+      "claude-opus-5",
+      "claude-opus-5",
+    ]);
+    expect(records.map((record) => totalTokens(record.totals))).toEqual([40, 210, 260]);
+    expect(new Set(records.map((record) => record.dedupeKey)).size).toBe(3);
+    expect(records.map((record) => record.reportedCostUsd)).toEqual([0.5, null, null]);
+    expect(records[1]?.totals).toEqual({
+      uncachedInputTokens: 100,
+      cachedInputTokens: 50,
+      cacheCreationTokens: 20,
+      outputTokens: 40,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("ignores malformed advisor entries and preserves calls without message IDs", () => {
+    const line = {
+      type: "assistant",
+      timestamp: "2026-08-07T04:05:13.944Z",
+      message: {
+        model: "claude-sonnet-5",
+        usage: {
+          input_tokens: 1,
+          iterations: [
+            null,
+            5,
+            { type: "advisor_message" },
+            { type: "advisor_message", model: " " },
+            {
+              type: "advisor_message",
+              model: "claude-opus-5",
+              input_tokens: 100,
+              output_tokens: 20,
+            },
+          ],
+        },
+      },
+    };
+    const records = parseClaudeLine(JSON.stringify(line));
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record.dedupeKey)).toEqual([null, null]);
+    expect(records[1]?.totals.outputTokens).toBe(20);
+    expect(
+      parseClaudeLine(
+        JSON.stringify({
+          ...line,
+          message: {
+            ...line.message,
+            usage: { input_tokens: 1, iterations: {} },
+          },
+        }),
+      ),
+    ).toHaveLength(1);
   });
 });
 
