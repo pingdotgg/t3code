@@ -136,7 +136,9 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
-export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>) {
+export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
+  hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
+) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
@@ -189,7 +191,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     hostId: DeviceHostId,
     status: DeviceServiceState["hostStatuses"][string],
   ) =>
-    publish((state) => ({ ...state, ...(hostId === LOCAL_DEVICE_HOST_ID ? {hostStatus: status.status, hostStatusDetail: status.detail} : {}), hostStatuses: { ...state.hostStatuses, [hostId]: status } }));
+    publish((state) => ({
+      ...state,
+      ...(hostId === LOCAL_DEVICE_HOST_ID
+        ? { hostStatus: status.status, hostStatusDetail: status.detail }
+        : {}),
+      hostStatuses: { ...state.hostStatuses, [hostId]: status },
+    }));
 
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
     function* (hostId) {
@@ -346,8 +354,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         return yield* publish((state) => ({
           ...state,
           hosts: hostSummaries,
-          devices: [...state.devices.filter(device => device.hostId !== ready.hostId), ...devices],
-          hostStatuses: {...state.hostStatuses, [ready.hostId]: {status: "ready", ...(detail ? {detail} : {})}},
+          devices: [
+            ...state.devices.filter((device) => device.hostId !== ready.hostId),
+            ...devices,
+          ],
+          hostStatuses: {
+            ...state.hostStatuses,
+            [ready.hostId]: { status: "ready", ...(detail ? { detail } : {}) },
+          },
         }));
       }),
     );
@@ -355,10 +369,19 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
     if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
-    yield* Effect.forEach(hosts.values(), host => Effect.gen(function* () {
-      const ready = yield* readinessIfSupported(host.id);
-      if (ready) yield* refresh(ready);
-    }).pipe(Effect.catch(error => setHostStatus(host.id, {status: "failed", detail: error.message}))), {concurrency: 4});
+    yield* Effect.forEach(
+      hosts.values(),
+      (host) =>
+        Effect.gen(function* () {
+          const ready = yield* readinessIfSupported(host.id);
+          if (ready) yield* refresh(ready);
+        }).pipe(
+          Effect.catch((error) =>
+            setHostStatus(host.id, { status: "failed", detail: error.message }),
+          ),
+        ),
+      { concurrency: 4 },
+    );
     return (yield* SynchronizedRef.get(stateRef)).state;
   }).pipe(Effect.withSpan("DeviceService.list"));
 
@@ -733,7 +756,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 });
 
-export const make = Effect.gen(function* () { const host = yield* DeviceHost.DeviceHost; return yield* makeWithHosts(new Map([[host.id,host]])); });
+export const make = Effect.gen(function* () {
+  const host = yield* DeviceHost.DeviceHost;
+  return yield* makeWithHosts(new Map([[host.id, host]]));
+});
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
 

@@ -1669,6 +1669,7 @@ const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
 
 const EMPTY_DEVICE_STATE: DeviceServiceState = {
   hosts: [],
+  hostStatus: "disabled",
   hostStatuses: {},
   devices: [],
   sessions: [],

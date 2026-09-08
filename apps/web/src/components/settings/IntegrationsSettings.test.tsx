@@ -105,6 +105,7 @@ const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceService
     },
   ],
   hostStatus: "ready",
+  hostStatuses: {},
   devices: [],
   sessions: [],
   onboardingCompleted: false,

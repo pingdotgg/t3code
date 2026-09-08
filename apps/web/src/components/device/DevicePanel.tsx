@@ -312,6 +312,7 @@ export function DevicePanel(props: {
                 environmentId={environmentId}
                 platform={activeDevice.platform}
                 deviceId={activeDevice.id}
+                hostId={activeDevice.hostId}
                 visible={props.visible}
                 axOverlay={axOverlay}
                 onHandle={setHandle}
