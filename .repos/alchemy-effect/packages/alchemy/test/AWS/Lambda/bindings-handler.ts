@@ -17,7 +17,7 @@ export class LambdaBindingsTestFunction extends Lambda.Function<Lambda.Function>
 export default LambdaBindingsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Resolve distilled from `src/*.ts` (the `bun` export condition — same
     // as vitest) so distilled source changes are test-visible in the
     // deployed bundle without a `lib/` rebuild.
@@ -30,7 +30,7 @@ export default LambdaBindingsTestFunction.make(
       main: targetMain,
       handler: "handler",
       isExternal: true,
-      url: false,
+      functionUrl: false,
     });
 
     const invokeFunction = yield* Lambda.InvokeFunction(target);

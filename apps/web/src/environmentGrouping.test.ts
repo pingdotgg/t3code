@@ -323,6 +323,74 @@ describe("environment grouping", () => {
     expect(entries[1]?.group.displayName).toBe("separate");
   });
 
+  it("keeps the current environment when available and falls back otherwise", () => {
+    const currentPrimary = makeProject({ repositoryIdentity });
+    const currentRemote = makeProject({
+      id: ProjectId.make("current-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const destinationRepositoryIdentity = {
+      canonicalKey: "github.com/example/destination",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/destination.git",
+      },
+    };
+    const destinationPrimary = makeProject({
+      id: ProjectId.make("destination-primary"),
+      title: "destination",
+      workspaceRoot: "/tmp/destination",
+      repositoryIdentity: destinationRepositoryIdentity,
+    });
+    const destinationRemote = makeProject({
+      id: ProjectId.make("destination-remote"),
+      environmentId: remoteEnvironmentId,
+      title: "destination",
+      workspaceRoot: "/remote/destination",
+      repositoryIdentity: destinationRepositoryIdentity,
+    });
+    const fallbackPrimary = makeProject({
+      id: ProjectId.make("fallback-primary"),
+      title: "fallback",
+      workspaceRoot: "/tmp/fallback",
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [
+        currentPrimary,
+        currentRemote,
+        destinationPrimary,
+        destinationRemote,
+        fallbackPrimary,
+      ],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: {
+        environmentId: remoteEnvironmentId,
+        projectId: currentRemote.id,
+      },
+    });
+    const destination = entries.find(
+      (entry) => entry.group.projectKey === destinationRepositoryIdentity.canonicalKey,
+    );
+    const fallback = entries.find((entry) => entry.group.displayName === "fallback");
+
+    expect(destination?.targetProject).toMatchObject({
+      environmentId: remoteEnvironmentId,
+      id: destinationRemote.id,
+    });
+    expect(fallback?.targetProject).toMatchObject({
+      environmentId: primaryEnvironmentId,
+      id: fallbackPrimary.id,
+    });
+  });
+
   it("keeps manual project order when building grouped sidebar entries", () => {
     const primary = makeProject({ repositoryIdentity });
     const remote = makeProject({

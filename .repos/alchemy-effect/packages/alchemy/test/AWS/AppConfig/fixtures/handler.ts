@@ -20,7 +20,7 @@ export class AppConfigTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AppConfigTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Starting a configuration session + fetching config fans out two SDK
     // calls; AWS's 3s default intermittently times out on a cold start.
     timeout: Duration.seconds(30),

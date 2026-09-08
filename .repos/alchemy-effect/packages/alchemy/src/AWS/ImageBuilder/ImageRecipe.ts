@@ -129,9 +129,8 @@ export interface ImageRecipe extends Resource<
  *
  * Recipes are immutable versions: every property except `tags` replaces the
  * recipe. Bump `semanticVersion` when changing the definition.
- * @resource
- * @section Creating an Image Recipe
- * @example Recipe from an AWS-Managed Parent Image
+ * ### Creating an Image Recipe
+ * **Example:** Recipe from an AWS-Managed Parent Image
  * ```typescript
  * const recipe = yield* ImageBuilder.ImageRecipe("Recipe", {
  *   parentImage: "arn:aws:imagebuilder:us-west-2:aws:image/amazon-linux-2023-x86/x.x.x",
@@ -140,14 +139,16 @@ export interface ImageRecipe extends Resource<
  * });
  * ```
  *
- * @section Using in a Pipeline
- * @example Wire into an Image Pipeline
+ * ### Using in a Pipeline
+ * **Example:** Wire into an Image Pipeline
  * ```typescript
  * const pipeline = yield* ImageBuilder.ImagePipeline("Pipeline", {
  *   imageRecipeArn: recipe.imageRecipeArn,
  *   infrastructureConfigurationArn: infra.infrastructureConfigurationArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const ImageRecipe = Resource<ImageRecipe>(
   "AWS.ImageBuilder.ImageRecipe",

@@ -15,15 +15,16 @@ export interface ListExportsRequest extends Omit<
  * that lists the bound table's S3 exports, automatically injecting the table
  * ARN. Provide the `ListExportsHttp` layer on the Function to satisfy the
  * binding.
- * @binding
- * @section Exporting to S3
- * @example List the Bound Table's Exports
+ * ### Exporting to S3
+ * **Example:** List the Bound Table's Exports
  * ```typescript
  * const listExports = yield* AWS.DynamoDB.ListExports(table);
  *
  * const response = yield* listExports();
  * const exports = response.ExportSummaries;
  * ```
+ *
+ * @binding
  */
 export interface ListExports extends Binding.Service<
   ListExports,

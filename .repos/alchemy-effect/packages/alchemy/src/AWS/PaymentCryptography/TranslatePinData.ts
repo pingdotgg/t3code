@@ -14,9 +14,8 @@ export interface TranslatePinDataRequest extends Omit<
  * format) to another without the PIN ever leaving the service. This is the
  * core acquirer operation for forwarding PIN blocks between networks.
  * Provide `TranslatePinDataHttp` on the Function to satisfy this service.
- * @binding
- * @section PIN Data
- * @example Translate a PIN block between two PEKs
+ * ### PIN Data
+ * **Example:** Translate a PIN block between two PEKs
  * ```typescript
  * // init
  * const translatePin = yield* PaymentCryptography.TranslatePinData(pek, partnerPek);
@@ -32,6 +31,8 @@ export interface TranslatePinDataRequest extends Omit<
  *   EncryptedPinBlock: encryptedPinBlock,
  * });
  * ```
+ *
+ * @binding
  */
 export interface TranslatePinData extends Binding.Service<
   TranslatePinData,

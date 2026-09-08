@@ -32,6 +32,77 @@ export default {
         const count = await counter.increment();
         return new Response(`Hello, world! ${count}`);
       }
+      case "/r2": {
+        await env.BUCKET.put("hello.txt", "hello from r2");
+        const object = await env.BUCKET.get("hello.txt");
+        const text = object === null ? null : await object.text();
+        const list = await env.BUCKET.list();
+        return Response.json({
+          text,
+          keys: list.objects.map((o) => o.key),
+        });
+      }
+      case "/d1": {
+        // The `greetings` table comes from ./migrations — no DDL here, so a
+        // failing migration apply fails this route loudly.
+        await env.DB.prepare("INSERT INTO greetings (text) VALUES (?)")
+          .bind("hello from d1")
+          .run();
+        const row = await env.DB.prepare(
+          "SELECT text FROM greetings ORDER BY id DESC LIMIT 1",
+        ).first<{ text: string }>();
+        return Response.json({ text: row?.text ?? null });
+      }
+      case "/cache": {
+        // The local runtime ships an always-on Cache API simulator
+        // (persisted under `.alchemy/local`), so `caches.default` works
+        // exactly like in production. The caller supplies a key to keep
+        // "first fetch misses" deterministic across runs.
+        const keyName = url.searchParams.get("key") ?? "cached-resource";
+        const key = new Request(`https://example.com/${keyName}`);
+        let hit = true;
+        let cached = await caches.default.match(key);
+        if (!cached) {
+          hit = false;
+          cached = new Response("cached-body", {
+            headers: { "Cache-Control": "public, max-age=60" },
+          });
+          await caches.default.put(key, cached.clone());
+        }
+        return Response.json({ hit, body: await cached.text() });
+      }
+      case "/ratelimit": {
+        // THROTTLE allows 2 requests per 10s per key — the third call with
+        // the same key observes `success: false`.
+        const key = url.searchParams.get("key") ?? "default";
+        const { success } = await env.THROTTLE.limit({ key });
+        return Response.json({ success });
+      }
+      case "/version": {
+        // Version metadata binding; locally stubbed with a random `id`.
+        return Response.json(env.CF_VERSION_METADATA);
+      }
+      case "/service": {
+        // Service binding: call the Effect-native worker's `/url` route
+        // (worker → worker, no public hop).
+        const response = await env.SERVICE.fetch("http://effect-worker/url");
+        return Response.json(await response.json());
+      }
+      case "/kv-live": {
+        // LIVE_KV opted out of local emulation via `Alchemy.remote()` — the
+        // roundtrip below lands in the REAL cloud namespace even in dev.
+        const key = url.searchParams.get("key") ?? "hello";
+        const value = url.searchParams.get("value");
+        if (value !== null) {
+          await env.LIVE_KV.put(key, value);
+        }
+        return Response.json({ value: await env.LIVE_KV.get(key) });
+      }
+      case "/tail-ping": {
+        // Logged marker rides the trace batch delivered to the tail worker.
+        console.log("cloudflare-dev-tail-marker");
+        return new Response("pinged");
+      }
       default:
         return env.ASSETS.fetch(request);
     }

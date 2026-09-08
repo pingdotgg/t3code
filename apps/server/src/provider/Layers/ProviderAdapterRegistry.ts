@@ -15,11 +15,7 @@
  *
  * @module ProviderAdapterRegistryLive
  */
-import {
-  defaultInstanceIdForDriver,
-  ProviderInstanceId,
-  type ProviderDriverKind,
-} from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -71,31 +67,10 @@ const makeProviderAdapterRegistry = Effect.fn("makeProviderAdapterRegistry")(fun
       Effect.map((instances) => instances.map((instance) => instance.instanceId)),
     );
 
-  const listProviders: ProviderAdapterRegistryShape["listProviders"] = () =>
-    registry.listInstances.pipe(
-      Effect.map((instances) => {
-        const kinds = new Set<ProviderDriverKind>();
-        for (const instance of instances) {
-          const defaultId = defaultInstanceIdForDriver(instance.driverKind);
-          if (instance.instanceId === defaultId) {
-            // Only the default-instance rows show up through the legacy
-            // shim — custom instances like `codex_personal` have no
-            // `ProviderDriverKind` equivalent.
-            kinds.add(instance.driverKind);
-          }
-        }
-        return Array.from(kinds);
-      }),
-    );
-
   return {
     getByInstance,
     getInstanceInfo,
     listInstances,
-    listProviders,
-    // Proxy directly — the facade has no state of its own; the instance
-    // registry already coalesces adds/removes/rebuilds into one emission.
-    streamChanges: registry.streamChanges,
     subscribeChanges: registry.subscribeChanges,
   } satisfies ProviderAdapterRegistryShape;
 });
@@ -105,13 +80,6 @@ export const ProviderAdapterRegistryLive = Layer.effect(
   makeProviderAdapterRegistry(),
 );
 
-// Exposed for tests that want to build a facade over a pre-assembled
-// `ProviderInstanceRegistry` without pulling in the whole boot graph.
-export { makeProviderAdapterRegistry };
-
-// Re-export for consumers that need the accessor shape. The service tag
-// itself lives in `Services/ProviderAdapterRegistry.ts`.
-export { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 // Re-export for consumers (including tests) that construct a
 // `ProviderInstanceId` before calling `getByInstance`.
 export { ProviderInstanceId };

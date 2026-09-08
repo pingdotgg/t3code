@@ -67,13 +67,13 @@ export interface Hub extends Resource<
  * singleton: adopting a pre-existing Hub that Alchemy did not create requires
  * `--adopt`.
  *
- * @section Enabling Security Hub
- * @example Enable with default standards
+ * ### Enabling Security Hub
+ * **Example:** Enable with default standards
  * ```typescript
  * const hub = yield* SecurityHub.Hub("Hub", {});
  * ```
  *
- * @example Enable without default standards, auto-enable controls
+ * **Example:** Enable without default standards, auto-enable controls
  * ```typescript
  * const hub = yield* SecurityHub.Hub("Hub", {
  *   enableDefaultStandards: false,

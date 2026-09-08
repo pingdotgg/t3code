@@ -1,4 +1,6 @@
 /**
+ * Loads and provides configuration for documentation generation.
+ *
  * @since 0.6.0
  */
 
@@ -19,6 +21,9 @@ import * as Domain from "./Domain.ts"
 import { DocgenError } from "./Domain.ts"
 
 /**
+ * Default GitHub Pages theme written to generated configuration.
+ *
+ * @category constants
  * @since 0.6.0
  */
 export const DEFAULT_THEME = "mikearnaldi/just-the-docs"
@@ -32,7 +37,9 @@ const compilerOptionsSchema = Schema.Union([
 ])
 
 /**
- * @category service
+ * Schema for docgen configuration files.
+ *
+ * @category schemas
  * @since 0.6.0
  */
 export const ConfigurationSchema = Schema.Struct({
@@ -99,7 +106,9 @@ export const ConfigurationSchema = Schema.Struct({
 }).annotate({ identifier: "ConfigurationSchema" })
 
 /**
- * @category service
+ * Resolved configuration used by the docgen services.
+ *
+ * @category services
  * @since 0.6.0
  */
 export interface ConfigurationShape {
@@ -121,7 +130,9 @@ export interface ConfigurationShape {
 }
 
 /**
- * @category service
+ * Service that provides resolved docgen configuration.
+ *
+ * @category services
  * @since 0.6.0
  */
 export class Configuration

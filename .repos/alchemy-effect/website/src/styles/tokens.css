@@ -36,10 +36,9 @@
   --alc-accent-40: color-mix(in srgb, #5c7a3e 40%, transparent);
   --alc-accent-12: color-mix(in srgb, #5c7a3e 12%, transparent);
 
-  /* Bindu (yantra centroid dot) — deep moss in light mode. The dark
-     block overrides this to terracotta so the brand mark gets a warm
-     focal point against the dark page. */
-  --alc-yantra-dot: #3f5a2a;
+  /* Bindu (yantra centroid dot). Kept in sync with YANTRA_THEMES in
+     src/brand/yantra.ts, which paints the generated favicons and app icons. */
+  --alc-yantra-dot: #9a4f27;
 
   /* ---------- Secondary: warm terracotta ---------- */
   --alc-terracotta: #c56e3c;
@@ -159,8 +158,8 @@
   --alc-accent-40: color-mix(in srgb, #a3c473 40%, transparent);
   --alc-accent-12: color-mix(in srgb, #a3c473 18%, transparent);
 
-  /* Bindu pops in terracotta against the dark page. */
-  --alc-yantra-dot: #c56e3c;
+  /* Bindu, lifted for the dark page. */
+  --alc-yantra-dot: #d8835a;
 
   /* Secondary: warm terracotta — lifted */
   --alc-terracotta: #d8835a;
@@ -360,4 +359,16 @@ body.alc-root,
 ::selection {
   background: var(--alc-accent-soft);
   color: var(--alc-fg-1);
+}
+
+/* Code surfaces stay dark walnut in BOTH themes, but the global selection
+   foreground follows the page (--alc-fg-1 is dark walnut in light mode) —
+   selecting code text would paint dark-on-dark. Pin selection inside code
+   surfaces to the dark-surface palette instead. */
+.expressive-code ::selection,
+.alc-term ::selection,
+.alc-code::selection,
+.alc-code ::selection {
+  background: #5c7a3e66; /* editor.selectionBackground from the walnut EC theme */
+  color: var(--alc-code-var);
 }

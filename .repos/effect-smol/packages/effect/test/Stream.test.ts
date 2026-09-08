@@ -149,6 +149,16 @@ describe("Stream", () => {
         )
       )
 
+    it.effect("mkArrayBuffer - concatenates Uint8Array chunks", () =>
+      Effect.gen(function*() {
+        const buffer = yield* Stream.make(
+          new Uint8Array([1, 2]),
+          new Uint8Array([3, 4])
+        ).pipe(Stream.mkArrayBuffer)
+
+        assert.deepStrictEqual([...new Uint8Array(buffer)], [1, 2, 3, 4])
+      }))
+
     it.effect("runForEachWhile continues across chunk boundaries", () =>
       Effect.gen(function*() {
         const seen: Array<number> = []
@@ -391,6 +401,16 @@ describe("Stream", () => {
     it.effect("range - min less than max", () =>
       Effect.gen(function*() {
         const result = yield* Stream.range(1, 3).pipe(Stream.runCollect)
+        assert.deepStrictEqual(result, [1, 2, 3])
+      }))
+
+    it.effect("range - zero chunk size does not change the emitted range", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.range(1, 3, 0).pipe(
+          Stream.take(4),
+          Stream.runCollect
+        )
+
         assert.deepStrictEqual(result, [1, 2, 3])
       }))
 
@@ -647,6 +667,52 @@ describe("Stream", () => {
   })
 
   describe("taking", () => {
+    it.effect("limitBytes - does not evaluate the fallback below the limit", () =>
+      Effect.gen(function*() {
+        let evaluated = false
+        const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])]
+        const result = yield* Stream.fromIterable(chunks).pipe(
+          Stream.limitBytes(5, () => {
+            evaluated = true
+            return Stream.empty
+          }),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, chunks)
+        assert.isFalse(evaluated)
+      }))
+
+    it.effect("limitBytes - does not evaluate the fallback at the limit", () =>
+      Effect.gen(function*() {
+        let evaluated = false
+        const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])]
+        const result = yield* Stream.fromIterable(chunks).pipe(
+          Stream.limitBytes(4, () => {
+            evaluated = true
+            return Stream.empty
+          }),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, chunks)
+        assert.isFalse(evaluated)
+      }))
+
+    it.effect("limitBytes - drops the crossing chunk and switches to the fallback", () =>
+      Effect.gen(function*() {
+        const first = new Uint8Array([1, 2])
+        const crossing = new Uint8Array([3, 4, 5, 6])
+        const after = new Uint8Array([7])
+        const fallback = new Uint8Array([8, 9])
+        const result = yield* Stream.make(first, crossing, after).pipe(
+          Stream.limitBytes(5, () => Stream.succeed(fallback)),
+          Stream.runCollect
+        )
+
+        assert.deepStrictEqual(result, [first, fallback])
+      }))
+
     it.effect("take - pulls the first `n` values from a stream", () =>
       Effect.gen(function*() {
         const result = yield* Stream.range(1, 5).pipe(
@@ -1198,6 +1264,17 @@ describe("Stream", () => {
         )
 
         assert.deepStrictEqual(result, Array.scan([1, 2, 3, 4, 5], 0, (acc, curr) => acc + curr))
+      }))
+
+    it.effect("mapAccumArrayEffect data-first", () =>
+      Effect.gen(function*() {
+        const result = yield* Stream.mapAccumArrayEffect(
+          Stream.make(1, 2, 3),
+          () => 0,
+          (sum, values) => Effect.succeed([sum + values.length, values] as const)
+        ).pipe(Stream.runCollect)
+
+        assert.deepStrictEqual(result, [1, 2, 3])
       }))
   })
 
@@ -2184,6 +2261,31 @@ describe("Stream", () => {
   })
 
   describe("aggregateWithin", () => {
+    it.effect("does not grow the fiber continuation stack while upstream is idle", () =>
+      Effect.gen(function*() {
+        const continuationCounts: Array<number> = []
+        const schedule = Schedule.spaced("10 millis").pipe(
+          Schedule.tap(() =>
+            Effect.withFiber((fiber) =>
+              Effect.sync(() => {
+                continuationCounts.push(
+                  (fiber as unknown as { readonly _stack: ReadonlyArray<unknown> })._stack.length
+                )
+              })
+            )
+          )
+        )
+        const fiber = yield* Stream.never.pipe(
+          Stream.aggregateWithin(Sink.take(25), schedule),
+          Stream.runDrain,
+          Effect.forkChild({ startImmediately: true })
+        )
+        yield* TestClock.adjust("1 second")
+        assert.isAbove(continuationCounts.length, 1)
+        assert.strictEqual(continuationCounts.at(-1), continuationCounts[0])
+        yield* Fiber.interrupt(fiber)
+      }))
+
     it.effect("groupedWithin does not emit empty arrays when upstream is idle", () =>
       Effect.gen(function*() {
         const fiber = yield* Stream.never.pipe(
@@ -4664,6 +4766,23 @@ describe("Stream", () => {
         deepStrictEqual(result1, result2)
       }))
 
+    it.effect("slidingSize is independent of upstream chunk boundaries", () =>
+      Effect.gen(function*() {
+        const result = yield* Effect.all([
+          Stream.make(1, 2, 3, 4, 5),
+          Stream.fromArrays([1, 2], [3, 4, 5]),
+          Stream.fromArrays([1], [2], [3], [4], [5]),
+          Stream.fromArrays([1], [2], [3], [4])
+        ].map((stream) => stream.pipe(Stream.slidingSize(2, 3), Stream.runCollect)))
+
+        deepStrictEqual(result, [
+          [[1, 2], [4, 5]],
+          [[1, 2], [4, 5]],
+          [[1, 2], [4, 5]],
+          [[1, 2], [4]]
+        ])
+      }))
+
     it.effect("sliding - fails if upstream produces an error", () =>
       Effect.gen(function*() {
         const result = yield* pipe(
@@ -5047,7 +5166,7 @@ describe("Stream", () => {
 
   describe("broadcastN", () => {
     it.effect("fans out to a fixed number of streams", () =>
-      Effect.scoped(Effect.gen(function*() {
+      Effect.gen(function*() {
         const [left, right] = yield* Stream.make(1, 2, 3).pipe(
           Stream.broadcastN({ n: 2, capacity: 4 })
         )
@@ -5058,10 +5177,10 @@ describe("Stream", () => {
         ], { concurrency: "unbounded" })
 
         assert.deepStrictEqual(result, [[1, 2, 3], [1, 2, 3]])
-      })))
+      }))
 
     it.effect("propagates failures to all downstream streams", () =>
-      Effect.scoped(Effect.gen(function*() {
+      Effect.gen(function*() {
         const [left, right] = yield* Stream.fail("boom").pipe(
           Stream.broadcastN({ n: 2, capacity: 4 })
         )
@@ -5072,7 +5191,7 @@ describe("Stream", () => {
         ], { concurrency: "unbounded" })
 
         assert.deepStrictEqual(result, [Exit.fail("boom"), Exit.fail("boom")])
-      })))
+      }))
   })
 })
 

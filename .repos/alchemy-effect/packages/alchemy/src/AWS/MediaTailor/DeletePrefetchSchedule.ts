@@ -20,14 +20,15 @@ export interface DeletePrefetchScheduleRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.MediaTailor.DeletePrefetchScheduleHttp)`.
  *
- * @binding
- * @section Prefetching Ads
- * @example Delete a prefetch schedule
+ * ### Prefetching Ads
+ * **Example:** Delete a prefetch schedule
  * ```typescript
  * const deletePrefetchSchedule = yield* AWS.MediaTailor.DeletePrefetchSchedule(config);
  *
  * yield* deletePrefetchSchedule({ Name: `event-${eventId}` });
  * ```
+ *
+ * @binding
  */
 export interface DeletePrefetchSchedule extends Binding.Service<
   DeletePrefetchSchedule,

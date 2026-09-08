@@ -188,9 +188,8 @@ export type LaunchTemplateRuntimeContext = Ec2HostRuntimeContext;
  * A launch template that preserves the `Host` authoring model used by
  * `AWS.EC2.Instance`, but packages that host configuration for use with an
  * Auto Scaling Group.
- * @resource
- * @section Creating a Launch Template
- * @example Basic Launch Template
+ * ### Creating a Launch Template
+ * **Example:** Basic Launch Template
  * ```typescript
  * import { LaunchTemplate } from "alchemy/AWS/AutoScaling";
  *
@@ -200,7 +199,7 @@ export type LaunchTemplateRuntimeContext = Ec2HostRuntimeContext;
  * });
  * ```
  *
- * @example Launch a fleet from the template
+ * **Example:** Launch a fleet from the template
  * ```typescript
  * import { AutoScalingGroup } from "alchemy/AWS/AutoScaling";
  *
@@ -212,8 +211,8 @@ export type LaunchTemplateRuntimeContext = Ec2HostRuntimeContext;
  * });
  * ```
  *
- * @section Hosting Processes
- * @example Hosted HTTP Launch Template
+ * ### Hosting Processes
+ * **Example:** Hosted HTTP Launch Template
  * ```typescript
  * const template = yield* Effect.gen(function* () {
  *   yield* Http.serve(HttpServerResponse.json({ ok: true }));
@@ -230,6 +229,8 @@ export type LaunchTemplateRuntimeContext = Ec2HostRuntimeContext;
  *   AWS.AutoScaling.LaunchTemplate("ApiTemplate"),
  * );
  * ```
+ *
+ * @resource
  */
 export const LaunchTemplate: Platform<
   LaunchTemplate,
@@ -406,7 +407,7 @@ export const LaunchTemplateProvider = () =>
           "launchTemplateArn",
           "launchTemplateName",
         ],
-        diff: Effect.fn(function* ({ id, olds, news: _news }) {
+        diff: Effect.fn(function* ({ id, olds, news: _news, output }) {
           if (!isResolved(_news)) return undefined;
           const news = _news as typeof olds;
           const oldName = yield* toName(id, olds ?? {});
@@ -424,6 +425,25 @@ export const LaunchTemplateProvider = () =>
                 "launchTemplateName",
               ],
             } as const;
+          }
+
+          // The hosted bundle hash participates in planning: a change confined
+          // to the runtime program (or its imports) leaves every prop equal,
+          // so re-bundle and compare against the deployed hash. A mismatch
+          // plans an in-place update, whose reconcile publishes a new template
+          // version carrying the new bundle.
+          if (news.main && output?.code?.hash) {
+            const { hash } = yield* hosted.bundleProgram(id, news);
+            if (hash !== output.code.hash) {
+              return {
+                action: "update",
+                stables: [
+                  "launchTemplateId",
+                  "launchTemplateArn",
+                  "launchTemplateName",
+                ],
+              } as const;
+            }
           }
         }),
         read: Effect.fn(function* ({ id, olds, output }) {

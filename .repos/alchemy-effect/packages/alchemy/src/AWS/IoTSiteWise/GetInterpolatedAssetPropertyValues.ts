@@ -22,13 +22,12 @@ export interface GetInterpolatedAssetPropertyValuesRequest extends Omit<
  * `LOCF_INTERPOLATION`) of one property of the bound asset at a fixed
  * interval from a deployed Lambda or Task.
  *
- * @binding
- * @section Reading Interpolated Values
+ * ### Reading Interpolated Values
  * Provide the `GetInterpolatedAssetPropertyValuesHttp` implementation layer
  * on the Function effect, bind the asset in the init phase, then call the
  * returned client at runtime.
  *
- * @example Interpolate at 1-Minute Intervals
+ * **Example:** Interpolate at 1-Minute Intervals
  * ```typescript
  * // init
  * const getInterpolated =
@@ -47,6 +46,8 @@ export interface GetInterpolatedAssetPropertyValuesRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTSiteWise.GetInterpolatedAssetPropertyValuesHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetInterpolatedAssetPropertyValues extends Binding.Service<
   GetInterpolatedAssetPropertyValues,

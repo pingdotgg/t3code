@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.Inspector2.BatchGetFindingDetailsHttp)`.
- * @binding
- * @section Querying Findings
- * @example Get Finding Details
+ * ### Querying Findings
+ * **Example:** Get Finding Details
  * ```typescript
  * // init
  * const batchGetFindingDetails = yield* AWS.Inspector2.BatchGetFindingDetails();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { findingDetails } = yield* batchGetFindingDetails({ findingArns: [findingArn] });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetFindingDetails extends Binding.Service<
   BatchGetFindingDetails,

@@ -1,7 +1,4 @@
-import {
-  Credentials,
-  formatHeaders,
-} from "@distilled.cloud/cloudflare/Credentials";
+import { Credentials } from "@distilled.cloud/cloudflare/Credentials";
 import * as zones from "@distilled.cloud/cloudflare/zones";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -52,50 +49,36 @@ type ZoneListItem = {
   account: { id?: string | null };
 };
 
-type ZoneListResponse = {
-  success: boolean;
-  errors?: { message?: string }[];
-  result?: ZoneListItem[];
-};
-
 export const findZoneByName = ({
   accountId,
   name,
 }: {
   accountId: string;
   name: string;
-}): Effect.Effect<ZoneListItem | undefined, Error, Credentials> =>
+}): Effect.Effect<
+  ZoneListItem | undefined,
+  zones.ListZonesError,
+  Credentials | HttpClient.HttpClient
+> =>
   Effect.gen(function* () {
-    const credentialsEffect = yield* Credentials;
-    const credentials = yield* credentialsEffect;
-    const url = new URL(`${credentials.apiBaseUrl}/zones`);
-    url.searchParams.set("account.id", accountId);
-    url.searchParams.set("name", name);
-    url.searchParams.set("per_page", "1");
-
-    const json = yield* Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(url, {
-          headers: formatHeaders(credentials),
-        });
-        return (await response.json()) as ZoneListResponse;
-      },
-      catch: (cause) => new Error(`Failed to list Cloudflare zones`, { cause }),
+    // Distilled `listZones` rides `Retry.makeDefault` (5xx / throttling).
+    // The previous raw `fetch` failed the first time Cloudflare answered
+    // `{ success: false, errors: [{ message: "unhandled server error" }] }`.
+    const page = yield* zones.listZones({
+      account: { id: accountId },
+      name,
+      perPage: 1,
     });
-
-    if (!json.success) {
-      return yield* Effect.fail(
-        new Error(
-          json.errors?.map((error) => error.message).join(", ") ??
-            `Failed to list Cloudflare zones`,
-        ),
-      );
-    }
-
-    return json.result?.find(
+    const match = (page.result ?? []).find(
       (candidate) =>
         candidate.name === name && candidate.account.id === accountId,
     );
+    if (match === undefined) return undefined;
+    return {
+      id: match.id,
+      name: match.name,
+      account: { id: match.account.id },
+    };
   });
 
 /**
@@ -119,7 +102,8 @@ export const listAllZones = (
     ),
   );
 
-const zoneNameCandidates = (hostname: string): string[] => {
+/** Hostname plus each parent label, longest first — used to infer a zone. */
+export const zoneNameCandidates = (hostname: string): string[] => {
   const parts = hostname.split(".");
   return parts.slice(0, -1).map((_, index) => parts.slice(index).join("."));
 };

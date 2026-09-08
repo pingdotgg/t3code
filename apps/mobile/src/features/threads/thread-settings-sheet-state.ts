@@ -1,4 +1,4 @@
-import type { ModelOption } from "../../lib/modelOptions";
+import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 
 /** Match the terms a user can actually see or recognize in the model picker. */
 export function modelMatchesCatalogQuery(input: {
@@ -29,6 +29,16 @@ export function pendingModelAfterPress(input: {
     return null;
   }
   return input.current?.key === input.pressed.key ? input.current : input.pressed;
+}
+
+/** A model can disappear while the picker is open. */
+export function canCommitPendingModel(
+  pending: ModelOption,
+  groups: ReadonlyArray<ProviderGroup>,
+): boolean {
+  return groups.some((group) =>
+    group.models.some((model) => model.key === pending.key && !model.isUnavailable),
+  );
 }
 
 /**

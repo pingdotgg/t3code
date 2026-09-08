@@ -46,7 +46,8 @@ export const OAUTH_CLIENT_ID = "pscale_app_aa12e3938baebb788aac443f66e422da";
 export const OAUTH_CLIENT_SECRET =
   "pscale_app_secret_yyZ3Q8oe99GP9_yA5wrA5er6RuN6Lz9dC66Bj1OJzpg";
 
-export const OAUTH_REDIRECT_URI = "http://localhost:9976/auth/callback";
+export const OAUTH_REDIRECT_URI = "https://alchemy.run/auth/callback";
+export const OAUTH_LOCAL_CALLBACK_URI = "http://localhost:9976/auth/callback";
 export const OAUTH_ENDPOINTS = {
   // PlanetScale's own .well-known OAuth discovery doc declares this as
   // the authorization_endpoint — NOT auth.planetscale.com/oauth/authorize
@@ -59,7 +60,7 @@ export const OAUTH_ENDPOINTS = {
 };
 
 function generateState(length = 32): string {
-  return crypto.randomBytes(length).toString("base64url");
+  return Buffer.from(crypto.randomBytes(length)).toString("base64url");
 }
 
 function extractCredentials(json: {
@@ -183,6 +184,46 @@ export const refresh = (
   });
 
 /**
+ * Exchange a code copied from the hosted relay page, or extract the code from
+ * either the hosted or loopback callback URL.
+ */
+export const exchangeCallbackInput = (
+  input: string,
+  authorization: Authorization,
+): Effect.Effect<OAuthCredentials, OAuthError> =>
+  Effect.gen(function* () {
+    const value = input.trim();
+    let code = value;
+    let state: string | null = null;
+
+    try {
+      const url = new URL(value);
+      code = url.searchParams.get("code") ?? "";
+      state = url.searchParams.get("state");
+    } catch {
+      const separator = value.lastIndexOf("#");
+      if (separator >= 0) {
+        code = value.slice(0, separator);
+        state = value.slice(separator + 1);
+      }
+    }
+
+    if (!code) {
+      return yield* new OAuthError({
+        error: "invalid_request",
+        errorDescription: "The authorization code is missing.",
+      });
+    }
+    if (state !== null && state !== authorization.state) {
+      return yield* new OAuthError({
+        error: "invalid_request",
+        errorDescription: "The authorization state does not match.",
+      });
+    }
+    return yield* exchange(code);
+  });
+
+/**
  * Start a local HTTP server to listen for the OAuth callback, exchange
  * the authorization code, and return the credentials.
  *
@@ -192,7 +233,7 @@ export const callback = (
   authorization: Authorization,
 ): Effect.Effect<OAuthCredentials, OAuthError> =>
   Effect.tryPromise({
-    try: () => callbackPromise(authorization),
+    try: (signal) => callbackPromise(authorization, signal),
     catch: (err) => {
       if (err instanceof OAuthError) return err;
       return new OAuthError({
@@ -204,12 +245,24 @@ export const callback = (
 
 function callbackPromise(
   authorization: Authorization,
+  signal: AbortSignal,
 ): Promise<OAuthCredentials> {
-  const { pathname, port } = new URL(OAUTH_REDIRECT_URI);
+  const { pathname, port } = new URL(OAUTH_LOCAL_CALLBACK_URI);
 
   return new Promise<OAuthCredentials>((resolve, reject) => {
     const server = http.createServer(async (req, res) => {
       const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+
+      if (url.pathname === "/auth/ping") {
+        res.writeHead(req.method === "OPTIONS" ? 204 : 200, {
+          "Access-Control-Allow-Origin": new URL(OAUTH_REDIRECT_URI).origin,
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Private-Network": "true",
+          "Cache-Control": "no-store",
+        });
+        res.end();
+        return;
+      }
 
       if (url.pathname !== pathname) {
         res.statusCode = 404;
@@ -289,8 +342,11 @@ function callbackPromise(
 
     function cleanup() {
       clearTimeout(timeout);
+      signal.removeEventListener("abort", cleanup);
       server.close();
     }
+
+    signal.addEventListener("abort", cleanup, { once: true });
 
     server.on("error", (err) => {
       cleanup();

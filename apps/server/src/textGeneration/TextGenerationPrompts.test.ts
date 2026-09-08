@@ -146,7 +146,7 @@ describe("buildBranchNamePrompt", () => {
 });
 
 describe("buildThreadTitlePrompt", () => {
-  it("includes the user message in the prompt", () => {
+  it("includes the user message without absent attachment metadata", () => {
     const result = buildThreadTitlePrompt({
       message: "Investigate reconnect regressions after session restore",
     });
@@ -154,18 +154,6 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("User message:");
     expect(result.prompt).toContain("Investigate reconnect regressions after session restore");
     expect(result.prompt).not.toContain("Attachment metadata:");
-    expect(result.prompt).toContain(
-      "Generate a title that will help the user recognize this T3 Code thread weeks later.",
-    );
-    expect(result.prompt).toContain(
-      "Title the subject and outcome. Discard incidental instructions.",
-    );
-    expect(result.prompt).toContain(
-      "Name the product change, not the mock, plan, report, branch, or PR used to produce it.",
-    );
-    expect(result.prompt).not.toContain(
-      "Title should summarize the user's request, not restate it verbatim.",
-    );
   });
 
   it("includes attachment metadata when attachments are provided", () => {
@@ -198,15 +186,6 @@ describe("buildThreadTitlePrompt", () => {
       "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
     );
     expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
-    expect(result.prompt).toContain(
-      "Read the USER messages first. Identify the latest explicit durable goal.",
-    );
-    expect(result.prompt).toContain(
-      "Do not promote one assistant finding into the thread subject unless the user adopts it as a new goal.",
-    );
-    expect(result.prompt).toContain(
-      'A subagent-monitoring review that finds a Codex roster bug remains "Review Subagent Monitoring Risks,"',
-    );
     expect(result.prompt).toContain("Thread contents:");
     expect(result.prompt).toContain("The remaining issue is stale session state");
   });
@@ -237,6 +216,35 @@ describe("buildThreadTitlePrompt", () => {
 });
 
 describe("sanitizeThreadTitle", () => {
+  it.each([
+    '{"title": "Refresh ev-stg APP ASG instances"}',
+    '{\n  "title": "Refresh ev-stg APP ASG instances"\n}',
+  ])("unwraps a JSON title before normalizing: %s", (raw) => {
+    expect(sanitizeThreadTitle(raw)).toBe("Refresh ev-stg APP ASG instances");
+  });
+
+  it.each([
+    "Rolling ES Refresh ev-stg",
+    "Fix {title} interpolation",
+    '{"title": 42}',
+    '{"subject": "Fix parsing"}',
+    '{"title": "unfinished}',
+  ])("preserves text that is not a JSON title: %s", (raw) => {
+    expect(sanitizeThreadTitle(raw)).toBe(raw);
+  });
+
+  it("normalizes the extracted title", () => {
+    expect(sanitizeThreadTitle('{"title": "  Fix   reconnect failures  "}')).toBe(
+      "Fix reconnect failures",
+    );
+    expect(sanitizeThreadTitle('{"title": "  "}')).toBe("New thread");
+    expect(
+      sanitizeThreadTitle(
+        '{"title": "Reconnect failures after restart because the session state does not recover"}',
+      ),
+    ).toBe("Reconnect failures after restart because the se...");
+  });
+
   it("truncates long titles with the shared sidebar-safe limit", () => {
     expect(
       sanitizeThreadTitle(

@@ -205,7 +205,7 @@ export const SchemaTypeId: SchemaTypeId = "~effect/eventlog/EventLog/Schema"
 /**
  * Returns `true` when a value carries the `EventLogSchema` marker.
  *
- * @category schemas
+ * @category guards
  * @since 4.0.0
  */
 export const isEventLogSchema = (u: unknown): u is EventLogSchema<EventGroup.Any> =>
@@ -410,7 +410,7 @@ export declare namespace Handlers {
  *
  * Defaults to the branded store id `"default"`.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class CurrentStoreId extends Context.Reference<StoreId>("effect/eventlog/EventLog/CurrentStoreId", {
@@ -763,6 +763,11 @@ export const makeReplayFromRemote = (options: {
       })
   )
 
+const remoteRetrySchedule = Schedule.min([
+  Schedule.exponential(200, 1.5),
+  Schedule.spaced({ seconds: 10 })
+])
+
 const make = Effect.gen(function*() {
   const storeId = yield* CurrentStoreId
   const identity = yield* Identity
@@ -860,12 +865,7 @@ const make = Effect.gen(function*() {
       }).pipe(
         Effect.scoped,
         Effect.catchCause(Effect.logError),
-        Effect.repeat(
-          Schedule.min([
-            Schedule.exponential(200, 1.5),
-            Schedule.spaced({ seconds: 10 })
-          ])
-        ),
+        Effect.repeat(remoteRetrySchedule),
         Effect.annotateLogs({
           service: "EventLog",
           effect: "runRemote consume"
@@ -874,11 +874,21 @@ const make = Effect.gen(function*() {
       )
 
       const write = journal.withRemoteUncommited(remote.id, (entries) => remote.write({ identity, entries, storeId }))
+      const writeUntilSuccess = write.pipe(
+        Effect.tapCause(Effect.logDebug),
+        Effect.retry(remoteRetrySchedule)
+      )
       yield* Effect.addFinalizer(() => Effect.ignore(write))
-      yield* write
       const changesSub = yield* journal.changes
-      return yield* PubSub.takeAll(changesSub).pipe(
-        Effect.andThen(write),
+      const changes = yield* Queue.dropping<void>(1)
+      yield* PubSub.takeAll(changesSub).pipe(
+        Effect.andThen(Queue.offer(changes, undefined)),
+        Effect.forever,
+        Effect.forkScoped
+      )
+      yield* writeUntilSuccess
+      return yield* Queue.take(changes).pipe(
+        Effect.andThen(writeUntilSuccess),
         Effect.catchCause(Effect.logError),
         Effect.forever
       )
@@ -1012,7 +1022,7 @@ export const layer = <Groups extends EventGroup.Any, E, R>(
  * The returned function delegates to the `EventLog` service and preserves each
  * event's success and error types.
  *
- * @category client
+ * @category constructors
  * @since 4.0.0
  */
 export const makeClient = <Groups extends EventGroup.Any>(

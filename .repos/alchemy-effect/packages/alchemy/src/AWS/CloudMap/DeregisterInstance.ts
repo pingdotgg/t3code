@@ -15,14 +15,15 @@ export interface DeregisterInstanceRequest extends Omit<
  *
  * The response carries an `OperationId`; deregistration completes
  * asynchronously on the Cloud Map side.
- * @binding
- * @section Deregistering Instances
- * @example Deregister on Shutdown
+ * ### Deregistering Instances
+ * **Example:** Deregister on Shutdown
  * ```typescript
  * const deregisterInstance = yield* AWS.CloudMap.DeregisterInstance(service);
  *
  * yield* deregisterInstance({ InstanceId: "worker-1" });
  * ```
+ *
+ * @binding
  */
 export interface DeregisterInstance extends Binding.Service<
   DeregisterInstance,

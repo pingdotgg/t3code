@@ -51,9 +51,8 @@ export interface CompleteLifecycleActionClient {
  * `autoscaling:CompleteLifecycleAction` and
  * `autoscaling:RecordLifecycleActionHeartbeat` scoped to the group ARN.
  *
- * @binding
- * @section Completing Lifecycle Actions
- * @example Signal CONTINUE from a lifecycle handler
+ * ### Completing Lifecycle Actions
+ * **Example:** Signal CONTINUE from a lifecycle handler
  * ```typescript
  * const lifecycle = yield* CompleteLifecycleAction(group);
  * yield* lifecycle.complete({
@@ -63,7 +62,7 @@ export interface CompleteLifecycleActionClient {
  * });
  * ```
  *
- * @example Drain launching instances from a Lambda Function
+ * **Example:** Drain launching instances from a Lambda Function
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  * import {
@@ -105,7 +104,7 @@ export interface CompleteLifecycleActionClient {
  * );
  * ```
  *
- * @example Buy more time with a heartbeat
+ * **Example:** Buy more time with a heartbeat
  * ```typescript
  * // reset the heartbeat timeout while a long drain is still in progress
  * yield* lifecycle.heartbeat({
@@ -113,6 +112,8 @@ export interface CompleteLifecycleActionClient {
  *   LifecycleActionToken: event.detail.LifecycleActionToken,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CompleteLifecycleAction extends Binding.Service<
   CompleteLifecycleAction,

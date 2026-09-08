@@ -86,16 +86,15 @@ export interface RegexPatternSet extends Resource<
  * referenced from web ACL and rule group rules via
  * `RegexPatternSetReferenceStatement`.
  *
- * @resource
- * @section Creating Regex Pattern Sets
- * @example Block Requests Matching Bad Path Patterns
+ * ### Creating Regex Pattern Sets
+ * **Example:** Block Requests Matching Bad Path Patterns
  * ```typescript
  * const badPaths = yield* AWS.WAFv2.RegexPatternSet("BadPaths", {
  *   regularExpressions: ["^/wp-admin", "\\.php$"],
  * });
  * ```
  *
- * @example Reference from a Web ACL Rule
+ * **Example:** Reference from a Web ACL Rule
  * ```typescript
  * const acl = yield* AWS.WAFv2.WebACL("Firewall", {
  *   rules: [
@@ -119,6 +118,8 @@ export interface RegexPatternSet extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const RegexPatternSet = Resource<RegexPatternSet>(
   "AWS.WAFv2.RegexPatternSet",

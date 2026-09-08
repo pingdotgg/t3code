@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * `tag:GetResources` for a CloudFormation stack); grant those on the host
  * separately. Provide the implementation with
  * `Effect.provide(AWS.AppRegistry.SyncResourceHttp)`.
- * @binding
- * @section Syncing Resources
- * @example Re-sync a CloudFormation Stack's Application Tag
+ * ### Syncing Resources
+ * **Example:** Re-sync a CloudFormation Stack's Application Tag
  * ```typescript
  * // init — account-level, no resource argument
  * const syncResource = yield* AWS.AppRegistry.SyncResource();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log(result.actionTaken);
  * ```
+ *
+ * @binding
  */
 export interface SyncResource extends Binding.Service<
   SyncResource,

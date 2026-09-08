@@ -6,14 +6,15 @@ import type { Project } from "./Project.ts";
 /**
  * Runtime binding for `codebuild:ListSandboxesForProject` — lists the
  * bound project's sandbox ids, newest first.
- * @binding
- * @section Sandboxes
- * @example List Sandboxes
+ * ### Sandboxes
+ * **Example:** List Sandboxes
  * ```typescript
  * const listSandboxes = yield* AWS.CodeBuild.ListSandboxesForProject(project);
  *
  * const { ids } = yield* listSandboxes();
  * ```
+ *
+ * @binding
  */
 export interface ListSandboxesForProject extends Binding.Service<
   ListSandboxesForProject,

@@ -11,6 +11,7 @@ import {
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
+  getStandardThemeColors,
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
@@ -33,7 +34,6 @@ import {
   OCEAN_THEME,
   updateCustomTheme,
   CUSTOM_THEMES_STORAGE_KEY,
-  createManagedThemeColors,
   createVividThemeColors,
   getDefaultThemeColors,
   themeColorToHex,
@@ -90,48 +90,17 @@ describe("theme files", () => {
     }
   });
 
-  it("derives a readable palette from extreme simple-editor colors", () => {
-    const light = createManagedThemeColors("light", "#111827", "#ffff00");
-    const dark = createManagedThemeColors("dark", "#ffffff", "#ffff00");
-    const darkDefaults = getDefaultThemeColors("dark");
-
-    expect(asHex(light.canvas)).not.toBe("#111827");
-    expect(asHex(dark.canvas)).not.toBe("#ffffff");
-    expect(contrastRatio(light.accent, light.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(dark.accent, dark.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(light.textMuted, light.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(dark.textMuted, dark.canvas)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(light.textMuted, light.canvas)).toBeLessThan(5.5);
-    expect(contrastRatio(dark.textMuted, dark.canvas)).toBeLessThan(5.5);
-    expect(contrastRatio(light.textMuted, light.canvas)).toBeCloseTo(4.705, 1);
-    expect(contrastRatio(dark.textMuted, dark.canvas)).toBeCloseTo(5.082, 1);
-    expect(light.secondaryLabel).toBe(light.textMuted);
-    expect(dark.secondaryLabel).toBe(dark.textMuted);
-    expect(contrastRatio(light.accentForeground, light.accent)).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(dark.accentForeground, dark.accent)).toBeGreaterThanOrEqual(4.5);
-    // Status colors fall back to T3 Code's standard red and amber rather than
-    // the flagship palette's, so no generated theme inherits a brand tint.
-    const channels = (value: string) =>
-      [1, 3, 5].map((index) => Number.parseInt(asHex(value).slice(index, index + 2), 16)) as [
-        number,
-        number,
-        number,
-      ];
-    for (const colors of [light, dark]) {
-      const [errorRed, errorGreen, errorBlue] = channels(colors.error);
-      // Red leads by a wide margin; the old default was a pink whose blue sat
-      // close behind its red.
-      expect(errorRed).toBeGreaterThan(errorGreen * 2);
-      expect(errorRed).toBeGreaterThan(errorBlue * 2);
-      expect(contrastRatio(colors.error, "#ffffff")).toBeGreaterThanOrEqual(2.5);
-      expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(
-        4.5,
-      );
-      const [warnRed, warnGreen, warnBlue] = channels(colors.warning);
-      expect(warnRed).toBeGreaterThan(warnBlue);
-      expect(warnGreen).toBeGreaterThan(warnBlue);
-    }
-    expect(asHex(dark.error)).not.toBe(asHex(darkDefaults.error));
+  it("keeps stock dark controls in the neutral-black surface hierarchy", () => {
+    expectThemeColors(getStandardThemeColors("dark"), {
+      canvas: "#0a0a0a",
+      surface: "#111111",
+      surfaceRaised: "#111111",
+      surfaceOverlay: "#111111",
+      toolbarControl: "#111111",
+      secondary: "#111111",
+      muted: "#111111",
+      accentSurface: "#141414",
+    });
   });
 
   it("derives readable, distinctive vivid palettes from exact seeds", () => {
@@ -144,6 +113,12 @@ describe("theme files", () => {
       ["light", "#111827", "#8ab4f8"],
       ["dark", "#f5ecf5", "#a84370"],
     ];
+    const channels = (value: string) =>
+      [1, 3, 5].map((index) => Number.parseInt(asHex(value).slice(index, index + 2), 16)) as [
+        number,
+        number,
+        number,
+      ];
     for (const [appearance, canvas, accent] of seeds) {
       const colors = createVividThemeColors(appearance, canvas, accent);
       // Exact seeds are honored.
@@ -156,7 +131,13 @@ describe("theme files", () => {
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeLessThan(5.5);
       expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeLessThan(
+        contrastRatio(colors.text, colors.muted),
+      );
       expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeLessThan(
+        contrastRatio(colors.text, colors.surfaceRaised),
+      );
       expect(colors.secondaryLabel).toBe(colors.textMuted);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
       expect(
@@ -173,6 +154,17 @@ describe("theme files", () => {
       expect(colors.messageAction).not.toBe(colors.accent);
       // Update family follows the theme, not the default palette.
       expect(asHex(colors.update)).toBe(accent);
+      // Semantic statuses stay red and amber instead of inheriting a brand tint.
+      const [errorRed, errorGreen, errorBlue] = channels(colors.error);
+      expect(errorRed).toBeGreaterThan(errorGreen * 2);
+      expect(errorRed).toBeGreaterThan(errorBlue * 2);
+      expect(contrastRatio(colors.error, "#ffffff")).toBeGreaterThanOrEqual(2.5);
+      expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(
+        4.5,
+      );
+      const [warnRed, warnGreen, warnBlue] = channels(colors.warning);
+      expect(warnRed).toBeGreaterThan(warnBlue);
+      expect(warnGreen).toBeGreaterThan(warnBlue);
     }
   });
 
@@ -182,8 +174,8 @@ describe("theme files", () => {
     const inverted = [
       createVividThemeColors("light", "#111827", "#8ab4f8"),
       createVividThemeColors("dark", "#f5ecf5", "#a84370"),
-      createManagedThemeColors("light", "#0d1117", "#69b1ff", { exactSeeds: true }),
-      createManagedThemeColors("dark", "#fdfdfd", "#c2571b", { exactSeeds: true }),
+      createVividThemeColors("light", "#0d1117", "#69b1ff"),
+      createVividThemeColors("dark", "#fdfdfd", "#c2571b"),
     ];
     for (const colors of inverted) {
       expect(contrastRatio(colors.errorForeground, colors.errorSurface)).toBeGreaterThanOrEqual(

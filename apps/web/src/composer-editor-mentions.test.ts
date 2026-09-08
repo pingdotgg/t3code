@@ -1,3 +1,5 @@
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,6 +7,18 @@ import {
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+const citation: AssistantCitation = {
+  version: 1,
+  environmentId: EnvironmentId.make("remote/環境"),
+  threadId: ThreadId.make("thread-1"),
+  messageId: MessageId.make("message-1"),
+  text: 'Use @AGENTS.md, $review and "雪 ❄️" (carefully).',
+  start: 4,
+  end: 50,
+  prefix: "前: ",
+  suffix: " 後",
+};
 
 describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
@@ -71,6 +85,70 @@ describe("splitPromptIntoComposerSegments", () => {
     ).toEqual([{ type: "text", text: "Read [the docs](https://example.com/docs) first" }]);
   });
 
+  it("keeps multiple assistant citations atomic next to punctuation and Unicode", () => {
+    const source = serializeAssistantCitation(citation);
+    const otherCitation = {
+      ...citation,
+      messageId: MessageId.make("message-2"),
+      text: "A second quote",
+    };
+    const otherSource = serializeAssistantCitation(otherCitation);
+
+    expect(splitPromptIntoComposerSegments(`前(${source}),${otherSource}後`)).toEqual([
+      { type: "text", text: "前(" },
+      { type: "citation", citation, source },
+      { type: "text", text: ")," },
+      { type: "citation", citation: otherCitation, source: otherSource },
+      { type: "text", text: "後" },
+    ]);
+  });
+
+  it("preserves exact citation source encoding for adjacent chips at the end of a prompt", () => {
+    const source = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+    expect(splitPromptIntoComposerSegments(`${source}${source}`)).toEqual([
+      { type: "citation", citation, source },
+      { type: "citation", citation, source },
+    ]);
+  });
+
+  it.each(["@", "@AGENTS.md"])(
+    "keeps a citation after the unfinished mention %s intact",
+    (prefix) => {
+      const source = serializeAssistantCitation(citation);
+
+      expect(splitPromptIntoComposerSegments(`${prefix}${source}`)).toEqual([
+        { type: "text", text: prefix },
+        { type: "citation", citation, source },
+      ]);
+    },
+  );
+
+  it("parses citations alongside file mentions, skills, and terminal contexts", () => {
+    const source = serializeAssistantCitation(citation);
+
+    expect(
+      splitPromptIntoComposerSegments(
+        `@AGENTS.md ${source}\n$review ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}${source}`,
+      ),
+    ).toEqual([
+      { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
+      { type: "text", text: " " },
+      { type: "citation", citation, source },
+      { type: "text", text: "\n" },
+      { type: "skill", name: "review" },
+      { type: "text", text: " " },
+      { type: "terminal-context", context: null },
+      { type: "citation", citation, source },
+    ]);
+  });
+
+  it("keeps malformed citation links as editable text", () => {
+    const prompt = "[Assistant quote](t3-citation://v1/env/thread/message?text=missing+metadata)";
+
+    expect(splitPromptIntoComposerSegments(prompt)).toEqual([{ type: "text", text: prompt }]);
+  });
+
   it.each(["@expo/ui", "@jane/foo.js", "@scope/pkg/sub/path"])(
     "does not turn scoped package reference %s into file mention segments",
     (reference) => {
@@ -117,6 +195,29 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "Use " },
       { type: "skill", name: "review-follow-up" },
       { type: "text", text: " please" },
+    ]);
+  });
+
+  it("splits digit-leading skill tokens into skill segments", () => {
+    expect(splitPromptIntoComposerSegments("Use $2spec please")).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "2spec" },
+      { type: "text", text: " please" },
+    ]);
+  });
+
+  it("keeps digits-only dollar amounts and compact monetary expressions as text", () => {
+    expect(splitPromptIntoComposerSegments("I'll pay $20 tomorrow")).toEqual([
+      { type: "text", text: "I'll pay $20 tomorrow" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Budget is $20k tomorrow")).toEqual([
+      { type: "text", text: "Budget is $20k tomorrow" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Cost is $100M total")).toEqual([
+      { type: "text", text: "Cost is $100M total" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Limit is $1e6 here")).toEqual([
+      { type: "text", text: "Limit is $1e6 here" },
     ]);
   });
 
@@ -168,6 +269,12 @@ describe("splitPromptIntoComposerSegments", () => {
 });
 
 describe("selectionTouchesMentionBoundary", () => {
+  it("does not treat text before a citation as an overlapping file mention", () => {
+    const prompt = `before @${serializeAssistantCitation(citation)}`;
+
+    expect(selectionTouchesMentionBoundary(prompt, "before".length, "before ".length)).toBe(false);
+  });
+
   it("returns true when selection includes the whitespace after a mention", () => {
     expect(
       selectionTouchesMentionBoundary(

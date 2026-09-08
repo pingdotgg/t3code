@@ -1,6 +1,9 @@
+import { InfoIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
 
 // Match the duration-220 exit transition before removing a dismissed notice.
@@ -15,14 +18,13 @@ export interface ComposerBannerStackItem {
   readonly description?: ReactNode;
   readonly children?: ReactNode;
   readonly actions?: ReactNode;
-  readonly className?: string;
   readonly dismissLabel?: string;
   readonly onDismiss?: () => void;
 }
 
 export type ComposerBannerStackContent = Pick<
   ComposerBannerStackItem,
-  "id" | "variant" | "priority" | "className"
+  "id" | "variant" | "priority"
 > & { readonly content: ReactNode };
 
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
@@ -118,6 +120,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
     >
       <div className={cn("relative flex flex-col-reverse", hasStack && stackExpanded && "z-50")}>
         <div
+          key={frontItem.id}
           className={cn(
             "relative z-10 transition-[translate,opacity] duration-220 ease-in",
             exitingItemId === frontItem.id
@@ -145,7 +148,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
         {hasStack ? (
           <div
             ref={noticesRef}
-            className={cn("relative z-20", stackExpanded && "min-h-3")}
+            className="relative z-20 min-h-3"
             onPointerEnter={(event) => {
               if (event.pointerType === "touch") return;
               if (document.activeElement === peekRef.current) {
@@ -252,25 +255,64 @@ function ComposerBannerStackAlert({
   if ("content" in item) {
     return (
       <ComposerBanner.Root
+        density="comfortable"
         placement={attached ? "attached" : "floating"}
         variant={item.variant}
-        className={item.className}
       >
         {item.content}
       </ComposerBanner.Root>
     );
   }
-
   return (
     <ComposerBanner.Root
       role="alert"
       placement={attached ? "attached" : "floating"}
       variant={item.variant}
-      className={item.className}
+      density="comfortable"
     >
-      <ComposerBanner.Row layout="wrap-actions">
-        <ComposerBanner.Icon>{item.icon}</ComposerBanner.Icon>
-        <ComposerBanner.Content className="font-medium">{item.title}</ComposerBanner.Content>
+      <ComposerBanner.Row layout="wrap-actions-narrow">
+        <ComposerBanner.Icon className="h-(--composer-banner-icon-column) self-start">
+          {item.icon}
+        </ComposerBanner.Icon>
+        <ComposerBanner.Content className="whitespace-nowrap">
+          <span
+            className={cn(
+              "min-w-0 font-medium leading-7 sm:leading-6",
+              typeof item.title === "string" && "truncate",
+            )}
+          >
+            {item.title}
+          </span>
+          {item.description ? (
+            <>
+              <span className="min-w-0 shrink-[9999] truncate text-muted-foreground @max-[400px]:sr-only">
+                {item.description}
+              </span>
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Show notice details"
+                      className="hidden flex-none text-muted-foreground hover:text-foreground @max-[400px]:inline-flex"
+                    />
+                  }
+                >
+                  <InfoIcon className="size-3.5" />
+                </PopoverTrigger>
+                <PopoverPopup
+                  tooltipStyle
+                  side="top"
+                  className="max-w-72 whitespace-normal text-pretty"
+                >
+                  {item.description}
+                </PopoverPopup>
+              </Popover>
+            </>
+          ) : null}
+        </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
             {item.actions}
@@ -284,19 +326,7 @@ function ComposerBannerStackAlert({
           </ComposerBanner.Actions>
         ) : null}
       </ComposerBanner.Row>
-      {item.description || item.children ? (
-        <ComposerBanner.Children>
-          {item.description ? (
-            <ComposerBanner.Row>
-              <ComposerBanner.Icon />
-              <ComposerBanner.Content className="text-muted-foreground">
-                {item.description}
-              </ComposerBanner.Content>
-            </ComposerBanner.Row>
-          ) : null}
-          {item.children}
-        </ComposerBanner.Children>
-      ) : null}
+      {item.children ? <ComposerBanner.Children>{item.children}</ComposerBanner.Children> : null}
     </ComposerBanner.Root>
   );
 }

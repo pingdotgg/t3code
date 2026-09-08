@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildProviderEnvironmentOptions,
   classifyProviderEnvironmentAccess,
+  isProviderSettingsEnvironmentAvailable,
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
@@ -20,6 +21,27 @@ const environments = [
 ] as const;
 
 describe("provider environment selection", () => {
+  it("requires a connected environment with server config for searchable provider settings", () => {
+    expect(
+      isProviderSettingsEnvironmentAvailable({
+        connectionPhase: "connected",
+        hasServerConfig: true,
+      }),
+    ).toBe(true);
+    expect(
+      isProviderSettingsEnvironmentAvailable({
+        connectionPhase: "reconnecting",
+        hasServerConfig: true,
+      }),
+    ).toBe(false);
+    expect(
+      isProviderSettingsEnvironmentAvailable({
+        connectionPhase: "connected",
+        hasServerConfig: false,
+      }),
+    ).toBe(false);
+  });
+
   it("sorts the primary environment first and the rest by label", () => {
     expect(
       buildProviderEnvironmentOptions(environments, primaryId).map(

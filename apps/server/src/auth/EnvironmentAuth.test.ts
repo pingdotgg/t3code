@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -34,6 +35,7 @@ const makeEnvironmentAuthLayer = (overrides?: Partial<ServerConfig.ServerConfig[
   EnvironmentAuth.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ServerEnvironment.identityLayer),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
@@ -46,6 +48,18 @@ const makeCookieRequest = (
       [cookieName]: sessionToken,
     },
     headers: {},
+  }) as unknown as Parameters<
+    EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
+  >[0];
+
+const makeBearerRequest = (
+  token: string,
+): Parameters<EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]>[0] =>
+  ({
+    cookies: {},
+    headers: {
+      authorization: `Bearer ${token}`,
+    },
   }) as unknown as Parameters<
     EnvironmentAuth.EnvironmentAuth["Service"]["authenticateHttpRequest"]
   >[0];
@@ -109,6 +123,20 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
+  it.effect("prefers a bearer token over a stale legacy cookie", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const bearer = yield* serverAuth.issueSession();
+      const verified = yield* serverAuth.authenticateHttpRequest({
+        cookies: { [sessions.legacyCookieName ?? "t3_session"]: "stale" },
+        headers: { authorization: `Bearer ${bearer.token}` },
+      } as never);
+
+      expect(verified.sessionId).toBe(bearer.sessionId);
+    }).pipe(Effect.provide(makeEnvironmentAuthLayer({ mode: "web", host: "192.168.1.50" }))),
+  );
+
   it.effect("does not exchange ordinary pairing grants for administrative access tokens", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -141,6 +169,71 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       expect(token.scope).toBe("orchestration:read");
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
+  );
+
+  it.effect("rotates desktop bearer sessions without accumulating authorized clients", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const browser = yield* serverAuth.createBrowserSession(
+        "desktop-bootstrap-token",
+        requestMetadata,
+      );
+      const browserSession = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(sessions.cookieName, browser.sessionToken),
+      );
+      const staleSessions = yield* Effect.forEach([1, 2, 3], () =>
+        sessions.issue({ subject: "desktop-bootstrap", method: "bearer-access-token" }),
+      );
+      const pairing = yield* serverAuth.issuePairingCredential();
+      const paired = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        pairing.credential,
+        undefined,
+        { ...requestMetadata, label: "T3 Code Desktop" },
+      );
+      const first = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        undefined,
+        requestMetadata,
+      );
+      const firstSession = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(first.access_token),
+      );
+      const second = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        undefined,
+        requestMetadata,
+      );
+
+      const active = yield* serverAuth.listSessions();
+      const firstError = yield* serverAuth
+        .authenticateHttpRequest(makeBearerRequest(first.access_token))
+        .pipe(Effect.flip);
+      const secondSession = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(second.access_token),
+      );
+
+      expect(active).toHaveLength(3);
+      expect(active.map((entry) => entry.sessionId)).toContain(browserSession.sessionId);
+      expect(active.map((entry) => entry.sessionId)).toContain(secondSession.sessionId);
+      expect(active.map((entry) => entry.sessionId)).not.toContain(firstSession.sessionId);
+      expect(firstError._tag).toBe("ServerAuthInvalidCredentialError");
+      for (const stale of staleSessions) {
+        const error = yield* sessions.verify(stale.token).pipe(Effect.flip);
+        expect(error._tag).toBe("SessionTokenRevokedError");
+      }
+      const pairedSession = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(paired.access_token),
+      );
+      expect(pairedSession.subject).toBe("one-time-token");
+      expect(active.map((entry) => entry.sessionId)).toContain(pairedSession.sessionId);
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthLayer({
+          desktopBootstrapToken: "desktop-bootstrap-token",
+        }),
+      ),
+    ),
   );
 
   it.effect("keeps user-issued administrative pairing links manageable", () =>
