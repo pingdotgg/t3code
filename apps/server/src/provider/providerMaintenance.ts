@@ -348,7 +348,7 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
  * owns that path; anything unproven stays manual-only so T3 Code never runs
  * a package manager against an install it did not create.
  */
-const resolvePackageManagedProviderMaintenance = Effect.fn(
+export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
   definition: PackageManagedProviderMaintenanceDefinition,
