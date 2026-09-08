@@ -48,6 +48,9 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // becoming real if either is ever declared as a dependency.
   "bufferutil",
   "utf-8-validate",
+  // Its lib/*Bundle files are CommonJS and read __dirname, which the ESM
+  // bundle does not define. It also finds browsers.json next to its own files.
+  "playwright-core",
 ] as const;
 
 /**
