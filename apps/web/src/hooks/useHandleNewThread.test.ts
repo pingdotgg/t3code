@@ -204,4 +204,18 @@ describe("useNewThreadHandler", () => {
     );
     expect(testState.router.navigate).toHaveBeenCalled();
   });
+
+  it("does not seed sticky from the machine default alone", async () => {
+    testState.reset(null);
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.draftStore.setStickyRuntimeMode).not.toHaveBeenCalled();
+  });
 });

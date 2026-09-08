@@ -195,9 +195,12 @@ export function useNewThreadHandler() {
         stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: targetServerSettings.defaultRuntimeMode,
       });
-      // Seed sticky from whatever we apply so fresh starts keep remembering
-      // even when the user never touched the picker in this session.
-      setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
+      // Only promote carry into sticky. Seeding from the machine default would
+      // permanently shadow later Default access changes (including Auto).
+      // Explicit composer picks update sticky in ChatView.
+      if (sameProjectCarryRuntimeMode != null) {
+        setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
+      }
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;

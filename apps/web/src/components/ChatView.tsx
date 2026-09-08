@@ -2270,7 +2270,6 @@ export default function ChatView(props: ChatViewProps) {
         stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: settings.defaultRuntimeMode,
       });
-      setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
@@ -2296,7 +2295,6 @@ export default function ChatView(props: ChatViewProps) {
       routeKind,
       setDraftThreadContext,
       setLogicalProjectDraftThreadId,
-      setStickyRuntimeMode,
       settings.defaultRuntimeMode,
     ],
   );
