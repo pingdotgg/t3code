@@ -6,16 +6,19 @@ import { useEnvironments } from "../../state/environments";
 import type { SettingsScopeSearch } from "./settingsScope";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { useNavigate } from "@tanstack/react-router";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 /** Offer an explicit target change when a category has no settings at this scope. */
 export function SettingsScopeNotice({
   children,
   target,
   targetId,
+  eligibleEnvironmentIds,
 }: {
   children: string;
   target: "device" | "environment" | "all" | "project" | "checkout";
   targetId?: string;
+  eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
   const { selectScope, search } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
@@ -41,15 +44,21 @@ export function SettingsScopeNotice({
             search: { project: group.projectKey },
           }))
         : target === "environment"
-          ? environments.map((entry) => ({
-              label: environments.some(
-                (other) =>
-                  other.environmentId !== entry.environmentId && other.label === entry.label,
+          ? environments
+              .filter(
+                (entry) =>
+                  eligibleEnvironmentIds === undefined ||
+                  eligibleEnvironmentIds.includes(entry.environmentId),
               )
-                ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
-                : entry.label,
-              search: { machine: entry.environmentId },
-            }))
+              .map((entry) => ({
+                label: environments.some(
+                  (other) =>
+                    other.environmentId !== entry.environmentId && other.label === entry.label,
+                )
+                  ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
+                  : entry.label,
+                search: { machine: entry.environmentId },
+              }))
           : [
               {
                 label:

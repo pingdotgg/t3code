@@ -1,5 +1,7 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -692,8 +694,49 @@ export function getSettingsSearchTargetScope(targetId: string) {
     items.find((candidate) => candidate.id === targetId) ??
     items.find((candidate) => candidate.targetId === targetId);
   return item
-    ? { title: item.title, scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to] }
+    ? {
+        title: item.title,
+        scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
+        ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
+      }
     : null;
+}
+
+interface AutoSettlementSearchEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly connection: { readonly phase: EnvironmentConnectionPhase };
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: { readonly threadAutoSettlement?: boolean };
+    };
+  } | null;
+}
+
+/** Discovery needs one capable environment; the selected page needs every connected target to support it. */
+export function getThreadAutoSettlementSearchAvailability(
+  environments: readonly AutoSettlementSearchEnvironment[],
+  scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+) {
+  const connected = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" && environment.serverConfig !== null,
+  );
+  const eligibleEnvironmentIds = connected
+    .filter(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.threadAutoSettlement === true,
+    )
+    .map((environment) => environment.environmentId);
+  const selected = connected.filter((environment) =>
+    scope?.environmentIds.includes(environment.environmentId),
+  );
+  return {
+    eligibleEnvironmentIds,
+    isTargetAvailable:
+      (scope?.kind === "all" || scope?.kind === "environment") &&
+      selected.length > 0 &&
+      selected.every((environment) => eligibleEnvironmentIds.includes(environment.environmentId)),
+  };
 }
 
 export function isSettingsSearchScopeAvailable(

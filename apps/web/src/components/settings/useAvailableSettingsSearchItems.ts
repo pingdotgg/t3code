@@ -9,7 +9,10 @@ import { useEnvironmentQuery } from "~/state/query";
 import { usePrimarySessionState } from "~/environments/primary";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
-import { filterAvailableSettingsSearchItems } from "./settingsSearch";
+import {
+  filterAvailableSettingsSearchItems,
+  getThreadAutoSettlementSearchAvailability,
+} from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems() {
   const { environments } = useEnvironments();
@@ -37,10 +40,8 @@ export function useAvailableSettingsSearchItems() {
           state: desktopWsl.data,
           error: desktopWsl.error,
         }),
-        hasThreadAutoSettlement: environments.some(
-          (environment) =>
-            environment.serverConfig?.environment.capabilities.threadAutoSettlement === true,
-        ),
+        hasThreadAutoSettlement:
+          getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
       }),
     [canManageLocalBackend, desktopWsl.data, desktopWsl.error, environments],
   );

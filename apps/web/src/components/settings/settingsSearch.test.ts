@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId } from "@t3tools/contracts";
 
 import {
   filterAvailableSettingsSearchItems,
   getSettingsSearchTargetScope,
+  getThreadAutoSettlementSearchAvailability,
   isSettingsOverviewVisible,
   isSettingsSearchScopeAvailable,
   searchableSetting,
@@ -288,6 +290,17 @@ describe("searchSettings", () => {
 });
 
 describe("settings search targets", () => {
+  it.each([
+    "auto-settle-inactive-threads",
+    "auto-settle-merged-threads",
+    "days-before-auto-settle",
+  ])("retains the capability requirement for %s", (targetId) => {
+    expect(getSettingsSearchTargetScope(targetId)).toMatchObject({
+      scope: "environment-defaults",
+      requiresThreadAutoSettlement: true,
+    });
+  });
+
   it("identifies the owning scope without changing the requested target", () => {
     const setting = getSettingsSearchTargetScope("time-format")!;
     expect(setting).toEqual({ title: "Time format", scope: "device" });
@@ -329,6 +342,105 @@ describe("settings search targets", () => {
       expect(isSettingsSearchScopeAvailable(setting.scope, "device")).toBe(true);
       expect(isSettingsSearchScopeAvailable(setting.scope, "environment")).toBe(false);
     }
+  });
+});
+
+describe("auto-settlement search availability", () => {
+  function environment(id: string, { connected = true, loaded = true, supported = true } = {}) {
+    return {
+      environmentId: EnvironmentId.make(id),
+      connection: { phase: connected ? ("connected" as const) : ("offline" as const) },
+      serverConfig: loaded
+        ? { environment: { capabilities: { threadAutoSettlement: supported } } }
+        : null,
+    };
+  }
+
+  const capable = environment("capable");
+  const unsupported = environment("unsupported", { supported: false });
+  const offline = environment("offline", { connected: false });
+  const loading = environment("loading", { loaded: false });
+  const environments = [capable, unsupported, offline, loading];
+
+  it("keeps results discoverable when one connected environment supports them", () => {
+    const availability = getThreadAutoSettlementSearchAvailability(environments);
+    expect(availability.eligibleEnvironmentIds).toEqual([capable.environmentId]);
+    const items = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: availability.eligibleEnvironmentIds.length > 0,
+    });
+    expect(searchSettings("auto-settle", items).map((item) => item.id)).toEqual([
+      "auto-settle-inactive-threads",
+      "auto-settle-merged-threads",
+      "days-before-auto-settle",
+    ]);
+  });
+
+  it("offers only capable environments when an aggregate has mixed capabilities", () => {
+    expect(
+      getThreadAutoSettlementSearchAvailability(environments, {
+        kind: "all",
+        environmentIds: environments.map((entry) => entry.environmentId),
+      }),
+    ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
+  });
+
+  it("allows a capable named environment regardless of other environments' capabilities", () => {
+    expect(
+      getThreadAutoSettlementSearchAvailability(environments, {
+        kind: "environment",
+        environmentIds: [capable.environmentId],
+      }).isTargetAvailable,
+    ).toBe(true);
+  });
+
+  it.each([unsupported, offline, loading])(
+    "does not render the target on $environmentId or silently fall back",
+    (selected) => {
+      expect(
+        getThreadAutoSettlementSearchAvailability(environments, {
+          kind: "environment",
+          environmentIds: [selected.environmentId],
+        }),
+      ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
+    },
+  );
+
+  it.each(["device", "project", "checkout"] as const)(
+    "offers a capable environment instead of a dead target at %s scope",
+    (kind) => {
+      expect(
+        getThreadAutoSettlementSearchAvailability(environments, {
+          kind,
+          environmentIds: [capable.environmentId],
+        }),
+      ).toEqual({ eligibleEnvironmentIds: [capable.environmentId], isTargetAvailable: false });
+    },
+  );
+
+  it("ignores offline and unloaded targets when all connected targets support the setting", () => {
+    const selected = [capable, offline, loading];
+    expect(
+      getThreadAutoSettlementSearchAvailability(selected, {
+        kind: "all",
+        environmentIds: selected.map((entry) => entry.environmentId),
+      }).isTargetAvailable,
+    ).toBe(true);
+  });
+
+  it("offers no unavailable environments when none can render the setting", () => {
+    const selected = [unsupported, offline, loading];
+    expect(
+      getThreadAutoSettlementSearchAvailability(selected, {
+        kind: "all",
+        environmentIds: selected.map((entry) => entry.environmentId),
+      }),
+    ).toEqual({ eligibleEnvironmentIds: [], isTargetAvailable: false });
+    expect(getThreadAutoSettlementSearchAvailability([]).eligibleEnvironmentIds).toEqual([]);
   });
 });
 

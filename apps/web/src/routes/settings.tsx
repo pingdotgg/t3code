@@ -33,6 +33,7 @@ import { ProjectsSettings } from "../components/settings/ProjectsSettings";
 import type { ProjectSettingsCategory } from "../components/settings/ProjectSettingsPanel";
 import {
   getSettingsSearchTargetScope,
+  getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
 } from "../components/settings/settingsSearch";
 
@@ -103,8 +104,30 @@ function SettingsTargetBar() {
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, search, connectedEnvironments } = useSettingsScope();
+  const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
   const searchTarget = getSettingsSearchTargetScope(hash);
+  const autoSettlementAvailability = searchTarget?.requiresThreadAutoSettlement
+    ? getThreadAutoSettlementSearchAvailability(environments, scope)
+    : null;
+  if (
+    scope.kind !== "unavailable" &&
+    searchTarget &&
+    autoSettlementAvailability &&
+    !autoSettlementAvailability.isTargetAvailable
+  ) {
+    return (
+      <SettingsScopeNotice
+        target="environment"
+        targetId={hash}
+        eligibleEnvironmentIds={autoSettlementAvailability.eligibleEnvironmentIds}
+      >
+        {autoSettlementAvailability.eligibleEnvironmentIds.length > 0
+          ? `${searchTarget.title} requires a supporting environment. Choose one to continue.`
+          : `${searchTarget.title} requires a supporting environment. Connect or update an environment to continue.`}
+      </SettingsScopeNotice>
+    );
+  }
   if (
     scope.kind !== "unavailable" &&
     searchTarget &&
