@@ -13,9 +13,9 @@ export function DiffFileStatus({
 }) {
   if (error) {
     return (
-      <button
-        type="button"
-        className="text-xs text-muted-foreground"
+      <Button
+        variant="ghost-muted"
+        size="xs"
         aria-label="Retry loading diff"
         onClick={(event) => {
           event.stopPropagation();
@@ -23,7 +23,7 @@ export function DiffFileStatus({
         }}
       >
         Retry loading diff
-      </button>
+      </Button>
     );
   }
   if (!truncated) return null;
@@ -33,8 +33,7 @@ export function DiffFileStatus({
         render={
           <Button
             size="icon-micro"
-            variant="ghost"
-            className="text-muted-foreground"
+            variant="ghost-muted"
             aria-label="Partial diff preview"
             onClick={(event) => event.stopPropagation()}
           />
