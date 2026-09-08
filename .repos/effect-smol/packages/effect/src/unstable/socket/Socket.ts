@@ -185,7 +185,7 @@ export class CloseEvent {
 /**
  * Returns `true` when a value is a `CloseEvent`.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isCloseEvent = (u: unknown): u is CloseEvent => Predicate.hasProperty(u, CloseEventTypeId)
@@ -209,7 +209,7 @@ export const SocketErrorTypeId: SocketErrorTypeId = "~effect/socket/Socket/Socke
 /**
  * Returns `true` when a value is a `SocketError`.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isSocketError = (u: unknown): u is SocketError => Predicate.hasProperty(u, SocketErrorTypeId)
@@ -220,7 +220,7 @@ export const isSocketError = (u: unknown): u is SocketError => Predicate.hasProp
  * @category errors
  * @since 4.0.0
  */
-export class SocketReadError extends Schema.ErrorClass<SocketReadError>("effect/socket/Socket/SocketReadError")({
+export class SocketReadError extends Schema.Error<SocketReadError>("effect/socket/Socket/SocketReadError")({
   _tag: Schema.tag("SocketReadError"),
   cause: Schema.Defect()
 }) {
@@ -238,7 +238,7 @@ export class SocketReadError extends Schema.ErrorClass<SocketReadError>("effect/
  * @category errors
  * @since 4.0.0
  */
-export class SocketWriteError extends Schema.ErrorClass<SocketWriteError>("effect/socket/Socket/SocketWriteError")({
+export class SocketWriteError extends Schema.Error<SocketWriteError>("effect/socket/Socket/SocketWriteError")({
   _tag: Schema.tag("SocketWriteError"),
   cause: Schema.Defect()
 }) {
@@ -257,7 +257,7 @@ export class SocketWriteError extends Schema.ErrorClass<SocketWriteError>("effec
  * @category errors
  * @since 4.0.0
  */
-export class SocketOpenError extends Schema.ErrorClass<SocketOpenError>("effect/socket/Socket/SocketOpenError")({
+export class SocketOpenError extends Schema.Error<SocketOpenError>("effect/socket/Socket/SocketOpenError")({
   _tag: Schema.tag("SocketOpenError"),
   kind: Schema.Literals(["Unknown", "Timeout"]),
   cause: Schema.Defect()
@@ -281,7 +281,7 @@ export class SocketOpenError extends Schema.ErrorClass<SocketOpenError>("effect/
  * @category errors
  * @since 4.0.0
  */
-export class SocketCloseError extends Schema.ErrorClass<SocketCloseError>("effect/socket/Socket/SocketCloseError")({
+export class SocketCloseError extends Schema.Error<SocketCloseError>("effect/socket/Socket/SocketCloseError")({
   _tag: Schema.tag("SocketCloseError"),
   code: Schema.Int,
   closeReason: Schema.optional(Schema.String)
@@ -339,7 +339,7 @@ export type SocketErrorReason =
  * @category errors
  * @since 4.0.0
  */
-export class SocketError extends Schema.TaggedErrorClass<SocketError>(SocketErrorTypeId)("SocketError", {
+export class SocketError extends Schema.TaggedError<SocketError>(SocketErrorTypeId)("SocketError", {
   _tag: Schema.tag("SocketError"),
   reason: SocketErrorReason
 }) {
@@ -608,10 +608,19 @@ export const fromWebSocket = <RO>(
   options?: {
     readonly closeCodeIsError?: ((code: number) => boolean) | undefined
     readonly openTimeout?: Duration.Input | undefined
+    /**
+     * Replays buffered events on the first run after the socket opens and before
+     * the run's `onOpen` effect.
+     *
+     * @category options
+     * @since 4.0.0
+     */
+    readonly onInitialRun?: ((ws: globalThis.WebSocket) => ReadonlyArray<MessageEvent>) | undefined
   } | undefined
 ): Effect.Effect<Socket, never, Exclude<RO, Scope.Scope>> =>
   Effect.withFiber((fiber) => {
     let currentWS: globalThis.WebSocket | undefined
+    let initial = true
     const latch = Latch.makeUnsafe(false)
     const acquireContext = fiber.context as Context.Context<RO>
     const closeCodeIsError = options?.closeCodeIsError ?? defaultCloseCodeIsError
@@ -638,7 +647,7 @@ export const fromWebSocket = <RO>(
             )
             return run(effect)
           }
-          const result = handler(event.data)
+          const result = handler(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data)
           if (Effect.isEffect(result)) {
             run(result)
           }
@@ -708,6 +717,10 @@ export const fromWebSocket = <RO>(
         open = true
         currentWS = ws
         latch.openUnsafe()
+        if (initial && options?.onInitialRun) {
+          initial = false
+          for (const event of options.onInitialRun(ws)) onMessage(event)
+        }
         if (opts?.onOpen) yield* opts.onOpen
         return yield* Effect.catchFilter(
           FiberSet.join(fiberSet),
@@ -723,14 +736,21 @@ export const fromWebSocket = <RO>(
       )
 
     const write = (chunk: Uint8Array | string | CloseEvent) =>
-      latch.whenOpen(Effect.sync(() => {
-        const ws = currentWS!
-        if (isCloseEvent(chunk)) {
-          ws.close(chunk.code, chunk.reason)
-        } else {
-          ws.send(chunk as string | Uint8Array<ArrayBuffer>)
-        }
-      }))
+      latch.whenOpen(
+        Effect.suspend(() => {
+          try {
+            const ws = currentWS!
+            if (isCloseEvent(chunk)) {
+              ws.close(chunk.code, chunk.reason)
+            } else {
+              ws.send(chunk as string | Uint8Array<ArrayBuffer>)
+            }
+            return Effect.void
+          } catch (cause) {
+            return Effect.fail(new SocketError({ reason: new SocketWriteError({ cause }) }))
+          }
+        })
+      )
     const writer = Effect.succeed(write)
 
     return Effect.succeed(make({
@@ -783,7 +803,7 @@ export const layerWebSocket: (
 /**
  * Context reference for socket send queue capacity, defaulting to `16`.
  *
- * @category fiber refs
+ * @category services
  * @since 4.0.0
  */
 export const SendQueueCapacity = Context.Reference<number>("~effect/socket/Socket/SendQueueCapacity", {
@@ -893,7 +913,10 @@ export const fromTransformStream = <R>(acquire: Effect.Effect<InputTransformStre
             })
           )
         }
-        return Effect.promise(() => getWriter(stream).write(typeof chunk === "string" ? encoder.encode(chunk) : chunk))
+        return Effect.tryPromise({
+          try: () => getWriter(stream).write(typeof chunk === "string" ? encoder.encode(chunk) : chunk),
+          catch: (cause) => new SocketError({ reason: new SocketWriteError({ cause }) })
+        })
       }))
     const writer = Effect.acquireRelease(
       Effect.succeed(write),

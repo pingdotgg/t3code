@@ -16,7 +16,7 @@ import type { NativeReviewDiffRow, NativeReviewDiffToken } from "./nativeReviewD
 export type NativeReviewDiffHighlightScheme = "light" | "dark";
 export type NativeReviewDiffHighlightEngine = "native" | "javascript";
 
-export class NativeReviewDiffHighlighterUnavailableError extends Schema.TaggedErrorClass<NativeReviewDiffHighlighterUnavailableError>()(
+export class NativeReviewDiffHighlighterUnavailableError extends Schema.TaggedError<NativeReviewDiffHighlighterUnavailableError>()(
   "NativeReviewDiffHighlighterUnavailableError",
   {},
 ) {
@@ -29,7 +29,7 @@ export const isNativeReviewDiffHighlighterUnavailableError = Schema.is(
   NativeReviewDiffHighlighterUnavailableError,
 );
 
-export class NativeReviewDiffHighlighterInitializationError extends Schema.TaggedErrorClass<NativeReviewDiffHighlighterInitializationError>()(
+export class NativeReviewDiffHighlighterInitializationError extends Schema.TaggedError<NativeReviewDiffHighlighterInitializationError>()(
   "NativeReviewDiffHighlighterInitializationError",
   {
     requestedEngine: Schema.Literals(["native", "javascript"]),

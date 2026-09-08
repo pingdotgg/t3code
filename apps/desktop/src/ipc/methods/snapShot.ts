@@ -22,7 +22,7 @@ import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
-class SnapShotIpcUnauthorizedSenderError extends Schema.TaggedErrorClass<SnapShotIpcUnauthorizedSenderError>()(
+class SnapShotIpcUnauthorizedSenderError extends Schema.TaggedError<SnapShotIpcUnauthorizedSenderError>()(
   "SnapShotIpcUnauthorizedSenderError",
   {},
 ) {

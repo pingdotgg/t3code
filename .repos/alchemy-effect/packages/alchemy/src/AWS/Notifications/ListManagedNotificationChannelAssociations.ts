@@ -15,9 +15,8 @@ export interface ListManagedNotificationChannelAssociationsRequest
  * List the account contacts and channels associated with an AWS-managed
  * notification configuration. Provide the implementation with
  * `Effect.provide(AWS.Notifications.ListManagedNotificationChannelAssociationsHttp)`.
- * @binding
- * @section Reading AWS-Managed Notifications
- * @example List a Managed Configuration's Channel Associations
+ * ### Reading AWS-Managed Notifications
+ * **Example:** List a Managed Configuration's Channel Associations
  * ```typescript
  * // init — account-level binding takes no resource
  * const listManagedNotificationChannelAssociations =
@@ -29,6 +28,8 @@ export interface ListManagedNotificationChannelAssociationsRequest
  * });
  * const channels = result.channelAssociations;
  * ```
+ *
+ * @binding
  */
 export interface ListManagedNotificationChannelAssociations extends Binding.Service<
   ListManagedNotificationChannelAssociations,

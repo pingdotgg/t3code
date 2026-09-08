@@ -9,15 +9,16 @@ import * as Binding from "../../Binding.ts";
  * Deletes a manual snapshot — the cleanup half of a snapshot-rotation
  * job. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.DeleteSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Delete an Expired Snapshot
+ * ### Managing Snapshots
+ * **Example:** Delete an Expired Snapshot
  * ```typescript
  * // init — resolve the runtime client
  * const deleteSnapshot = yield* AWS.RedshiftServerless.DeleteSnapshot();
  *
  * yield* deleteSnapshot({ snapshotName: "pre-migration-1" });
  * ```
+ *
+ * @binding
  */
 export interface DeleteSnapshot extends Binding.Service<
   DeleteSnapshot,

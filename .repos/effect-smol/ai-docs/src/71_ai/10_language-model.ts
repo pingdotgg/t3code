@@ -26,7 +26,7 @@ const OpenAiClientLayer = OpenAiClient.layerConfig({
   Layer.provide(FetchHttpClient.layer)
 )
 
-export class AiWriterError extends Schema.TaggedErrorClass<AiWriterError>()("AiWriterError", {
+export class AiWriterError extends Schema.TaggedError<AiWriterError>()("AiWriterError", {
   // AiErrorReason is a Schema, so we can include it directly in our custom
   // error schema.
   reason: AiError.AiErrorReason

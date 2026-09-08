@@ -22,9 +22,11 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   state: Alchemy.localState(),
 });
 
-const stack = beforeAll(deploy(Stack));
+const stack = beforeAll(deploy(Stack), { timeout: 240_000 });
 
-afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
+afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
+  timeout: 180_000,
+});
 
 // Fresh `workers.dev` URLs transiently 404 (route still propagating) or 5xx
 // (Hyperdrive/Neon binding still settling). `Test.getWhenReady` fails on that

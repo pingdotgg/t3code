@@ -19,10 +19,12 @@ import {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as FileSystem from "effect/FileSystem";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as ServerConfig from "../../../config.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -45,7 +47,7 @@ const safeBrowserTool = <T extends Tool.Any>(tool: T): T =>
 const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
   safeBrowserTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T;
 
-export const PreviewStatusTool = Tool.make("preview_status", {
+const PreviewStatusTool = Tool.make("preview_status", {
   description:
     "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
   parameters: PreviewAutomationTabTargetInput,
@@ -58,7 +60,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const PreviewOpenTool = browserTool(
+const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
       "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
@@ -71,7 +73,7 @@ export const PreviewOpenTool = browserTool(
     .annotate(Tool.Destructive, false),
 );
 
-export const PreviewNavigateTool = safeBrowserTool(
+const PreviewNavigateTool = safeBrowserTool(
   Tool.make("preview_navigate", {
     description:
       "Navigate a collaborative browser tab. Pass tabId to target a specific tab, plus {url:'https://t3.chat'} for a website or {target:{kind:'environment-port',port:5173}} for a dev server. Exactly one of url or target is required.",
@@ -82,7 +84,7 @@ export const PreviewNavigateTool = safeBrowserTool(
   }).annotate(Tool.Title, "Navigate browser preview"),
 );
 
-export const PreviewResizeTool = safeBrowserTool(
+const PreviewResizeTool = safeBrowserTool(
   Tool.make("preview_resize", {
     description:
       "Resize a collaborative browser tab, optionally selected by tabId. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
@@ -95,7 +97,7 @@ export const PreviewResizeTool = safeBrowserTool(
     .annotate(Tool.Idempotent, true),
 );
 
-export const PreviewSetAppearanceTool = safeBrowserTool(
+const PreviewSetAppearanceTool = safeBrowserTool(
   Tool.make("preview_set_appearance", {
     description:
       "Emulate prefers-color-scheme in a collaborative browser tab, optionally selected by tabId. Use {colorScheme:'dark'} or {colorScheme:'light'} to preview the page in that appearance, and {colorScheme:'system'} to clear the override and follow the OS appearance.",
@@ -111,13 +113,19 @@ export const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
         Schema.Boolean.annotate({
           description:
             "Include the PNG image in the tool response. Defaults to true. Set false for text-only output.",
+        }),
+      ),
+      save: Schema.optional(
+        Schema.Boolean.annotate({
+          description:
+            "Write the screenshot PNG to disk and return its absolute path as screenshotPath. Defaults to false.",
         }),
       ),
     }),
@@ -127,7 +135,7 @@ export const PreviewSnapshotTool = readonlyBrowserTool(
   }).annotate(Tool.Title, "Inspect browser page"),
 );
 
-export const PreviewClickTool = browserTool(
+const PreviewClickTool = browserTool(
   Tool.make("preview_click", {
     description:
       "Click exactly one target in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; selector accepts legacy CSS; x and y must be supplied together.",
@@ -138,7 +146,7 @@ export const PreviewClickTool = browserTool(
   }).annotate(Tool.Title, "Click preview page"),
 );
 
-export const PreviewTypeTool = browserTool(
+const PreviewTypeTool = browserTool(
   Tool.make("preview_type", {
     description:
       "Insert literal text into one input in the tab selected by tabId, or this agent session's current tab when omitted. Prefer a Playwright locator; set clear=true to replace existing text.",
@@ -149,7 +157,7 @@ export const PreviewTypeTool = browserTool(
   }).annotate(Tool.Title, "Type into preview page"),
 );
 
-export const PreviewPressTool = browserTool(
+const PreviewPressTool = browserTool(
   Tool.make("preview_press", {
     description:
       "Press one keyboard key in the tab selected by tabId, or this agent session's current tab when omitted. Examples: {key:'Enter'}, {key:'Escape'}, or {key:'a',modifiers:['Meta']}.",
@@ -160,7 +168,7 @@ export const PreviewPressTool = browserTool(
   }).annotate(Tool.Title, "Press key in preview page"),
 );
 
-export const PreviewScrollTool = safeBrowserTool(
+const PreviewScrollTool = safeBrowserTool(
   Tool.make("preview_scroll", {
     description:
       "Scroll the tab selected by tabId, or this agent session's current tab when omitted. Positive deltaY scrolls down and positive deltaX scrolls right; a locator/selector targets a container.",
@@ -171,18 +179,29 @@ export const PreviewScrollTool = safeBrowserTool(
   }).annotate(Tool.Title, "Scroll preview page"),
 );
 
-export const PreviewEvaluateTool = browserTool(
+/**
+ * MCP `structuredContent` must be a JSON object, and Claude Code rejects the
+ * whole result when it is not. Wrapping keeps arrays, strings, numbers, and
+ * null valid instead of failing only for non-object expressions.
+ */
+export const PreviewEvaluateResult = Schema.Struct({
+  value: Schema.Unknown.annotate({
+    description: "The JSON-serializable value the expression produced, or null.",
+  }),
+}).annotate({ description: "The evaluated expression result." });
+
+const PreviewEvaluateTool = browserTool(
   Tool.make("preview_evaluate", {
     description:
-      "Evaluate JavaScript in the tab selected by tabId, or this agent session's current tab when omitted. Returns a serializable result up to 64 KB; the expression may mutate page state.",
+      "Evaluate JavaScript in the tab selected by tabId, or this agent session's current tab when omitted. Returns {value} with a serializable result up to 64 KB; the expression may mutate page state.",
     parameters: PreviewAutomationEvaluateInput,
-    success: Schema.Unknown,
+    success: PreviewEvaluateResult,
     failure: PreviewAutomationError,
     dependencies,
   }).annotate(Tool.Title, "Evaluate JavaScript in preview"),
 );
 
-export const PreviewWaitForTool = readonlyBrowserTool(
+const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
     description:
       "Wait in the tab selected by tabId, or this agent session's current tab when omitted, until all supplied locator, selector, text, and URL conditions match.",
@@ -193,7 +212,7 @@ export const PreviewWaitForTool = readonlyBrowserTool(
   }).annotate(Tool.Title, "Wait for preview page condition"),
 );
 
-export const PreviewRecordingStartTool = safeBrowserTool(
+const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
     description:
       "Start recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted.",
@@ -204,14 +223,14 @@ export const PreviewRecordingStartTool = safeBrowserTool(
   }).annotate(Tool.Title, "Start browser recording"),
 );
 
-export const PreviewRecordingStopTool = safeBrowserTool(
+const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description:
-      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and save it as a local evidence artifact.",
+      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and transfer the compressed recording once (up to 50 MiB) to an evidence file readable in this agent's environment. Returns its environment-local path after transfer succeeds.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,
-    dependencies,
+    dependencies: [...dependencies, FileSystem.FileSystem, ServerConfig.ServerConfig],
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 

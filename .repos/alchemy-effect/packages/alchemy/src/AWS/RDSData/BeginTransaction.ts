@@ -21,9 +21,8 @@ export interface BeginTransactionOptions {
  * `Effect.provide(AWS.RDSData.BeginTransactionHttp)`. Pair with
  * `AWS.RDSData.CommitTransaction` / `AWS.RDSData.RollbackTransaction` to
  * finish the transaction.
- * @binding
- * @section Transactions
- * @example Begin, Write, Commit
+ * ### Transactions
+ * **Example:** Begin, Write, Commit
  * ```typescript
  * // init
  * const beginTransaction = yield* AWS.RDSData.BeginTransaction(db.cluster, {
@@ -50,6 +49,8 @@ export interface BeginTransactionOptions {
  * });
  * yield* commitTransaction({ transactionId: tx.transactionId! });
  * ```
+ *
+ * @binding
  */
 export interface BeginTransaction extends Binding.Service<
   BeginTransaction,

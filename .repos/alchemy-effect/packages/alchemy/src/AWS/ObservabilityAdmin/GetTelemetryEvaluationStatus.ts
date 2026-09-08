@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `AWS.ObservabilityAdmin.GetTelemetryEvaluationStatusHttp` on the
  * hosting Lambda Function to satisfy the requirement.
- * @binding
- * @section Reading Onboarding Status
- * @example Verify telemetry auditing is enabled
+ * ### Reading Onboarding Status
+ * **Example:** Verify telemetry auditing is enabled
  * ```typescript
  * // init — grants observabilityadmin:GetTelemetryEvaluationStatus
  * const getEvaluationStatus = yield* AWS.ObservabilityAdmin.GetTelemetryEvaluationStatus();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.logWarning("telemetry auditing is off");
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetTelemetryEvaluationStatus extends Binding.Service<
   GetTelemetryEvaluationStatus,

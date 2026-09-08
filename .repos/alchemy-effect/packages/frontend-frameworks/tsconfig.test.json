@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.node.json",
+  "include": ["src/**/*.ts", "vitest.config.ts"],
+  "exclude": ["src/astro/runtime"],
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "rootDir": "."
+  }
+}

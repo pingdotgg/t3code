@@ -41,9 +41,8 @@ export interface IdentityPoolRoleAttachment extends Resource<
  * Attaches the authenticated/unauthenticated IAM roles to an Amazon Cognito
  * identity pool. A singleton child of the pool — one attachment manages the
  * pool's role configuration.
- * @resource
- * @section Attaching Roles
- * @example Authenticated Role
+ * ### Attaching Roles
+ * **Example:** Authenticated Role
  * ```typescript
  * import * as Cognito from "alchemy/AWS/Cognito";
  *
@@ -70,6 +69,8 @@ export interface IdentityPoolRoleAttachment extends Resource<
  *   roles: { authenticated: role.roleArn },
  * });
  * ```
+ *
+ * @resource
  */
 export const IdentityPoolRoleAttachment = Resource<IdentityPoolRoleAttachment>(
   "AWS.Cognito.IdentityPoolRoleAttachment",

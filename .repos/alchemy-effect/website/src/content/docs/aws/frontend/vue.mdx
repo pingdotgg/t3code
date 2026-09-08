@@ -1,0 +1,277 @@
+---
+title: Vue
+description: Deploy a Vue single-page app to AWS with AWS.Website.Vite — S3 + CloudFront, deep links that work by default, and Vue's own Vite dev server under alchemy dev.
+sidebar:
+  order: 6
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+export const routerDep = "vue-router";
+
+[Vue](https://vuejs.org) is pure Vite — the whole app builds from
+`@vitejs/plugin-vue` in your `vite.config.ts`, so
+[`AWS.Website.Vite`](/aws/frontend/vite) deploys it with a single
+declaration. The build output goes to a private S3 bucket behind a
+CloudFront distribution; there is no server function, no build command
+to wire up, and no CloudFormation to write.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/vite` and
+`/vite/aws` exports from your project at deploy time. It is only used at
+build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Scaffold the app
+
+Start from Vite's official Vue + TypeScript template:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun create vite@latest my-vue-app -- --template vue-ts\ncd my-vue-app && bun install`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm create vite@latest my-vue-app -- --template vue-ts\ncd my-vue-app && npm install`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm create vite my-vue-app --template vue-ts\ncd my-vue-app && pnpm install`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn create vite my-vue-app --template vue-ts\ncd my-vue-app && yarn install`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Write `alchemy.run.ts` in that project root, next to `index.html` and
+`vite.config.ts`. `rootDir` defaults to `"."`, so you only set it when the
+app lives somewhere else.
+
+## Configure Vite
+
+Your Vite config stays exactly what the template gives you:
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+
+export default defineConfig({
+  plugins: [vue()],
+});
+```
+
+Alchemy runs your project's own `vite build` programmatically against this
+config — plugins, aliases, and the rest of your setup are preserved as-is.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) — every prop is optional, so the minimal declaration is just a
+name:
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.Vite("Vue");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyVueSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+```sh
+bun alchemy deploy
+```
+
+Alchemy runs `vite build`, uploads `dist` to S3, and serves it from
+CloudFront at the returned `url`. Input files are content-hashed, so a
+deploy that changes nothing skips the build and the upload.
+
+## Deep links with vue-router
+
+`vue-router` in history mode (`createWebHistory`) sends a deep link like
+`/about` to the server as a request for a file that doesn't exist.
+`AWS.Website.Vite` answers those misses with the index page and a `200`,
+so the router resolves the route on the client — that is the `spa`
+default and there is nothing to configure.
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${routerDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${routerDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${routerDep}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${routerDep}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+```typescript
+// src/main.ts
+import { createApp } from "vue";
+import { createRouter, createWebHistory } from "vue-router";
+import App from "./App.vue";
+import About from "./About.vue";
+import Home from "./Home.vue";
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: "/", component: Home },
+    { path: "/about", component: About },
+  ],
+});
+
+createApp(App).use(router).mount("#app");
+```
+
+Loading `https://<your-site>/about` directly serves the index page and
+vue-router renders the About view. Pretty URLs still win over the
+fallback: `/about` serves `about.html` or `about/index.html` when the
+build produced one.
+
+For a multi-page project (one `index.html` per route), turn the fallback
+off and serve a real 404 instead:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Vite("Vue", {
++  spa: false,
++  errorPage: "404.html",
+});
+```
+
+`spa` and `errorPage` are mutually exclusive: one answers misses with the
+index page at `200`, the other with your built error page at `404`.
+
+## Add environment variables
+
+A pure SPA has no server, so anything the app needs is baked into the
+bundle at build time. Vite inlines `VITE_`-prefixed variables from your
+project's `.env` files and from the environment the deploy runs in:
+
+```sh
+# .env.production
+VITE_API_URL=https://api.example.com
+```
+
+Type it for your Vue code with Vite's standard `ImportMetaEnv`
+augmentation:
+
+```typescript
+// src/vite-env.d.ts
+/// <reference types="vite/client" />
+
+interface ImportMetaEnv {
+  readonly VITE_API_URL: string;
+}
+```
+
+Client code reads it as `import.meta.env.VITE_API_URL`.
+
+## Bake a Stack output into the bundle
+
+To inline a value that only exists after another resource deploys — an
+API's URL, a bucket name — build the site with
+[`AWS.Website.StaticSite`](/aws/frontend/static-site), whose
+`build.env` is passed to the build command:
+
+```typescript
+// alchemy.run.ts
+export default Alchemy.Stack(
+  "MyVueSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const api = yield* Api;
+
+    const site = yield* AWS.Website.StaticSite("Vue", {
+      build: {
+        command: "vite build",
+        output: "dist",
+        env: {
+          VITE_API_URL: api.url,
+        },
+      },
+      spa: true,
+    });
+
+    return { url: site.url };
+  }),
+);
+```
+
+The build re-runs when the inputs change and the output deploys to the
+same S3 + CloudFront stack.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Vue's own Vite dev server with native HMR instead of
+deploying; `site.url` is the local address and no AWS resources are
+created. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+// alchemy.run.ts
+export const Website = AWS.Website.Vite("Vue", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The ACM certificate and the Route 53 records are created for you, and
+`site.url` becomes `https://app.example.com`. The hosted zone is
+inferred from the hostname — pass `hostedZoneId` to pin it when
+several zones could match.
+
+## Where next
+
+- [Vite on AWS](/aws/frontend/vite) — every prop the resource takes,
+  including `vite.outDir`, `vite.base`, and Router composition
+- [Websites on AWS](/aws/frontend/websites) — the full websites surface

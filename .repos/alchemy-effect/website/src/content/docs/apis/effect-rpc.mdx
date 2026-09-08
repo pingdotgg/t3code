@@ -138,7 +138,7 @@ host serves — it imports nothing cloud-specific. `layerJson` buffers
 one body per request and suits plain request/response; streaming
 rpcs require `RpcSerialization.layerNdjson` — whichever you pick,
 the client's serialization layer must match the server's. A Lambda
-Function with `url: true` or a Cloudflare Worker returns it as
+Function with `functionUrl: true` or a Cloudflare Worker returns it as
 `{ fetch }` — host wiring, storage binding Layers, and deploy live
 on [Workers](/cloudflare/apis/effect-rpc) and
 [Lambda](/aws/apis/effect-rpc).

@@ -82,9 +82,8 @@ export interface VpcConnector extends Resource<
  *
  * VPC connectors are immutable: any change to subnets or security groups
  * replaces the connector.
- * @resource
- * @section Creating a VPC Connector
- * @example Connector over Two Subnets
+ * ### Creating a VPC Connector
+ * **Example:** Connector over Two Subnets
  * ```typescript
  * const connector = yield* AppRunner.VpcConnector("Egress", {
  *   subnets: [subnetA.subnetId, subnetB.subnetId],
@@ -92,8 +91,8 @@ export interface VpcConnector extends Resource<
  * });
  * ```
  *
- * @section Routing a Service through the VPC
- * @example Service with VPC Egress
+ * ### Routing a Service through the VPC
+ * **Example:** Service with VPC Egress
  * ```typescript
  * const service = yield* AppRunner.Service("Api", {
  *   imageRepository: {
@@ -108,6 +107,8 @@ export interface VpcConnector extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const VpcConnector = Resource<VpcConnector>(
   "AWS.AppRunner.VpcConnector",

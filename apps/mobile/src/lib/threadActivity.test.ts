@@ -2,6 +2,7 @@ import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests"
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ApprovalRequestId,
   EventId,
   MessageId,
   ProjectId,
@@ -3313,4 +3314,73 @@ describe("quiet timeline: nested agents", () => {
       },
     ]);
   });
+});
+
+it("accepts ready attachment-only answers while preserving selected options", () => {
+  const question = {
+    id: "q",
+    header: "Spec",
+    question: "Provide a specification",
+    options: [{ label: "Yes", description: "Approve" }],
+    multiSelect: false,
+  };
+  expect(buildPendingUserInputAnswers([question], { q: { attachmentCount: 1 } })).toEqual({
+    q: "",
+  });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, selectedOptionValues: ["Yes"] },
+    }),
+  ).toEqual({ q: "Yes" });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...question, allowCustomAnswer: false }], {
+      q: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
+
+it("makes attachment-only question answers expandable in the mobile feed", () => {
+  const answer = {
+    requestId: ApprovalRequestId.make("question-request"),
+    answers: { q: "" },
+    questionTextById: { q: "Attach the specification" },
+    attachmentsByQuestionId: {
+      q: [
+        {
+          type: "file" as const,
+          id: "question-file",
+          name: "spec.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+        },
+      ],
+    },
+  };
+  const thread = makeThread({
+    id: ThreadId.make("thread-answer"),
+    projectId: ProjectId.make("project-answer"),
+    title: "Answer history",
+    activities: [
+      makeActivity({
+        id: EventId.make("answer-submitted"),
+        createdAt: "2026-09-08T00:00:00.000Z",
+        kind: "user-input.answer-submitted",
+        summary: "Answered questions",
+        payload: answer,
+      }),
+    ],
+  });
+  const [group] = buildThreadFeed(thread);
+  expect(group?.type).toBe("activity-group");
+  if (group?.type !== "activity-group") return;
+  expect(group.activities[0]).toMatchObject({
+    canExpand: true,
+    workEntry: { questionAnswer: answer },
+  });
+  expect(group.activities[0]?.getFullDetail()).toBeNull();
 });

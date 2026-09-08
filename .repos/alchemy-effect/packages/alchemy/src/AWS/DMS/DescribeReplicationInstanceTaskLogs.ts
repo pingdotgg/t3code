@@ -10,9 +10,8 @@ import type { ReplicationInstance } from "./ReplicationInstance.ts";
  * the task logs accumulated on the instance — useful for storage-pressure
  * monitoring and deciding when to purge logs. Provide the implementation with
  * `Effect.provide(AWS.DMS.DescribeReplicationInstanceTaskLogsHttp)`.
- * @binding
- * @section Inspecting Task Logs
- * @example Report Task Log Sizes
+ * ### Inspecting Task Logs
+ * **Example:** Report Task Log Sizes
  * ```typescript
  * // init — bind the operation to the instance
  * const taskLogs = yield* AWS.DMS.DescribeReplicationInstanceTaskLogs(instance);
@@ -20,6 +19,8 @@ import type { ReplicationInstance } from "./ReplicationInstance.ts";
  * // runtime
  * const { ReplicationInstanceTaskLogs } = yield* taskLogs();
  * ```
+ *
+ * @binding
  */
 export interface DescribeReplicationInstanceTaskLogs extends Binding.Service<
   DescribeReplicationInstanceTaskLogs,

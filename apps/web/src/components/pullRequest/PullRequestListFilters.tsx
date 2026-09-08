@@ -25,7 +25,7 @@ import {
 import { type ElementType, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
-import { ProjectFavicon } from "../ProjectFavicon";
+import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Button } from "../ui/button";
 
@@ -57,12 +57,7 @@ export interface PullRequestFilterOption<Value extends string> {
   readonly label: string;
   /** Uses the option's native icon tone. */
   readonly Icon: ElementType<{ className?: string }>;
-  readonly favicon?: {
-    readonly environmentId: EnvironmentId;
-    readonly cwd: string;
-    readonly faviconPath?: string | null;
-    readonly projectIcon?: ProjectIconOverride | null;
-  };
+  readonly project?: ProjectFaviconProject;
   /** Why it cannot be chosen, carried onto the item as its title. */
   readonly unavailable?: string | undefined;
 }
@@ -72,15 +67,8 @@ export function PullRequestFilterOptionIcon<Value extends string>({
 }: {
   option: PullRequestFilterOption<Value>;
 }) {
-  return option.favicon ? (
-    <ProjectFavicon
-      environmentId={option.favicon.environmentId}
-      cwd={option.favicon.cwd}
-      projectName={option.label}
-      faviconPath={option.favicon.faviconPath}
-      projectIcon={option.favicon.projectIcon}
-      className="size-3.5"
-    />
+  return option.project ? (
+    <ProjectFavicon project={option.project} className="size-3.5" />
   ) : (
     <option.Icon aria-hidden className="size-3.5" />
   );
@@ -452,14 +440,7 @@ export function PullRequestFiltersMenu({
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
   /** The projects of every connected environment, each carrying the one its favicon is read from. */
-  projects: ReadonlyArray<{
-    readonly id: ProjectId;
-    readonly environmentId: EnvironmentId;
-    readonly title: string;
-    readonly workspaceRoot: string;
-    readonly faviconPath?: string | null | undefined;
-    readonly projectIcon?: ProjectIconOverride | null | undefined;
-  }>;
+  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
   projectId: ProjectId | undefined;
   /**
    * The server the selected project belongs to. A project id is only unique within its own
@@ -514,12 +495,7 @@ export function PullRequestFiltersMenu({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
-        favicon: {
-          environmentId: project.environmentId,
-          cwd: project.workspaceRoot,
-          faviconPath: project.faviconPath ?? null,
-          projectIcon: project.projectIcon ?? null,
-        },
+        project,
         ...(unavailable.has(pullRequestProjectKey(project))
           ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
           : {}),

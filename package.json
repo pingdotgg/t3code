@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "node scripts/clean-tsgo-backups.mjs && effect-tsgo patch && vp config --no-agent",
+    "prepare": "effect-tsgo patch && vp config --no-agent",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:share": "node scripts/dev-runner.ts dev --share",
     "dev:server": "node scripts/dev-runner.ts dev:server",
@@ -27,7 +27,7 @@
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
-    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace apps/desktop --workspace apps/web --workspace packages/client-runtime --workspace packages/contracts --workspace packages/effect-acp --workspace packages/effect-codex-app-server --workspace packages/shared --workspace packages/ssh --workspace packages/tailscale --exports --preprocessor ./scripts/knip-schemas.ts --no-config-hints",
+    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace apps/server --workspace apps/desktop --workspace apps/web --workspace packages/client-runtime --workspace packages/contracts --workspace packages/effect-acp --workspace packages/effect-codex-app-server --workspace packages/shared --workspace packages/ssh --workspace packages/tailscale --exports --preprocessor ./scripts/knip-schemas.ts --no-config-hints",
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
@@ -51,8 +51,8 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
-    "@typescript/native-preview": "catalog:",
     "knip": "6.34.0",
+    "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

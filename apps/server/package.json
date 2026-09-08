@@ -18,7 +18,7 @@
     "dev": "node --watch src/bin.ts",
     "build:bundle": "vp pack && vp pack src/service-launcher.ts --out-dir dist --no-clean",
     "start": "node dist/bin.mjs",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {

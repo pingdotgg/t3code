@@ -28,7 +28,7 @@ interface RateLimitEntry {
   readonly retryAt: number;
 }
 
-export class SourceControlRateLimitPausedError extends Schema.TaggedErrorClass<SourceControlRateLimitPausedError>()(
+export class SourceControlRateLimitPausedError extends Schema.TaggedError<SourceControlRateLimitPausedError>()(
   "SourceControlRateLimitPausedError",
   {
     provider: SourceControlProviderKindSchema,
@@ -82,6 +82,7 @@ export function retryAtFromHeader(value: string | undefined, now: number): numbe
   return Number.isFinite(retryAt) && retryAt > now ? retryAt : undefined;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const entries = yield* Ref.make<ReadonlyMap<string, RateLimitEntry>>(new Map());
 

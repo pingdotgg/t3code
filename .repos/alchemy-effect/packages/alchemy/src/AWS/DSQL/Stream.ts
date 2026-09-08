@@ -89,9 +89,8 @@ export interface Stream extends Resource<
  * source on the **target** stream; DSQL itself never invokes compute
  * directly.
  *
- * @resource
- * @section Creating a CDC Stream
- * @example Stream Cluster Changes into Kinesis
+ * ### Creating a CDC Stream
+ * **Example:** Stream Cluster Changes into Kinesis
  * ```typescript
  * const cluster = yield* DSQL.Cluster("AppDb", {});
  * const target = yield* Kinesis.Stream("Changes", {
@@ -134,7 +133,7 @@ export interface Stream extends Resource<
  * });
  * ```
  *
- * @example Consume Change Records with a Function
+ * **Example:** Consume Change Records with a Function
  * ```typescript
  * // DSQL delivers into the Kinesis stream; consume it with the
  * // Kinesis event source on the target stream.
@@ -142,6 +141,8 @@ export interface Stream extends Resource<
  *   Effect.forEach(records, (record) => handleChange(record)),
  * );
  * ```
+ *
+ * @resource
  */
 export const Stream = Resource<Stream>("AWS.DSQL.Stream");
 

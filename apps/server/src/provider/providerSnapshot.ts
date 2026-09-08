@@ -35,7 +35,7 @@ export interface CommandResult {
   readonly code: number;
 }
 
-export class ProviderCommandNotFoundError extends Schema.TaggedErrorClass<ProviderCommandNotFoundError>()(
+export class ProviderCommandNotFoundError extends Schema.TaggedError<ProviderCommandNotFoundError>()(
   "ProviderCommandNotFoundError",
   {
     binaryPath: Schema.String,
@@ -64,6 +64,7 @@ export interface ServerProviderPresentation {
   readonly displayName: string;
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
+  readonly reportsContextWindow?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
 }
 
@@ -104,42 +105,6 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
     }
     return result;
   }).pipe(Effect.scoped);
-
-export function detailFromResult(
-  result: CommandResult & { readonly timedOut?: boolean },
-): string | undefined {
-  if (result.timedOut) return "Timed out while running command.";
-  const stderr = nonEmptyTrimmed(result.stderr);
-  if (stderr) return stderr;
-  const stdout = nonEmptyTrimmed(result.stdout);
-  if (stdout) return stdout;
-  if (result.code !== 0) {
-    return `Command exited with code ${result.code}.`;
-  }
-  return undefined;
-}
-
-export function extractAuthBoolean(value: unknown): boolean | undefined {
-  if (globalThis.Array.isArray(value)) {
-    for (const entry of value) {
-      const nested = extractAuthBoolean(entry);
-      if (nested !== undefined) return nested;
-    }
-    return undefined;
-  }
-
-  if (!value || typeof value !== "object") return undefined;
-
-  const record = value as Record<string, unknown>;
-  for (const key of ["authenticated", "isAuthenticated", "loggedIn", "isLoggedIn"] as const) {
-    if (typeof record[key] === "boolean") return record[key];
-  }
-  for (const key of ["auth", "status", "session", "account"] as const) {
-    const nested = extractAuthBoolean(record[key]);
-    if (nested !== undefined) return nested;
-  }
-  return undefined;
-}
 
 export function parseGenericCliVersion(output: string): string | null {
   const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
@@ -247,6 +212,9 @@ export function buildServerProvider(input: {
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
+      : {}),
+    ...(typeof input.presentation.reportsContextWindow === "boolean"
+      ? { reportsContextWindow: input.presentation.reportsContextWindow }
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }

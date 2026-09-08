@@ -339,6 +339,32 @@ describe("attachmentUploadQueue", () => {
     }
   });
 
+  it("persists a retried question upload without a mounted composer", async () => {
+    const draftId = DraftId.make("question-retry-upload");
+    const file = makeFile("question-retry");
+    const store = useComposerDraftStore.getState();
+    store.addFiles(draftId, [file]);
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      let settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete(500);
+      await settled;
+      expect(store.getComposerDraft(draftId)?.files[0]?.uploadedAttachmentId).toBeUndefined();
+      retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[1]!.complete();
+      await settled;
+      expect(store.getComposerDraft(draftId)?.files[0]).toMatchObject({
+        uploadedAttachmentId: "pending-environment-1-question-retry.pdf",
+        uploadEnvironmentId: firstEnvironment,
+      });
+    } finally {
+      store.clearComposerContent(draftId);
+    }
+  });
+
   it("verifies an uploaded file reference before restoring it", async () => {
     const file: ComposerFileAttachment = {
       ...makeFile("restored"),

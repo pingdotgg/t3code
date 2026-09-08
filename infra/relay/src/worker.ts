@@ -1,6 +1,6 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
