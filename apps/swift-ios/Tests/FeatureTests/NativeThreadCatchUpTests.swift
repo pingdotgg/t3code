@@ -165,21 +165,18 @@ final class NativeThreadCatchUpTests: XCTestCase {
 
     func testDelayedCompletedShellPreservesNewerRunningDetailAndBackgroundLiveness() async throws {
         for background: String? in [nil, "working"] {
-            let receipts = AsyncStream<Int>.makeStream()
-            let fixture = try await CatchUpFixture.make(aggregateRefreshReceipt: { receipt in
-                if case let .shellApplied("one", sequence) = receipt { receipts.continuation.yield(sequence) }
-            })
+            let fixture = try await CatchUpFixture.make()
             defer { fixture.cleanUp() }
             do {
                 var requests = fixture.requests.makeAsyncIterator()
-                var applied = receipts.stream.makeAsyncIterator()
+                var events = fixture.client.events().makeAsyncIterator()
                 let shell = try await nextShellRequest(&requests)
-                try await shell.completeShell(sequence: 10, assistantMessageID: nil)
-                while let sequence = await applied.next(isolation: #isolation) {
-                    if sequence == 10 { break }
+                try await shell.completeShell(sequence: 10, assistantMessageID: nil, title: "Shell 10")
+                while let event = await events.next(isolation: #isolation) {
+                    if case let .snapshot(snapshot) = event,
+                       snapshot.threads.contains(where: { $0.id == fixture.firstID && $0.title == "Shell 10" }) { break }
                 }
                 try Task.checkCancellation()
-                var events = fixture.client.events().makeAsyncIterator()
                 _ = try await fixture.client.loadThread(id: fixture.firstID)
                 let detail = try await nextThreadRequest(&requests)
                 try await detail.synchronize()
@@ -197,14 +194,22 @@ final class NativeThreadCatchUpTests: XCTestCase {
                 XCTAssertEqual(latest?.thread.state, .working)
                 let startedAt = try XCTUnwrap(latest?.thread.workingStartedAt)
                 try await shell.completeShell(
-                    sequence: 11, assistantMessageID: nil, backgroundLiveness: background
+                    sequence: 11, assistantMessageID: nil, backgroundLiveness: background, title: "Shell 11"
                 )
-                while let sequence = await applied.next(isolation: #isolation) {
-                    if sequence == 11 { break }
+                while let event = await events.next(isolation: #isolation) {
+                    switch event {
+                    case let .detail(value), let .detailDelta(value, _):
+                        latest = value
+                        XCTAssertEqual(value.thread.state, .working)
+                        XCTAssertEqual(value.thread.workingStartedAt, startedAt)
+                    default: break
+                    }
+                    if case let .snapshot(snapshot) = event,
+                       snapshot.threads.contains(where: { $0.id == fixture.firstID && $0.title == "Shell 11" }) { break }
                 }
                 try Task.checkCancellation()
-                // The applied shell receipt orders this explicit detail marker
-                // after any detail publication caused by the delayed shell.
+                // The published shell title proves that the delayed shell was applied
+                // before this detail marker.
                 try await detail.synchronize()
                 while let event = await events.next(isolation: #isolation) {
                     switch event {
@@ -1324,7 +1329,6 @@ private struct CatchUpFixture {
     static func make(
         completionMarker: Bool? = true,
         activities: [OrchestrationActivity] = [],
-        aggregateRefreshReceipt: @escaping @MainActor @Sendable (NativePassiveShellReceipt) -> Void = { _ in },
         detailPublicationSleep: @escaping @Sendable () async throws -> Void = {
             try await Task.sleep(for: .milliseconds(80))
         },
@@ -1351,18 +1355,15 @@ private struct CatchUpFixture {
                 requests: requests.continuation, completionMarker: completionMarker
             )
         )
-        let readiness = CatchUpBootstrapReadiness()
         let client = NativeFeatureClient(
             runtime: runtime, settingsStore: UserDefaults(suiteName: UUID().uuidString)!,
             fallbackPollingInitialDelay: .seconds(3_600),
             aggregateRefreshInterval: .seconds(3_600),
-            aggregateRefreshReceipt: { readiness.record($0); aggregateRefreshReceipt($0) },
             detailPublicationSleep: detailPublicationSleep,
             catchUpDelay: { try await delay.wait() },
             threadRetryDelay: threadRetryDelay
         )
         _ = try await client.initialSnapshot()
-        try await readiness.wait()
         return Self(client: client, http: http, requests: requests.stream, delay: delay, directory: directory)
     }
 
@@ -1500,8 +1501,8 @@ private struct CatchUpRequest: Sendable {
     let payload: JSONValue
     let socket: CatchUpSocket
 
-    func completeShell(sequence: Int, assistantMessageID: String?, activeOrderKey: String? = nil, backgroundLiveness: String? = nil) async throws {
-        let shell = multiEnvironmentShell(projectID: "project", threadID: "first", title: "First")
+    func completeShell(sequence: Int, assistantMessageID: String?, activeOrderKey: String? = nil, backgroundLiveness: String? = nil, title: String = "First") async throws {
+        let shell = multiEnvironmentShell(projectID: "project", threadID: "first", title: title)
         var thread = try JSONValue.encode(shell.threads[0]).decode([String: JSONValue].self)
         thread["latestTurn"] = catchUpCompletedTurn(assistantMessageID: assistantMessageID)
         thread["activeOrderKey"] = activeOrderKey.map(JSONValue.string)
@@ -1795,41 +1796,6 @@ private func catchUpCompletedTurn(assistantMessageID: String?) -> JSONValue {
         "completedAt": .string("2026-09-02T12:01:00Z"),
         "assistantMessageId": assistantMessageID.map(JSONValue.string) ?? .null,
     ])
-}
-
-/// The detail tests retain their one FeatureEvent consumer. Readiness comes
-/// from applied shell/config receipts and does not drain that event stream.
-@MainActor
-private final class CatchUpBootstrapReadiness {
-    private var hasShell = false
-    private var hasConfig = false
-    private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
-
-    func record(_ receipt: NativePassiveShellReceipt) {
-        switch receipt {
-        case .shellApplied(environmentID: "one", sequence: _): hasShell = true
-        case .configurationApplied(environmentID: "one"): hasConfig = true
-        default: break
-        }
-        if hasShell && hasConfig {
-            let pending = waiters.values
-            waiters.removeAll()
-            pending.forEach { $0.resume() }
-        }
-    }
-
-    func wait() async throws {
-        try Task.checkCancellation()
-        guard !hasShell || !hasConfig else { return }
-        let id = UUID()
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { waiters[id] = $0 }
-        } onCancel: {
-            Task { @MainActor [weak self] in
-                self?.waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
-            }
-        }
-    }
 }
 
 private final class CatchUpPublicationClock: Sendable {
