@@ -16,7 +16,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 
-import { type DeviceService, make, stateStream } from "./DeviceService.ts";
+import { type DeviceService, makeWithHosts, stateStream } from "./DeviceService.ts";
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -108,7 +108,7 @@ const fixture = Effect.fn("fixture")(function* (
       starts.push("stop");
     }),
   };
-  const service = yield* make.pipe(
+  const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
     Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
       ServerSettingsService,

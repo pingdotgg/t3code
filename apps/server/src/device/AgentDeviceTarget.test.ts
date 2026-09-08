@@ -29,7 +29,7 @@ const args = process.argv.slice(2);
 console.log(readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
 if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       );
-      const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir, fs, path });
+      const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
       const files = ["mini", "android"].map((host) => agentDeviceConfigPath(dir, host, path));
       for (const [index, file] of files.entries())
         yield* writeAgentDeviceConfig(file, {

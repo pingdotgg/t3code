@@ -35,7 +35,7 @@ import {
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { ensureAgentDeviceCli } from "./DeviceToolchain.ts";
+import { ensureAgentDevice } from "./DeviceToolchain.ts";
 import { ServerConfig } from "../config.ts";
 import {
   agentDeviceConfigPath,
@@ -151,7 +151,13 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
-export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>, configureAgent: (hostId: DeviceHostId, ready: DeviceHost.DeviceAgentReady) => Effect.Effect<string, DeviceError> = () => Effect.succeed("")) {
+export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
+  hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
+  configureAgent: (
+    hostId: DeviceHostId,
+    ready: DeviceHost.DeviceHostAgentReady,
+  ) => Effect.Effect<string, DeviceError> = () => Effect.succeed(""),
+) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
@@ -749,13 +755,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     agentCli: Effect.fail(
       new DeviceOperationError({
         operation: "install agent CLI",
-        detail: "CLI installation unavailable.",
+        reason: "command_failed",
+        cause: new Error("CLI installation unavailable"),
       }),
     ),
     agentTarget: (input) =>
       Effect.gen(function* () {
         const ready = yield* agentReadinessIfSupported(input.hostId);
-        if (!ready) return yield* new DeviceHostUnavailableError({hostId: input.hostId, reason: "Agent device access is disabled."});
+        if (!ready)
+          return yield* new DeviceHostUnavailableError({
+            hostId: input.hostId,
+            reason: "Agent device access is disabled.",
+          });
         const configPath = yield* configureAgent(input.hostId, ready);
         return [
           "--config",
@@ -787,8 +798,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliContext =
-    yield* Effect.context<Effect.Services<ReturnType<typeof ensureAgentDeviceCli>>>();
+  const cliContext = yield* Effect.context<Effect.Services<ReturnType<typeof ensureAgentDevice>>>();
   const service = yield* makeWithHosts(new Map([[localHost.id, localHost]]), (hostId, ready) => {
     const file = agentDeviceConfigPath(config.stateDir, hostId, path);
     return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
@@ -796,19 +806,27 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
       Effect.mapError(
         (cause) =>
-          new DeviceOperationError({ operation: "configure agent", reason: "settings_failed", cause }),
+          new DeviceOperationError({
+            operation: "configure agent",
+            reason: "settings_failed",
+            cause,
+          }),
       ),
       Effect.as(file),
     );
   });
   return {
     ...service,
-    agentCli: ensureAgentDeviceCli(config.baseDir).pipe(
+    agentCli: ensureAgentDevice(config.baseDir).pipe(
       Effect.provide(cliContext),
       Effect.map((tool) => tool.entryPath),
       Effect.mapError(
         (error) =>
-          new DeviceOperationError({ operation: "install agent CLI", detail: error.message }),
+          new DeviceOperationError({
+            operation: "install agent CLI",
+            reason: "command_failed",
+            cause: error,
+          }),
       ),
     ),
   };
