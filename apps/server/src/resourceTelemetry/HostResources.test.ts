@@ -22,6 +22,64 @@ const makeTest = Effect.fn(function* (statfs: typeof HostResources.HostStorageSt
 });
 
 describe("HostResources storage", () => {
+  it.effect(
+    "shares an uncancellable filesystem call across concurrent reads and timed-out retries",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const pending = Promise.withResolvers<{ blocks: bigint; bsize: bigint; bavail: bigint }>();
+        let reads = 0;
+        const service = yield* makeTest(
+          HostResources.makeHostStorageStatFs(() => {
+            reads++;
+            Deferred.doneUnsafe(started, Effect.void);
+            return pending.promise;
+          }),
+        );
+        const clients = yield* Effect.all([service.readStorage, service.readStorage], {
+          concurrency: "unbounded",
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("1 second");
+        expect((yield* Fiber.join(clients)).map((reading) => reading.storage)).toEqual([
+          null,
+          null,
+        ]);
+        const retry = yield* service.readStorage.pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        expect((yield* Fiber.join(retry)).storage).toBeNull();
+        expect(reads).toBe(1);
+
+        pending.resolve({ blocks: 1000n, bsize: 4096n, bavail: 100n });
+        yield* Effect.promise(() => pending.promise);
+        expect((yield* service.readStorage).storage).toEqual({
+          totalBytes: 4096000,
+          availableBytes: 409600,
+        });
+        expect(reads).toBe(2);
+      }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("releases the in-flight sample after a filesystem rejection", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const service = yield* makeTest(
+        HostResources.makeHostStorageStatFs(() => {
+          reads++;
+          return reads === 1
+            ? Promise.reject(new Error("filesystem unavailable"))
+            : Promise.resolve({ blocks: 1000n, bsize: 4096n, bavail: 100n });
+        }),
+      );
+      expect((yield* service.readStorage).storage).toBeNull();
+      expect((yield* service.readStorage).storage).toEqual({
+        totalBytes: 4096000,
+        availableBytes: 409600,
+      });
+      expect(reads).toBe(2);
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("samples the configured data filesystem again on every explicit read", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig;

@@ -23,17 +23,30 @@ export class HostStorageError extends Schema.TaggedError<HostStorageError>()("Ho
   cause: Schema.Defect(),
 }) {}
 
-export const HostStorageStatFs = Context.Reference<
-  (
-    path: string,
-  ) => Effect.Effect<Pick<NodeFS.BigIntStatsFs, "blocks" | "bavail" | "bsize">, HostStorageError>
->("t3/resourceTelemetry/HostStorageStatFs", {
-  defaultValue: () => (path) =>
+type StorageStats = Pick<NodeFS.BigIntStatsFs, "blocks" | "bavail" | "bsize">;
+
+/** A timed-out caller must not start another uncancellable statfs on the same filesystem. */
+export function makeHostStorageStatFs(
+  read: (path: string) => Promise<StorageStats> = (path) => NodeFSP.statfs(path, { bigint: true }),
+) {
+  const pending = new Map<string, Promise<StorageStats>>();
+  return (path: string) =>
     Effect.tryPromise({
-      try: () => NodeFSP.statfs(path, { bigint: true }),
+      try: () => {
+        const current = pending.get(path);
+        if (current) return current;
+        const next = read(path).finally(() => pending.delete(path));
+        pending.set(path, next);
+        return next;
+      },
       catch: (cause) => new HostStorageError({ cause }),
-    }),
-});
+    });
+}
+
+export const HostStorageStatFs = Context.Reference<ReturnType<typeof makeHostStorageStatFs>>(
+  "t3/resourceTelemetry/HostStorageStatFs",
+  { defaultValue: makeHostStorageStatFs },
+);
 
 const decodeStorage = Schema.decodeUnknownEffect(HostStorageSnapshot);
 
