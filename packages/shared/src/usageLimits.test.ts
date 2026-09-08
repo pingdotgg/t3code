@@ -2,14 +2,17 @@ import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ServerProvider,
+  ServerProvider,
   type UsageLimitSourceAccount,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   type LimitAccount,
+  hasLocalUsageLimitsCommand,
+  hasProviderUsageLimits,
   isUsageLimitsCommand,
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
@@ -27,6 +30,7 @@ import {
   remainingPercent,
 } from "./usageLimits.ts";
 
+const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 const now = Date.parse("2026-09-03T12:00:00.000Z");
 
 const window = {
@@ -1194,5 +1198,48 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("hasLocalUsageLimitsCommand", () => {
+  const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [] };
+  const sources = [
+    {
+      id: UsageLimitSourceId.make("hub"),
+      kind: "cliproxy" as const,
+      label: "Accounts",
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      accounts: [
+        {
+          id: "account",
+          driver: ProviderDriverKind.make("codex"),
+          usageLimits: limits,
+        },
+      ],
+    },
+  ];
+
+  it("keeps a saved source-only command local without inventing a limits report", () => {
+    const [advertised] = withUsageLimitsCommands([provider({})], sources);
+    const cached = decodeServerProvider(JSON.parse(JSON.stringify(advertised)));
+
+    expect(hasProviderUsageLimits(cached.driver, [cached], [])).toBe(false);
+    expect(hasLocalUsageLimitsCommand(cached, [cached], [])).toBe(true);
+    expect(collectProviderUsageLimits(cached.instanceId, [cached], [], now)).toBeNull();
+  });
+
+  it("does not claim a provider command with the same name and description", () => {
+    const native = provider({
+      slashCommands: [{ name: "usage-limits", description: "Show this provider's usage limits" }],
+    });
+    expect(hasLocalUsageLimitsCommand(native, [native], [])).toBe(false);
+  });
+
+  it("keeps data-based ownership for older servers without command origins", () => {
+    const legacy = provider({ slashCommands: [{ name: "usage-limits" }] });
+    expect(hasLocalUsageLimitsCommand(legacy, [legacy], sources)).toBe(true);
+    expect(hasLocalUsageLimitsCommand(legacy, [legacy], [])).toBe(false);
+    const native = provider({ usageLimits: limits });
+    expect(hasLocalUsageLimitsCommand(native, [native], [])).toBe(true);
   });
 });

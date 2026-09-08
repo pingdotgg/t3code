@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { hasLocalUsageLimitsCommand, USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
@@ -17,6 +18,30 @@ import {
 } from "./use-composer-command-menu";
 
 describe("mobile slash commands", () => {
+  it.each([true, false])(
+    "keeps cached local=%s usage commands out of New Task without hiding provider commands",
+    (local) => {
+      const selected = {
+        driver: ProviderDriverKind.make("codex"),
+        slashCommands: [
+          local
+            ? USAGE_LIMITS_COMMAND
+            : { name: USAGE_LIMITS_COMMAND.name, description: USAGE_LIMITS_COMMAND.description },
+        ],
+      };
+      const items = buildComposerSlashCommandItems({
+        query: "usage-limits",
+        atMessageStart: true,
+        hasThread: false,
+        allowInteractionMode: true,
+        offersUsageLimits: hasLocalUsageLimitsCommand(selected, [], []),
+        selectedProviderStatus: selected,
+      });
+
+      expect(items.map((item) => item.label)).toEqual(local ? [] : ["/usage-limits"]);
+    },
+  );
+
   const antigravity = {
     driver: ProviderDriverKind.make("antigravity"),
     showInteractionModeToggle: false,

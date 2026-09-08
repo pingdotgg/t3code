@@ -89,6 +89,8 @@ export const ServerProviderSlashCommand = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   input: Schema.optional(ServerProviderSlashCommandInput),
+  /** T3 handles this command locally, even before its data is available. */
+  source: Schema.optional(Schema.Literal("t3")),
 });
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 

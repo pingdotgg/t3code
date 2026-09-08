@@ -6449,6 +6449,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                       {
                         name: "usage-limits",
                         description: "Show this provider's usage limits",
+                        source: "t3",
                       },
                     ],
                   },
@@ -6591,7 +6592,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               {
                 ...codex,
                 slashCommands: [
-                  { name: "usage-limits", description: "Show this provider's usage limits" },
+                  {
+                    name: "usage-limits",
+                    description: "Show this provider's usage limits",
+                    source: "t3",
+                  },
                 ],
               },
             ],

@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
-  hasProviderUsageLimits,
+  hasLocalUsageLimitsCommand,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
@@ -281,12 +281,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
+  // A cached local command stays local while its limits data reconnects.
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
-    hasProviderUsageLimits(
-      selectedProviderStatus.driver,
+    hasLocalUsageLimitsCommand(
+      selectedProviderStatus,
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );

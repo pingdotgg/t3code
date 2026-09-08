@@ -2,7 +2,7 @@ import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment"
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
-  hasProviderUsageLimits,
+  hasLocalUsageLimitsCommand,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -2864,11 +2864,10 @@ export default function ChatView(props: ChatViewProps) {
         : null,
     [environmentId, usageLimitsPanel, usageLimitsReport],
   );
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
+  // A cached local command stays local while its limits data reconnects.
   const usageLimitsOffered =
     activeProviderStatus !== null &&
-    hasProviderUsageLimits(activeProviderStatus.driver, providerStatuses, usageLimitSources);
+    hasLocalUsageLimitsCommand(activeProviderStatus, providerStatuses, usageLimitSources);
   // Answered locally from the last Limits snapshot; the agent never sees it.
   const openUsageLimits = useCallback(() => {
     const now = Date.now();
