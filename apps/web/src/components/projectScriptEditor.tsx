@@ -276,11 +276,10 @@ export function ProjectScriptEditorDialog({
       if (pendingSubmissionRef.current === submission) {
         setValidationError(error instanceof Error ? error.message : "Failed to save action.");
       }
-    } finally {
-      if (pendingSubmissionRef.current === submission) {
-        pendingSubmissionRef.current = null;
-        setSavingRequest(null);
-      }
+    }
+    if (pendingSubmissionRef.current === submission) {
+      pendingSubmissionRef.current = null;
+      setSavingRequest(null);
     }
   };
 
