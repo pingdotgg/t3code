@@ -63,7 +63,7 @@ export type EngineViewEvent =
 
 export interface EngineView {
   readonly tabId: PreviewTabId;
-  /** Server-relative MJPEG stream URL. The path carries a per-tab secret. */
+  /** Server-relative frame stream URL. The path carries a per-tab secret. */
   readonly frameUrl: string;
   /** Ends when the page closes. */
   readonly events: Stream.Stream<EngineViewEvent>;
@@ -116,8 +116,9 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 const IDLE_CLOSE_MS = 10 * 60_000;
 const FRAME_JPEG_QUALITY = 80;
-/** View pages render at 2x so frames stay sharp on a retina display. */
+/** View pages render at 2x so the settled frame is sharp on a retina display. */
 const FRAME_SCALE = 2;
+const SETTLE_MS = 200;
 const MAX_LOG_ENTRIES = 200;
 const MAX_ELEMENTS = 200;
 const MAX_EVALUATE_RESULT_CHARS = 64_000;
@@ -234,6 +235,10 @@ interface EngineViewState {
   readonly secret: string;
   readonly events: Queue.Queue<EngineViewEvent, Cause.Done<void>>;
   readonly frameSinks: Set<Queue.Queue<Uint8Array, Cause.Done>>;
+  /** Every new frame's sequence number. The settle fiber waits for it to go quiet. */
+  readonly frameSignals: Queue.Queue<number, Cause.Done<void>>;
+  lastFrame: Uint8Array | undefined;
+  frameSeq: number;
   /** Set by a back or forward move so the next navigation keeps the forward count. */
   historyMove: boolean;
   forwardSteps: number;
@@ -699,6 +704,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       secret: NodeCrypto.randomBytes(18).toString("base64url"),
       events: yield* Queue.unbounded<EngineViewEvent, Cause.Done<void>>(),
       frameSinks: new Set(),
+      frameSignals: yield* Queue.unbounded<number, Cause.Done<void>>(),
+      lastFrame: undefined,
+      frameSeq: 0,
       historyMove: false,
       forwardSteps: 0,
     };
@@ -728,11 +736,13 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       );
     });
     page.on("close", () => {
+      Queue.endUnsafe(view.frameSignals);
       Queue.offerUnsafe(view.events, { type: "closed" });
       Queue.endUnsafe(view.events);
       for (const sink of view.frameSinks) Queue.endUnsafe(sink);
       view.frameSinks.clear();
     });
+    yield* Effect.forkIn(sendSettledFrames(page, view), scope);
     if (input.url !== undefined) yield* Effect.forkIn(gotoView(tab, input.url), scope);
     return {
       tabId: tab.tabId,
@@ -786,7 +796,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     return ignoreFailure(async () => {
       await page.setViewportSize({ width: size.width, height: size.height });
       if (view.frameSinks.size === 0) return;
-      await page.screencast.stop();
+      await stopScreencast(page, view);
       await startScreencast(page, view);
     });
   };
@@ -824,17 +834,55 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     }
   };
 
+  const pushFrame = (view: EngineViewState, data: Uint8Array) => {
+    for (const sink of view.frameSinks) Queue.offerUnsafe(sink, data);
+  };
+
+  // Both engines cap screencast frames at the CSS viewport size, so motion
+  // streams at 1x. When frames stop, one 2x PNG screenshot makes text sharp.
+  // It is dropped when a new frame lands while the screenshot is in flight.
+  const sendSettledFrames = (page: Page, view: EngineViewState) =>
+    Effect.forever(
+      Effect.gen(function* () {
+        let seq = yield* Queue.take(view.frameSignals);
+        while (true) {
+          const next = yield* Effect.raceFirst(
+            Queue.take(view.frameSignals),
+            Effect.as(Effect.sleep(SETTLE_MS), undefined),
+          );
+          if (next === undefined) break;
+          seq = next;
+        }
+        const png = yield* Effect.promise(() =>
+          page.screenshot({ type: "png" }).catch(() => undefined),
+        );
+        if (png !== undefined && view.frameSeq === seq && view.frameSinks.size > 0) {
+          pushFrame(view, png);
+        }
+      }),
+    );
+
   // Playwright fixes the frame size when the screencast starts and downsizes to
-  // 800px when no size is given. Frames match the page's device pixels instead.
+  // 800px when no size is given. Firefox repeats identical frames at 25 fps, so
+  // duplicates are dropped here.
   const startScreencast = (page: Page, view: EngineViewState) => {
     const viewport = page.viewportSize() ?? DEFAULT_VIEWPORT;
     return page.screencast.start({
       size: { width: viewport.width * FRAME_SCALE, height: viewport.height * FRAME_SCALE },
       quality: FRAME_JPEG_QUALITY,
       onFrame: ({ data }) => {
-        for (const sink of view.frameSinks) Queue.offerUnsafe(sink, data);
+        if (view.lastFrame !== undefined && Buffer.from(view.lastFrame).equals(data)) return;
+        view.lastFrame = data;
+        view.frameSeq += 1;
+        pushFrame(view, data);
+        Queue.offerUnsafe(view.frameSignals, view.frameSeq);
       },
     });
+  };
+
+  const stopScreencast = async (page: Page, view: EngineViewState) => {
+    view.lastFrame = undefined;
+    await page.screencast.stop().catch(() => undefined);
   };
 
   const frames: PlaywrightPreviewHost["Service"]["frames"] = (tabId, secret) => {
@@ -851,7 +899,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
           () =>
             Effect.promise(async () => {
               view.frameSinks.delete(queue);
-              if (view.frameSinks.size === 0) await page.screencast.stop().catch(() => undefined);
+              if (view.frameSinks.size === 0) await stopScreencast(page, view);
             }),
         ),
       { bufferSize: 2, strategy: "sliding" },

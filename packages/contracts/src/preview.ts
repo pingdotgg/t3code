@@ -184,7 +184,7 @@ export const PreviewSessionSnapshot = Schema.Struct({
    * instead of the docked Chromium view. Fixed at open.
    */
   engine: Schema.optional(PreviewBrowserEngine),
-  /** Server-relative MJPEG stream of the engine page. Present with `engine`. */
+  /** Server-relative frame stream of the engine page. Present with `engine`. */
   frameUrl: Schema.optional(Schema.String),
   updatedAt: Schema.String,
 });

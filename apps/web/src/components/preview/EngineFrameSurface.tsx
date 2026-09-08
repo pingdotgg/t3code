@@ -1,5 +1,5 @@
 import type { PreviewInputEvent, PreviewMouseButton, ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -11,27 +11,43 @@ const MOUSE_BUTTONS: Record<number, PreviewMouseButton> = { 0: "left", 1: "middl
 interface Props {
   threadRef: ScopedThreadRef;
   tabId: string;
-  /** Server-relative MJPEG stream path from the session snapshot. */
+  /** Server-relative frame stream path from the session snapshot. */
   frameUrl: string;
   httpBaseUrl: string;
   visible: boolean;
 }
 
-/** Shows a headless engine page as an MJPEG stream and sends pointer and key input back. */
+/** Yields each length-prefixed image in the stream as soon as its last byte arrives. */
+async function* readFrames(body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader();
+  let buffered = new Uint8Array(0);
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    const joined = new Uint8Array(buffered.byteLength + value.byteLength);
+    joined.set(buffered, 0);
+    joined.set(value, buffered.byteLength);
+    buffered = joined;
+    while (buffered.byteLength >= 4) {
+      const length = new DataView(buffered.buffer, buffered.byteOffset).getUint32(0);
+      if (buffered.byteLength < 4 + length) break;
+      yield buffered.slice(4, 4 + length);
+      buffered = buffered.subarray(4 + length);
+    }
+  }
+}
+
+/** Shows a headless engine page on a canvas and sends pointer and key input back. */
 export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, visible }: Props) {
   const sendInput = useAtomCommand(previewEnvironment.input);
   const resize = useAtomCommand(previewEnvironment.resize);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pendingRef = useRef<{
     move: PreviewInputEvent | undefined;
     wheel: PreviewInputEvent | undefined;
-  }>({
-    move: undefined,
-    wheel: undefined,
-  });
+  }>({ move: undefined, wheel: undefined });
   const inFlightRef = useRef(false);
-  const [streamAttempt, setStreamAttempt] = useState(0);
 
   const send = useCallback(
     (event: PreviewInputEvent) =>
@@ -60,17 +76,13 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
     [send],
   );
 
-  // Frames are viewport-sized and drawn top-left with object-contain, so one
-  // scale factor maps client pixels back to page pixels.
+  // The page viewport follows the container size, so client pixels map to page
+  // pixels one to one.
   const pagePoint = useCallback((clientX: number, clientY: number) => {
-    const image = imageRef.current;
-    if (!image || image.naturalWidth === 0) return null;
-    const rect = image.getBoundingClientRect();
-    const scale = Math.max(image.naturalWidth / rect.width, image.naturalHeight / rect.height);
-    return {
-      x: Math.round((clientX - rect.left) * scale),
-      y: Math.round((clientY - rect.top) * scale),
-    };
+    const container = containerRef.current;
+    if (!container) return null;
+    const rect = container.getBoundingClientRect();
+    return { x: Math.round(clientX - rect.left), y: Math.round(clientY - rect.top) };
   }, []);
 
   useEffect(() => {
@@ -99,6 +111,83 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
       observer.disconnect();
     };
   }, [resize, tabId, threadRef.environmentId, threadRef.threadId]);
+
+  // Frames decode off the main thread and the newest one is drawn once per
+  // animation frame, so a slow decode never shows a half-drawn image.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!visible || !canvas) return;
+    const controller = new AbortController();
+    let newest: ImageBitmap | null = null;
+    let decodeSeq = 0;
+    let drawnSeq = 0;
+    let animationFrame = 0;
+
+    const draw = () => {
+      animationFrame = 0;
+      const bitmap = newest;
+      if (!bitmap) return;
+      newest = null;
+      const scale = window.devicePixelRatio;
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.round(rect.width * scale);
+      const height = Math.round(rect.height * scale);
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      const context = canvas.getContext("2d");
+      if (context) {
+        const fit = Math.min(width / bitmap.width, height / bitmap.height);
+        const drawWidth = Math.round(bitmap.width * fit);
+        const drawHeight = Math.round(bitmap.height * fit);
+        context.imageSmoothingQuality = "high";
+        context.fillStyle = "#fff";
+        context.fillRect(0, 0, width, height);
+        context.drawImage(bitmap, 0, 0, drawWidth, drawHeight);
+      }
+      bitmap.close();
+    };
+
+    const onFrame = (bitmap: ImageBitmap, seq: number) => {
+      if (controller.signal.aborted || seq < drawnSeq) {
+        bitmap.close();
+        return;
+      }
+      drawnSeq = seq;
+      newest?.close();
+      newest = bitmap;
+      if (!animationFrame) animationFrame = requestAnimationFrame(draw);
+    };
+
+    const stream = async () => {
+      while (!controller.signal.aborted) {
+        try {
+          const response = await fetch(new URL(frameUrl, httpBaseUrl), {
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) throw new Error(response.statusText);
+          for await (const bytes of readFrames(response.body)) {
+            const seq = ++decodeSeq;
+            void createImageBitmap(new Blob([bytes])).then(
+              (bitmap) => onFrame(bitmap, seq),
+              () => undefined,
+            );
+          }
+        } catch {
+          if (controller.signal.aborted) return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, RETRY_STREAM_MS));
+      }
+    };
+    void stream();
+
+    return () => {
+      controller.abort();
+      cancelAnimationFrame(animationFrame);
+      newest?.close();
+    };
+  }, [frameUrl, httpBaseUrl, visible]);
 
   // React registers wheel listeners as passive, so preventDefault must go through the DOM.
   useEffect(() => {
@@ -153,19 +242,7 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
       onKeyDown={handleKey("keyDown")}
       onKeyUp={handleKey("keyUp")}
     >
-      {visible ? (
-        <img
-          key={streamAttempt}
-          ref={imageRef}
-          src={new URL(frameUrl, httpBaseUrl).toString()}
-          alt=""
-          draggable={false}
-          className="absolute inset-0 h-full w-full object-contain object-left-top"
-          onError={() => {
-            setTimeout(() => setStreamAttempt((attempt) => attempt + 1), RETRY_STREAM_MS);
-          }}
-        />
-      ) : null}
+      <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
     </div>
   );
 }

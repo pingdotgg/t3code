@@ -102,10 +102,10 @@ describe("PlaywrightPreviewHost", () => {
             view.tabId,
             "data:text/html,<title>Frames</title><body style='background:%23f00'>",
           );
-          const frame = yield* Stream.runHead(frames);
-          expect(frame._tag).toBe("Some");
-          if (frame._tag !== "Some") return;
-          expect(Array.from(frame.value.slice(0, 2))).toEqual([0xff, 0xd8]);
+          const isPng = (frame: Uint8Array) => frame[0] === 0x89 && frame[1] === 0x50;
+          const received = yield* Stream.runCollect(Stream.takeUntil(frames, isPng));
+          expect(Array.from(received[0]?.slice(0, 2) ?? [])).toEqual([0xff, 0xd8]);
+          expect(received.some(isPng)).toBe(true);
 
           yield* host.sendInput(view.tabId, { type: "mouseMove", x: 10, y: 10 });
           yield* host.sendInput(view.tabId, { type: "keyDown", key: "a" });

@@ -8,24 +8,17 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import { ENGINE_FRAMES_ROUTE_PREFIX, PlaywrightPreviewHost } from "../mcp/PlaywrightPreviewHost.ts";
 
-const BOUNDARY = "t3frame";
 const decodeTabId = Schema.decodeUnknownOption(PreviewTabId);
-const encoder = new TextEncoder();
-// The boundary follows each frame so Chromium draws it as soon as it arrives.
-const preamble = encoder.encode(`--${BOUNDARY}\r\n`);
+
+/** Big-endian byte length, then the PNG or JPEG bytes. */
 const framePart = (frame: Uint8Array) => {
-  const header = encoder.encode(
-    `Content-Type: image/jpeg\r\nContent-Length: ${frame.byteLength}\r\n\r\n`,
-  );
-  const part = new Uint8Array(header.byteLength + frame.byteLength + preamble.byteLength + 2);
-  part.set(header, 0);
-  part.set(frame, header.byteLength);
-  part.set(encoder.encode("\r\n"), header.byteLength + frame.byteLength);
-  part.set(preamble, header.byteLength + frame.byteLength + 2);
+  const part = new Uint8Array(4 + frame.byteLength);
+  new DataView(part.buffer).setUint32(0, frame.byteLength);
+  part.set(frame, 4);
   return part;
 };
 
-/** Streams an engine page as MJPEG. The tab secret in the path is the only credential. */
+/** Streams engine page frames as length-prefixed images. The tab secret in the path is the only credential. */
 export const engineFramesRouteLayer = Layer.unwrap(
   Effect.map(PlaywrightPreviewHost, (host) =>
     HttpRouter.add(
@@ -44,15 +37,9 @@ export const engineFramesRouteLayer = Layer.unwrap(
         }
         const frames = host.frames(tabId.value, secret);
         if (frames === undefined) return HttpServerResponse.text("Not Found", { status: 404 });
-        return HttpServerResponse.stream(
-          Stream.concat(Stream.make(preamble), Stream.map(frames, framePart)),
-          {
-            headers: {
-              "content-type": `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
-              "cache-control": "no-store",
-            },
-          },
-        );
+        return HttpServerResponse.stream(Stream.map(frames, framePart), {
+          headers: { "content-type": "application/octet-stream", "cache-control": "no-store" },
+        });
       }),
     ),
   ),
