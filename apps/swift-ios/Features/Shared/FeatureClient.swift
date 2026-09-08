@@ -91,6 +91,8 @@ public protocol FeatureClient: AnyObject {
         threadID: String, messageID: String,
         prepareRecovery: @MainActor (FeatureRevertedMessage) async throws -> Void
     ) async throws
+    func stopStatus(threadID: String) async throws -> FeatureThread
+    func cancelTurn(threadID: String, expectedTurnID: String?) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws
     func resolveUserInput(
         id: String, answers: [String: FeatureInputAnswer],
@@ -251,6 +253,14 @@ public extension FeatureClient {
         prepareRecovery: @MainActor (FeatureRevertedMessage) async throws -> Void
     ) async throws {
         throw FeatureCapabilityUnavailable("Conversation rewind")
+    }
+
+    func stopStatus(threadID: String) async throws -> FeatureThread {
+        throw FeatureStopStatusUnavailableError()
+    }
+
+    func cancelTurn(threadID: String, expectedTurnID: String?) async throws {
+        try await cancelTurn(threadID: threadID)
     }
 
     func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot {
@@ -572,4 +582,14 @@ public extension FeatureClient {
     func closeTerminal(threadID: String, terminalID _: String) async throws {
         throw FeatureCapabilityUnavailable("Terminal")
     }
+}
+
+public struct FeatureStopTurnChangedError: LocalizedError {
+    public init() {}
+    public var errorDescription: String? { "The active turn changed. Check the thread before stopping again." }
+}
+
+public struct FeatureStopStatusUnavailableError: LocalizedError {
+    public init() {}
+    public var errorDescription: String? { "Could not confirm the thread’s stop status." }
 }
