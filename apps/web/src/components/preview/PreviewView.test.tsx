@@ -11,6 +11,16 @@ import { act, Profiler } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+// PreviewView resolves the local API once at module scope behind a `typeof
+// window` guard. The guard has to see a window before the import further down
+// runs, or every shell call in this suite is a silent no-op.
+vi.hoisted(() => {
+  globalThis.window ??= {
+    addEventListener() {},
+    removeEventListener() {},
+  } as unknown as Window & typeof globalThis;
+});
+
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
@@ -19,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   emptyStateUrl: null as ((url: string) => void) | null,
   togglePictureInPicture: null as (() => void) | null,
   toggleNativePictureInPicture: null as (() => void) | null,
+  openInBrowser: null as (() => void) | null,
+  openExternal: vi.fn(async (_url: string): Promise<void> => undefined),
   pictureInPicturePressed: false,
   miniPlayerTabId: null as string | null,
   openMiniPlayer: vi.fn(),
@@ -95,7 +107,7 @@ vi.mock("~/lib/previewAnnotation", () => ({
 }));
 
 vi.mock("~/localApi", () => ({
-  ensureLocalApi: vi.fn(),
+  ensureLocalApi: vi.fn(() => ({ shell: { openExternal: mocks.openExternal } })),
 }));
 
 vi.mock("~/previewStateStore", () => ({
@@ -221,7 +233,7 @@ vi.mock("./PreviewChromeRow", () => ({
     onPictureInPicture?: () => void;
     pictureInPicture?: boolean;
     trailingActions?: {
-      props: { onNativePictureInPicture?: () => void };
+      props: { onNativePictureInPicture?: () => void; onOpenInBrowser?: () => void };
     };
   }) => {
     mocks.submittedUrl = props.onSubmit;
@@ -229,6 +241,7 @@ vi.mock("./PreviewChromeRow", () => ({
     mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
     mocks.toggleNativePictureInPicture =
       props.trailingActions?.props.onNativePictureInPicture ?? null;
+    mocks.openInBrowser = props.trailingActions?.props.onOpenInBrowser ?? null;
     mocks.pictureInPicturePressed = props.pictureInPicture ?? false;
     return null;
   },
@@ -333,6 +346,8 @@ describe("PreviewView navigation", () => {
     mocks.emptyStateUrl = null;
     mocks.togglePictureInPicture = null;
     mocks.toggleNativePictureInPicture = null;
+    mocks.openInBrowser = null;
+    mocks.openExternal.mockClear();
     mocks.pictureInPicturePressed = false;
     mocks.miniPlayerTabId = null;
     mocks.openMiniPlayer.mockClear();
@@ -517,6 +532,27 @@ describe("PreviewView navigation", () => {
     await vi.waitFor(() =>
       expect(mocks.closePictureInPicture).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID),
     );
+  });
+
+  it("hands the page the tab is showing to the system browser", async () => {
+    const props = {
+      threadRef: TEST_THREAD_REF,
+      tabId: "tab-1",
+      visible: true,
+    } as const;
+
+    renderToStaticMarkup(<PreviewView {...props} />);
+    mocks.openInBrowser?.();
+    await vi.waitFor(() => expect(mocks.openExternal).toHaveBeenCalledWith("http://example.com/"));
+
+    // An empty tab has no address to hand over; the menu item stays clickable,
+    // so the handler is the only thing keeping it from opening about:blank.
+    mocks.showEmptyState = true;
+    mocks.openExternal.mockClear();
+    renderToStaticMarkup(<PreviewView {...props} />);
+    expect(mocks.openInBrowser).not.toBeNull();
+    mocks.openInBrowser?.();
+    expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 
   it("forwards Cmd/Ctrl+Enter annotations to the composer send path", async () => {
