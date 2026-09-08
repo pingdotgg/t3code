@@ -452,6 +452,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "hosting-cli-path",
+    title: "Hosting CLI path",
+    to: "/settings/source-control",
+    searchTerms: [
+      "gh glab az executable binary path custom location not found on path wrapper mise asdf volta homebrew",
+    ],
+    primaryOnly: true,
+  },
+  {
     id: "git-fetch-interval",
     title: "Git fetch interval",
     to: "/settings/source-control",

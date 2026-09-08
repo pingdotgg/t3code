@@ -17,6 +17,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as VcsExecutables from "./VcsExecutables.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 const run = (input: VcsProcess.VcsProcessInput) =>
@@ -37,6 +38,9 @@ const baseInput = {
   cwd: "/workspace",
 } satisfies VcsProcess.VcsProcessInput;
 
+/** The production default: every command resolves by name on PATH. */
+const pathOnlyExecutables = VcsExecutables.VcsExecutables.of({ resolve: Effect.succeed });
+
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
 ) =>
@@ -45,11 +49,58 @@ const captureProcessResult = (
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
+    Effect.provideService(VcsExecutables.VcsExecutables, pathOnlyExecutables),
     Effect.flatMap((service) => service.run(baseInput)),
     Effect.flip,
   );
 
 describe("VcsProcess.run", () => {
+  it.effect("spawns the configured executable while still reporting the logical command", () =>
+    Effect.gen(function* () {
+      const spawned = yield* Ref.make<ReadonlyArray<string>>([]);
+      const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          VcsExecutables.VcsExecutables,
+          VcsExecutables.VcsExecutables.of({
+            resolve: (command) => Effect.succeed(command === "gh" ? "/opt/gh/bin/gh" : command),
+          }),
+        ),
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Ref.update(spawned, (commands) => [...commands, input.command]).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ProcessRunner.ProcessSpawnError({
+                      command: input.command,
+                      argumentCount: input.args.length,
+                      cwd: input.cwd ?? "/workspace",
+                      cause: new Error("ENOENT"),
+                    }),
+                  ),
+                ),
+              ),
+          }),
+        ),
+      );
+
+      const error = yield* service
+        .run({
+          operation: "test.configured-executable",
+          command: "gh",
+          args: ["api", "user"],
+          cwd: "/workspace",
+        })
+        .pipe(Effect.flip);
+
+      expect(yield* Ref.get(spawned)).toEqual(["/opt/gh/bin/gh"]);
+      // Callers, error payloads, and the GitHub limiter all key off "gh".
+      assert(error._tag === "VcsProcessSpawnError");
+      expect(error.command).toBe("gh");
+    }),
+  );
+
   it.effect("bounds a synthetic burst of GitHub API processes", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
@@ -58,6 +109,7 @@ describe("VcsProcess.run", () => {
       const peak = yield* Ref.make(0);
       const total = yield* Ref.make(0);
       const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(VcsExecutables.VcsExecutables, pathOnlyExecutables),
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({

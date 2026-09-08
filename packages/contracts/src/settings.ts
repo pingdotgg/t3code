@@ -875,6 +875,28 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+/**
+ * Hosting CLIs T3 Code shells out to, keyed by the logical command name the
+ * server passes to `VcsProcess`. An empty value means "resolve the name on
+ * PATH", which is the default.
+ */
+export const SOURCE_CONTROL_CLI_COMMANDS = ["gh", "glab", "az"] as const;
+export const SourceControlCliCommand = Schema.Literals(SOURCE_CONTROL_CLI_COMMANDS);
+export type SourceControlCliCommand = typeof SourceControlCliCommand.Type;
+
+/**
+ * Paths that override PATH resolution for the hosting CLIs. Empty means
+ * "resolve the command name on PATH", which is the default. Needed when the
+ * name on PATH is a version-manager wrapper too slow for the discovery probe,
+ * or when the binary lives outside the server's PATH.
+ */
+export const SourceControlCliPaths = Schema.Struct({
+  gh: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  glab: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  az: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type SourceControlCliPaths = typeof SourceControlCliPaths.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -1025,6 +1047,7 @@ export const ServerSettings = Schema.Struct({
   sourceControlWriterModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  sourceControlCliPaths: SourceControlCliPaths.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   // Legacy single-instance-per-driver settings. Continues to be the source
   // of truth until `providerInstances` (below) lands per-driver migration
@@ -1255,6 +1278,13 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   sourceControlWriterModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  sourceControlCliPaths: Schema.optionalKey(
+    Schema.Struct({
+      gh: Schema.optionalKey(TrimmedString),
+      glab: Schema.optionalKey(TrimmedString),
+      az: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

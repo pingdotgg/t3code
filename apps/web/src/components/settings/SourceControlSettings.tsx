@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
+  SourceControlCliCommand,
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
@@ -43,6 +44,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -82,6 +84,18 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
   git: GitIcon,
   jj: JujutsuIcon,
+};
+
+/**
+ * Hosting providers T3 Code reaches through a CLI. Bitbucket talks to the REST
+ * API instead, so it has no executable to point anywhere.
+ */
+const SOURCE_CONTROL_PROVIDER_CLI: Partial<
+  Record<SourceControlProviderKind, SourceControlCliCommand>
+> = {
+  github: "gh",
+  gitlab: "glab",
+  "azure-devops": "az",
 };
 
 const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
@@ -342,6 +356,104 @@ function DiscoveryItemRow({
   );
 }
 
+function HostingCliPathSettings({
+  command,
+  label,
+}: {
+  readonly command: SourceControlCliCommand;
+  readonly label: string;
+}) {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const savedPath = settings.sourceControlCliPaths[command];
+  const [draft, setDraft] = useState(savedPath);
+  const [lastSavedPath, setLastSavedPath] = useState(savedPath);
+  const setting = searchableSetting("hosting-cli-path");
+
+  // Another client, or an edit to the settings file, can change this while the
+  // row is open. Adjusting during render keeps the input on the saved value
+  // without a second render pass.
+  if (lastSavedPath !== savedPath) {
+    setLastSavedPath(savedPath);
+    setDraft(savedPath);
+  }
+
+  const commit = (value: string) => {
+    const next = value.trim();
+    setDraft(next);
+    if (next !== savedPath) {
+      updateSettings({ sourceControlCliPaths: { [command]: next } });
+    }
+  };
+
+  return (
+    <SettingsSearchTarget id={setting.id} className="grid gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 items-center gap-1">
+            <span className="text-xs font-medium text-foreground">{setting.title}</span>
+            <PolicyTooltip>
+              {`T3 Code runs \`${command}\` for ${label}. Point this at a specific binary when the name on PATH is a version-manager wrapper, or when the CLI lives somewhere the server cannot see. Rescan after changing it.`}
+            </PolicyTooltip>
+            <span
+              className={cn(
+                "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
+                savedPath ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-hidden={!savedPath}
+            >
+              {savedPath ? (
+                <SettingResetButton
+                  label={`${command} path`}
+                  onClick={() => {
+                    setDraft("");
+                    updateSettings({ sourceControlCliPaths: { [command]: "" } });
+                  }}
+                />
+              ) : null}
+            </span>
+          </div>
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+            Leave empty to resolve <code>{command}</code> on the server&apos;s PATH.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Input
+            size="sm"
+            className="w-full sm:w-72"
+            aria-label={`${label} CLI path`}
+            placeholder={command}
+            value={draft}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={(event) => commit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                setDraft(savedPath);
+              }
+            }}
+          />
+        </div>
+      </div>
+    </SettingsSearchTarget>
+  );
+}
+
+/** Only the primary environment's settings are writable from this screen. */
+function hostingCliPathField(
+  kind: SourceControlProviderKind,
+  label: string,
+  isPrimaryEnvironment: boolean,
+) {
+  const command = SOURCE_CONTROL_PROVIDER_CLI[kind];
+  if (!command || !isPrimaryEnvironment) return undefined;
+  return <HostingCliPathSettings command={command} label={label} />;
+}
+
 function GitFetchIntervalSettings() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
@@ -574,7 +686,9 @@ export function SourceControlSettingsPanel() {
               headerAction={hasVersionControlSystems ? null : scanButton}
             >
               {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
+                  {hostingCliPathField(item.kind, item.label, isPrimaryEnvironment)}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}

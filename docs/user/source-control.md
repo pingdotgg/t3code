@@ -87,6 +87,10 @@ reopening a declined pull request.
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
   confirm the running server received the environment variables.
 - **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
+- **A provider stays unavailable even though its CLI is installed:** the name on the server's PATH
+  may resolve to something other than the real binary, such as a version-manager wrapper. Expand the
+  provider's row in **Settings → Source Control**, set **Hosting CLI path** to the executable, and
+  rescan. Leave it empty to go back to resolving the command on PATH.
 - **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
