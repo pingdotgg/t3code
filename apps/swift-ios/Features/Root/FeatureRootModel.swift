@@ -137,12 +137,10 @@ public final class FeatureRootModel {
         backgroundedAt = date
     }
 
-    func applicationDidBecomeActive(at date: Date = .now) async {
-        guard let backgroundedAt else { return }
+    func applicationDidBecomeActive(at _: Date = .now) async {
+        guard backgroundedAt != nil else { return }
         self.backgroundedAt = nil
-        await client.resumeAfterBackground(
-            reconnect: date.timeIntervalSince(backgroundedAt) >= 10
-        )
+        await client.resumeAfterBackground(reconnect: true)
     }
 
     /// Background refresh is deliberately separate from `reload()`: native
