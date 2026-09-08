@@ -34,6 +34,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveProjectAgentBrowserAccess } from "@t3tools/shared/serverSettings";
@@ -43,6 +44,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -52,6 +54,9 @@ import * as Stream from "effect/Stream";
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
+import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
+import * as DeviceService from "../../device/DeviceService.ts";
+import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import {
   increment,
   providerMetricAttributes,
@@ -249,6 +254,8 @@ export interface ProviderServiceLiveOptions {
    * test see whether a credential was requested at all.
    */
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
+  /** Overrides the device host lookup used to build the agent-device environment. */
+  readonly deviceReadiness?: () => Effect.Effect<DeviceService.DeviceReadiness | null>;
 }
 
 interface TurnAnalyticsMetadata {
@@ -477,7 +484,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
+  const deviceReadiness =
+    options?.deviceReadiness ??
+    (() =>
+      Effect.serviceOption(DeviceService.DeviceService).pipe(
+        Effect.flatMap((service) =>
+          Option.isSome(service) ? service.value.currentReadiness() : Effect.succeed(null),
+        ),
+      ));
   const fileSystem = yield* FileSystem.FileSystem;
+  const pathService = yield* Path.Path;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const pendingCompactions = new Map<ThreadId, PendingCompaction>();
   const timedOutNativeCompactions = new Set<ThreadId>();
@@ -879,22 +895,66 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const agentDeviceAccessEnabled = serverSettings.getSettings.pipe(
+    Effect.map((settings) => settings.enableAgentDeviceAccess),
+    Effect.catch((cause) =>
+      Effect.logWarning(
+        "Could not read server settings; withholding agent device access for this session.",
+        { cause },
+      ).pipe(Effect.as(false)),
+    ),
+  );
+
+  const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(
+    function* (threadId: ThreadId) {
+      const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+      if (yield* agentBrowserAccessEnabled(threadId)) capabilities.add("preview");
+      if (yield* agentDeviceAccessEnabled) capabilities.add("device");
+      return capabilities;
+    },
+  );
+
   /**
-   * Attach the `t3-code` MCP server to the session that is about to start.
-   *
-   * Every session gets a credential: the pull request toolkit is always on,
-   * since it only registers links on the session's own thread. Browser access
-   * is a capability on that credential, so turning the setting off withholds
-   * the preview tools without taking the server away. `issueActiveMcpCredential`
-   * revokes the thread's previous token first, which matters because a session
-   * restart (runtime mode, cwd, model) re-prepares without stopping.
+   * The device host only starts when a device is first opened, so a session
+   * prepared before that gets the tools without the CLI environment; the
+   * `device_open` result tells the agent the CLI is ready, and by then the
+   * next session restart picks the environment up. Sessions prepared after
+   * the host is running get it immediately.
    */
+  const hostPlatform = yield* HostProcessPlatform;
+  const agentDeviceEnvironment = Effect.gen(function* () {
+    const readiness = yield* deviceReadiness();
+    if (!readiness) return undefined;
+    const shimDir = yield* ensureAgentDeviceShim({
+      entryPath: readiness.agentDevice.entryPath,
+      stateDir: serverConfig.stateDir,
+      fs: fileSystem,
+      path: pathService,
+    }).pipe(Effect.orElseSucceed(() => undefined));
+    if (!shimDir) return undefined;
+    return {
+      PATH: shimDir,
+      PATH_SEPARATOR: hostPlatform === "win32" ? ";" : ":",
+      AGENT_DEVICE_DAEMON_BASE_URL: readiness.agentDevice.baseUrl,
+      AGENT_DEVICE_DAEMON_AUTH_TOKEN: readiness.agentDevice.token,
+      AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
+    } satisfies Record<string, string>;
+  });
+
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
-      const preview = yield* agentBrowserAccessEnabled(threadId);
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, preview });
+      const capabilities = yield* agentAccessCapabilities(threadId);
+      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
-        yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
+        const deviceEnvironment = capabilities.has("device")
+          ? yield* agentDeviceEnvironment
+          : undefined;
+        yield* Effect.sync(() =>
+          McpProviderSession.setMcpProviderSession({
+            ...credential.config,
+            ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
+          }),
+        );
       }
       return credential;
     });

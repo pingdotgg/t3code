@@ -167,7 +167,7 @@ export type ThreadFeedEntry =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogEntry["toolSurface"];
       readonly toolIcon?: WorkLogEntry["toolIcon"];
-      readonly summaryToolIcon?: "browser" | "t3-code" | "pull-request";
+      readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;

@@ -182,6 +182,15 @@ import {
   PreviewSessionSnapshot,
 } from "./preview.ts";
 import {
+  DeviceCloseInput,
+  DeviceError,
+  DeviceListInput,
+  DeviceOpenInput,
+  DeviceServiceState,
+  DeviceSession,
+  DeviceShutdownInput,
+} from "./device.ts";
+import {
   PreviewAutomationError,
   PreviewAutomationHost,
   PreviewAutomationHostFocus,
@@ -312,6 +321,12 @@ export const WS_METHODS = {
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
 
+  // Device methods
+  deviceList: "device.list",
+  deviceOpen: "device.open",
+  deviceClose: "device.close",
+  deviceShutdown: "device.shutdown",
+
   // Server meta
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -378,6 +393,7 @@ export const WS_METHODS = {
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
+  subscribeDeviceState: "subscribeDeviceState",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1078,6 +1094,35 @@ const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(WS_METHODS.subscribeDiscov
   stream: true,
 });
 
+const WsDeviceListRpc = Rpc.make(WS_METHODS.deviceList, {
+  payload: DeviceListInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
+  payload: DeviceOpenInput,
+  success: DeviceSession,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceCloseRpc = Rpc.make(WS_METHODS.deviceClose, {
+  payload: DeviceCloseInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceShutdownRpc = Rpc.make(WS_METHODS.deviceShutdown, {
+  payload: DeviceShutdownInput,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
+const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
+  payload: Schema.Struct({}),
+  success: DeviceServiceState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsOrchestrationDispatchCommandRpc = Rpc.make(ORCHESTRATION_WS_METHODS.dispatchCommand, {
   payload: ClientOrchestrationCommand,
   success: OrchestrationRpcSchemas.dispatchCommand.output,
@@ -1308,6 +1353,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
+  WsDeviceListRpc,
+  WsDeviceOpenRpc,
+  WsDeviceCloseRpc,
+  WsDeviceShutdownRpc,
+  WsSubscribeDeviceStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

@@ -221,6 +221,19 @@ describe("resolveWorkEntryToolPresentation", () => {
     });
   });
 
+  it("labels device tools with the device icon", () => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "mcp__t3-code__device_open",
+        toolLifecycleStatus: "completed",
+      }),
+    ).toEqual({ displayName: "Opened a device in the Device panel", icon: "device" });
+    expect(resolveWorkEntryToolPresentation({ label: "t3-code · device_screenshot" })).toEqual({
+      displayName: "Taking a screenshot of the device",
+      icon: "device",
+    });
+  });
+
   it("uses structured MCP identity when the provider supplies a custom title", () => {
     expect(
       resolveWorkEntryToolPresentation({

@@ -967,6 +967,14 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Whether agents may drive simulators and emulators. Gates the `device_*`
+   * MCP tools and the preconfigured `agent-device` CLI the same way
+   * `enableAgentBrowserAccess` gates the browser: server-authoritative, applied
+   * when the provider session is prepared. The user's own Device panel is
+   * unaffected.
+   */
+  enableAgentDeviceAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1239,6 +1247,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(

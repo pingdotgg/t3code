@@ -24,6 +24,7 @@ const RIGHT_PANEL_KINDS = [
   "files",
   "file",
   "preview",
+  "device",
   "terminal",
   "pull-request",
   "pull-requests",
@@ -34,6 +35,12 @@ export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
+  /**
+   * One Device tab per thread. The tab is the surface; which device it shows
+   * comes from the thread's server-side device sessions, so an agent opening a
+   * device from another client lands in the same tab.
+   */
+  | { id: "device"; kind: "device" }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -82,7 +89,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 adds the device surface.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -178,6 +186,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "agents":
       return { id: "agents", kind };
+    case "device":
+      return { id: "device", kind };
   }
 };
 

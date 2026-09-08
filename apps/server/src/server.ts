@@ -57,6 +57,8 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as DeviceService from "./device/DeviceService.ts";
+import { deviceHubProxyRouteLayer } from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -386,6 +388,11 @@ const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PortScannerLayerLive),
 );
 
+const DeviceLayerLive = DeviceService.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(NetService.layer),
+);
+
 const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
@@ -469,7 +476,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
-  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
+  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
   Layer.provideMerge(PersistenceLayerLive),
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.
@@ -553,6 +560,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

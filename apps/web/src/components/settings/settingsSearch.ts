@@ -403,6 +403,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow open drive preview tools sessions"],
   },
   {
+    id: "agent-device-access",
+    title: "Agent device access",
+    to: "/settings/projects",
+    searchTerms: ["allow simulator emulator ios android drive tools sessions"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",
