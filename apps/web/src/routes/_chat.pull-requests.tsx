@@ -1925,8 +1925,9 @@ function PullRequestsRouteView() {
       if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // Let panel shortcuts consume Escape before page navigation at window.
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [keybindings]);
 
   return (
