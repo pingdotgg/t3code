@@ -13,6 +13,7 @@ import { ConfirmDialogHost } from "./components/ConfirmDialogHost";
 import { CloudAuthProvider } from "./features/cloud/CloudAuthProvider";
 import { prepareNativeShowcaseCapture } from "./features/showcase/nativeShowcaseScene";
 import { IncomingShareProvider } from "./features/sharing/IncomingShareProvider";
+import { InteractionSoundCoordinator } from "./features/interaction-sounds/InteractionSoundCoordinator";
 import {
   AppearancePreferencesProvider,
   useAppearancePreferences,
@@ -76,6 +77,7 @@ function AppContent() {
   return (
     <>
       <SplashScreenCoordinator />
+      <InteractionSoundCoordinator />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>

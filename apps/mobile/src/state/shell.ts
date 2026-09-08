@@ -2,6 +2,7 @@ import {
   createEnvironmentShellAtoms,
   createEnvironmentShellSummaryAtom,
   createEnvironmentSnapshotAtom,
+  createLiveEnvironmentIdsAtom,
   createShellEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/shell";
 
@@ -14,4 +15,10 @@ export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environment
 export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   shellStateValueAtom: environmentShell.stateValueAtom,
+});
+
+export const liveEnvironmentIdsAtom = createLiveEnvironmentIdsAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  shellStateValueAtom: environmentShell.stateValueAtom,
+  label: "mobile-live-environment-ids",
 });

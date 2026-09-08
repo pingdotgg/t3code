@@ -6,7 +6,11 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import type { EnvironmentShellState } from "./shell.ts";
-import { createEnvironmentServerConfigsAtom, createEnvironmentShellSummaryAtom } from "./shell.ts";
+import {
+  createEnvironmentServerConfigsAtom,
+  createEnvironmentShellSummaryAtom,
+  createLiveEnvironmentIdsAtom,
+} from "./shell.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const OTHER_ENVIRONMENT_ID = EnvironmentId.make("environment-2");
@@ -77,6 +81,11 @@ function makeHarness() {
     catalogValueAtom,
     serverConfigValueAtom: configAtoms,
   });
+  const liveEnvironmentIdsAtom = createLiveEnvironmentIdsAtom({
+    catalogValueAtom,
+    shellStateValueAtom: shellStateAtoms,
+    label: "test-live-environment-ids",
+  });
 
   return {
     registry: AtomRegistry.make(),
@@ -84,6 +93,7 @@ function makeHarness() {
     configAtom: configAtoms,
     summaryAtom,
     serverConfigsAtom,
+    liveEnvironmentIdsAtom,
   };
 }
 
@@ -126,5 +136,31 @@ describe("environment shell projections", () => {
 
     harness.registry.set(harness.configAtom(ENVIRONMENT_ID), config);
     expect(harness.registry.get(harness.serverConfigsAtom)).toBe(withConfig);
+  });
+
+  it("projects live environment IDs and preserves identity while membership is unchanged", () => {
+    const harness = makeHarness();
+    const empty = harness.registry.get(harness.liveEnvironmentIdsAtom);
+
+    harness.registry.set(
+      harness.shellStateAtom(OTHER_ENVIRONMENT_ID),
+      shellState({
+        status: "live",
+        updatedAt: "2026-06-02T00:00:00.000Z",
+      }),
+    );
+    const live = harness.registry.get(harness.liveEnvironmentIdsAtom);
+
+    expect(live).not.toBe(empty);
+    expect(live).toEqual(new Set([OTHER_ENVIRONMENT_ID]));
+
+    harness.registry.set(
+      harness.shellStateAtom(OTHER_ENVIRONMENT_ID),
+      shellState({
+        status: "live",
+        updatedAt: "2026-06-03T00:00:00.000Z",
+      }),
+    );
+    expect(harness.registry.get(harness.liveEnvironmentIdsAtom)).toBe(live);
   });
 });

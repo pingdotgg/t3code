@@ -10,6 +10,7 @@
 - [Source control](./user/source-control.md)
 - [Project settings](./user/project-settings.md)
 - [Appearance and themes](./user/appearance.md)
+- [Interaction sounds](./user/interaction-sounds.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Usage and limits](./user/usage.md)

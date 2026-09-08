@@ -5,6 +5,7 @@ import {
 import {
   createEnvironmentShellAtoms,
   createEnvironmentSnapshotAtom,
+  createLiveEnvironmentIdsAtom,
   createShellEnvironmentAtoms,
   type EnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
@@ -20,6 +21,12 @@ import { isHostedStaticApp } from "../hostedPairing";
 export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntime);
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
+
+export const liveEnvironmentIdsAtom = createLiveEnvironmentIdsAtom({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  shellStateValueAtom: environmentShell.stateValueAtom,
+  label: "web-live-environment-ids",
+});
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
