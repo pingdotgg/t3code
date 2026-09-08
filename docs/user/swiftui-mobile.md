@@ -82,7 +82,6 @@ Codex file citations open the cited file when available. Artifact templates incl
 **Use** action. **Use** inserts an editable prompt into the composer. Review or change it before
 you send it.
 
-
 ## Stopping a turn
 
 Tap **Stop** to request cancellation. **Stopping…** remains visible while the app waits for the
