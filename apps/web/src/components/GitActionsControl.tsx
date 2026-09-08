@@ -1539,6 +1539,19 @@ export default function GitActionsControl({
     });
   };
 
+  const runSplitDialogAction = (featureBranch = false) => {
+    if (!isSplitCommitDialogOpen) return;
+    setIsSplitCommitDialogOpen(false);
+    setExcludedFiles(new Set());
+    setIsEditingFiles(false);
+    void runGitActionWithToast({
+      action: "commit",
+      splitCommits: true,
+      ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+      ...(featureBranch ? { featureBranch: true, skipDefaultBranchPrompt: true } : {}),
+    });
+  };
+
   const openChangedFileInEditor = (filePath: string) => {
     if (workingTreeRoot === null) {
       toastManager.add({
@@ -1984,6 +1997,17 @@ export default function GitActionsControl({
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
+              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+                <span className="text-muted-foreground">Branch</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span className="font-medium">
+                    {gitStatusForActions?.refName ?? "(detached HEAD)"}
+                  </span>
+                  {isDefaultRef && (
+                    <span className="text-right text-warning">Warning: default refName</span>
+                  )}
+                </span>
+              </div>
               <CommitFileSelection
                 files={allFiles}
                 excludedFiles={excludedFiles}
@@ -2012,19 +2036,14 @@ export default function GitActionsControl({
               Cancel
             </Button>
             <Button
+              variant="outline"
               size="sm"
               disabled={!canWriteSourceControl || noneSelected}
-              onClick={() => {
-                setIsSplitCommitDialogOpen(false);
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
-                void runGitActionWithToast({
-                  action: "commit",
-                  splitCommits: true,
-                  ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
-                });
-              }}
+              onClick={() => runSplitDialogAction(true)}
             >
+              Commit on new branch
+            </Button>
+            <Button size="sm" disabled={!canWriteSourceControl || noneSelected} onClick={() => runSplitDialogAction()}>
               Split &amp; commit
             </Button>
           </DialogFooter>

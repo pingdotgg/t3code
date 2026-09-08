@@ -3937,13 +3937,13 @@ export const make = Effect.gen(function* () {
 
         if (
           input.splitCommits &&
-          (input.action !== "commit" || input.commitMessage !== undefined || input.featureBranch)
+          (input.action !== "commit" || input.commitMessage !== undefined)
         ) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
             detail:
-              "Logical commit splitting is only supported for commit actions without a custom message or feature ref.",
+              "Logical commit splitting is only supported for commit actions without a custom message.",
           });
         }
 

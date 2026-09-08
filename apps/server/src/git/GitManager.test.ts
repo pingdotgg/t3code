@@ -3893,6 +3893,65 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("creates a feature branch before splitting changes into logical commits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.ts"), "export const alpha = 1;\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.ts"), "export const beta = 2;\n");
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: (input) => {
+            const hunkIdByPath = new Map(
+              input.changeUnitSummary.split(/\r?\n/g).map((line) => {
+                const [hunkId = "", path = ""] = line.split("\t");
+                return [path, hunkId] as const;
+              }),
+            );
+            return Effect.succeed({
+              commits: [
+                {
+                  subject: "Add alpha behavior",
+                  body: "",
+                  hunkIds: [hunkIdByPath.get("alpha.ts") ?? ""],
+                },
+                {
+                  subject: "Add beta behavior",
+                  body: "",
+                  hunkIds: [hunkIdByPath.get("beta.ts") ?? ""],
+                },
+              ],
+            });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        splitCommits: true,
+        featureBranch: true,
+      });
+
+      expect(result.branch).toEqual({
+        status: "created",
+        name: "feature/implement-stacked-git-actions",
+      });
+      expect(result.commit).toMatchObject({ status: "created", commitCount: 2 });
+      expect(
+        yield* runGit(repoDir, ["branch", "--show-current"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe("feature/implement-stacked-git-actions");
+      expect(
+        yield* runGit(repoDir, ["log", "-2", "--pretty=%s"]).pipe(
+          Effect.map((output) => output.stdout.trim().split("\n")),
+        ),
+      ).toEqual(["Add beta behavior", "Add alpha behavior"]);
+    }),
+  );
+
   it.effect("splits distant hunks in the same file into separate commits", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
