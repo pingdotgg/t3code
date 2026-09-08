@@ -18,24 +18,9 @@ struct FeatureWorkspaceNavigationRequest: Equatable, Sendable {
     }
 }
 
-struct WorkspaceThreadSelection: Equatable {
-    private(set) var selectedID: String?
-    private(set) var lastOpenedID: String?
-
-    var highlightedID: String? { selectedID ?? lastOpenedID }
-
-    mutating func open(_ id: String) {
-        selectedID = id
-        lastOpenedID = id
-    }
-
-    mutating func close() {
-        selectedID = nil
-    }
-}
-
 public struct WorkspaceView: View {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @SwiftUI.Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @Bindable var model: FeatureRootModel
     private let navigationRequest: FeatureWorkspaceNavigationRequest?
@@ -81,8 +66,8 @@ public struct WorkspaceView: View {
         self.submitMessage = { submission in await model.sendMessage(submission) }
     }
 
-    public var body: some View {
-        NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
+    private var workspaceNavigation: some View {
+        NavigationSplitView(preferredCompactColumn: compactColumnBinding) {
             sidebar
                 .navigationSplitViewColumnWidth(
                     min: T3Metrics.minimumSidebarWidth,
@@ -93,6 +78,17 @@ public struct WorkspaceView: View {
             detail
         }
         .navigationSplitViewStyle(.balanced)
+        .task(id: presentedThreadID) { [id = presentedThreadID] in
+            guard let id else { return }
+            await model.runThreadPresentation(id: id)
+        }
+        .onChange(of: horizontalSizeClass) { _, _ in
+            reconcileThreadPresentation()
+        }
+    }
+
+    public var body: some View {
+        workspaceNavigation
         .sheet(isPresented: $showingNewTask) {
             NewThreadView(
                 model: model,
@@ -297,7 +293,8 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: closeSelectedThread,
+                managesThreadPresentation: false
             )
             .id(id)
         } else {
@@ -598,6 +595,31 @@ public struct WorkspaceView: View {
     private var selectedProjectIsAvailable: Bool {
         guard let selectedProjectID else { return true }
         return model.snapshot.projects.contains { $0.id == selectedProjectID }
+    }
+
+    private var compactColumnBinding: Binding<NavigationSplitViewColumn> {
+        Binding(
+            get: { preferredCompactColumn },
+            set: { column in
+                preferredCompactColumn = column
+                reconcileThreadPresentation()
+            }
+        )
+    }
+
+    private var presentedThreadID: String? {
+        guard let id = threadSelection.presentedID(
+            isCompact: horizontalSizeClass == .compact,
+            showsDetailColumn: preferredCompactColumn == .detail
+        ), model.snapshot.threads.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
+
+    private func reconcileThreadPresentation() {
+        threadSelection.reconcilePresentation(
+            isCompact: horizontalSizeClass == .compact,
+            showsDetailColumn: preferredCompactColumn == .detail
+        )
     }
 
     private func openThread(_ id: String) {
