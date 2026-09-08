@@ -128,6 +128,102 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   return path.resolve(expandHomePathWith(input.cwd, path), input.partialPath);
 });
 
+const NON_GIT_DOT_ENTRY_SCAN_MAX_ENTRIES = 25_000;
+const NON_GIT_DOT_ENTRY_SKIP_DIRS = new Set([".git", "node_modules"]);
+const NON_GIT_IGNORE_FILE_NAMES = new Set([".gitignore", ".ignore"]);
+
+async function pathExistsForRepositoryDetection(input: string): Promise<boolean> {
+  try {
+    await NodeFSP.lstat(input);
+    return true;
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+    return code !== "ENOENT" && code !== "ENOTDIR";
+  }
+}
+
+async function hasGitMetadataInAncestors(root: string, path: Path.Path): Promise<boolean> {
+  let current = root;
+  while (true) {
+    if (await pathExistsForRepositoryDetection(path.join(current, ".git"))) {
+      return true;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
+  }
+}
+
+/**
+ * FFF intentionally skips root dot-entries for non-Git workspaces as a
+ * safeguard for home/root scans. For an ordinary project with no ignore
+ * rules, collect those omitted roots and their descendants. If ignore
+ * semantics or an incomplete scan make that unsafe to infer, keep FFF's
+ * result unchanged.
+ */
+async function collectNonGitRootDotEntries(
+  root: string,
+  path: Path.Path,
+): Promise<ReadonlyArray<ProjectListEntriesResult["entries"][number]> | null> {
+  const rootDirents = await NodeFSP.readdir(root, { withFileTypes: true }).catch(() => null);
+  if (!rootDirents || rootDirents.some((dirent) => NON_GIT_IGNORE_FILE_NAMES.has(dirent.name))) {
+    return null;
+  }
+
+  const entries: Array<ProjectListEntriesResult["entries"][number]> = [];
+  const pendingDirectories: string[] = [];
+  let scannedEntries = rootDirents.length;
+  if (scannedEntries > NON_GIT_DOT_ENTRY_SCAN_MAX_ENTRIES) {
+    return null;
+  }
+
+  for (const dirent of rootDirents) {
+    if (!dirent.name.startsWith(".") || NON_GIT_DOT_ENTRY_SKIP_DIRS.has(dirent.name)) {
+      continue;
+    }
+    entries.push({
+      path: dirent.name,
+      kind: dirent.isDirectory() ? "directory" : "file",
+    });
+    if (dirent.isDirectory()) {
+      pendingDirectories.push(dirent.name);
+    }
+  }
+
+  for (let index = 0; index < pendingDirectories.length; index += 1) {
+    const relativeDirectory = pendingDirectories[index]!;
+    const dirents = await NodeFSP.readdir(path.join(root, relativeDirectory), {
+      withFileTypes: true,
+    }).catch(() => null);
+    if (!dirents || dirents.some((dirent) => NON_GIT_IGNORE_FILE_NAMES.has(dirent.name))) {
+      return null;
+    }
+
+    scannedEntries += dirents.length;
+    if (scannedEntries > NON_GIT_DOT_ENTRY_SCAN_MAX_ENTRIES) {
+      return null;
+    }
+
+    for (const dirent of dirents) {
+      const relativePath = `${relativeDirectory}/${dirent.name}`;
+      if (NON_GIT_DOT_ENTRY_SKIP_DIRS.has(dirent.name)) {
+        continue;
+      }
+      entries.push({
+        path: relativePath,
+        kind: dirent.isDirectory() ? "directory" : "file",
+      });
+      if (dirent.isDirectory()) {
+        pendingDirectories.push(relativePath);
+      }
+    }
+  }
+
+  return entries;
+}
+
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -265,7 +361,7 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
-      return yield* Effect.gen(function* () {
+      const indexedResult = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
       }).pipe(
@@ -275,6 +371,44 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
+
+      if (
+        indexedResult.truncated ||
+        normalizedCwd === path.resolve(NodeOS.homedir()) ||
+        path.dirname(normalizedCwd) === normalizedCwd ||
+        (yield* Effect.promise(() => hasGitMetadataInAncestors(normalizedCwd, path)))
+      ) {
+        return indexedResult;
+      }
+
+      const dotEntries = yield* Effect.promise(() =>
+        collectNonGitRootDotEntries(normalizedCwd, path),
+      );
+      if (!dotEntries || dotEntries.length === 0) {
+        return indexedResult;
+      }
+
+      const indexedPaths = new Set(indexedResult.entries.map((entry) => entry.path));
+      const supplementalEntries = dotEntries
+        .filter((entry) => !indexedPaths.has(entry.path))
+        .toSorted((left, right) => left.path.localeCompare(right.path));
+      if (supplementalEntries.length === 0) {
+        return indexedResult;
+      }
+
+      const remainingCapacity = Math.max(
+        0,
+        NON_GIT_DOT_ENTRY_SCAN_MAX_ENTRIES - indexedResult.entries.length,
+      );
+      const acceptedSupplementalEntries = supplementalEntries.slice(0, remainingCapacity);
+      const entries = [...indexedResult.entries, ...acceptedSupplementalEntries].toSorted(
+        (left, right) => left.path.localeCompare(right.path),
+      );
+
+      return {
+        entries,
+        truncated: acceptedSupplementalEntries.length < supplementalEntries.length,
+      };
     },
   );
 
