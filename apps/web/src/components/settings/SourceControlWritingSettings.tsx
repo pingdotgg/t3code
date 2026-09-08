@@ -218,6 +218,7 @@ export function SourceControlWritingSettingsSection() {
         {...searchableSetting("follow-change-request-templates")}
         description="Use the repository's template for change request descriptions when available."
         resetAction={
+          writingStyleMixed ||
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
               label="change request templates"
