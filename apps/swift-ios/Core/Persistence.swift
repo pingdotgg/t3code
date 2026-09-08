@@ -337,6 +337,9 @@ public actor EnvironmentStore {
         }
         let data = try Data(contentsOf: fileURL)
         let document = try JSONDecoder.t3.decode(Document.self, from: data)
+        guard document.version == 1 else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
         cached = document
         return document
     }
