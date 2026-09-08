@@ -230,8 +230,18 @@ public enum FeatureOutboxPolicy {
 
 public actor FeatureOutboxStore {
     private struct Document: Codable {
-        var version = 1
+        static let currentVersion = 1
+
+        var version = currentVersion
         var submissions: [FeatureQueuedSubmission]
+    }
+
+    private struct UnsupportedDocumentVersion: LocalizedError {
+        let version: Int
+
+        var errorDescription: String? {
+            "The saved message queue uses unsupported version \(version)."
+        }
     }
 
     public static let shared = FeatureOutboxStore()
@@ -266,6 +276,9 @@ public actor FeatureOutboxStore {
             Document.self,
             from: Data(contentsOf: fileURL)
         )
+        guard document.version == Document.currentVersion else {
+            throw UnsupportedDocumentVersion(version: document.version)
+        }
         cached = document.submissions.map { submission in
             var submission = submission
             submission.interactionMode = submission.interactionMode.mobileNormalized

@@ -5,6 +5,52 @@ import Testing
 @Suite("Durable mobile outbox")
 struct FeatureOutboxStoreTests {
     @Test
+    func unreadableDocumentCannotBeSilentlyReplacedByTheNextMutation() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-feature-outbox-corrupt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("outbox.json")
+        let original = Data("{not valid json".utf8)
+        try original.write(to: fileURL)
+        let store = FeatureOutboxStore(fileURL: fileURL)
+
+        do {
+            _ = try await store.submissions()
+            Issue.record("A corrupt outbox must not be treated as empty.")
+        } catch {}
+
+        do {
+            try await store.enqueue(queuedSubmission(text: "Must not replace the recovery copy"))
+            Issue.record("Mutation must remain blocked while the persisted outbox is unreadable.")
+        } catch {}
+        #expect(try Data(contentsOf: fileURL) == original)
+    }
+
+    @Test
+    func futureDocumentVersionIsPreservedInsteadOfDecodedAsCurrent() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-feature-outbox-future-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fileURL = directory.appendingPathComponent("outbox.json")
+        let original = Data(#"{"version":2,"submissions":[]}"#.utf8)
+        try original.write(to: fileURL)
+        let store = FeatureOutboxStore(fileURL: fileURL)
+
+        do {
+            _ = try await store.submissions()
+            Issue.record("A future outbox version must require an explicit migration.")
+        } catch {}
+
+        do {
+            try await store.enqueue(queuedSubmission(text: "Must not downgrade the document"))
+            Issue.record("Mutation must not overwrite a future-version outbox.")
+        } catch {}
+        #expect(try Data(contentsOf: fileURL) == original)
+    }
+
+    @Test
     func roundTripPreservesStableWireIdentityAndAttachments() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-feature-outbox-\(UUID().uuidString)", isDirectory: true)
@@ -332,6 +378,19 @@ struct FeatureOutboxStoreTests {
                 snapshot: snapshot,
                 pendingCreationThreadIDs: [creation.threadID]
             ) == .wait
+        )
+    }
+
+    private func queuedSubmission(text: String) -> FeatureQueuedSubmission {
+        FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: FeatureSubmissionIdentity(),
+            threadID: "thread-1",
+            text: text,
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: []
         )
     }
 }
