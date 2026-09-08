@@ -221,9 +221,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
               ]
             : [],
         );
+        // The OAuth usage read carries no subscription tier, and the pooled
+        // views treat a plan label as part of the account's identity, so the
+        // hub claims none rather than a placeholder a native tier would not match.
         return {
           ...base,
-          plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
             response: {

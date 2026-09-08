@@ -403,9 +403,53 @@ describe("pools", () => {
 
   it("still merges same-email accounts when both sides report the same plan", () => {
     const native = provider({
+      auth: {
+        status: "authenticated",
+        email: "same@example.com",
+        label: "ChatGPT Plus Subscription",
+      },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "codex-same@example.com.json",
+                    driver: ProviderDriverKind.make("codex"),
+                    email: "same@example.com",
+                    plan: "ChatGPT Plus Subscription",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T11:30:00.000Z",
+                      windows: [{ ...window, usedPercent: 55 }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
+  it("merges a native Claude tier with the hub's tierless read of the same account", () => {
+    const native = provider({
       driver: claude,
       instanceId: ProviderInstanceId.make("claude"),
-      auth: { status: "authenticated", email: "same@example.com", label: "Claude Subscription" },
+      auth: {
+        status: "authenticated",
+        email: "same@example.com",
+        label: "Claude Max Subscription",
+      },
       usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
     });
     const input = new Map([
@@ -423,7 +467,6 @@ describe("pools", () => {
                     id: "claude-same@example.com.json",
                     driver: claude,
                     email: "same@example.com",
-                    plan: "Claude Subscription",
                     usageLimits: {
                       checkedAt: "2026-09-03T11:30:00.000Z",
                       windows: [{ ...window, usedPercent: 55 }],
@@ -436,7 +479,10 @@ describe("pools", () => {
         },
       ],
     ]);
-    expect(collectLimitAccounts(input)).toHaveLength(1);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.plan).toBe("Claude Max Subscription");
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
   it("keeps same-email Codex instances apart when their plans differ", () => {
