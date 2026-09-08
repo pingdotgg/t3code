@@ -1978,17 +1978,18 @@ describe("fast completion delivery", () => {
 
 describe("signed APNs registration metadata", () => {
   for (const kind of ["live_activity_update", "push_notification"] as const) {
-    for (const changed of ["bundle", "environment"] as const) {
-      it.effect(`skips ${kind} when the ${changed} changes without token rotation`, () => {
+    for (const changed of ["bundle", "environment", "legacy"] as const) {
+      it.effect(`routes ${kind} using current registration with ${changed} job metadata`, () => {
         const attempts: DeliveryAttempts.DeliveryAttemptInput[] = [];
-        let sent = 0;
+        const requests: HttpClientRequest.HttpClientRequest[] = [];
         const payload = makeApnsDeliveryJobPayload({
           kind,
           userId: target.user_id,
           deviceId: target.device_id,
           token: "unchanged-token",
-          bundleId: "com.t3tools.t3code.dev",
-          apsEnvironment: "sandbox",
+          ...(changed === "legacy"
+            ? {}
+            : { bundleId: "com.t3tools.t3code.dev", apsEnvironment: "sandbox" as const }),
           aggregate: kind === "live_activity_update" ? aggregate : null,
           ...(kind === "push_notification"
             ? {
@@ -2012,8 +2013,14 @@ describe("signed APNs registration metadata", () => {
         return Effect.gen(function* () {
           const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
           const result = yield* deliveries.processSignedJob(signed);
-          expect(sent).toBe(0);
-          expect(result.apnsReason).toBe("Stale APNs delivery job skipped.");
+          expect(result.ok).toBe(true);
+          expect(requests).toHaveLength(1);
+          expect(requests[0]?.url).toBe(
+            `${changed === "environment" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com"}/3/device/unchanged-token`,
+          );
+          expect(requests[0]?.headers["apns-topic"]).toBe(
+            `${changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
+          );
         }).pipe(
           Effect.provide(
             makeLayer({
@@ -2031,7 +2038,7 @@ describe("signed APNs registration metadata", () => {
               ],
               execute: (request) =>
                 Effect.sync(() => {
-                  sent++;
+                  requests.push(request);
                   return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
                 }),
             }),
