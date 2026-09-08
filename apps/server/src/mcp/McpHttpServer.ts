@@ -130,6 +130,11 @@ const cutEntryStrings = <A>(entry: A): A =>
       ) as A)
     : entry;
 
+const hasLongString = (entry: unknown, max: number) =>
+  typeof entry === "object" &&
+  entry !== null &&
+  Object.values(entry).some((value) => typeof value === "string" && value.length > max);
+
 type SnapshotMetadata = {
   readonly url: string;
   readonly title: string;
@@ -162,8 +167,18 @@ const boundSnapshotMetadata = (
     if (entries.length > MAX_SNAPSHOT_LOG_ENTRIES) {
       omitted.push(`${entries.length - MAX_SNAPSHOT_LOG_ENTRIES} older ${label}`);
     }
-    return entries.slice(-MAX_SNAPSHOT_LOG_ENTRIES).map(cutEntryStrings);
+    const kept = entries.slice(-MAX_SNAPSHOT_LOG_ENTRIES);
+    if (kept.some((entry) => hasLongString(entry, MAX_SNAPSHOT_LOG_TEXT_CHARS))) {
+      omitted.push(`${label} text after ${MAX_SNAPSHOT_LOG_TEXT_CHARS} characters`);
+    }
+    return kept.map(cutEntryStrings);
   };
+  if (
+    metadata.url.length > MAX_SNAPSHOT_IDENTIFIER_CHARS ||
+    metadata.title.length > MAX_SNAPSHOT_IDENTIFIER_CHARS
+  ) {
+    omitted.push(`url or title after ${MAX_SNAPSHOT_IDENTIFIER_CHARS} characters`);
+  }
   if (
     metadata.interactiveElements.some(
       (element) => element.name.length > MAX_SNAPSHOT_ELEMENT_NAME_CHARS,

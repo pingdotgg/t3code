@@ -435,6 +435,10 @@ it.effect("bounds the snapshot text even when nothing but logs and the title are
       };
       expect(parsed.title.length).toBe(2_049);
       expect(parsed.consoleEntries[0]?.text.length).toBe(501);
+      const notice = snapshot.content[1];
+      const noticeText = notice?.type === "text" ? notice.text : "";
+      expect(noticeText).toContain("url or title after 2048 characters");
+      expect(noticeText).toContain("console entries text after 500 characters");
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
