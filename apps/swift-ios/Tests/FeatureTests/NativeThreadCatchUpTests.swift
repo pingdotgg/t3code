@@ -37,6 +37,11 @@ final class NativeThreadCatchUpTests: XCTestCase {
                 _ = try await fixture.client.loadThread(id: fixture.firstID)
                 let detail = try await nextThreadRequest(&requests)
                 _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                // HTTP readiness can precede installation of the subscription's
+                // connection UUID. Establish this stream's own live boundary
+                // before counting the already-synchronized burst publications.
+                try await detail.synchronize()
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
                 try await detail.sendBurst(count: 100, includeMarker: true)
                 var publications = 0
                 var sawLive = false
@@ -83,6 +88,8 @@ final class NativeThreadCatchUpTests: XCTestCase {
                 _ = try await fixture.client.loadThread(id: fixture.firstID)
                 let detail = try await nextThreadRequest(&requests)
                 _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await detail.synchronize()
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
                 try await detail.sendBurst(count: 1, includeMarker: false)
                 guard await entries.next(isolation: #isolation) != nil else { throw CancellationError() }
                 await clock.release()
@@ -125,6 +132,8 @@ final class NativeThreadCatchUpTests: XCTestCase {
                 var entries = clock.entries.makeAsyncIterator()
                 _ = try await fixture.client.loadThread(id: fixture.firstID)
                 let detail = try await nextThreadRequest(&requests)
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await detail.synchronize()
                 _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
                 try await detail.sendBurst(count: 1, includeMarker: false)
                 guard await entries.next(isolation: #isolation) != nil else { throw CancellationError() }
