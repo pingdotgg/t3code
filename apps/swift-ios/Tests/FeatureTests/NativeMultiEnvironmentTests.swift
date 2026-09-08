@@ -2408,18 +2408,35 @@ struct NativePassiveLiveShellTests {
             aggregateRefreshReceipt: { receipts.record($0) }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        _ = try await fixture.client.initialSnapshot()
+        let seed = try await fixture.client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: fixture.client.events())
+        defer { recorder.stop() }
         await server.waitForSubscriptions(host: "two.example", count: 1)
         try await receipts.waitForHTTP("two", count: 1)
         try await server.snapshot(multiEnvironmentShell(
             projectID: "project-two", threadID: "thread-two", title: "Selected peer", snapshotSequence: 10
         ), host: "two.example")
         try await receipts.waitForShells("two", count: 1)
+        // A same-socket HTTP refresh must retain the epoch association even
+        // when its complete snapshot is identical to the last socket snapshot.
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Selected peer", snapshotSequence: 10
+        ), host: "two.example")
+        let readsBeforeRename = await fixture.transport.shellReadCount(host: "two.example")
+        try await fixture.client.renameThread(
+            id: FeatureScopedID.thread(environmentID: "two", wireID: "thread-two"), title: "Selected peer"
+        )
+        #expect(await fixture.transport.shellReadCount(host: "two.example") == readsBeforeRename + 1)
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Remote work", snapshotSequence: 1
+        ), host: "two.example")
         let oldWorker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
+        let adoptedHTTPCount = receipts.httpCount("two") + 1
         _ = try await fixture.runtime.activate(id: "two")
         let selected = try await fixture.client.initialSnapshot()
         await oldWorker.value
         await server.waitForSubscriptions(host: "two.example", count: 2)
+        try await receipts.waitForHTTP("two", count: adoptedHTTPCount)
         #expect(oldWorker.isCancelled)
         #expect(fixture.client.aggregateRefreshWorkers["two"] == nil)
         #expect(selected.environments.first { $0.isActive }?.id == "two")
@@ -2432,6 +2449,21 @@ struct NativePassiveLiveShellTests {
         let snapshot = try await fixture.client.backgroundSnapshot()
         #expect(snapshot.threads.first { $0.environmentID == "two" }?.title == "Selected peer")
         #expect(snapshot.threads.first { $0.environmentID == "one" }?.title == "New passive peer")
+
+        // Retaining the adopted socket's sequence must not pin a genuinely
+        // replacement socket to that old high watermark after a server restart.
+        let restarted = multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Restarted active peer", snapshotSequence: 2
+        )
+        await fixture.transport.setShell(restarted, host: "two.example")
+        await server.closeLatest(host: "two.example")
+        await server.waitForSubscriptions(host: "two.example", count: 3)
+        try await server.snapshot(restarted, host: "two.example")
+        let recovered = try await recorder.wait {
+            $0.connection.state == .connected
+                && $0.threads.first { $0.environmentID == "two" }?.title == "Restarted active peer"
+        }
+        #expect(recovered.threads.first { $0.environmentID == "two" }?.title == "Restarted active peer")
         await fixture.client.disconnect()
     }
 
@@ -2502,13 +2534,19 @@ struct NativePassiveLiveShellTests {
         let threadID = FeatureScopedID.thread(environmentID: "two", wireID: "thread-two")
         await server.waitForSubscriptions(host: "two.example", count: 1)
         try await receipts.waitForHTTP("two", count: 1)
+        // HTTP completion can mean a rejected read after the socket epoch
+        // changed. Establish an applied baseline before using its detail route.
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Before removal", snapshotSequence: 9
+        ), host: "two.example")
+        try await receipts.waitForShells("two", count: 1)
         _ = try await fixture.client.loadThread(id: threadID)
         await server.waitForSubscriptions(host: "two.example#detail", count: 1)
         let baseline = multiEnvironmentShell(projectID: "project-two", threadID: "thread-two", title: "Removed", snapshotSequence: 10)
         try await server.snapshot(OrchestrationShellSnapshot(
             snapshotSequence: 10, projects: baseline.projects, threads: [], updatedAt: baseline.updatedAt
         ), host: "two.example")
-        try await receipts.waitForShells("two", count: 1)
+        try await receipts.waitForShells("two", count: 2)
         await server.waitForInterrupts(host: "two.example#detail", count: 1)
         #expect(await server.subscriptionCount(host: "one.example") == 1)
         await fixture.client.disconnect()
@@ -2618,6 +2656,14 @@ private actor PassiveLiveServer: WebSocketConnecting {
             resumeWaiters()
         }
         if value["_tag"]?.stringValue == "Ping" { return .object(["_tag": .string("Pong")]) }
+        if value["tag"]?.stringValue == RPCMethod.dispatchCommand.rawValue,
+           value["payload"]?["type"]?.stringValue == "thread.meta.update",
+           case let .number(id)? = value["id"] {
+            return .object([
+                "_tag": .string("Exit"), "requestId": .number(id),
+                "exit": .object(["_tag": .string("Success"), "value": try JSONValue.encode(DispatchResult(sequence: 10))]),
+            ])
+        }
         if value["tag"]?.stringValue == RPCMethod.getArchivedShellSnapshot.rawValue,
            let gate = archiveGates.removeValue(forKey: host) { await gate.enter() }
         return try await configs.response(to: value, host: host)
@@ -2947,8 +2993,9 @@ struct NativeIncrementalBootstrapTests {
 
     @Test("A failed initial socket attempt cannot invalidate its independent HTTP read", .timeLimit(.minutes(1)))
     func failedSocketDoesNotStarveHTTP() async throws {
+        let connector = FailedBootstrapAttemptConnector()
         let fixture = try await NativeMultiEnvironmentTests.makeFixture(
-            fallbackPollingInitialDelay: .seconds(60), aggregatePublishSleep: {}
+            webSocketConnector: connector, fallbackPollingInitialDelay: .seconds(60), aggregatePublishSleep: {}
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let held = PassiveRequestGate()
@@ -2956,14 +3003,20 @@ struct NativeIncrementalBootstrapTests {
         let seed = try await fixture.client.initialSnapshot()
         let recorder = BootstrapSnapshotRecorder(seed: seed, events: fixture.client.events())
         defer { recorder.stop() }
+        do {
         try await held.waitUntilEnteredCancellable()
-        _ = try await recorder.wait { $0.connection.detail == "Live updates paused. Refreshing over HTTP." }
+        try await connector.waitForFailure()
         await held.release()
         let ready = try await recorder.wait {
             $0.environments.first { $0.id == "one" }?.connectionState == .connected
         }
         #expect(ready.threads.contains { $0.environmentID == "one" })
         #expect(await fixture.transport.shellReadCount(host: "one.example") == 1)
+        } catch {
+            await held.release()
+            await fixture.client.disconnect()
+            throw error
+        }
         await fixture.client.disconnect()
     }
 }
@@ -3207,5 +3260,24 @@ private final class OwnedOutboxRemovalWaiter {
         source?.cancel()
         source = nil
         pending?.resume(with: result)
+    }
+}
+
+
+/// Observe the failed connector attempt itself: the RPC subscription deliberately
+/// keeps waiting for its first usable socket instead of failing with a UI header.
+private actor FailedBootstrapAttemptConnector: WebSocketConnecting {
+    private let failures = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+
+    func connect(to url: URL) async throws -> any WebSocketConnection {
+        if url.host == "one.example" { failures.continuation.yield(()) }
+        throw URLError(.cannotConnectToHost)
+    }
+
+    func waitForFailure() async throws {
+        try Task.checkCancellation()
+        var iterator = failures.stream.makeAsyncIterator()
+        guard await iterator.next() != nil else { throw CancellationError() }
+        try Task.checkCancellation()
     }
 }

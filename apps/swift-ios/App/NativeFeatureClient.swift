@@ -116,6 +116,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var activeHydrationID: UUID?
     private var activeHydrationPending = false
     private var activeHTTPAuthorityRevision = 0
+    private var shellConnectionIDsByEnvironmentID: [String: UUID] = [:]
     private var activeShellConnectionID: UUID?
     private var activeShellEpochHasSnapshot = false
     private var activeHasHydrated = false
@@ -373,6 +374,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         activeShellEpochHasSnapshot = true
         activeHasHydrated = true
         if socketAuthoritative {
+            shellConnectionIDsByEnvironmentID[client.environment.id] = activeShellConnectionID
             activeStreamIsAuthoritative = true
             activeHTTPAuthorityRevision &+= 1
             activeHydrationPending = false
@@ -616,7 +618,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {
-        if !enabled { aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel() }
+        if !enabled {
+            shellConnectionIDsByEnvironmentID[id] = nil
+            aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
+        }
         try await runtime.setEnabled(id: id, enabled: enabled)
         if !enabled {
             environmentConnectionStates[id] = .disconnected
@@ -632,6 +637,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func removeEnvironment(id: String) async throws {
+        shellConnectionIDsByEnvironmentID[id] = nil
         aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
         let removesActiveEnvironment = activeEnvironment?.id == id
         let environment = try await runtime.environments().first { $0.id == id }
@@ -1017,6 +1023,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             latestShell = shellsByEnvironmentID[environment.id]
             return
         }
+        let bootstrapID = foregroundBootstrapID
+        let generation = environmentGeneration
+        let adoptedConnectionID = await newClient.currentConnectionID()
+        let selectedEnvironment = try? await runtime.activeEnvironment()
+        guard bootstrapID == foregroundBootstrapID, generation == environmentGeneration,
+              selectedEnvironment == environment else { return }
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
@@ -1027,8 +1039,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
-        activeShellConnectionID = nil
-        activeShellEpochHasSnapshot = false
+        // A passive snapshot is authoritative for adoption only while its
+        // exact socket is still current. A replacement socket starts a new epoch.
+        activeShellConnectionID = adoptedConnectionID
+        activeShellEpochHasSnapshot = adoptedConnectionID != nil
+            && shellConnectionIDsByEnvironmentID[environment.id] == adoptedConnectionID
         clearEnvironmentState(preserveEnvironmentSnapshots: true)
         activeEnvironment = environment
         client = newClient
@@ -1073,6 +1088,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         latestServerConfig = nil
         if !preserveEnvironmentSnapshots {
             environmentClients.removeAll()
+            shellConnectionIDsByEnvironmentID.removeAll()
             shellsByEnvironmentID.removeAll()
             shellProjectionCache.removeAll()
             indexedShellMembership = nil
@@ -3626,6 +3642,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     return
                 }
                 self.lastShellEventAt = nil
+                self.shellConnectionIDsByEnvironmentID[activeClient.environment.id] = nil
                 if self.activeStreamIsAuthoritative {
                     self.activeHTTPAuthorityRevision &+= 1
                 }
@@ -3914,6 +3931,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     guard owns(environment), epoch == state.epoch,
                           authority == state.authorityRevision, connectionID == currentConnection,
                           !state.isLive else { continue }
+                    // A validated HTTP snapshot remains in this socket's cache
+                    // epoch without claiming that the live stream is complete.
+                    if shell != nil { owner?.shellConnectionIDsByEnvironmentID[environment.id] = connectionID }
                     // The first authoritative response in this subscription epoch
                     // may reset a cache left over from a restarted server.
                     interval = applyShell(
@@ -3973,6 +3993,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         func markStreamPaused(_ environment: Environment) {
             guard let owner, owns(environment) else { return }
+            owner.shellConnectionIDsByEnvironmentID[environment.id] = nil
             owner.environmentConnectionStates[environment.id] = .reconnecting
             owner.environmentConnectionDetails[environment.id] = "Live updates paused. Refreshing over HTTP."
             schedulePublication(environment.id)
@@ -3998,6 +4019,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         environmentID: environment.id, wireID: removed.id
                     ))
                 }
+                owner.shellConnectionIDsByEnvironmentID[environment.id] = state.connectionID
                 state.authorityRevision &+= 1
                 state.cacheEpoch = state.epoch
                 state.isLive = true
@@ -4881,6 +4903,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) {
         let savedIDs = Set(savedEnvironments.map(\.id))
         environmentClients = environmentClients.filter { savedIDs.contains($0.key) }
+        shellConnectionIDsByEnvironmentID = shellConnectionIDsByEnvironmentID.filter { savedIDs.contains($0.key) }
         shellsByEnvironmentID = shellsByEnvironmentID.filter { savedIDs.contains($0.key) }
         shellProjectionCache = shellProjectionCache.filter { savedIDs.contains($0.key) }
         serverConfigsByEnvironmentID = serverConfigsByEnvironmentID.filter {
@@ -5238,6 +5261,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             archivedShellThreadsByEnvironmentID[sourceEnvironment.id] = Dictionary(
                 uniqueKeysWithValues: archivedShell.threads.map { ($0.id, $0) }
             )
+        }
+        if let refreshGuard {
+            shellConnectionIDsByEnvironmentID[sourceEnvironment.id] = refreshGuard.connectionID
         }
         shellsByEnvironmentID[sourceEnvironment.id] = shell
         if markSourceConnected {
