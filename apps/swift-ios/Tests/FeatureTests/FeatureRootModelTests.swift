@@ -1691,8 +1691,67 @@ struct FeatureRootModelTests {
         #expect(model.details[thread.id]?.messages.last?.state == .queued)
     }
 
+    @Test(arguments: ["accepted", "cancelled", "network", "rejected"])
+    func queuedMessageWaitsForAcceptance(outcome: String) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-queued-feedback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "thread-1", projectID: "project-1", environmentID: "environment-1", title: "Thread"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(
+                id: "environment-1", name: "Studio", endpoint: "https://studio.example",
+                isActive: true, connectionState: .connected
+            )],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        let started = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<Void, any Error>?
+        client.beforeSendMessageReturn = {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                response = continuation
+                started.continuation.yield()
+            }
+        }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+        let send = Task { await model.sendMessage(threadID: thread.id, text: "Queued response", selection: nil) }
+        var requests = started.stream.makeAsyncIterator()
+        await requests.next()
+        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+        #expect(try await store.submissions().count == 1)
+        switch outcome {
+        case "cancelled": response?.resume(throwing: CancellationError())
+        case "network": response?.resume(throwing: URLError(.notConnectedToInternet))
+        case "rejected": response?.resume(throwing: FeatureCapabilityUnavailable("Rejected message"))
+        default: response?.resume()
+        }
+        let sent = await send.value
+        #expect(client.sendMessageCallCount == 1)
+        switch outcome {
+        case "accepted":
+            #expect(sent)
+            #expect(model.details[thread.id]?.messages.last?.state == .complete)
+            #expect(try await store.submissions().isEmpty)
+        case "rejected":
+            #expect(!sent)
+            #expect(model.details[thread.id]?.messages.isEmpty == true)
+            #expect(try await store.submissions().isEmpty)
+        default:
+            #expect(sent, "Ambiguous delivery remains queued for stable-identity retry")
+            #expect(model.details[thread.id]?.messages.last?.state == .queued)
+            #expect(try await store.submissions().count == 1)
+        }
+    }
+
     @Test
-    func failedDeliveryCleanupKeepsTheDurableAndOptimisticSubmission() async throws {
+    func failedDeliveryCleanupKeepsAcceptedStateAndTheDurableSubmission() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-completion-failure-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -1749,8 +1808,49 @@ struct FeatureRootModelTests {
         #expect(client.sendMessageCallCount == 1)
         #expect(try await store.submissions().count == 1)
         #expect(model.details[thread.id]?.messages.last?.text == "Already delivered")
-        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+        #expect(model.details[thread.id]?.messages.last?.state == .complete)
         #expect(model.errorMessage?.contains("delivered") == true)
+        guard case let .delta(delta) = model.detailRenderUpdates[thread.id]?.change else {
+            Issue.record("Expected accepted message to update the existing timeline row")
+            return
+        }
+        #expect(delta.changedMessages == model.details[thread.id]?.messages)
+        #expect(delta.changedMessages.first?.state == .complete)
+
+        // A stale detail read must retain accepted local feedback while cleanup is pending.
+        _ = await model.detail(for: thread.id, force: true)
+        #expect(model.details[thread.id]?.messages.last?.state == .complete)
+        #expect(client.sendMessageCallCount == 1)
+
+        let accepted = try #require(await store.submissions().first)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o700))], ofItemAtPath: directory.path
+        )
+        client.beforeSendMessage = nil
+        client.sendMessageError = URLError(.notConnectedToInternet)
+        #expect(await model.sendMessage(threadID: thread.id, text: "Retry boundary", selection: nil))
+        client.sendMessageError = nil
+        let retryEntered = AsyncStream<Void>.makeStream()
+        var retryResponse: CheckedContinuation<Void, any Error>?
+        client.beforeSendMessageReturn = {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                retryResponse = continuation
+                retryEntered.continuation.yield()
+            }
+        }
+        // This public boundary cancels the delayed retry and starts the owned drain now.
+        #expect(await model.setEnvironmentEnabled("environment-1", enabled: true))
+        var retries = retryEntered.stream.makeAsyncIterator()
+        await retries.next()
+        // Sorted drain reaches the later message only after completing the accepted copy.
+        #expect(try await store.submissions().allSatisfy { $0.id != accepted.id })
+        #expect(client.sentIdentities.filter { $0.commandID == accepted.identity.commandID }.count == 1)
+        #expect(model.details[thread.id]?.messages.first { $0.id == accepted.identity.messageID }?.state == .complete)
+        retryResponse?.resume(throwing: FeatureCapabilityUnavailable("Sentinel rejected"))
+        // Await the current drain's exit through its existing owner boundary.
+        #expect(await model.setEnvironmentEnabled("environment-1", enabled: true))
+        #expect(try await store.submissions().isEmpty)
+        #expect(client.sentIdentities.filter { $0.commandID == accepted.identity.commandID }.count == 1)
     }
 
     @Test
@@ -3584,6 +3684,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var startedFromOrigin = false
     var createThreadCallCount = 0
     var sendMessageCallCount = 0
+    var sentIdentities: [FeatureSubmissionIdentity] = []
     var sentRuntimeModes: [FeatureRuntimeMode] = []
     var setRuntimeModeCalls: [FeatureRuntimeMode] = []
     var cancelTurnCallCount = 0
@@ -3598,6 +3699,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var removedEnvironmentID: String?
     var beforeStartTask: (() async throws -> Void)?
     var beforeSendMessage: (() throws -> Void)?
+    var beforeSendMessageReturn: (() async throws -> Void)?
     var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
     var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
@@ -3770,6 +3872,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     func sendMessage(threadID: String, text: String, selection: FeatureSelection?) async throws {
         sendMessageCallCount += 1
         try beforeSendMessage?()
+        try await beforeSendMessageReturn?()
         if let sendMessageError { throw sendMessageError }
         sentText = text
     }
@@ -3780,8 +3883,9 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments _: [FeatureUploadAttachment],
-        identity _: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity
     ) async throws {
+        sentIdentities.append(identity)
         sentRuntimeModes.append(runtimeMode)
         try await sendMessage(threadID: threadID, text: text, selection: selection)
     }
