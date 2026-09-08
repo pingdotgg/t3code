@@ -42,6 +42,7 @@ import {
   resolveEnvironmentMachineKind,
   RuntimeMode,
   TerminalOpenInput,
+  type PreviewBrowserEngine,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
@@ -4081,12 +4082,12 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, navigate],
   );
   const createBrowserSurface = useCallback(
-    (profileId?: string) => {
+    (options?: { profileId?: string; engine?: PreviewBrowserEngine }) => {
       if (!activeThreadRef) return;
       void addBrowserSurface({
         threadRef: activeThreadRef,
         openPreview,
-        ...(profileId === undefined ? {} : { profileId }),
+        ...options,
       }).then((result) => {
         if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
         const error = squashAtomCommandFailure(result);
@@ -8602,7 +8603,9 @@ export default function ChatView(props: ChatViewProps) {
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
           onAddBrowser={() => createBrowserSurface()}
-          onAddBrowserInProfile={createBrowserSurface}
+          onAddBrowserInProfile={(profileId) => createBrowserSurface({ profileId })}
+          onAddBrowserInEngine={(engine) => createBrowserSurface({ engine })}
+          browserEngines={activePreviewState.engines}
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
@@ -8652,7 +8655,9 @@ export default function ChatView(props: ChatViewProps) {
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
             onAddBrowser={() => createBrowserSurface()}
-            onAddBrowserInProfile={createBrowserSurface}
+            onAddBrowserInProfile={(profileId) => createBrowserSurface({ profileId })}
+            onAddBrowserInEngine={(engine) => createBrowserSurface({ engine })}
+            browserEngines={activePreviewState.engines}
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}

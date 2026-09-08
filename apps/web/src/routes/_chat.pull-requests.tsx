@@ -1919,6 +1919,8 @@ function PullRequestsRouteView() {
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}
             onAddBrowserInProfile={() => undefined}
+            onAddBrowserInEngine={() => undefined}
+            browserEngines={[]}
             onAddTerminal={() => undefined}
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}

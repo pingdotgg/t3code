@@ -3,6 +3,8 @@ import { Schema } from "effect";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   PREVIEW_VIEWPORT_MAX_AREA,
+  PreviewAutomationEngineUnavailableError,
+  PreviewBrowserEngine,
   PreviewRenderedViewportSize,
   PreviewTabId,
   PreviewViewportPresetId,
@@ -62,9 +64,6 @@ const PreviewAutomationTabTargetFields = {
 
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
-
-export const PreviewBrowserEngine = Schema.Literals(["blink", "gecko", "webkit"]);
-export type PreviewBrowserEngine = typeof PreviewBrowserEngine.Type;
 
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
@@ -910,21 +909,6 @@ export class PreviewAutomationRecordingDeadlineExpiredError extends Schema.Tagge
 ) {
   override get message(): string {
     return "The recording transfer deadline expired. The saved copy remains on the desktop.";
-  }
-}
-
-export class PreviewAutomationEngineUnavailableError extends Schema.TaggedError<PreviewAutomationEngineUnavailableError>()(
-  "PreviewAutomationEngineUnavailableError",
-  {
-    engine: PreviewBrowserEngine,
-    installedEngines: Schema.Array(PreviewBrowserEngine),
-    installCommand: Schema.String,
-  },
-) {
-  override get message(): string {
-    const installed =
-      this.installedEngines.length === 0 ? "none" : this.installedEngines.join(", ");
-    return `Browser engine ${this.engine} is not installed on the environment host. Installed engines: ${installed}. Install it with: ${this.installCommand}`;
   }
 }
 

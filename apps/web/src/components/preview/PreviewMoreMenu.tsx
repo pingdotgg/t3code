@@ -1,6 +1,10 @@
 "use client";
 
-import type { DesktopPreviewColorScheme, EnvironmentId } from "@t3tools/contracts";
+import type {
+  DesktopPreviewColorScheme,
+  EnvironmentId,
+  PreviewBrowserEngine,
+} from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -19,6 +23,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { BROWSER_ENGINE_LABELS, pickableBrowserEngines } from "~/browser/browserEngines";
 
 import { previewBridge } from "./previewBridge";
 
@@ -63,6 +68,10 @@ interface Props {
   profileId: string;
   /** Profile display name, shown so the menu says which data is being cleared. */
   profileName: string | undefined;
+  /** Engines installed on the server host. */
+  engines: ReadonlyArray<PreviewBrowserEngine>;
+  /** Opens a new tab in the engine with this tab's current URL. */
+  onOpenInEngine: (engine: PreviewBrowserEngine) => void;
 }
 
 /**
@@ -82,6 +91,8 @@ export function PreviewMoreMenu({
   environmentId,
   profileId,
   profileName,
+  engines,
+  onOpenInEngine,
 }: Props) {
   if (!previewBridge) return null;
   const bridge = previewBridge;
@@ -123,6 +134,11 @@ export function PreviewMoreMenu({
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
         </MenuItem>
+        {pickableBrowserEngines(engines).map((engine) => (
+          <MenuItem key={engine} onClick={() => onOpenInEngine(engine)}>
+            Open in {BROWSER_ENGINE_LABELS[engine]}
+          </MenuItem>
+        ))}
         <MenuSub>
           <MenuSubTrigger disabled={tabDisabled}>Appearance</MenuSubTrigger>
           <MenuSubPopup className="min-w-32">

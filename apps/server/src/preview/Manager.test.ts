@@ -1,10 +1,43 @@
 import { it } from "@effect/vitest";
-import { type PreviewEvent, ThreadId } from "@t3tools/contracts";
+import { type PreviewEvent, PreviewTabId, ThreadId } from "@t3tools/contracts";
 import { PreviewUrlNormalizationError } from "@t3tools/shared/preview";
-import { Effect, PubSub } from "effect";
+import { type Cause, Effect, Layer, PubSub, Queue, Stream } from "effect";
 import { expect } from "vite-plus/test";
 
+import { type EngineWindowEvent, PlaywrightPreviewHost } from "../mcp/PlaywrightPreviewHost.ts";
 import * as PreviewManager from "./Manager.ts";
+
+const windows = new Map<string, Queue.Queue<EngineWindowEvent, Cause.Done<void>>>();
+const hostCalls: Array<string> = [];
+let windowSequence = 0;
+
+const fakeHost = Layer.succeed(PlaywrightPreviewHost, {
+  installedEngines: Effect.succeed(["gecko"] as const),
+  invoke: () => Effect.die("not used"),
+  openWindow: (input) =>
+    Effect.gen(function* () {
+      const tabId = PreviewTabId.make(`engine-${input.engine}-${++windowSequence}`);
+      const queue = yield* Queue.unbounded<EngineWindowEvent, Cause.Done<void>>();
+      windows.set(tabId, queue);
+      hostCalls.push(`open ${input.engine} ${input.url ?? "-"}`);
+      return { tabId, events: Stream.fromQueue(queue) };
+    }),
+  navigateWindow: (tabId, url) =>
+    Effect.sync(() => void hostCalls.push(`navigate ${tabId} ${url}`)),
+  reloadWindow: (tabId) => Effect.sync(() => void hostCalls.push(`reload ${tabId}`)),
+  closeWindow: (tabId) => Effect.sync(() => void hostCalls.push(`close ${tabId}`)),
+});
+
+const emitWindow = (tabId: string, event: EngineWindowEvent) =>
+  Effect.gen(function* () {
+    const queue = windows.get(tabId);
+    if (queue === undefined) throw new Error(`no window ${tabId}`);
+    yield* Queue.offer(queue, event);
+    if (event.type === "closed") yield* Queue.end(queue);
+    // The manager consumes window events on a forked fiber.
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+  });
 
 const DRAIN_LIMIT = 100;
 
@@ -35,7 +68,73 @@ const collectEvents = Effect.gen(function* () {
   return collector;
 }).pipe(Effect.withSpan("preview.test.collectEvents"));
 
-it.layer(PreviewManager.layer)("PreviewManager", (it) => {
+it.layer(PreviewManager.layer.pipe(Layer.provide(fakeHost)))("PreviewManager", (it) => {
+  it.effect("drives an engine window and mirrors its page events", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const collector = yield* collectEvents;
+
+      const opened = yield* manager.open({ threadId, engine: "gecko", url: "localhost:5173" });
+      expect(opened.engine).toBe("gecko");
+      expect(opened.profileId).toBeUndefined();
+      expect(opened.navStatus).toEqual({
+        _tag: "Loading",
+        url: "http://localhost:5173/",
+        title: "",
+      });
+      expect(hostCalls).toContain("open gecko http://localhost:5173/");
+      expect((yield* manager.list({ threadId })).engines).toEqual(["gecko"]);
+
+      yield* emitWindow(opened.tabId, {
+        type: "status",
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+      });
+      const listed = yield* manager.list({ threadId });
+      expect(listed.sessions[0]?.navStatus).toEqual({
+        _tag: "Success",
+        url: "http://localhost:5173/",
+        title: "Dev",
+      });
+      expect(listed.sessions[0]?.engine).toBe("gecko");
+
+      const navigated = yield* manager.navigate({
+        threadId,
+        tabId: opened.tabId,
+        url: "localhost:5174",
+      });
+      expect(navigated.navStatus._tag).toBe("Loading");
+      expect(navigated.engine).toBe("gecko");
+      yield* Effect.yieldNow;
+      expect(hostCalls).toContain(`navigate ${opened.tabId} http://localhost:5174/`);
+
+      yield* manager.refresh({ threadId, tabId: opened.tabId });
+      yield* Effect.yieldNow;
+      expect(hostCalls).toContain(`reload ${opened.tabId}`);
+
+      yield* emitWindow(opened.tabId, { type: "closed" });
+      expect((yield* manager.list({ threadId })).sessions).toHaveLength(0);
+      const events = yield* collector.drain;
+      expect(events.map((event) => event.type)).toEqual([
+        "opened",
+        "navigated",
+        "navigated",
+        "closed",
+      ]);
+    }),
+  );
+
+  it.effect("closing an engine tab closes its window", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const opened = yield* manager.open({ threadId, engine: "gecko" });
+      yield* manager.close({ threadId, tabId: opened.tabId });
+      yield* Effect.yieldNow;
+      expect(hostCalls).toContain(`close ${opened.tabId}`);
+    }),
+  );
+
   it.effect("opens a session and emits opened with normalized URL", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

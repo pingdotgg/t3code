@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  PreviewBrowserEngine,
   PreviewOpenInput,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
@@ -28,6 +29,8 @@ interface OpenPreviewSessionInput<E> {
   viewport?: PreviewViewportSetting;
   /** Overrides the configured default profile. */
   profileId?: string;
+  /** Opens a window in this engine on the server host instead of the docked view. */
+  engine?: PreviewBrowserEngine;
 }
 
 export async function openPreviewSession<E>(
@@ -46,8 +49,12 @@ export async function openPreviewSession<E>(
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
-      viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      ...(input.engine === undefined
+        ? {
+            viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
+            profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+          }
+        : { engine: input.engine }),
     },
   });
   if (result._tag === "Failure") {

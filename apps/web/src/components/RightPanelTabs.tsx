@@ -1,6 +1,7 @@
 import type {
   ContextMenuItem,
   EnvironmentId,
+  PreviewBrowserEngine,
   PreviewSessionSnapshot,
   ProjectId,
   PullRequestState,
@@ -36,6 +37,7 @@ import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
+import { BROWSER_ENGINE_LABELS, pickableBrowserEngines } from "~/browser/browserEngines";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
@@ -43,6 +45,7 @@ import {
   Menu,
   MenuItem,
   MenuPopup,
+  MenuSeparator,
   MenuShortcut,
   MenuSub,
   MenuSubPopup,
@@ -100,6 +103,10 @@ interface RightPanelTabsProps {
    * accept the MouseEvent as a profile id.
    */
   onAddBrowserInProfile: (profileId: string) => void;
+  /** Opens a tab whose page renders in a Playwright window on the server host. */
+  onAddBrowserInEngine: (engine: PreviewBrowserEngine) => void;
+  /** Engines installed on the server host. Blink is filtered out at render. */
+  browserEngines: ReadonlyArray<PreviewBrowserEngine>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -290,10 +297,31 @@ function SurfaceMenuItem(props: {
  * focused. The highlight only appears on hover or arrow use. Unavailable
  * surfaces stay visible with a one-line reason.
  */
+/** Engine rows sit below the profile rows in both browser pickers. */
+function BrowserEngineMenuItems(props: {
+  engines: ReadonlyArray<PreviewBrowserEngine>;
+  onPick: (engine: PreviewBrowserEngine) => void;
+}) {
+  const engines = pickableBrowserEngines(props.engines);
+  if (engines.length === 0) return null;
+  return (
+    <>
+      <MenuSeparator />
+      {engines.map((engine) => (
+        <MenuItem key={engine} onClick={() => props.onPick(engine)}>
+          {BROWSER_ENGINE_LABELS[engine]}
+        </MenuItem>
+      ))}
+    </>
+  );
+}
+
 function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  onAddBrowserInEngine: (engine: PreviewBrowserEngine) => void;
+  browserEngines: ReadonlyArray<PreviewBrowserEngine>;
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
@@ -524,7 +552,8 @@ function RightPanelEmptyState(props: {
                   default profile, the chevron picks another. Only worth showing
                   once there is something to choose between.
                 */}
-                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
+                {action.label === "Browser" &&
+                (props.browserProfiles.length > 1 || props.browserEngines.length > 0) ? (
                   <Menu>
                     <MenuTrigger
                       render={
@@ -552,6 +581,10 @@ function RightPanelEmptyState(props: {
                           <span className="min-w-0 truncate">{profile.name}</span>
                         </MenuItem>
                       ))}
+                      <BrowserEngineMenuItems
+                        engines={props.browserEngines}
+                        onPick={props.onAddBrowserInEngine}
+                      />
                     </MenuPopup>
                   </Menu>
                 ) : null}
@@ -1166,6 +1199,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                 <span className="min-w-0 truncate">{profile.name}</span>
                               </MenuItem>
                             ))}
+                            <BrowserEngineMenuItems
+                              engines={props.browserEngines}
+                              onPick={props.onAddBrowserInEngine}
+                            />
                           </MenuSubPopup>
                         </MenuSub>
                       );
@@ -1246,6 +1283,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
+            onAddBrowserInEngine={props.onAddBrowserInEngine}
+            browserEngines={props.browserEngines}
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}

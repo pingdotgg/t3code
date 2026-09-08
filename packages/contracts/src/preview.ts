@@ -25,6 +25,9 @@ const Title = Schema.String.check(Schema.isMaxLength(512));
 export const PreviewTabId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type PreviewTabId = typeof PreviewTabId.Type;
 
+export const PreviewBrowserEngine = Schema.Literals(["blink", "gecko", "webkit"]);
+export type PreviewBrowserEngine = typeof PreviewBrowserEngine.Type;
+
 export const PREVIEW_VIEWPORT_MIN_DIMENSION = 240;
 export const PREVIEW_VIEWPORT_MAX_DIMENSION = 3840;
 export const PREVIEW_VIEWPORT_MAX_AREA = 3840 * 2160;
@@ -176,6 +179,11 @@ export const PreviewSessionSnapshot = Schema.Struct({
    * switching would require tearing the guest down and losing page state.
    */
   profileId: Schema.optional(BrowserProfileId),
+  /**
+   * Set when the page renders in a Playwright browser window on the server
+   * host instead of the docked Chromium view. Fixed at open.
+   */
+  engine: Schema.optional(PreviewBrowserEngine),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
@@ -193,6 +201,8 @@ export const PreviewOpenInput = Schema.Struct({
   viewport: Schema.optional(PreviewViewportSetting),
   /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Opens a browser window in this engine on the server host. `profileId` is ignored. */
+  engine: Schema.optional(PreviewBrowserEngine),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
 
@@ -243,6 +253,8 @@ export const PreviewListResult = Schema.Struct({
   serverEpoch: TrimmedNonEmptyString,
   /** Monotonic server state revision used to reject stale list responses. */
   revision: NonNegativeInt,
+  /** Engines installed on the server host. Missing from older servers. */
+  engines: Schema.optional(Schema.Array(PreviewBrowserEngine)),
 });
 export type PreviewListResult = typeof PreviewListResult.Type;
 
@@ -350,5 +362,37 @@ export class PreviewInvalidUrlError extends Schema.TaggedError<PreviewInvalidUrl
   }
 }
 
-export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
+export class PreviewAutomationEngineUnavailableError extends Schema.TaggedError<PreviewAutomationEngineUnavailableError>()(
+  "PreviewAutomationEngineUnavailableError",
+  {
+    engine: PreviewBrowserEngine,
+    installedEngines: Schema.Array(PreviewBrowserEngine),
+    installCommand: Schema.String,
+  },
+) {
+  override get message(): string {
+    const installed =
+      this.installedEngines.length === 0 ? "none" : this.installedEngines.join(", ");
+    return `Browser engine ${this.engine} is not installed on the environment host. Installed engines: ${installed}. Install it with: ${this.installCommand}`;
+  }
+}
+
+export class PreviewEngineLaunchError extends Schema.TaggedError<PreviewEngineLaunchError>()(
+  "PreviewEngineLaunchError",
+  {
+    engine: PreviewBrowserEngine,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Browser engine ${this.engine} did not start: ${this.detail}`;
+  }
+}
+
+export const PreviewError = Schema.Union([
+  PreviewSessionLookupError,
+  PreviewInvalidUrlError,
+  PreviewAutomationEngineUnavailableError,
+  PreviewEngineLaunchError,
+]);
 export type PreviewError = typeof PreviewError.Type;

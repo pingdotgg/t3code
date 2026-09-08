@@ -115,6 +115,8 @@ function renderTabs(
       onCopyFilePath={() => undefined}
       onAddBrowser={() => undefined}
       onAddBrowserInProfile={() => undefined}
+      onAddBrowserInEngine={() => undefined}
+      browserEngines={[]}
       onAddTerminal={() => undefined}
       onAddPullRequest={() => undefined}
       onAddDiff={() => undefined}

@@ -1,12 +1,30 @@
 # Test in other browser engines
 
-The docked browser renders pages with Chromium. The agent can also open a headless tab in Gecko
+The docked browser renders pages with Chromium. You and the agent can also test a page in Gecko
 (Firefox) or WebKit (Safari) on the machine that runs the T3 Code server.
 
-Ask the agent to test the page in Firefox or Safari. It opens the tab, takes screenshots, clicks,
-types, and reads the page in that engine. A headless Blink (Chromium) tab is also available for
-tests that must not touch the docked browser. The tab has no window. Screenshots the agent saves
-appear in the conversation.
+## Open a page in Firefox or Safari
+
+In the right panel, open the "+" menu and hover Browser. Below the profiles, pick "Firefox
+(Gecko)" or "Safari (WebKit)". The same choices are in the browser card of the empty panel. An
+open browser tab has "Open in Firefox (Gecko)" and "Open in Safari (WebKit)" in its three-dot
+menu. Those open the current page in a new tab.
+
+The page opens in a real browser window on the machine that runs the server. The T3 Code tab
+shows the engine, the address bar, and the refresh button. Type a URL or refresh in the tab, and
+the window follows. Close the window to close the tab, or close the tab to close the window.
+Screenshots, element picking, and the device toolbar are not available in these tabs.
+
+Engines that are not installed do not appear in the menus.
+
+## Let the agent test in another engine
+
+Ask the agent to test the page in Firefox or Safari. It opens a headless tab, takes screenshots,
+clicks, types, and reads the page in that engine. A headless Blink (Chromium) tab is also
+available for tests that must not touch the docked browser. These tabs have no window.
+Screenshots the agent saves appear in the conversation.
+
+## Install an engine
 
 T3 Code does not bundle these browsers. It looks for the Playwright builds of Firefox and WebKit,
 and for a Chromium build, Google Chrome, or Microsoft Edge. When an engine is missing, the agent

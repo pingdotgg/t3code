@@ -380,6 +380,7 @@ const TerminalLayerLive = TerminalManager.layer.pipe(
 
 const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PreviewManager.layer),
+  Layer.provideMerge(PlaywrightPreviewHost.layer),
   Layer.provideMerge(PortScannerLayerLive),
 );
 
@@ -559,6 +560,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
+  // Same layer reference as PreviewLayerLive, so one build shares one host instance.
   Layer.provide(PlaywrightPreviewHost.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
   Layer.provide(commandReadinessLayer),

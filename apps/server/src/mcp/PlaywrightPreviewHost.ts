@@ -17,6 +17,8 @@ import {
   type PreviewAutomationStatus,
   type PreviewAutomationTypeInput,
   type PreviewAutomationWaitForInput,
+  PreviewEngineLaunchError,
+  type PreviewNavStatus,
   PreviewTabId,
   type PreviewBrowserEngine,
   type PreviewViewportSetting,
@@ -24,13 +26,16 @@ import {
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import { chromium, firefox, webkit, type Browser, type Page } from "playwright-core";
 import playwrightPackage from "playwright-core/package.json" with { type: "json" };
 
@@ -44,6 +49,22 @@ export interface PlaywrightPreviewInvokeInput {
   readonly timeoutMs?: number;
 }
 
+export type EngineWindowEvent =
+  | { readonly type: "status"; readonly navStatus: PreviewNavStatus }
+  | { readonly type: "closed" };
+
+export interface EngineWindow {
+  readonly tabId: PreviewTabId;
+  /** Ends when the window closes. */
+  readonly events: Stream.Stream<EngineWindowEvent>;
+}
+
+export interface EngineWindowOpenInput {
+  readonly owner: string;
+  readonly engine: PreviewBrowserEngine;
+  readonly url?: string | undefined;
+}
+
 export class PlaywrightPreviewHost extends Context.Service<
   PlaywrightPreviewHost,
   {
@@ -51,6 +72,16 @@ export class PlaywrightPreviewHost extends Context.Service<
     readonly invoke: <A = unknown>(
       input: PlaywrightPreviewInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
+    /** Opens a visible browser window on the host. Page failures arrive as `status` events. */
+    readonly openWindow: (
+      input: EngineWindowOpenInput,
+    ) => Effect.Effect<
+      EngineWindow,
+      PreviewAutomationEngineUnavailableError | PreviewEngineLaunchError
+    >;
+    readonly navigateWindow: (tabId: PreviewTabId, url: string) => Effect.Effect<void>;
+    readonly reloadWindow: (tabId: PreviewTabId) => Effect.Effect<void>;
+    readonly closeWindow: (tabId: PreviewTabId) => Effect.Effect<void>;
   }
 >()("t3/mcp/PlaywrightPreviewHost") {}
 
@@ -181,6 +212,8 @@ interface EngineTab {
   readonly tabId: PreviewTabId;
   readonly owner: string;
   readonly engine: PreviewBrowserEngine;
+  /** Present on visible windows the user drives from a browser tab. */
+  readonly window: Queue.Queue<EngineWindowEvent, Cause.Done<void>> | undefined;
   readonly browser: Browser;
   readonly page: Page;
   readonly consoleEntries: Array<PreviewAutomationSnapshot["consoleEntries"][number]>;
@@ -223,6 +256,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   const env = yield* HostProcessEnvironment;
+  const scope = yield* Effect.scope;
   const tabs = new Map<PreviewTabId, EngineTab>();
   const openLock = yield* Semaphore.make(1);
   let tabSequence = 0;
@@ -260,7 +294,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   const closeIdleTabs = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     yield* Effect.forEach(
-      Array.from(tabs.values()).filter((tab) => now - tab.lastUsedAt > IDLE_CLOSE_MS),
+      Array.from(tabs.values()).filter(
+        (tab) => tab.window === undefined && now - tab.lastUsedAt > IDLE_CLOSE_MS,
+      ),
       closeTab,
       { discard: true },
     );
@@ -270,7 +306,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   const openTab = Effect.fn("PlaywrightPreviewHost.openTab")(function* (
     owner: string,
     engine: PreviewBrowserEngine,
+    window?: Queue.Queue<EngineWindowEvent, Cause.Done<void>>,
   ) {
+    const headed = window !== undefined;
     const path = yield* executablePath(engine);
     if (path === undefined) {
       return yield* new PreviewAutomationEngineUnavailableError({
@@ -284,10 +322,11 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       try: async () => {
         const browser = await ENGINES[engine].browserType.launch({
           executablePath: path,
-          headless: true,
+          headless: !headed,
         });
         try {
-          const page = await browser.newPage({ viewport: DEFAULT_VIEWPORT });
+          // A fixed viewport in a headed window leaves dead space when the user resizes it.
+          const page = await browser.newPage({ viewport: headed ? null : DEFAULT_VIEWPORT });
           return { browser, page };
         } catch (cause) {
           await browser.close().catch(() => undefined);
@@ -306,6 +345,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       tabId,
       owner,
       engine,
+      window,
       browser,
       page,
       consoleEntries: [],
@@ -598,7 +638,91 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     return (yield* invokeOnTab(tab, input.operation, input.input, timeout)) as A;
   });
 
-  return PlaywrightPreviewHost.of({ installedEngines, invoke });
+  const reportWindow = (tab: EngineTab, navStatus: PreviewNavStatus) => {
+    if (tab.window !== undefined) Queue.offerUnsafe(tab.window, { type: "status", navStatus });
+  };
+
+  const gotoWindow = (tab: EngineTab, url: string) =>
+    Effect.promise(() =>
+      tab.page.goto(url).then(
+        () => undefined,
+        (cause: unknown) =>
+          reportWindow(tab, {
+            _tag: "LoadFailed",
+            url,
+            title: "",
+            code: -1,
+            description: errorDetail(cause),
+          }),
+      ),
+    );
+
+  const openWindow: PlaywrightPreviewHost["Service"]["openWindow"] = Effect.fn(
+    "PlaywrightPreviewHost.openWindow",
+  )(function* (input) {
+    const queue = yield* Queue.unbounded<EngineWindowEvent, Cause.Done<void>>();
+    const tab = yield* openTab(input.owner, input.engine, queue).pipe(
+      Effect.catchTag(
+        "PreviewAutomationEngineError",
+        (error) => new PreviewEngineLaunchError({ engine: input.engine, detail: error.detail }),
+      ),
+    );
+    const { page } = tab;
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) {
+        reportWindow(tab, { _tag: "Loading", url: frame.url(), title: "" });
+      }
+    });
+    page.on("load", () => {
+      const url = page.url();
+      void page
+        .title()
+        .catch(() => "")
+        .then((title) => reportWindow(tab, { _tag: "Success", url, title }));
+    });
+    page.on("close", () => {
+      Queue.offerUnsafe(queue, { type: "closed" });
+      Queue.endUnsafe(queue);
+    });
+    if (input.url !== undefined) yield* Effect.forkIn(gotoWindow(tab, input.url), scope);
+    return { tabId: tab.tabId, events: Stream.fromQueue(queue) };
+  });
+
+  const windowTab = (tabId: PreviewTabId) => {
+    const tab = tabs.get(tabId);
+    return tab?.window === undefined ? undefined : tab;
+  };
+
+  const navigateWindow: PlaywrightPreviewHost["Service"]["navigateWindow"] = (tabId, url) => {
+    const tab = windowTab(tabId);
+    return tab === undefined ? Effect.void : gotoWindow(tab, url);
+  };
+
+  const reloadWindow: PlaywrightPreviewHost["Service"]["reloadWindow"] = (tabId) => {
+    const tab = windowTab(tabId);
+    return tab === undefined
+      ? Effect.void
+      : Effect.promise(() =>
+          tab.page.reload().then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+  };
+
+  const closeWindow: PlaywrightPreviewHost["Service"]["closeWindow"] = (tabId) => {
+    const tab = windowTab(tabId);
+    return tab === undefined ? Effect.void : closeTab(tab);
+  };
+
+  return PlaywrightPreviewHost.of({
+    installedEngines,
+    invoke,
+    openWindow,
+    navigateWindow,
+    reloadWindow,
+    closeWindow,
+  });
 });
 
 export const layer = Layer.effect(PlaywrightPreviewHost, make);

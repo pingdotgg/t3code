@@ -9,6 +9,7 @@ import {
   DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
+  type PreviewBrowserEngine,
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -39,6 +40,8 @@ import { useRightPanelStore } from "~/rightPanelStore";
 
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
+import { addBrowserSurface } from "./addBrowserSurface";
+import { EngineWindowNotice } from "./EngineWindowNotice";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
@@ -49,6 +52,7 @@ import {
 } from "~/browser/browserViewportActions";
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { BROWSER_ENGINE_LABELS } from "~/browser/browserEngines";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
@@ -124,6 +128,8 @@ export function PreviewView({
     ? new URL(environmentHttpBaseUrl).hostname
     : null;
   const open = useAtomCommand(previewEnvironment.open);
+  const navigate = useAtomCommand(previewEnvironment.navigate);
+  const refresh = useAtomCommand(previewEnvironment.refresh);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
   usePreviewSession(threadRef);
@@ -146,6 +152,10 @@ export function PreviewView({
         : findActiveBrowserRecordingRuntimeTabId(threadRef, tabId)
       : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
+  // Set when the page renders in a Playwright window on the host. The docked
+  // bridge actions do not apply; navigation goes through the server RPCs.
+  const engine = snapshot?.engine;
+  const engineTab = engine !== undefined && tabId !== null ? { engine, tabId } : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
@@ -183,6 +193,16 @@ export function PreviewView({
 
   const navigateToResolvedUrl = useCallback(
     async (resolvedUrl: string) => {
+      if (engineTab) {
+        const result = await navigate({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, tabId: engineTab.tabId, url: resolvedUrl },
+        });
+        if (result._tag !== "Success") return false;
+        updatePreviewServerSnapshot(threadRef, result.value);
+        rememberPreviewUrl(threadRef, resolvedUrl);
+        return true;
+      }
       if (runtimeTabId && previewBridge) {
         // The bridge mirrors the resolved URL back to the server.
         await previewBridge.navigate(runtimeTabId, resolvedUrl);
@@ -202,7 +222,19 @@ export function PreviewView({
       }
       return result._tag === "Success";
     },
-    [open, runtimeTabId, threadRef],
+    [engineTab, navigate, open, runtimeTabId, threadRef],
+  );
+
+  const handleOpenInEngine = useCallback(
+    (nextEngine: PreviewBrowserEngine) => {
+      void addBrowserSurface({
+        threadRef,
+        openPreview: open,
+        engine: nextEngine,
+        ...(url === "" ? {} : { url }),
+      });
+    },
+    [open, threadRef, url],
   );
 
   const handleSubmitUrl = useCallback(
@@ -234,8 +266,15 @@ export function PreviewView({
   );
 
   const handleRefresh = useCallback(() => {
+    if (engineTab) {
+      void refresh({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, tabId: engineTab.tabId },
+      });
+      return;
+    }
     if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
-  }, [runtimeTabId]);
+  }, [engineTab, refresh, runtimeTabId, threadRef]);
 
   const handleZoomIn = useCallback(() => {
     if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
@@ -718,13 +757,15 @@ export function PreviewView({
         onRefresh={handleRefresh}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
-        onCapture={previewBridge && tabId ? handleCapture : undefined}
+        onCapture={previewBridge && tabId && !engineTab ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
-        onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
+        onPictureInPicture={
+          previewBridge && tabId && !engineTab ? handlePictureInPicture : undefined
+        }
         pictureInPicture={miniPlayer?.tabId === tabId}
         pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}
-        onPickElement={previewBridge && tabId ? handlePickElement : undefined}
+        onPickElement={previewBridge && tabId && !engineTab ? handlePickElement : undefined}
         pickActive={pickActive}
         // Disable when there's no tab (nothing to pick on) OR the page
         // failed to load (a React overlay covers the webview, so the
@@ -734,7 +775,11 @@ export function PreviewView({
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
         leadingActions={
-          // Only when it differs from the default: labelling every tab
+          engine !== undefined ? (
+            <Badge variant="outline" className="shrink-0">
+              {BROWSER_ENGINE_LABELS[engine]}
+            </Badge>
+          ) : // Only when it differs from the default: labelling every tab
           // "Default" would be noise on the common case, while a tab in
           // another profile is exactly what needs calling out.
           activeProfileId !== browserDefaults.profileId ? (
@@ -754,8 +799,10 @@ export function PreviewView({
           ) : null
         }
         trailingActions={
-          previewBridge ? (
+          previewBridge && !engineTab ? (
             <PreviewMoreMenu
+              engines={previewState.engines}
+              onOpenInEngine={handleOpenInEngine}
               environmentId={threadRef.environmentId}
               profileId={activeProfileId}
               profileName={activeProfileName}
@@ -773,7 +820,10 @@ export function PreviewView({
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {runtimeTabId && snapshot && !showEmptyState ? (
+        {engineTab && snapshot && !showEmptyState ? (
+          <EngineWindowNotice engine={engineTab.engine} url={url} loading={loading} />
+        ) : null}
+        {runtimeTabId && snapshot && !showEmptyState && !engineTab ? (
           <BrowserSurfaceSlot
             key={runtimeTabId}
             tabId={runtimeTabId}
