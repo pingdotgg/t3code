@@ -250,7 +250,7 @@ export function resolveSelectedMergeMethod(
  * this account may. A reader with read access on someone else's project sees the pull request and
  * none of the buttons that would only ever be refused.
  */
-export function canPerformPullRequestAction(
+function canPerformPullRequestAction(
   detail: Pick<PullRequestActionableDetail, "capabilities" | "viewerPermissions"> | null,
   action: PullRequestAction,
 ): boolean {
@@ -265,20 +265,6 @@ export function isPullRequestConflicting(
   detail: Pick<PullRequestActionableDetail, "state" | "mergeability"> | null,
 ): boolean {
   return detail?.state === "open" && detail.mergeability === "conflicting";
-}
-
-/**
- * One live action holds the slot. A conflicting change cannot be merged now, so the slot goes to
- * the thing that would help instead of a Merge button that only ever says no.
- */
-export function resolvePullRequestPrimaryAction(
-  detail: PullRequestActionableDetail | null,
-): "ready" | "merge" | "resolve" | null {
-  if (detail === null || detail.state !== "open") return null;
-  if (detail.isDraft && canPerformPullRequestAction(detail, "ready")) return "ready";
-  if (!canPerformPullRequestAction(detail, "merge")) return null;
-  if (isPullRequestConflicting(detail)) return "resolve";
-  return allowedPullRequestMergeMethods(detail).length > 0 ? "merge" : null;
 }
 
 /** The checks as one word. Failing outranks running: a red run is already worth acting on. */

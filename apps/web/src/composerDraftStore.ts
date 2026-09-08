@@ -4204,22 +4204,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
 export const useComposerDraftStore = composerDraftStore;
 
-export function beginBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
-  const threadKey = scopedThreadKey(threadRef);
-  useComposerDraftStore.setState((state) => {
-    if (state.backgroundSubmissionThreadKeys[threadKey]) {
-      return state;
-    }
-    return {
-      backgroundSubmissionThreadKeys: {
-        ...state.backgroundSubmissionThreadKeys,
-        [threadKey]: true,
-      },
-    };
-  });
-}
-
-export function clearBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
+function clearBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
   const threadKey = scopedThreadKey(threadRef);
   useComposerDraftStore.setState((state) => {
     if (!state.backgroundSubmissionThreadKeys[threadKey]) {
