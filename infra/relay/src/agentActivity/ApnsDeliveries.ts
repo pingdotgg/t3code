@@ -181,7 +181,7 @@ function shouldUpdateLiveActivity(input: {
   // A thread finishing must never be throttled away: when a completion and a
   // new start land in the same window, activeCount is unchanged and the Done
   // transition (and its alert) would otherwise be suppressed.
-  if (newlyTerminalRows(input.previousAggregate, input.nextAggregate).length > 0) {
+  if (newlyTerminalRows(input.previousAggregate, input.nextAggregate, true).length > 0) {
     return true;
   }
   const lastDeliveryAtMs =
@@ -228,6 +228,7 @@ function chooseLiveActivityDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
+  readonly replay?: boolean;
 }): ChosenLiveActivityDelivery | "suppressed" | null {
   const preferences = parsePreferences(input.target.preferences_json);
   if (preferences?.liveActivitiesEnabled === false) {
@@ -286,18 +287,20 @@ function chooseLiveActivityDelivery(input: {
         kind: "live_activity_update",
         token: input.target.activity_push_token,
         aggregate: nextAggregate,
-        alert:
-          alertForAttentionTransition({
-            previousAggregate,
-            nextAggregate,
-            preferences,
-          }) ??
-          alertForNewlyTerminal({
-            previousAggregate,
-            nextAggregate,
-            preferences,
-            nowMs: input.nowMs,
-          }),
+        alert: input.replay
+          ? null
+          : (alertForAttentionTransition({
+              previousAggregate,
+              nextAggregate,
+              preferences,
+            }) ??
+            alertForNewlyTerminal({
+              previousAggregate,
+              nextAggregate,
+              preferences,
+              nowMs: input.nowMs,
+              includeUnobserved: true,
+            })),
       }
     : "suppressed";
 }
@@ -306,6 +309,7 @@ function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
+  readonly replay?: boolean;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
   if (liveActivityDelivery === "suppressed") {
@@ -314,7 +318,7 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = notificationForAggregate(input);
+  const notification = input.replay ? null : notificationForAggregate(input);
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -519,6 +523,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
+      readonly replay?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -652,7 +657,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const isCurrentSignedJobToken = Effect.fnUntraced(function* (input: {
+  const currentSignedJobTarget = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
     readonly kind: RelayDeliveryKind;
     readonly token: string;
@@ -660,10 +665,10 @@ export const make = Effect.gen(function* () {
     return yield* liveActivities.listTargets({ userId: input.target.user_id }).pipe(
       Effect.map((targets) => {
         const currentTarget = targets.find((row) => row.device_id === input.target.device_id);
-        return (
-          currentTarget !== undefined &&
+        return currentTarget &&
           expectedCurrentToken({ target: currentTarget, kind: input.kind }) === input.token
-        );
+          ? currentTarget
+          : null;
       }),
     );
   });
@@ -679,11 +684,7 @@ export const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
-    const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
-      apns,
-      { ...input, aggregate } as SendLiveActivityDeliveryInput,
-      now,
-    );
+    let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
       recoverApnsDeliveryTransportError(
         {
@@ -709,17 +710,36 @@ export const make = Effect.gen(function* () {
       if (claim === "in_flight") {
         return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
       }
-      const tokenIsCurrent = yield* isCurrentSignedJobToken({
+      const currentTarget = yield* currentSignedJobTarget({
         target: input.target,
         kind: input.kind,
         token: input.token,
       });
-      if (!tokenIsCurrent) {
+      if (!currentTarget) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale APNs delivery job skipped.",
         });
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+      }
+      if (alert) {
+        const preferences = parsePreferences(currentTarget.preferences_json);
+        const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+        alert =
+          !preferences?.notificationsEnabled || !aggregate
+            ? null
+            : (alertForAttentionTransition({
+                previousAggregate,
+                nextAggregate: aggregate,
+                preferences,
+              }) ??
+              alertForNewlyTerminal({
+                previousAggregate,
+                nextAggregate: aggregate,
+                preferences,
+                nowMs: now.epochMilliseconds,
+                includeUnobserved: true,
+              }));
       }
       if (
         input.kind !== "live_activity_start" &&
@@ -752,6 +772,11 @@ export const make = Effect.gen(function* () {
       }
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
+    const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
+      apns,
+      { ...input, aggregate, alert } as SendLiveActivityDeliveryInput,
+      now,
+    );
     const result = yield* apns
       .sendLiveActivityRequest({
         credentials: credentialsForTarget(config.apns, input.target),
@@ -859,12 +884,12 @@ export const make = Effect.gen(function* () {
       if (claim === "in_flight") {
         return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
       }
-      const tokenIsCurrent = yield* isCurrentSignedJobToken({
+      const currentTarget = yield* currentSignedJobTarget({
         target: input.target,
         kind: "push_notification",
         token: input.token,
       });
-      if (!tokenIsCurrent) {
+      if (!currentTarget) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale APNs delivery job skipped.",
@@ -888,6 +913,24 @@ export const make = Effect.gen(function* () {
           deviceId: input.target.device_id,
           kind: "push_notification",
         });
+      }
+      const preferences = parsePreferences(currentTarget.preferences_json);
+      const alertAllowed =
+        notification.phase !== undefined && notification.updatedAt !== undefined
+          ? shouldAlertForActivity({
+              ...notification,
+              phase: notification.phase,
+              updatedAt: notification.updatedAt,
+              preferences,
+              nowMs: now.epochMilliseconds,
+            })
+          : preferences?.notificationsEnabled === true;
+      if (!alertAllowed) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Notification is disabled or no longer fresh.",
+        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: "push_notification" });
       }
     }
     const result = yield* apns
@@ -1057,6 +1100,7 @@ export const make = Effect.gen(function* () {
         target: input.target,
         aggregate: input.aggregate,
         nowMs: input.nowMs,
+        replay: input.replay ?? false,
       });
       if (!delivery) {
         return null;
@@ -1072,17 +1116,20 @@ export const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = notificationForAggregate({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: input.nowMs,
-      });
+      const notification = input.replay
+        ? null
+        : notificationForAggregate({
+            target: input.target,
+            aggregate: input.aggregate,
+            nowMs: input.nowMs,
+          });
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
       // stays silent; otherwise the end itself carries the alert so LA-only
       // users still get the buzz.
-      const alert =
-        delivery.kind === "live_activity_end"
+      const alert = input.replay
+        ? null
+        : delivery.kind === "live_activity_end"
           ? notification && input.target.push_token
             ? null
             : alertForTerminalAggregate({
