@@ -224,6 +224,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     async ({ platform, modifiers }) => {
       vi.stubGlobal("navigator", { platform });
       const harness = createHarness();
+      vi.spyOn(Event.prototype, "timeStamp", "get").mockImplementation(() => Date.now());
       let canOpenPaths = false;
       const openLink = vi.fn();
       const surface = await harness.create({
@@ -238,11 +239,13 @@ describe("GhosttyTerminalSurface visibility", () => {
       harness.pointer("pointerup", 5, 0, modifiers);
       expect(openLink).not.toHaveBeenCalled();
 
+      vi.advanceTimersByTime(501);
       harness.pointer("pointerdown", 5, 1);
       harness.pointer("pointermove", 37, 1);
       harness.pointer("pointerup", 37, 0);
       expect(surface.getSelection()).toBe("/repo");
 
+      vi.advanceTimersByTime(501);
       harness.pointer("pointermove", 5, 0, modifiers);
       canOpenPaths = true;
       surface.refreshLinkActivation();
@@ -251,6 +254,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       harness.pointer("pointerup", 5, 0, modifiers);
       expect(openLink).toHaveBeenCalledExactlyOnceWith("/repo/file.ts", expect.any(Event));
 
+      vi.advanceTimersByTime(501);
       harness.pointer("pointerdown", 5, 1, modifiers);
       canOpenPaths = false;
       surface.refreshLinkActivation();
@@ -258,6 +262,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       harness.pointer("pointerup", 5, 0, modifiers);
       expect(openLink).toHaveBeenCalledOnce();
 
+      vi.advanceTimersByTime(501);
       surface.resetAndWrite("https://t3.codes");
       harness.flushFrame();
       harness.pointer("pointermove", 5, 0, modifiers);
