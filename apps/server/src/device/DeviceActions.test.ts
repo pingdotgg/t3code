@@ -94,6 +94,40 @@ describe("runDeviceAction", () => {
     }),
   );
 
+  it.effect(
+    "rotates emulators through the accelerometer and physical devices through the lock",
+    () =>
+      Effect.gen(function* () {
+        const emulator = makeReady();
+        yield* runDeviceAction(emulator.ready, "android", {
+          type: "setOrientation",
+          deviceId: "emulator-5554",
+          value: "landscape_left",
+        });
+        expect(emulator.calls.at(-1)?.args).toEqual([
+          "-s",
+          "emulator-5554",
+          "emu",
+          "sensor",
+          "set",
+          "acceleration",
+          "9.81:0:0",
+        ]);
+        const phone = makeReady();
+        yield* runDeviceAction(phone.ready, "android", {
+          type: "setOrientation",
+          deviceId: "R5CT1234",
+          value: "landscape_right",
+        });
+        expect(phone.calls).toEqual([
+          {
+            command: "adb",
+            args: ["-s", "R5CT1234", "shell", "cmd", "window", "user-rotation", "lock", "3"],
+          },
+        ]);
+      }),
+  );
+
   it.effect("runs accessibility toggles through the bundled helper via simctl spawn", () =>
     Effect.gen(function* () {
       const { ready, calls } = makeReady();

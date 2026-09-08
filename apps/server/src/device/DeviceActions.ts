@@ -17,6 +17,7 @@ import {
   type DeviceActionType,
   type DeviceForegroundApp,
   DeviceOperationError,
+  type DeviceOrientation,
   type DevicePlatform,
   type DeviceSettings,
   type DeviceTextSize,
@@ -157,6 +158,21 @@ const ANDROID_PERMISSIONS: Record<string, ReadonlyArray<string>> = {
   ],
   notifications: ["android.permission.POST_NOTIFICATIONS"],
   motion: ["android.permission.ACTIVITY_RECOGNITION"],
+};
+
+// Gravity vector (x:y:z) that makes the emulator report each orientation,
+// and the window-manager rotation index for the same.
+const ANDROID_GRAVITY: Record<DeviceOrientation, string> = {
+  portrait: "0:9.81:0",
+  landscape_left: "9.81:0:0",
+  portrait_upside_down: "0:-9.81:0",
+  landscape_right: "-9.81:0:0",
+};
+const ANDROID_ROTATION: Record<DeviceOrientation, string> = {
+  portrait: "0",
+  landscape_left: "1",
+  portrait_upside_down: "2",
+  landscape_right: "3",
 };
 
 export const runDeviceAction = Effect.fn("DeviceActions.run")(function* (
@@ -336,15 +352,25 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
       }
       return yield* fail(input.type, `${input.setting} is not supported on Android.`);
     case "setOrientation": {
-      const rotation =
-        input.value === "portrait"
-          ? "0"
-          : input.value === "landscape_left"
-            ? "1"
-            : input.value === "portrait_upside_down"
-              ? "2"
-              : "3";
-      yield* shell(["cmd", "window", "user-rotation", "lock", rotation], "orientation");
+      // `user-rotation lock` only rotates window content on recent images;
+      // the display the encoder captures stays put. Tilting the emulator's
+      // accelerometer rotates it for real, so that is used whenever the
+      // target is an emulator. Physical devices get the lock.
+      if (serial.startsWith("emulator-")) {
+        yield* shell(["settings", "put", "system", "accelerometer_rotation", "1"], "orientation");
+        yield* shell(["cmd", "window", "user-rotation", "free"], "orientation");
+        yield* adb(
+          run,
+          serial,
+          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[input.value]],
+          "orientation",
+        );
+        return;
+      }
+      yield* shell(
+        ["cmd", "window", "user-rotation", "lock", ANDROID_ROTATION[input.value]],
+        "orientation",
+      );
       return;
     }
     case "setLocation":
