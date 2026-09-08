@@ -402,6 +402,7 @@ export const make = Effect.gen(function* () {
         webviewTag: true,
       },
     });
+    yield* Ref.set(desktopState.windowCreated, true);
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
@@ -822,8 +823,11 @@ export const make = Effect.gen(function* () {
 
   const createMain = Effect.gen(function* () {
     const window = yield* createWindow();
+    if (yield* Ref.get(desktopState.quitting)) {
+      yield* electronWindow.destroyAll;
+      return window;
+    }
     yield* electronWindow.setMain(window);
-    yield* Ref.set(desktopState.mainWindowCreated, true);
     yield* logWindowInfo("main window created");
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
@@ -843,6 +847,7 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
 
   const createMainIfBackendReady = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return;
     const backendReady = yield* Ref.get(backendReadyRef);
     if (!backendReady) return;
     const existingWindow = yield* currentMainWindow;
@@ -877,6 +882,7 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
+    yield* Ref.set(desktopState.windowCreated, true);
     yield* Ref.set(splashWindowRef, Option.some(splash));
     splash.once("closed", () => {
       void runPromise(Ref.set(splashWindowRef, Option.none()));

@@ -248,9 +248,10 @@ export const make = DesktopLifecycle.of({
           const state = yield* DesktopState.DesktopState;
           if (
             environment.platform !== "darwin" &&
-            (yield* Ref.get(state.mainWindowCreated)) &&
+            (yield* Ref.get(state.windowCreated)) &&
             !(yield* Ref.get(state.quitting))
           ) {
+            yield* Ref.set(state.quitting, true);
             yield* app.quit;
           }
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),

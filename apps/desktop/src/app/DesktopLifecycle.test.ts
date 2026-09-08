@@ -255,7 +255,7 @@ describe("DesktopLifecycle", () => {
     }),
   );
 
-  it.effect("ignores window-all-closed until a main window has been created", () =>
+  it.effect("ignores a synthetic early close but quits after an owned window existed", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
       let quitCount = 0;
@@ -289,11 +289,13 @@ describe("DesktopLifecycle", () => {
           appListeners.get("window-all-closed")?.();
           yield* Effect.yieldNow;
           assert.equal(quitCount, 0);
+          assert.isFalse(yield* Ref.get(state.quitting));
 
-          yield* Ref.set(state.mainWindowCreated, true);
+          yield* Ref.set(state.windowCreated, true);
           appListeners.get("window-all-closed")?.();
           yield* Effect.yieldNow;
           assert.equal(quitCount, 1);
+          assert.isTrue(yield* Ref.get(state.quitting));
         }),
       ).pipe(Effect.provide(layer));
     }),
