@@ -117,7 +117,7 @@ const ROSTER_LIMIT = 100;
  * background by definition: they render in the ordinary work log, exactly
  * as they did before this feature existed.
  */
-export function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
+function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
   return payload.agentKind !== "agent";
 }
 
@@ -719,10 +719,6 @@ const EMPTY_PANEL_MODEL: AgentPanelModel = {
   hasAgents: false,
   liveCount: 0,
 };
-
-export function emptyAgentPanelModel(): AgentPanelModel {
-  return EMPTY_PANEL_MODEL;
-}
 
 /**
  * The v2 leg of the mapper swap (#5219 spec): project orchestration-v2

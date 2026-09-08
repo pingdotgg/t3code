@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-      # Keep v2 checked while its pull request has conflicts with main.
-      - t3code/codex-turn-mapping
 
 permissions:
   contents: read

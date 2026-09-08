@@ -418,7 +418,7 @@ describe("t3_worktree_handoff", () => {
         projectId,
         projectCwd: workspaceRoot,
         worktreePath: "/worktrees/project/feature/handoff",
-        project: { workspaceRoot, scripts: [] },
+        project: { id: projectId, workspaceRoot, scripts: [] },
       });
     });
   });
