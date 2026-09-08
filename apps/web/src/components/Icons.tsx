@@ -681,6 +681,19 @@ export const OpenCodeIcon: Icon = (props) => (
   </svg>
 );
 
+export const CommandCodeIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 32 32" className={cn("fill-black dark:fill-white", className)}>
+    <path
+      className="fill-black dark:fill-white"
+      d="M5 5h22v15.5H13.6l-4 3.6V23H5V5Zm2 2v11.2l2.2-2H25V7H7Z"
+    />
+    <path
+      className="fill-white dark:fill-black"
+      d="M10.4 10.2 13.6 13l-3.2 2.8v-1.7l1.5-1.1-1.5-1.1v-1.7Zm6 4.5H20v-1.6h-3.6v1.6Z"
+    />
+  </svg>
+);
+
 export const GithubCopilotIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
