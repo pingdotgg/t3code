@@ -110,7 +110,7 @@ export const WorktreeMcpStatusResult = Schema.Struct({
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;
 
-export class WorktreeMcpFailure extends Schema.TaggedErrorClass<WorktreeMcpFailure>()(
+export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()(
   "WorktreeMcpFailure",
   {
     code: Schema.Literals([

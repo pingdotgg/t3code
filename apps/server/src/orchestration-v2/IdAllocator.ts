@@ -51,7 +51,7 @@ export const IdAllocatorV2Kind = Schema.Literals([
 ]);
 export type IdAllocatorV2Kind = typeof IdAllocatorV2Kind.Type;
 
-export class IdAllocatorV2AllocationError extends Schema.TaggedErrorClass<IdAllocatorV2AllocationError>()(
+export class IdAllocatorV2AllocationError extends Schema.TaggedError<IdAllocatorV2AllocationError>()(
   "IdAllocatorV2AllocationError",
   {
     kind: IdAllocatorV2Kind,

@@ -152,7 +152,7 @@ export const ProviderAdapterV2Event = Schema.Union([
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
 
-export class ProviderAdapterCapabilitiesError extends Schema.TaggedErrorClass<ProviderAdapterCapabilitiesError>()(
+export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<ProviderAdapterCapabilitiesError>()(
   "ProviderAdapterCapabilitiesError",
   {
     driver: ProviderDriverKind,
@@ -164,7 +164,7 @@ export class ProviderAdapterCapabilitiesError extends Schema.TaggedErrorClass<Pr
   }
 }
 
-export class ProviderAdapterOpenSessionError extends Schema.TaggedErrorClass<ProviderAdapterOpenSessionError>()(
+export class ProviderAdapterOpenSessionError extends Schema.TaggedError<ProviderAdapterOpenSessionError>()(
   "ProviderAdapterOpenSessionError",
   {
     driver: ProviderDriverKind,
@@ -177,7 +177,7 @@ export class ProviderAdapterOpenSessionError extends Schema.TaggedErrorClass<Pro
   }
 }
 
-export class ProviderAdapterCloseSessionError extends Schema.TaggedErrorClass<ProviderAdapterCloseSessionError>()(
+export class ProviderAdapterCloseSessionError extends Schema.TaggedError<ProviderAdapterCloseSessionError>()(
   "ProviderAdapterCloseSessionError",
   {
     driver: ProviderDriverKind,
@@ -190,7 +190,7 @@ export class ProviderAdapterCloseSessionError extends Schema.TaggedErrorClass<Pr
   }
 }
 
-export class ProviderAdapterResumeThreadError extends Schema.TaggedErrorClass<ProviderAdapterResumeThreadError>()(
+export class ProviderAdapterResumeThreadError extends Schema.TaggedError<ProviderAdapterResumeThreadError>()(
   "ProviderAdapterResumeThreadError",
   {
     driver: ProviderDriverKind,
@@ -204,7 +204,7 @@ export class ProviderAdapterResumeThreadError extends Schema.TaggedErrorClass<Pr
   }
 }
 
-export class ProviderAdapterEnsureThreadError extends Schema.TaggedErrorClass<ProviderAdapterEnsureThreadError>()(
+export class ProviderAdapterEnsureThreadError extends Schema.TaggedError<ProviderAdapterEnsureThreadError>()(
   "ProviderAdapterEnsureThreadError",
   {
     driver: ProviderDriverKind,
@@ -217,7 +217,7 @@ export class ProviderAdapterEnsureThreadError extends Schema.TaggedErrorClass<Pr
   }
 }
 
-export class ProviderAdapterReadThreadSnapshotError extends Schema.TaggedErrorClass<ProviderAdapterReadThreadSnapshotError>()(
+export class ProviderAdapterReadThreadSnapshotError extends Schema.TaggedError<ProviderAdapterReadThreadSnapshotError>()(
   "ProviderAdapterReadThreadSnapshotError",
   {
     driver: ProviderDriverKind,
@@ -230,7 +230,7 @@ export class ProviderAdapterReadThreadSnapshotError extends Schema.TaggedErrorCl
   }
 }
 
-export class ProviderAdapterRollbackThreadError extends Schema.TaggedErrorClass<ProviderAdapterRollbackThreadError>()(
+export class ProviderAdapterRollbackThreadError extends Schema.TaggedError<ProviderAdapterRollbackThreadError>()(
   "ProviderAdapterRollbackThreadError",
   {
     driver: ProviderDriverKind,
@@ -244,7 +244,7 @@ export class ProviderAdapterRollbackThreadError extends Schema.TaggedErrorClass<
   }
 }
 
-export class ProviderAdapterForkThreadError extends Schema.TaggedErrorClass<ProviderAdapterForkThreadError>()(
+export class ProviderAdapterForkThreadError extends Schema.TaggedError<ProviderAdapterForkThreadError>()(
   "ProviderAdapterForkThreadError",
   {
     driver: ProviderDriverKind,
@@ -257,7 +257,7 @@ export class ProviderAdapterForkThreadError extends Schema.TaggedErrorClass<Prov
   }
 }
 
-export class ProviderAdapterTurnStartError extends Schema.TaggedErrorClass<ProviderAdapterTurnStartError>()(
+export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAdapterTurnStartError>()(
   "ProviderAdapterTurnStartError",
   {
     driver: ProviderDriverKind,
@@ -272,7 +272,7 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedErrorClass<Provi
   }
 }
 
-export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedErrorClass<ProviderAdapterSteerRunUnsupportedError>()(
+export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedError<ProviderAdapterSteerRunUnsupportedError>()(
   "ProviderAdapterSteerRunUnsupportedError",
   {
     driver: ProviderDriverKind,
@@ -284,7 +284,7 @@ export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedErrorC
   }
 }
 
-export class ProviderAdapterSteerRunError extends Schema.TaggedErrorClass<ProviderAdapterSteerRunError>()(
+export class ProviderAdapterSteerRunError extends Schema.TaggedError<ProviderAdapterSteerRunError>()(
   "ProviderAdapterSteerRunError",
   {
     driver: ProviderDriverKind,
@@ -298,7 +298,7 @@ export class ProviderAdapterSteerRunError extends Schema.TaggedErrorClass<Provid
   }
 }
 
-export class ProviderAdapterInterruptError extends Schema.TaggedErrorClass<ProviderAdapterInterruptError>()(
+export class ProviderAdapterInterruptError extends Schema.TaggedError<ProviderAdapterInterruptError>()(
   "ProviderAdapterInterruptError",
   {
     driver: ProviderDriverKind,
@@ -312,7 +312,7 @@ export class ProviderAdapterInterruptError extends Schema.TaggedErrorClass<Provi
   }
 }
 
-export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedErrorClass<ProviderAdapterRuntimeRequestResponseError>()(
+export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedError<ProviderAdapterRuntimeRequestResponseError>()(
   "ProviderAdapterRuntimeRequestResponseError",
   {
     driver: ProviderDriverKind,
@@ -325,7 +325,7 @@ export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedErr
   }
 }
 
-export class ProviderAdapterEventStreamError extends Schema.TaggedErrorClass<ProviderAdapterEventStreamError>()(
+export class ProviderAdapterEventStreamError extends Schema.TaggedError<ProviderAdapterEventStreamError>()(
   "ProviderAdapterEventStreamError",
   {
     driver: ProviderDriverKind,
@@ -338,7 +338,7 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedErrorClass<Pro
   }
 }
 
-export class ProviderAdapterProtocolError extends Schema.TaggedErrorClass<ProviderAdapterProtocolError>()(
+export class ProviderAdapterProtocolError extends Schema.TaggedError<ProviderAdapterProtocolError>()(
   "ProviderAdapterProtocolError",
   {
     driver: ProviderDriverKind,

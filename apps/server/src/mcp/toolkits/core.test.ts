@@ -58,6 +58,8 @@ const scope: McpInvocationScope = {
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "mcp-core", version: "1" },
   initializePayload: {
     protocolVersion: "2025-06-18",
     capabilities: {},

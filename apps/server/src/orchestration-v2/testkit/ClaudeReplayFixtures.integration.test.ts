@@ -320,7 +320,7 @@ describe("Claude Agent SDK replay fixtures", () => {
     }),
   );
 
-  it.skipIf(process.env.T3_RECORD_CLAUDE_AGENT_SDK_FIXTURE !== "1")(
+  it.effect.skipIf(process.env.T3_RECORD_CLAUDE_AGENT_SDK_FIXTURE !== "1")(
     "records simple from real Claude Code query() output",
     () =>
       Effect.scoped(

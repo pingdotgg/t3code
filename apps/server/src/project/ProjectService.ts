@@ -45,7 +45,7 @@ export interface ProjectDeleteInput {
   readonly force?: boolean;
 }
 
-export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
+export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
   "ProjectNotFoundError",
   { projectId: ProjectId },
 ) {
@@ -54,7 +54,7 @@ export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoun
   }
 }
 
-export class ProjectConflictError extends Schema.TaggedErrorClass<ProjectConflictError>()(
+export class ProjectConflictError extends Schema.TaggedError<ProjectConflictError>()(
   "ProjectConflictError",
   {
     projectId: ProjectId,
@@ -67,7 +67,7 @@ export class ProjectConflictError extends Schema.TaggedErrorClass<ProjectConflic
   }
 }
 
-export class ProjectNotEmptyError extends Schema.TaggedErrorClass<ProjectNotEmptyError>()(
+export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyError>()(
   "ProjectNotEmptyError",
   { projectId: ProjectId },
 ) {
@@ -76,7 +76,7 @@ export class ProjectNotEmptyError extends Schema.TaggedErrorClass<ProjectNotEmpt
   }
 }
 
-export class ProjectOperationError extends Schema.TaggedErrorClass<ProjectOperationError>()(
+export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
   {
     operation: Schema.Literals([

@@ -48,7 +48,7 @@ export type OrchestrationGetFullThreadDiffInput = typeof OrchestrationGetFullThr
 export const OrchestrationGetFullThreadDiffResult = ThreadTurnDiff;
 export type OrchestrationGetFullThreadDiffResult = typeof OrchestrationGetFullThreadDiffResult.Type;
 
-export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<OrchestrationGetTurnDiffError>()(
+export class OrchestrationGetTurnDiffError extends Schema.TaggedError<OrchestrationGetTurnDiffError>()(
   "OrchestrationGetTurnDiffError",
   {
     message: TrimmedNonEmptyString,
@@ -56,7 +56,7 @@ export class OrchestrationGetTurnDiffError extends Schema.TaggedErrorClass<Orche
   },
 ) {}
 
-export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass<OrchestrationGetFullThreadDiffError>()(
+export class OrchestrationGetFullThreadDiffError extends Schema.TaggedError<OrchestrationGetFullThreadDiffError>()(
   "OrchestrationGetFullThreadDiffError",
   {
     message: TrimmedNonEmptyString,
