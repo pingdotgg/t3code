@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
-  metric: "cost" as "cost" | "tokens",
+  metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
 }));
 
@@ -14,23 +14,25 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useState: vi.fn((initial: unknown) => [
-      typeof initial === "function"
-        ? {
-            days: 1,
-            window: {
-              sinceDay: "2026-08-10",
-              untilDay: "2026-08-11",
-              timeZone: "UTC",
-              resolution: "hour",
-              sinceTime: "2026-08-10T12:37:00.000Z",
-              untilTime: "2026-08-11T12:37:00.000Z",
-            },
-          }
-        : initial === "cost"
-          ? testState.metric
-          : initial === "model"
-            ? testState.breakdown
-            : initial,
+      initial === readUsagePagePreferences
+        ? { metric: testState.metric, windowDays: 30 }
+        : typeof initial === "function"
+          ? {
+              days: 1,
+              window: {
+                sinceDay: "2026-08-10",
+                untilDay: "2026-08-11",
+                timeZone: "UTC",
+                resolution: "hour",
+                sinceTime: "2026-08-10T12:37:00.000Z",
+                untilTime: "2026-08-11T12:37:00.000Z",
+              },
+            }
+          : initial === "cost"
+            ? testState.metric
+            : initial === "model"
+              ? testState.breakdown
+              : initial,
       vi.fn(),
     ]),
   };
@@ -70,6 +72,7 @@ vi.mock("./usageProviders", async (importOriginal) => {
 });
 
 import { UsagePage } from "./UsagePage";
+import { readUsagePagePreferences } from "./usagePagePreferences";
 
 const providerTotals = (codex: number, claude: number) =>
   new Map([

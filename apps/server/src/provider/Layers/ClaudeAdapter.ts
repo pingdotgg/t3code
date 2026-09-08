@@ -434,26 +434,9 @@ function resultErrorsText(result: SDKResultMessage): string {
     : "";
 }
 
-/**
- * First user-facing error from a non-success result. "[ede_diagnostic] ..."
- * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
- * so they must never become the error banner.
- */
-function resultUserFacingError(result: SDKResultMessage): string | undefined {
-  const listed =
-    result.subtype === "success" || !Array.isArray(result.errors)
-      ? undefined
-      : result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
-  if (listed) {
-    return listed;
-  }
-  // Structured failure markers for results whose error list is empty or
-  // diagnostic-only: an overloaded API (529) and the terminal reasons the
-  // CLI stamps when it gives up on a turn.
-  if (isOverloadedResult(result)) {
-    return "Claude API is overloaded (529). Try again shortly.";
-  }
-  switch (result.terminal_reason) {
+/** Failure text for structured terminal reasons, including success-tagged failures. */
+function terminalResultError(reason: SDKResultMessage["terminal_reason"]): string | undefined {
+  switch (reason) {
     case "api_error":
       return "Claude gave up after repeated API errors.";
     case "malformed_tool_use_exhausted":
@@ -1560,27 +1543,6 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 });
 
 /**
- * terminal_reason values the CLI classifies as dead turns: the turn died
- * rather than finished, even when the result subtype is success and the
- * error list is empty. Kept in sync with the messages in
- * resultUserFacingError.
- */
-const FAILED_TERMINAL_REASONS: ReadonlySet<NonNullable<SDKResultMessage["terminal_reason"]>> =
-  new Set([
-    "api_error",
-    "malformed_tool_use_exhausted",
-    "budget_exhausted",
-    "structured_output_retry_exhausted",
-    "tool_deferred_unavailable",
-    "turn_setup_failed",
-    "blocking_limit",
-    "rapid_refill_breaker",
-    "prompt_too_long",
-    "image_error",
-    "model_error",
-  ]);
-
-/**
  * The CLI reports repeated 529 overload failures as a success-subtype result
  * with api_error_status 529 and an empty error list; the status code is the
  * only structured failure signal.
@@ -1589,25 +1551,27 @@ function isOverloadedResult(result: SDKResultMessage): boolean {
   return result.subtype === "success" && result.api_error_status === 529;
 }
 
-function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
-  if (
-    isOverloadedResult(result) ||
-    (result.terminal_reason !== undefined && FAILED_TERMINAL_REASONS.has(result.terminal_reason))
-  ) {
-    return "failed";
-  }
-  if (result.subtype === "success") {
-    return "completed";
-  }
-
-  const errors = resultErrorsText(result);
-  if (isInterruptedResult(result)) {
-    return "interrupted";
-  }
-  if (errors.includes("cancel")) {
-    return "cancelled";
-  }
-  return "failed";
+/** Derives turn status and its error from the same provider result. */
+function resultOutcome(result: SDKResultMessage): {
+  status: ProviderRuntimeTurnStatus;
+  errorMessage: string | undefined;
+} {
+  const structuredError = isOverloadedResult(result)
+    ? "Claude API is overloaded (529). Try again shortly."
+    : terminalResultError(result.terminal_reason);
+  // CLI diagnostic entries must not become the error banner.
+  const listedError =
+    result.subtype === "success" || !Array.isArray(result.errors)
+      ? undefined
+      : result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+  const errorMessage = listedError || structuredError;
+  if (structuredError !== undefined) return { status: "failed", errorMessage };
+  if (result.subtype === "success") return { status: "completed", errorMessage };
+  if (isInterruptedResult(result)) return { status: "interrupted", errorMessage };
+  return {
+    status: resultErrorsText(result).includes("cancel") ? "cancelled" : "failed",
+    errorMessage,
+  };
 }
 
 function streamKindFromDeltaType(deltaType: string): ClaudeTextStreamKind {
@@ -3268,8 +3232,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const { status, errorMessage } = resultOutcome(message);
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -5112,6 +5075,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     capabilities: {
       sessionModelSwitch: "in-session",
     },
+    compaction: { type: "slash-command", command: "/compact" },
     startSession,
     sendTurn,
     interruptTurn,

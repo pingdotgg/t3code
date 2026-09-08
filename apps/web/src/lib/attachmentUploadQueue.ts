@@ -445,7 +445,7 @@ export function startAttachmentUpload(input: {
  * persisted draft upload survives cancellation (an environment switch cancels
  * the old job, and the draft still references that server copy).
  */
-export function cancelAttachmentUpload(imageId: string): void {
+function cancelAttachmentUpload(imageId: string): void {
   const job = jobsByImageId.get(imageId);
   if (!job) {
     return;
