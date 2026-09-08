@@ -2663,7 +2663,7 @@ private actor PassiveLiveServer: WebSocketConnecting {
         }
         if value["_tag"]?.stringValue == "Ping" { return .object(["_tag": .string("Pong")]) }
         if value["tag"]?.stringValue == RPCMethod.dispatchCommand.rawValue,
-           value["payload"]?["type"]?.stringValue == "thread.meta.update",
+           ["thread.meta.update", "thread.unarchive"].contains(value["payload"]?["type"]?.stringValue ?? ""),
            case let .number(id)? = value["id"] {
             return .object([
                 "_tag": .string("Exit"), "requestId": .number(id),
@@ -2762,6 +2762,56 @@ private actor PassiveLiveConnection: WebSocketConnection {
 @Suite("Native incremental bootstrap")
 @MainActor
 struct NativeIncrementalBootstrapTests {
+    @Test("Foreground restores bootstrap before a client has been adopted", .timeLimit(.minutes(1)))
+    func foregroundRestartsUnadoptedClient() async throws {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            fallbackPollingInitialDelay: .seconds(60), aggregatePublishSleep: {}
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let recorder = BootstrapSnapshotRecorder(
+            seed: FeatureSnapshot(connection: .init(state: .disconnected)), events: fixture.client.events()
+        )
+        defer { recorder.stop() }
+        fixture.client.suspendForBackground()
+        await fixture.client.resumeAfterBackground(reconnect: false)
+        let restored = try await recorder.wait { $0.threads.contains { $0.environmentID == "one" } }
+        #expect(restored.environments.contains { $0.id == "one" })
+        await fixture.client.disconnect()
+    }
+
+    @Test("An archive refresh reads the current shell after the archive RPC settles", .timeLimit(.minutes(1)))
+    func archiveRefreshReadsShellAfterArchive() async throws {
+        let receipts = PassiveLiveReceipts()
+        let server = PassiveLiveServer()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            webSocketConnector: server, fallbackPollingInitialDelay: .seconds(60),
+            aggregatePublishSleep: {}, aggregateRefreshReceipt: { receipts.record($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.hydratedSnapshot()
+        let recorder = try #require(fixture.recorder)
+        try await receipts.waitForArchive("one")
+        let archive = PassiveRequestGate()
+        await server.holdArchive(host: "one.example", gate: archive)
+        let refresh = Task { try await fixture.client.setThreadArchived(id: "thread-one", archived: false) }
+        do {
+            try await archive.waitUntilEnteredCancellable()
+            await fixture.transport.setShell(multiEnvironmentShell(
+                projectID: "project-one", threadID: "thread-one", title: "Current after archive", snapshotSequence: 20
+            ), host: "one.example")
+            await archive.release()
+            try await refresh.value
+            #expect(recorder.history.last?.threads.contains { $0.title == "Current after archive" } == true)
+        } catch {
+            await archive.release()
+            refresh.cancel()
+            _ = try? await refresh.value
+            await fixture.client.disconnect()
+            throw error
+        }
+        await fixture.client.disconnect()
+    }
+
     @Test("Metadata returns while active HTTP and catalogue are held; a healthy peer publishes", .timeLimit(.minutes(1)))
     func heldActiveDoesNotBlockHealthyPeer() async throws {
         let connector = BootstrapHeldConnector()

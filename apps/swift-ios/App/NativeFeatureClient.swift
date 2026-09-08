@@ -444,6 +444,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func resumeAfterBackground(reconnect: Bool) async {
         isForeground = true
+        if client == nil {
+            if let snapshot = try? await initialSnapshot(), isForeground {
+                continuation.yield(.snapshot(snapshot))
+            }
+            return
+        }
         if let client { startAggregateRefresh(client) }
         let sessionGeneration = environmentGeneration
         let selectedRoute = activeThreadID.flatMap { try? threadRoute(for: $0) }
@@ -5257,6 +5263,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let bootstrapID = foregroundBootstrapID
         let sourceSequence = shellsByEnvironmentID[environment.id]?.snapshotSequence
         let authorityRevision = activeHTTPAuthorityRevision
+        // Archive RPC can establish the first socket. Bind the subsequent shell
+        // read to that socket instead of treating its creation as replacement.
+        let archivedShell = includeArchived ? try? await client.archivedShellSnapshot() : nil
         let connectionID = await client.currentConnectionID()
         guard !Task.isCancelled, bootstrapID == foregroundBootstrapID else { throw CancellationError() }
         let shell = try await client.shellSnapshot()
@@ -5264,9 +5273,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               isKnownClient(client, environmentID: environment.id, generation: generation) else {
             throw CancellationError()
         }
-        // Optional archive work cannot carry a pre-reload shell through another
-        // suspension and then establish authority in the replacement bootstrap.
-        let archivedShell = includeArchived ? try? await client.archivedShellSnapshot() : nil
         let currentConnectionID = await client.currentConnectionID()
         guard !Task.isCancelled, bootstrapID == foregroundBootstrapID,
               isKnownClient(client, environmentID: environment.id, generation: generation),
