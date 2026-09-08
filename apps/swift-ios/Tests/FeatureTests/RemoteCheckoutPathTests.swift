@@ -36,6 +36,8 @@ struct RemoteCheckoutPathTests {
         (#"\\server\share\."#, "//server/share"),
         (#"\\server\share\..\repo"#, "//server/repo"),
         ("/srv/App", "/srv/app"),
+        ("//srv/Work", "//srv/work"),
+        ("//srv/work", "//srv/Work"),
         (#"/srv/a\b"#, "/srv/a/b"),
         (#"C:\work\linked"#, #"C:\work\repo"#),
     ])
