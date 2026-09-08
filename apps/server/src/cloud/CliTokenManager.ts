@@ -324,6 +324,7 @@ export const outOfBandOAuthLogin = Effect.fn("cloud.cli_token.out_of_band_oauth_
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   // Capture exactly the services the login/refresh flows need at build time
   // (matching the behavior before the out-of-band flow captured the instances), not

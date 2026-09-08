@@ -72,7 +72,6 @@ export const BootstrapCredentialInvalidError = Schema.Union([
   UnavailableBootstrapCredentialError,
 ]);
 export type BootstrapCredentialInvalidError = typeof BootstrapCredentialInvalidError.Type;
-export const isBootstrapCredentialInvalidError = Schema.is(BootstrapCredentialInvalidError);
 
 export class ActivePairingLinksLoadError extends Schema.TaggedError<ActivePairingLinksLoadError>()(
   "ActivePairingLinksLoadError",
@@ -173,7 +172,6 @@ export const BootstrapCredentialError = Schema.Union([
   BootstrapCredentialInternalError,
 ]);
 export type BootstrapCredentialError = typeof BootstrapCredentialError.Type;
-export const isBootstrapCredentialError = Schema.is(BootstrapCredentialError);
 
 export interface IssuedBootstrapCredential {
   readonly id: string;

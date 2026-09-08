@@ -81,7 +81,7 @@ function isDesktopPlatform(platform: NodeJS.Platform): platform is DesktopAppAct
   return platform === "darwin" || platform === "linux" || platform === "win32";
 }
 
-export function sendDesktopAppActivationRequest(input: {
+function sendDesktopAppActivationRequest(input: {
   readonly address: string;
   readonly fallbackAddress?: string;
   readonly request: DesktopAppActivationRequest;
