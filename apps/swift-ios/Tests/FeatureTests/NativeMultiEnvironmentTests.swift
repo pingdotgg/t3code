@@ -1475,7 +1475,7 @@ private final class ThreadTitleEventProbe {
                     observed = snapshot.threads.contains {
                         $0.id == self.threadID && $0.title == self.title
                     }
-                case .connection, .threadRemoved, .detail, .detailDelta, .threadSync, .failure:
+                case .connection, .threadRemoved, .detail, .detailDelta, .threadSync, .threadReceipt, .failure:
                     observed = false
                 }
                 if observed {

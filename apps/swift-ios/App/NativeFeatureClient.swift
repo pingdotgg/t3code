@@ -4211,6 +4211,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 case let .threadUpserted(nextSequence, thread):
                     sequence = nextSequence
                     guard sequence > current.snapshotSequence else { return true }
+                    owner.publishThreadReceipt(FeatureScopedID.thread(
+                        environmentID: environment.id, wireID: thread.id
+                    ), source: .shellThreadUpdate)
                     owner.archivedThreadsByEnvironmentID[environment.id]?.removeAll {
                         ($0.wireID ?? $0.id) == thread.id
                     }
@@ -4482,6 +4485,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 changedThreadIDs.insert(FeatureScopedID.thread(
                     environmentID: client.environment.id, wireID: thread.id
                 ))
+                publishThreadReceipt(FeatureScopedID.thread(environmentID: client.environment.id, wireID: thread.id), source: .shellThreadUpdate)
                 archivedThreadsByEnvironmentID[client.environment.id]?.removeAll {
                     ($0.wireID ?? $0.id) == thread.id
                 }
@@ -4885,6 +4889,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         ensureDetailCatchUpFallback(route, generation: detailStreamGeneration)
     }
 
+    private var threadReceiptGate = NativeThreadReceiptGate()
+
+    private func publishThreadReceipt(_ threadID: String, source: FeatureThreadReceipt.Source) {
+        guard let receipt = threadReceiptGate.receive(
+            threadID: threadID, selectedThreadID: activeThreadID,
+            generation: detailStreamGeneration, now: Date(), source: source
+        ) else { return }
+        continuation.yield(.threadReceipt(receipt))
+    }
+
     private func consumeDetailStreamItem(
         _ item: ThreadStreamItem,
         route: NativeThreadRoute,
@@ -4903,6 +4917,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                subscriptionEpoch < requiredEpoch { return }
             guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0),
                   activeRawThread == nil || snapshot.snapshotSequence > (activeThreadSequence ?? 0) else { return }
+            guard snapshot.thread.id == route.wireID else { return }
+            publishThreadReceipt(route.uiID, source: .detailSnapshot)
             selectedThreadLastProgressAt = selectedThreadReconciliationNow()
             beginWarmReplayIfNeeded(route)
             resetDetailRefresh()
@@ -4915,6 +4931,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             scheduleRawDetailPublish(route: route, mutation: .full)
             if detailCompletionReceived { markDetailSynchronized(route) }
         case let .event(event):
+            if case .object = event,
+               let type = event["type"]?.stringValue, !type.isEmpty,
+               let occurredAt = event["occurredAt"]?.stringValue,
+               NativeTimestampParser.parse(occurredAt) != nil,
+               event["payload"]?["threadId"]?.stringValue == route.wireID,
+               case let .number(value) = event["sequence"],
+               let sequence = Int(exactly: value), sequence > (activeThreadSequence ?? 0) {
+                publishThreadReceipt(route.uiID, source: .detailEvent)
+            }
             guard let current = activeRawThread else {
                 // Do not apply later events to a snapshot that missed earlier
                 // ones. It must cover every event skipped while replacing it.
@@ -5825,23 +5850,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             return nil
         }
 
-        var changedIDs = Set(mutations.messages.map(\.id))
-        for activity in mutations.activities {
-            if activity.kind == "user-input.answer-submitted" {
-                changedIDs.formUnion(NativeQuestionAnswerHistory.messages(
-                    activity, createdAt: parseDate(activity.createdAt)
-                ).map(\.id))
-            }
-            if NativeActivityNotice.accepts(activity) {
-                changedIDs.insert("activity-\(activity.id)")
-            } else if NativeWorkLogAccumulator.accepts(activity) {
-                changedIDs.insert("work-log-\(activity.turnId ?? "unscoped")")
-            }
-        }
-
         guard let cache = detailRenderCaches[next.thread.id] else { return nil }
+        let changedIDs = cache.transcript.changedIDs
         let changedMessages = changedIDs.compactMap { id in
-            cache.mergedIndexByID[id].map { cache.mergedMessages[$0] }
+            cache.transcript.indexByID[id].map { cache.transcript.messages[$0] }
         }
         let appendedCount = next.messages.count - previous.messages.count
         let appendedMessageIDs = appendedCount == 0
@@ -6318,38 +6330,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 cache.compaction.apply(raw, createdAt: parseDate(raw.createdAt))
             }
             resetPendingRequests(thread, environment: environment, cache: cache)
-            let notices = thread.activities.compactMap { activity in
-                cache.compaction.apply(activity)
-                return NativeActivityNotice.message(activity, createdAt: parseDate(activity.createdAt))
-            }
+            for activity in thread.activities { cache.compaction.apply(activity) }
             let sessionIsLive = thread.session?.status == "starting"
                 || thread.session?.status == "running"
-            let activityMessages = (notices + collapsedWorkLogs(
-                thread.activities,
+            cache.transcript = NativeTranscriptTimeline(
+                messages: thread.messages.compactMap { cache.messagesByID[$0.id] },
+                activities: thread.activities,
                 sessionIsLive: sessionIsLive
-            ))
-                .sorted { $0.createdAt < $1.createdAt }
-            seedWorkLogs(thread.activities, sessionIsLive: sessionIsLive, cache: cache)
+            )
             cache.subagents.reset(with: thread.activities)
-            let messages = thread.messages.compactMap { cache.messagesByID[$0.id] }
-            cache.mergedMessages = (messages + activityMessages)
-                .sorted { $0.createdAt < $1.createdAt }
-            rebuildMergedIndexes(cache)
             cache.isInitialized = true
         } else if let mutations {
-            for message in mutations.messages {
-                let mapped = mapMessage(message, environmentID: environment.id)
-                cache.messagesByID[message.id] = mapped
-                cache.compaction.apply(message, createdAt: mapped.createdAt)
-                upsertMergedMessage(mapped, cache: cache)
-            }
-            for activity in mutations.activities {
-                applyActivityMutation(
-                    activity,
-                    threadID: threadID,
-                    environment: environment,
-                    cache: cache
-                )
+            cache.transcript.changedIDs.removeAll(keepingCapacity: true)
+            for mutation in mutations.ordered {
+                switch mutation {
+                case let .message(message):
+                    let mapped = mapMessage(message, environmentID: environment.id)
+                    cache.messagesByID[message.id] = mapped
+                    cache.compaction.apply(message, createdAt: mapped.createdAt)
+                    cache.transcript.append(mapped)
+                case let .activity(activity):
+                    applyActivityMutation(activity, threadID: threadID, environment: environment, cache: cache)
+                case .full, .metadata, .none:
+                    break
+                }
             }
         } else {
             assertionFailure("Initialized detail caches require an incremental mutation")
@@ -6363,14 +6367,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let backgroundWorkIsActive = backgroundLiveness == .working
         let sessionIsLive = thread.session?.status == "starting"
             || thread.session?.status == "running"
-        if !sessionIsLive {
-            for (groupID, var accumulator) in cache.workLogsByGroupID
-            where accumulator.hasActiveWork {
-                accumulator.clearActiveWork()
-                cache.workLogsByGroupID[groupID] = accumulator
-                upsertMergedMessage(accumulator.message(groupID: groupID), cache: cache)
-            }
-        }
+        if !sessionIsLive { cache.transcript.finishActiveWork() }
         mappedThread.state = Self.resolveThreadState(
             latestTurn: thread.latestTurn,
             session: thread.session,
@@ -6387,7 +6384,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         return FeatureThreadDetail(
             thread: mappedThread,
-            messages: cache.mergedMessages,
+            messages: cache.transcript.messages,
             approvals: cache.approvals,
             userInputs: cache.userInputs,
             page: page,
@@ -6508,7 +6505,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     environmentID: route.environmentID
                 )
             }
-            cache.mergedMessages = mergedMessages
+            cache.transcript.messages = mergedMessages
             rebuildMergedIndexes(cache)
         }
 
@@ -6533,14 +6530,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let messages = thread.messages.map {
             mapMessage($0, environmentID: environmentID)
         }
-        let workIsLive = thread.session?.status == "starting"
-            || thread.session?.status == "running"
-            || backgroundLiveness(threadID: thread.id, environmentID: environmentID) == .working
-        let activities = thread.activities.compactMap {
-            NativeActivityNotice.message($0, createdAt: parseDate($0.createdAt))
-        }
-            + collapsedWorkLogs(thread.activities, sessionIsLive: workIsLive)
-        return (messages + activities).sorted { $0.createdAt < $1.createdAt }
+        // Older pages contain earlier turn windows, but carry current session
+        // metadata. That metadata must not revive their historical tool rows.
+        return NativeTranscriptTimeline(
+            messages: messages, activities: thread.activities, sessionIsLive: false
+        ).messages
     }
 
     private func mergingOlderHistory(
@@ -6590,31 +6584,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func rebuildMergedIndexes(_ cache: NativeDetailRenderCache) {
-        cache.mergedIndexByID = cache.mergedMessages.enumerated().reduce(into: [:]) {
-            $0[$1.element.id] = $1.offset
-        }
-    }
-
-    /// Known stream events are chronological, so new render entities land at
-    /// the tail and existing streaming/work-log entities patch in constant time.
-    private func upsertMergedMessage(
-        _ message: FeatureMessage,
-        cache: NativeDetailRenderCache
-    ) {
-        if let index = cache.mergedIndexByID[message.id] {
-            cache.mergedMessages[index] = message
-            return
-        }
-        if let last = cache.mergedMessages.last, last.createdAt > message.createdAt {
-            // Out-of-order events are rare; preserve correctness while keeping
-            // the normal append path independent of transcript size.
-            cache.mergedMessages.append(message)
-            cache.mergedMessages.sort { $0.createdAt < $1.createdAt }
-            rebuildMergedIndexes(cache)
-            return
-        }
-        cache.mergedIndexByID[message.id] = cache.mergedMessages.count
-        cache.mergedMessages.append(message)
+        cache.transcript.rebuildIndexes()
     }
 
     private func applyActivityMutation(
@@ -6637,27 +6607,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environment: environment,
             cache: cache
         )
-        if let notice = NativeActivityNotice.message(activity, createdAt: parseDate(activity.createdAt)) {
-            upsertMergedMessage(notice, cache: cache)
-        }
-        for answer in NativeQuestionAnswerHistory.messages(activity, createdAt: parseDate(activity.createdAt)) {
-            upsertMergedMessage(answer, cache: cache)
-        }
-        guard NativeWorkLogAccumulator.accepts(activity),
-              cache.workLogActivityIDs.insert(activity.id).inserted else {
-            return
-        }
-        let groupID = activity.turnId ?? "unscoped"
-        var accumulator = cache.workLogsByGroupID[groupID] ?? NativeWorkLogAccumulator()
-        accumulator.append(
-            activity,
-            preview: previewText(activity.payload["detail"]?.stringValue),
-            createdAt: parseDate(activity.createdAt)
-        )
-        cache.workLogsByGroupID[groupID] = accumulator
-        guard accumulator.hasContent else { return }
-        let message = accumulator.message(groupID: groupID)
-        upsertMergedMessage(message, cache: cache)
+        cache.transcript.append(activity)
     }
 
     /// Decorate-sort so each timestamp is parsed once (via the memoized date
@@ -6677,32 +6627,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             lhs.date != rhs.date ? lhs.date < rhs.date : lhs.index < rhs.index
         }
         return decorated.map(\.activity)
-    }
-
-    private func seedWorkLogs(
-        _ activities: [OrchestrationActivity],
-        sessionIsLive: Bool,
-        cache: NativeDetailRenderCache
-    ) {
-        cache.workLogsByGroupID.removeAll(keepingCapacity: true)
-        cache.workLogActivityIDs.removeAll(keepingCapacity: true)
-        for activity in sortedByCreation(activities)
-        where NativeWorkLogAccumulator.accepts(activity) {
-            cache.workLogActivityIDs.insert(activity.id)
-            let groupID = activity.turnId ?? "unscoped"
-            var accumulator = cache.workLogsByGroupID[groupID] ?? NativeWorkLogAccumulator()
-            accumulator.append(
-                activity,
-                preview: previewText(activity.payload["detail"]?.stringValue),
-                createdAt: parseDate(activity.createdAt)
-            )
-            cache.workLogsByGroupID[groupID] = accumulator
-        }
-        if !sessionIsLive {
-            for groupID in cache.workLogsByGroupID.keys {
-                cache.workLogsByGroupID[groupID]?.clearActiveWork()
-            }
-        }
     }
 
     private func applyApprovalActivity(
@@ -6823,32 +6747,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 )
             }
         )
-    }
-
-    /// Lifecycle updates can number in the thousands on a long turn. Keep the
-    /// primary transcript message-sized while preserving a bounded, expandable
-    /// summary for each turn.
-    private func collapsedWorkLogs(
-        _ activities: [OrchestrationActivity],
-        sessionIsLive: Bool
-    ) -> [FeatureMessage] {
-        let groups = Dictionary(grouping: sortedByCreation(activities).filter {
-            NativeWorkLogAccumulator.accepts($0)
-        }) { activity in
-            activity.turnId ?? "unscoped"
-        }
-        return groups.compactMap { groupID, group in
-            var accumulator = NativeWorkLogAccumulator()
-            for activity in group {
-                accumulator.append(
-                    activity,
-                    preview: previewText(activity.payload["detail"]?.stringValue),
-                    createdAt: parseDate(activity.createdAt)
-                )
-            }
-            if !sessionIsLive { accumulator.clearActiveWork() }
-            return accumulator.hasContent ? accumulator.message(groupID: groupID) : nil
-        }
     }
 
     /// Snapshot replay and live updates share terminal request rules. Request IDs
@@ -7700,8 +7598,7 @@ enum NativeDetailRenderMutation: Equatable {
 struct NativeDetailRenderMutations {
     private(set) var hasUpdates = false
     private(set) var requiresFullRebuild = false
-    private(set) var messages: [OrchestrationMessage] = []
-    private(set) var activities: [OrchestrationActivity] = []
+    private(set) var ordered: [NativeDetailRenderMutation] = []
 
     mutating func formUnion(_ mutation: NativeDetailRenderMutation) {
         if mutation != .none { hasUpdates = true }
@@ -7709,33 +7606,24 @@ struct NativeDetailRenderMutations {
         switch mutation {
         case .full:
             requiresFullRebuild = true
-            messages.removeAll(keepingCapacity: true)
-            activities.removeAll(keepingCapacity: true)
+            ordered.removeAll(keepingCapacity: true)
         case let .message(message):
-            if let index = messages.firstIndex(where: { $0.id == message.id }) {
-                messages[index] = message
-            } else {
-                messages.append(message)
-            }
-        case let .activity(activity):
-            if let index = activities.firstIndex(where: { $0.id == activity.id }) {
-                activities[index] = activity
-            } else {
-                activities.append(activity)
-            }
+            if case let .message(previous) = ordered.last, previous.id == message.id {
+                ordered[ordered.count - 1] = mutation
+            } else { ordered.append(mutation) }
+        case .activity:
+            ordered.append(mutation)
         case .metadata, .none:
             break
         }
     }
 }
 
+@MainActor
 private final class NativeDetailRenderCache {
     var isInitialized = false
     var messagesByID: [String: FeatureMessage] = [:]
-    var mergedMessages: [FeatureMessage] = []
-    var mergedIndexByID: [String: Int] = [:]
-    var workLogsByGroupID: [String: NativeWorkLogAccumulator] = [:]
-    var workLogActivityIDs: Set<String> = []
+    var transcript = NativeTranscriptTimeline()
     var approvals: [FeatureApproval] = []
     var userInputs: [FeatureUserInput] = []
     var closedApprovalRequestIDs: Set<String> = []
@@ -7865,131 +7753,6 @@ enum NativeSharedPreferenceChange {
     }
 }
 
-struct NativeWorkLogAccumulator {
-    private static let terminalKinds = Set([
-        "tool.completed", "task.completed", "turn.plan.updated",
-    ])
-    private static let activeKinds = Set(["tool.started", "tool.updated"])
-    private static let imageExtensions = Set([
-        "avif", "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp",
-    ])
-
-    private(set) var count = 0
-    private var visibleLines: [String] = []
-    private var createdAt = Date.distantPast
-    private var activeEntries: [String: String] = [:]
-    private var activeOrder: [String] = []
-    private var imagePaths: [String] = []
-    private var toolPresentation: ToolActivityPresentation?
-    private var activePresentations: [String: ToolActivityPresentation] = [:]
-
-    var hasActiveWork: Bool { !activeEntries.isEmpty }
-    var hasContent: Bool { count > 0 || hasActiveWork || !imagePaths.isEmpty }
-
-    static func accepts(_ activity: OrchestrationActivity) -> Bool {
-        activeKinds.contains(activity.kind)
-            || (activity.tone != "error" && terminalKinds.contains(activity.kind))
-    }
-
-    mutating func append(
-        _ activity: OrchestrationActivity,
-        preview: String?,
-        createdAt: Date
-    ) {
-        if count == 0 && activeEntries.isEmpty {
-            self.createdAt = createdAt
-        }
-        let key = Self.lifecycleKey(activity)
-        toolPresentation = ToolActivityPresentation(payload: activity.payload) ?? activePresentations[key]
-        let label = activity.payload["title"]?.stringValue ?? activity.summary
-        let lifecycleStatus = activity.payload["status"]?.stringValue
-        let isTerminalUpdate = activity.kind == "tool.updated"
-            && lifecycleStatus.map { $0 != "inProgress" && $0 != "in_progress" } == true
-        if Self.activeKinds.contains(activity.kind) && !isTerminalUpdate
-            && activity.tone != "error" {
-            activeEntries[key] = label
-            activePresentations[key] = toolPresentation
-            activeOrder.removeAll { $0 == key }
-            activeOrder.append(key)
-        } else {
-            activeEntries[key] = nil
-            activePresentations[key] = nil
-            activeOrder.removeAll { $0 == key }
-            guard activity.tone != "error" else { return }
-            count += 1
-            visibleLines.append("• \(preview ?? activity.summary)")
-            if visibleLines.count > 40 {
-                visibleLines.removeFirst(visibleLines.count - 40)
-            }
-        }
-        if let path = Self.viewedImagePath(activity), !imagePaths.contains(path) {
-            imagePaths.append(path)
-            if imagePaths.count > 8 { imagePaths.removeFirst(imagePaths.count - 8) }
-        }
-    }
-
-    mutating func clearActiveWork() {
-        activeEntries.removeAll(keepingCapacity: true)
-        activePresentations.removeAll(keepingCapacity: true)
-        activeOrder.removeAll(keepingCapacity: true)
-    }
-
-    func message(groupID: String) -> FeatureMessage {
-        var lines: [String] = []
-        if count > visibleLines.count {
-            lines.append("\(count - visibleLines.count) earlier updates hidden")
-        }
-        lines.append(contentsOf: visibleLines)
-        var message = FeatureMessage(
-            id: "work-log-\(groupID)",
-            role: .tool,
-            text: lines.joined(separator: "\n"),
-            createdAt: createdAt,
-            state: .complete,
-            toolName: "Work log · \(count)",
-            workLogImagePaths: imagePaths.isEmpty ? nil : imagePaths,
-            activeWorkLabel: activeOrder.last.flatMap { activeEntries[$0] }
-        )
-        message.toolPresentation = activeOrder.last.flatMap { activePresentations[$0] } ?? toolPresentation
-        return message
-    }
-
-    private static func lifecycleKey(_ activity: OrchestrationActivity) -> String {
-        if let id = activity.payload["toolCallId"]?.stringValue
-            ?? activity.payload["data"]?["toolCallId"]?.stringValue {
-            return "id:\(id)"
-        }
-        let itemType = activity.payload["itemType"]?.stringValue ?? ""
-        let title = activity.payload["title"]?.stringValue ?? activity.summary
-        let detail = activity.payload["detail"]?.stringValue ?? ""
-        return "fallback:\([itemType, title, detail].map(normalizedLifecycleText).joined(separator: "|"))"
-    }
-
-    private static func normalizedLifecycleText(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(
-                of: #"\s+(complete|completed)$"#,
-                with: "",
-                options: .regularExpression
-            )
-    }
-
-    private static func viewedImagePath(_ activity: OrchestrationActivity) -> String? {
-        let itemType = normalizedLifecycleText(activity.payload["itemType"]?.stringValue ?? "")
-        let title = normalizedLifecycleText(activity.payload["title"]?.stringValue ?? activity.summary)
-        let qualifies = activity.payload["requestKind"]?.stringValue == "file-read"
-            || itemType == "image_view"
-            || (itemType == "dynamic_tool_call" && title == "read file")
-        guard qualifies,
-              let detail = activity.payload["detail"]?.stringValue,
-              !detail.contains("\n"), !detail.contains("\r") else { return nil }
-        let path = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let ext = path.split(separator: ".").last?.lowercased(),
-              imageExtensions.contains(String(ext)) else { return nil }
-        return path
-    }
-}
 
 enum NativeThreadDetailReductionResult: Equatable {
     case updated(OrchestrationThread)
@@ -8721,4 +8484,27 @@ enum NativePassiveShellReceipt: Sendable {
     case httpFinished(environmentID: String)
     case configurationApplied(environmentID: String)
     case archiveFinished(environmentID: String)
+}
+
+/// Receipt display has second precision. Collapse only updates invisible at that precision.
+struct NativeThreadReceiptGate {
+    private var lastThreadID: String?
+    private var lastGeneration: Int?
+    private var lastSecond: TimeInterval?
+    private var lastSource: FeatureThreadReceipt.Source?
+
+    mutating func receive(
+        threadID: String, selectedThreadID: String?, generation: Int,
+        now: Date, source: FeatureThreadReceipt.Source
+    ) -> FeatureThreadReceipt? {
+        guard threadID == selectedThreadID else { return nil }
+        let second = floor(now.timeIntervalSince1970)
+        guard lastThreadID != threadID || lastGeneration != generation
+                || lastSecond != second || lastSource != source else { return nil }
+        lastThreadID = threadID
+        lastGeneration = generation
+        lastSecond = second
+        lastSource = source
+        return FeatureThreadReceipt(threadID: threadID, receivedAt: now, source: source)
+    }
 }

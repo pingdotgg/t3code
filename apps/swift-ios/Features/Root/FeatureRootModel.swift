@@ -149,6 +149,7 @@ public final class FeatureRootModel {
     public private(set) var details: [String: FeatureThreadDetail] = [:]
     private(set) var detailLoadStates: [String: FeatureThreadLoadState] = [:]
     private(set) var threadSyncStates: [String: FeatureThreadSyncState] = [:]
+    private(set) var selectedThreadReceipt: FeatureThreadReceipt?
     private var backgroundedAt: Date?
     /// Advances whenever a Home presentation input changes.
     public private(set) var homePresentationRevision: UInt64 = 0
@@ -722,6 +723,7 @@ public final class FeatureRootModel {
         if let previous = activeDetailPresentation {
             releaseThread(previous.threadID)
         }
+        selectedThreadReceipt = nil
         let owner = UUID()
         let lifetime = AsyncStream<Void>.makeStream()
         activeDetailPresentation = (id, owner, lifetime.continuation, nil)
@@ -843,6 +845,7 @@ public final class FeatureRootModel {
 
     /// Ends any selected-thread transport work when its detail view closes.
     public func releaseThread(_ id: String) {
+        if selectedThreadReceipt?.threadID == id { selectedThreadReceipt = nil }
         if let presentation = activeDetailPresentation, presentation.threadID == id {
             activeDetailPresentation = nil
             presentation.refreshTask?.cancel()
@@ -1203,6 +1206,8 @@ public final class FeatureRootModel {
 
     private func apply(_ event: FeatureEvent) {
         switch event {
+        case let .threadReceipt(receipt):
+            recordThreadReceipt(receipt)
         case let .snapshot(value):
             install(value)
         case let .connection(value):
@@ -1236,6 +1241,13 @@ public final class FeatureRootModel {
         case let .failure(message):
             errorMessage = message
         }
+    }
+
+    func recordThreadReceipt(_ receipt: FeatureThreadReceipt) {
+        guard activeDetailPresentation?.threadID == receipt.threadID else { return }
+        guard selectedThreadReceipt.map({ receipt.receivedAt >= $0.receivedAt }) ?? true else { return }
+        // Receipt-only updates must not invalidate the transcript or Home projections.
+        selectedThreadReceipt = receipt
     }
 
     private func upsert(_ thread: FeatureThread) {
@@ -1471,6 +1483,7 @@ public final class FeatureRootModel {
     }
 
     private func removeDetail(id: String) {
+        if selectedThreadReceipt?.threadID == id { selectedThreadReceipt = nil }
         if details.removeValue(forKey: id) != nil {
             detailRecency.removeAll { $0 == id }
         }
@@ -1483,6 +1496,7 @@ public final class FeatureRootModel {
     }
 
     private func clearDetails() {
+        selectedThreadReceipt = nil
         detailLoadGeneration &+= 1
         detailLoadRevisions.removeAll()
         storedDetailLoadRequestRevisions.removeAll()

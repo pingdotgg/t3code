@@ -47,7 +47,7 @@ struct NativeWorkLogAccumulatorTests {
         )
         message = accumulator.message(groupID: "turn-1")
         #expect(message.activeWorkLabel == nil)
-        #expect(message.toolName == "Work log · 1")
+        #expect(message.toolName == "Run focused tests completed")
         #expect(message.text == "• 2 tests passed")
     }
 

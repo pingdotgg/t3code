@@ -5,6 +5,73 @@ import XCTest
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
+    func testOlderToolPageNeverInheritsCurrentSessionLiveness() async throws {
+        var capture = try JSONSerialization.jsonObject(with: JSONEncoder.t3.encode(
+            NativeStopProjectionFixtures.snapshot("approval"))) as! [String: Any]
+        var before = capture["before"] as! [String: Any]
+        var detail = before["detail"] as! [String: Any]
+        let sequence = detail["snapshotSequence"] as! Int
+        var thread = detail["thread"] as! [String: Any]
+        func tool(_ id: String, turn: String, at time: String) -> [String: Any] {
+            ["id": id, "tone": "info", "kind": "tool.started", "summary": id,
+             "payload": ["toolCallId": id, "title": id], "turnId": turn, "createdAt": time]
+        }
+        thread["messages"] = [["id": "new-text", "role": "assistant", "text": "Current turn",
+            "turnId": "outcome-proof-A", "streaming": false,
+            "createdAt": "2026-01-01T00:00:03Z", "updatedAt": "2026-01-01T00:00:03Z"]]
+        thread["activities"] = [tool("new-tool", turn: "outcome-proof-A", at: "2026-01-01T00:00:04Z")]
+        detail["thread"] = thread
+        detail["page"] = ["beforeCursor": "older", "hasMore": true, "snapshotSequence": sequence, "threadSequence": sequence]
+        before["detail"] = detail
+        capture["before"] = before
+        var older = before
+        thread["messages"] = []
+        thread["activities"] = [tool("old-tool", turn: "old-turn", at: "2026-01-01T00:00:01Z")]
+        detail["thread"] = thread
+        detail["page"] = ["hasMore": false, "snapshotSequence": sequence, "threadSequence": sequence]
+        older["detail"] = detail
+        capture["older"] = older
+        let fixture = try await AcceptedSendFixture.make(captured:
+            JSONDecoder.t3.decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: capture)), supportsPagination: true)
+        addTeardownBlock { await fixture.cleanUp() }
+        await fixture.transport.useCapturedPhase("older")
+        let result = try await fixture.client.loadEarlierThreadTurns(id: fixture.threadID)
+        let rows = try XCTUnwrap(result?.messages)
+        XCTAssertEqual(rows.map(\.id), ["work-log-old-tool", "new-text", "work-log-new-tool"])
+        XCTAssertNil(rows.first?.activeWorkLabel)
+        XCTAssertEqual(rows.last?.activeWorkLabel, "new-tool")
+    }
+
+    func testToolUpdatesContinueAfterInterveningText() async throws {
+        let base = try NativeStopProjectionFixtures.snapshot("approval")
+        var capture = try JSONSerialization.jsonObject(with: JSONEncoder.t3.encode(base)) as! [String: Any]
+        let times = ["2026-01-01T00:00:01.000Z", "2026-01-01T00:00:02.000Z", "2026-01-01T00:00:03.000Z"]
+        let activities: [[String: Any]] = [0, 2].map { index in
+            ["id": "call-event-\(index)", "tone": "info", "kind": "tool.updated",
+             "summary": "Read \(index)", "payload": ["toolCallId": "call-a", "title": "Read \(index)"],
+             "turnId": "outcome-proof-A", "sequence": index + 10, "createdAt": times[index]]
+        }
+        let message: [String: Any] = ["id": "between", "role": "assistant", "text": "Checking the result",
+            "turnId": "outcome-proof-A", "streaming": false, "createdAt": times[1], "updatedAt": times[1]]
+        var phase = capture["before"] as! [String: Any]
+        var detail = phase["detail"] as! [String: Any]
+        var thread = detail["thread"] as! [String: Any]
+        thread["messages"] = [message]
+        thread["activities"] = activities
+        detail["thread"] = thread
+        phase["detail"] = detail
+        capture["before"] = phase
+        let fixture = try await AcceptedSendFixture.make(captured:
+            JSONDecoder.t3.decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: capture)))
+        addTeardownBlock { await fixture.cleanUp() }
+        let rows = try XCTUnwrap(fixture.model.details[fixture.threadID]?.messages)
+        XCTAssertEqual(rows.map(\.role), [.tool, .assistant, .tool])
+        XCTAssertEqual(rows.filter { $0.role == .tool }.map(\.createdAt),
+                       [NativeTimestampParser.parse(times[0])!, NativeTimestampParser.parse(times[2])!])
+        XCTAssertEqual(rows.last?.activeWorkLabel, "Read 2")
+        XCTAssertNil(rows.first?.activeWorkLabel)
+    }
+
     func testCapturedStopProjectionsRetainFeedbackUntilInactiveSession() async throws {
         for scenario in ["approval", "approval-starting", "input", "background-ready-null", "active-running-null"] {
             let fixture = try await AcceptedSendFixture.make(
@@ -1089,9 +1156,9 @@ private actor PartialBootstrapWebSocketConnection: WebSocketConnection {
     }
 }
 
-private func retryConfigResponse(for request: JSONValue) throws -> Data? {
+private func retryConfigResponse(for request: JSONValue, supportsPagination: Bool = false) throws -> Data? {
     guard case let .number(requestID)? = request["id"] else { return nil }
-    let config = JSONValue.object(["providers": .array([])])
+    let config = JSONValue.object(["providers": .array([]), "threadSnapshotPagination": .bool(supportsPagination)])
     if request["tag"]?.stringValue == RPCMethod.subscribeServerConfig.rawValue {
         return try JSONEncoder.t3.encode(
             JSONValue.object([
@@ -1177,7 +1244,7 @@ private struct AcceptedSendFixture {
     let runtime: EnvironmentRuntime
 
     static func make(
-        includePeer: Bool = false, turnID: String? = nil, captured: JSONValue? = nil
+        includePeer: Bool = false, turnID: String? = nil, captured: JSONValue? = nil, supportsPagination: Bool = false
     ) async throws -> Self {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-accepted-send-\(UUID().uuidString)")
@@ -1195,7 +1262,7 @@ private struct AcceptedSendFixture {
         try await store.save(includePeer ? [environment, peer] : [environment])
         try await store.setActiveEnvironment(id: environment.id)
         let transport = AcceptedSendHTTPTransport(turnID: turnID, captured: captured)
-        let socket = AcceptedSendSocket()
+        let socket = AcceptedSendSocket(supportsPagination: supportsPagination)
         let runtime = EnvironmentRuntime(
             environmentStore: store,
             credentialStore: InMemoryCredentialStore(credentials: [
@@ -1463,7 +1530,11 @@ private actor AcceptedSendSocket: WebSocketConnection {
     private var rejectsInterrupts = false
     private var pendingInterruptResponses: [Data] = []
 
-    init() { (heldInterrupts, interruptReceipts) = AsyncStream.makeStream() }
+    private let supportsPagination: Bool
+    init(supportsPagination: Bool = false) {
+        self.supportsPagination = supportsPagination
+        (heldInterrupts, interruptReceipts) = AsyncStream.makeStream()
+    }
     func holdInterruptAcknowledgements() { holdsInterrupts = true }
     func rejectInterruptAcknowledgements() { rejectsInterrupts = true }
     func releaseInterruptAcknowledgements() {
@@ -1481,7 +1552,7 @@ private actor AcceptedSendSocket: WebSocketConnection {
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
         let tag = request["tag"]?.stringValue
         if tag == RPCMethod.serverGetConfig.rawValue || tag == RPCMethod.subscribeServerConfig.rawValue,
-           let response = try retryConfigResponse(for: request) {
+           let response = try retryConfigResponse(for: request, supportsPagination: supportsPagination) {
             enqueue(response)
         } else if tag == RPCMethod.dispatchCommand.rawValue, let payload = request["payload"] {
             commands.append(payload)

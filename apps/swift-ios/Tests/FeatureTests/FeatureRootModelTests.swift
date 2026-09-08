@@ -9,6 +9,66 @@ import XCTest
 @MainActor
 @Suite("Feature root model")
 struct FeatureRootModelTests {
+    @Test
+    func receiptBelongsToCurrentPresentationWithoutInvalidatingTranscript() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<String>.makeStream()
+        var loads = loaded.stream.makeAsyncIterator()
+        let first = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield("a") }
+        }
+        #expect(await loads.next() == "a")
+        let detailRevision = model.detailRevision
+        let homeRevision = model.homePresentationRevision
+        let receipt = FeatureThreadReceipt(threadID: "a", receivedAt: Date(timeIntervalSince1970: 100), source: .detailEvent)
+        model.recordThreadReceipt(receipt)
+        #expect(model.selectedThreadReceipt == receipt)
+        #expect(model.detailRevision == detailRevision)
+        #expect(model.homePresentationRevision == homeRevision)
+        model.recordThreadReceipt(.init(threadID: "b", receivedAt: .now, source: .shellThreadUpdate))
+        #expect(model.selectedThreadReceipt == receipt)
+
+        let second = Task {
+            await model.runThreadPresentation(id: "b") { loaded.continuation.yield("b") }
+        }
+        #expect(await loads.next() == "b")
+        await first.value
+        #expect(model.selectedThreadReceipt == nil)
+        model.recordThreadReceipt(receipt)
+        #expect(model.selectedThreadReceipt == nil)
+        model.recordThreadReceipt(.init(threadID: "b", receivedAt: .now, source: .detailSnapshot))
+        #expect(model.selectedThreadReceipt?.source == .detailSnapshot)
+        second.cancel()
+        await second.value
+        #expect(model.selectedThreadReceipt == nil)
+        model.recordThreadReceipt(.init(threadID: "b", receivedAt: .now, source: .detailEvent))
+        #expect(model.selectedThreadReceipt == nil)
+        loaded.continuation.finish()
+    }
+
+    @Test(arguments: [FeatureThreadReceipt.Source.detailEvent, .shellThreadUpdate])
+    func olderReceiptCannotReplaceNewerReceipt(source: FeatureThreadReceipt.Source) async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let presentation = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        let newest = FeatureThreadReceipt(threadID: "a", receivedAt: Date(timeIntervalSince1970: 100), source: source)
+        model.recordThreadReceipt(newest)
+        model.recordThreadReceipt(.init(threadID: "a", receivedAt: Date(timeIntervalSince1970: 99), source: .detailSnapshot))
+        #expect(model.selectedThreadReceipt == newest)
+        let next = FeatureThreadReceipt(threadID: "a", receivedAt: Date(timeIntervalSince1970: 101), source: .shellThreadUpdate)
+        model.recordThreadReceipt(next)
+        #expect(model.selectedThreadReceipt == next)
+        presentation.cancel()
+        await presentation.value
+        loaded.continuation.finish()
+    }
+
     @Test(arguments: [["a", "b", "a"], ["a", "a"]])
     func presentationTaskReplacementAndCloseReleaseExactlyOnce(threadIDs: [String]) async {
         let client = FeatureClientStub()

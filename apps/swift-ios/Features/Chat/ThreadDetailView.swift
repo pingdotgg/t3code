@@ -824,12 +824,10 @@ public struct ThreadDetailView: View {
 
     private func timelineMessages(_ messages: [FeatureMessage]) -> [FeatureMessage] {
         guard !feedbackMessages.isEmpty else { return messages }
-        return (messages + feedbackMessages).sorted {
-            if $0.createdAt == $1.createdAt {
-                return $0.id < $1.id
-            }
-            return $0.createdAt < $1.createdAt
-        }
+        return (messages + feedbackMessages).enumerated().sorted {
+            $0.element.createdAt != $1.element.createdAt
+                ? $0.element.createdAt < $1.element.createdAt : $0.offset < $1.offset
+        }.map(\.element)
     }
 
     private var markdownImageContext: MarkdownImageContext? {
@@ -2564,28 +2562,36 @@ struct FeatureMessageView: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(T3Colors.warning)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(message.text)
-                        .foregroundStyle(T3Colors.textPrimary)
-                        .textSelection(.enabled)
-                    Text(message.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                        .foregroundStyle(T3Colors.textSecondary)
-                }
+                Text(message.text)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .textSelection(.enabled)
+                Spacer(minLength: 8)
+                FeatureActivityTimestamp(date: message.createdAt)
             }
             .font(T3Typography.supporting)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         } else if message.toolName == "context-compaction" {
-            Label(message.text, systemImage: "arrow.down.right.and.arrow.up.left")
+            HStack(alignment: .top, spacing: 8) {
+                Label(message.text, systemImage: "arrow.down.right.and.arrow.up.left")
+                Spacer(minLength: 8)
+                FeatureActivityTimestamp(date: message.createdAt)
+            }
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
         } else {
-            Text(message.text)
+            HStack(alignment: .top, spacing: 8) {
+                Text(message.text)
+                Spacer(minLength: 8)
+                FeatureActivityTimestamp(date: message.createdAt)
+            }
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityElement(children: .combine)
         }
     }
 
@@ -2597,6 +2603,19 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureActivityTimestamp: View {
+    let date: Date
+
+    var body: some View {
+        Text(date, format: Date.FormatStyle(date: .numeric, time: .standard))
+            .font(T3Typography.supporting.monospacedDigit())
+            .foregroundStyle(T3Colors.textSecondary)
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(date.formatted(date: .complete, time: .standard))
     }
 }
 
@@ -2630,6 +2649,7 @@ private struct FeatureWorkLogView: View {
                     Spacer(minLength: 8)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption.weight(.semibold))
+                    FeatureActivityTimestamp(date: message.createdAt)
                 }
                 .font(T3Typography.tool.weight(.medium))
                 .foregroundStyle(T3Colors.textSecondary)
