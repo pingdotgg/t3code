@@ -2270,9 +2270,9 @@ export default function ChatView(props: ChatViewProps) {
       const nextThreadId = newThreadId();
       const resolvedRuntimeMode = resolveNewPullRequestDraftRuntimeMode({
         composerRuntimeMode,
-        viewedThreadRuntimeMode: activeThread?.runtimeMode,
+        viewedThreadRuntimeMode: activeThread?.runtimeMode ?? null,
         lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
-        configuredRuntimeMode: settings.defaultRuntimeMode,
+        configuredRuntimeMode: settings.defaultRuntimeMode ?? null,
       });
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,

@@ -644,8 +644,8 @@ export function resolveNewPullRequestDraftRuntimeMode(sources: {
 }): RuntimeMode {
   return resolveNewThreadRuntimeMode({
     carryRuntimeMode: sources.composerRuntimeMode ?? sources.viewedThreadRuntimeMode ?? null,
-    lastUsedRuntimeMode: sources.lastUsedRuntimeMode,
-    configuredRuntimeMode: sources.configuredRuntimeMode,
+    lastUsedRuntimeMode: sources.lastUsedRuntimeMode ?? null,
+    configuredRuntimeMode: sources.configuredRuntimeMode ?? null,
   });
 }
 
