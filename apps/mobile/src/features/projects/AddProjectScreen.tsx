@@ -38,7 +38,6 @@ import {
   CommandId,
   type EnvironmentId,
   type EnvironmentMachineKind,
-  type SourceControlRepositoryInfo,
   ProjectId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -662,53 +661,25 @@ export function AddProjectRepositoryScreen(props: {
   const lookupRepositoryQuery = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
-  const listRepositoriesQuery = useAtomQueryRunner(sourceControlEnvironment.repositories, {
-    reportFailure: false,
-  });
   const navigation = useNavigation();
   const environment = useEnvironmentFromParam(props.environmentId);
   const source = sourceFromParam(props.source);
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [repositorySuggestionResult, setRepositorySuggestionResult] = useState<{
-    readonly key: string;
-    readonly repositories: ReadonlyArray<SourceControlRepositoryInfo>;
-    readonly isTruncated: boolean;
-  } | null>(null);
   const suggestionInput =
     source === "github" ? parseGitHubRepositorySuggestionInput(repositoryInput) : null;
   const suggestionOwner = suggestionInput?.owner ?? null;
-  const suggestionKey =
-    environment && suggestionOwner
-      ? `${environment.environmentId}:${suggestionOwner.toLowerCase()}`
-      : null;
-  const repositorySuggestions =
-    repositorySuggestionResult?.key === suggestionKey
-      ? repositorySuggestionResult.repositories
-      : [];
-  const areRepositorySuggestionsTruncated =
-    repositorySuggestionResult?.key === suggestionKey && repositorySuggestionResult.isTruncated;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!environment || suggestionOwner === null || suggestionKey === null) return;
-
-    void listRepositoriesQuery({
-      environmentId: environment.environmentId,
-      input: { provider: "github", owner: suggestionOwner },
-    }).then((result) => {
-      if (cancelled) return;
-      setRepositorySuggestionResult({
-        key: suggestionKey,
-        repositories: AsyncResult.isSuccess(result) ? result.value.repositories : [],
-        isTruncated: AsyncResult.isSuccess(result) && result.value.isTruncated,
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [environment, listRepositoriesQuery, suggestionKey, suggestionOwner]);
+  const repositorySuggestionsQuery = useEnvironmentQuery(
+    environment && suggestionOwner !== null
+      ? sourceControlEnvironment.repositories({
+          environmentId: environment.environmentId,
+          input: { provider: "github", owner: suggestionOwner.toLowerCase() },
+        })
+      : null,
+  );
+  const repositorySuggestions = repositorySuggestionsQuery.data?.repositories ?? [];
+  const areRepositorySuggestionsTruncated = repositorySuggestionsQuery.data?.isTruncated ?? false;
 
   const matchingRepositorySuggestions = filterGitHubRepositorySuggestions(
     repositorySuggestions,

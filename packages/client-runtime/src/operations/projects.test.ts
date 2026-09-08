@@ -67,6 +67,42 @@ describe("add project shared logic", () => {
     ).toBe(true);
   });
 
+  it("keeps complete GitHub clone inputs while blocking incomplete shorthand", () => {
+    for (const input of [
+      "https://github.com/owner/repo/",
+      "git@github.com:owner/repo.git",
+      "ssh://git@github.com/owner/repo.git",
+      "owner/repo",
+    ]) {
+      expect(isCompleteAddProjectRepositoryInput("github", input)).toBe(true);
+    }
+    for (const input of ["", "owner", "owner/", "owner//"]) {
+      expect(isCompleteAddProjectRepositoryInput("github", input)).toBe(false);
+    }
+  });
+
+  it("filters out suggestions from a previous owner without mutating cached results", () => {
+    const repositories = Object.freeze([
+      {
+        provider: "github" as const,
+        nameWithOwner: "first/z",
+        url: "https://github.com/first/z",
+        sshUrl: "git@github.com:first/z.git",
+      },
+      {
+        provider: "github" as const,
+        nameWithOwner: "first/a",
+        url: "https://github.com/first/a",
+        sshUrl: "git@github.com:first/a.git",
+      },
+    ]);
+    expect(
+      filterGitHubRepositorySuggestions(repositories, "first/").map((repo) => repo.nameWithOwner),
+    ).toEqual(["first/a", "first/z"]);
+    expect(filterGitHubRepositorySuggestions(repositories, "second/")).toEqual([]);
+    expect(repositories[0]?.nameWithOwner).toBe("first/z");
+  });
+
   it("only allows project creation in connected environments", () => {
     expect(canCreateProjectInEnvironment("connected")).toBe(true);
     expect(canCreateProjectInEnvironment("available")).toBe(false);

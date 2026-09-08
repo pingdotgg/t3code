@@ -137,7 +137,7 @@ export function filterGitHubRepositorySuggestions(
         (repositoryName?.toLowerCase().includes(query) ?? false)
       );
     })
-    .toSorted((left, right) => left.nameWithOwner.localeCompare(right.nameWithOwner));
+    .sort((left, right) => left.nameWithOwner.localeCompare(right.nameWithOwner));
 }
 
 export function isCompleteAddProjectRepositoryInput(
@@ -147,7 +147,8 @@ export function isCompleteAddProjectRepositoryInput(
   const trimmed = input.trim();
   if (trimmed.length === 0) return false;
   if (source !== "github") return true;
-  return trimmed.includes("/") && !trimmed.endsWith("/");
+  if (trimmed.includes("://") || trimmed.startsWith("git@")) return true;
+  return GITHUB_REPOSITORY_SHORTHAND.test(trimmed);
 }
 
 const GITHUB_REPOSITORY_SHORTHAND =

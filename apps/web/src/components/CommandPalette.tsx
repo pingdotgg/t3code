@@ -592,9 +592,6 @@ function OpenCommandPaletteDialog(props: {
   const lookupRepository = useAtomQueryRunner(sourceControlEnvironment.repository, {
     reportFailure: false,
   });
-  const listRepositories = useAtomQueryRunner(sourceControlEnvironment.repositories, {
-    reportFailure: false,
-  });
   const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
     reportFailure: false,
     reportDefect: false,
@@ -705,11 +702,6 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
-  const [repositorySuggestionResult, setRepositorySuggestionResult] = useState<{
-    readonly key: string;
-    readonly repositories: ReadonlyArray<SourceControlRepositoryInfo>;
-    readonly isTruncated: boolean;
-  } | null>(null);
   const githubSuggestionInput =
     addProjectCloneFlow?.step === "repository" && addProjectCloneFlow.source === "github"
       ? parseGitHubRepositorySuggestionInput(deferredQuery)
@@ -717,45 +709,17 @@ function OpenCommandPaletteDialog(props: {
   const githubSuggestionOwner = githubSuggestionInput?.owner ?? null;
   const githubSuggestionEnvironmentId =
     addProjectCloneFlow?.step === "repository" ? addProjectCloneFlow.environmentId : null;
-  const githubSuggestionKey =
+  const repositorySuggestionsQuery = useEnvironmentQuery(
     githubSuggestionOwner !== null && githubSuggestionEnvironmentId !== null
-      ? `${githubSuggestionEnvironmentId}:${githubSuggestionOwner.toLowerCase()}`
-      : null;
-  const repositorySuggestions =
-    repositorySuggestionResult?.key === githubSuggestionKey
-      ? repositorySuggestionResult.repositories
-      : [];
-  const areRepositorySuggestionsTruncated =
-    repositorySuggestionResult?.key === githubSuggestionKey &&
-    repositorySuggestionResult.isTruncated;
-  const isRepositorySuggestionsLoading =
-    githubSuggestionKey !== null && repositorySuggestionResult?.key !== githubSuggestionKey;
-
-  useEffect(() => {
-    let cancelled = false;
-    if (
-      githubSuggestionOwner === null ||
-      githubSuggestionEnvironmentId === null ||
-      githubSuggestionKey === null
-    )
-      return;
-
-    void listRepositories({
-      environmentId: githubSuggestionEnvironmentId,
-      input: { provider: "github", owner: githubSuggestionOwner },
-    }).then((result) => {
-      if (cancelled) return;
-      setRepositorySuggestionResult({
-        key: githubSuggestionKey,
-        repositories: result._tag === "Success" ? result.value.repositories : [],
-        isTruncated: result._tag === "Success" && result.value.isTruncated,
-      });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [githubSuggestionEnvironmentId, githubSuggestionKey, githubSuggestionOwner, listRepositories]);
+      ? sourceControlEnvironment.repositories({
+          environmentId: githubSuggestionEnvironmentId,
+          input: { provider: "github", owner: githubSuggestionOwner.toLowerCase() },
+        })
+      : null,
+  );
+  const repositorySuggestions = repositorySuggestionsQuery.data?.repositories ?? [];
+  const areRepositorySuggestionsTruncated = repositorySuggestionsQuery.data?.isTruncated ?? false;
+  const isRepositorySuggestionsLoading = repositorySuggestionsQuery.isPending;
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
