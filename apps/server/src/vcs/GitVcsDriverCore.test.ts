@@ -1133,7 +1133,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const branch = preview.sources.find((source) => source.kind === "branch-range")!;
         for (const path of ["renamed.md", "[literal].txt", " leading.txt"]) {
           const stat = branch.files!.find((file) => file.path === path)!;
-          const request = Schema.decodeUnknownSync(ReviewDiffPreviewInput)({
+          const request = yield* Schema.decodeEffect(ReviewDiffPreviewInput)({
             cwd,
             baseRef: initialBranch,
             file: { path, previousPath: stat.previousPath, sourceKind: "branch-range" },
