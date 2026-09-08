@@ -56,7 +56,7 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
-export function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolean {
+function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolean {
   return (
     status === "preparing" ||
     status === "queued" ||
@@ -245,7 +245,12 @@ export function presentThreadShell(
   };
 }
 
-export const scopeThreadShell = presentThreadShell;
+export function scopeThreadShell(
+  environmentId: EnvironmentId,
+  thread: OrchestrationV2ThreadShell,
+): EnvironmentThreadShell {
+  return presentThreadShell(environmentId, thread);
+}
 
 const THREAD_PROVIDER_STACK_LIMIT = 3;
 

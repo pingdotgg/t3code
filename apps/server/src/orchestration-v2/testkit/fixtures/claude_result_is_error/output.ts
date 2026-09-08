@@ -12,6 +12,8 @@ import {
 } from "../shared.ts";
 
 const AUTH_ERROR_TEXT = "Failed to authenticate. API Error: 401 Invalid authentication credentials";
+const AUTH_FAILURE_TEXT =
+  "Claude could not authenticate. For subscription login, run `claude auth login` on this environment's machine, then start a new thread. For API-key authentication, check this instance's configured credentials.";
 
 export function assertClaudeResultIsErrorOutput(
   result: OrchestratorV2ScenarioResult,
@@ -32,8 +34,8 @@ export function assertClaudeResultIsErrorOutput(
   ]);
 
   // Run 1 ended with subtype "success" + is_error: the run and its provider
-  // turn must be failed, and the failure must preserve the API error verbatim
-  // (message + status code), not a generic wrapper string.
+  // turn must be failed. The failure gives actionable authentication guidance
+  // while retaining the provider's status code and failure class.
   const failedRun = projection.runs.find((run) => run.ordinal === 1);
   assert.isDefined(failedRun);
   assert.equal(failedRun?.status, "failed");
@@ -47,7 +49,7 @@ export function assertClaudeResultIsErrorOutput(
   );
   assert.isDefined(errorItem);
   if (errorItem?.type !== "error") throw new Error("expected error item");
-  assert.equal(errorItem.failure.message, AUTH_ERROR_TEXT);
+  assert.equal(errorItem.failure.message, AUTH_FAILURE_TEXT);
   assert.equal(errorItem.failure.code, "api_error_401");
   assert.equal(errorItem.failure.class, "provider_error");
 

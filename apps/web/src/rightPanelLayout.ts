@@ -1,5 +1,5 @@
 export const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY = "(max-width: 980px)";
-export const THREAD_PANEL_INLINE_MIN_WIDTH = 1_104;
+const THREAD_PANEL_INLINE_MIN_WIDTH = 1_104;
 // Applied only while a floating preview overlaps the compact sheet.
 export const RIGHT_PANEL_SHEET_LAYER_CLASS_NAME = "z-[35]";
 export const RIGHT_PANEL_SHEET_CLASS_NAME =
