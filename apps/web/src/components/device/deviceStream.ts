@@ -70,7 +70,7 @@ const IOS_TAG_SCREEN_CONFIG = 0x82;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export const isWebCodecsSupported = (): boolean =>
+const isWebCodecsSupported = (): boolean =>
   typeof globalThis !== "undefined" &&
   "VideoDecoder" in globalThis &&
   "EncodedVideoChunk" in globalThis;
