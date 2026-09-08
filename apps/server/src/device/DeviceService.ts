@@ -95,6 +95,13 @@ export class DeviceService extends Context.Service<
     }) => Effect.Effect<DeviceScreenshot, DeviceError>;
     /** Host endpoints for the proxy and the provider environment. */
     readonly readiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness, DeviceError>;
+    /**
+     * `readiness` only when the host can run at least one platform; a machine
+     * with no simulator toolchain never installs or starts anything.
+     */
+    readonly readinessIfSupported: (
+      hostId?: DeviceHostId,
+    ) => Effect.Effect<DeviceReadiness | null, DeviceError>;
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
   }
@@ -175,6 +182,15 @@ export const make = Effect.gen(function* () {
       return { hostId: host.id, ...ready };
     },
   );
+
+  const readinessIfSupported: DeviceService["Service"]["readinessIfSupported"] = Effect.fn(
+    "DeviceService.readinessIfSupported",
+  )(function* (hostId) {
+    const host = yield* resolveHost(hostId);
+    const summary = yield* host.summary;
+    if (!summary.platforms.some((platform) => platform.available)) return null;
+    return yield* readiness(host.id);
+  });
 
   const currentReadiness: DeviceService["Service"]["currentReadiness"] = (hostId) =>
     resolveHost(hostId).pipe(
@@ -457,6 +473,7 @@ export const make = Effect.gen(function* () {
     shutdown,
     screenshot,
     readiness,
+    readinessIfSupported,
     currentReadiness,
     sessionsForThread,
   });

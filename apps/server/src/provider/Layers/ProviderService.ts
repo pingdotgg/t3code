@@ -255,7 +255,7 @@ export interface ProviderServiceLiveOptions {
    */
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
   /** Overrides the device host lookup used to build the agent-device environment. */
-  readonly deviceReadiness?: () => Effect.Effect<DeviceService.DeviceReadiness | null>;
+  readonly deviceReadiness?: () => Effect.Effect<DeviceService.DeviceReadiness | null, unknown>;
 }
 
 interface TurnAnalyticsMetadata {
@@ -489,7 +489,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     (() =>
       Effect.serviceOption(DeviceService.DeviceService).pipe(
         Effect.flatMap((service) =>
-          Option.isSome(service) ? service.value.currentReadiness() : Effect.succeed(null),
+          Option.isSome(service) ? service.value.readinessIfSupported() : Effect.succeed(null),
         ),
       ));
   const fileSystem = yield* FileSystem.FileSystem;
@@ -915,15 +915,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   /**
-   * The device host only starts when a device is first opened, so a session
-   * prepared before that gets the tools without the CLI environment; the
-   * `device_open` result tells the agent the CLI is ready, and by then the
-   * next session restart picks the environment up. Sessions prepared after
-   * the host is running get it immediately.
+   * Starting a session with device access also brings the device host up, so
+   * the `agent-device` CLI is on the provider's PATH from its first turn. The
+   * environment is fixed at spawn time, so a host started later by
+   * `device_open` could not reach an already-running agent. Tools install once
+   * and the host is idempotent, so this is cheap after the first session;
+   * a host that fails to start withholds only the CLI, not the MCP tools.
    */
   const hostPlatform = yield* HostProcessPlatform;
   const agentDeviceEnvironment = Effect.gen(function* () {
-    const readiness = yield* deviceReadiness();
+    const readiness = yield* deviceReadiness().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Device host unavailable; starting session without agent-device", {
+          cause,
+        }).pipe(Effect.as(null)),
+      ),
+    );
     if (!readiness) return undefined;
     const shimDir = yield* ensureAgentDeviceShim({
       entryPath: readiness.agentDevice.entryPath,
