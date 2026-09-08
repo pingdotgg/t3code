@@ -7,6 +7,7 @@ import {
   ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectAgentBrowserAccess } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -25,6 +26,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -279,22 +281,33 @@ export const layerWithOptions = (
        * reverse costs an agent one toolset and is visible immediately (#7083).
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
-      const agentBrowserAccessEnabled = Option.match(serverSettings, {
-        onNone: () => Effect.succeed(true),
-        onSome: (settings) =>
-          settings.getSettings.pipe(
-            Effect.map((resolved) => resolved.enableAgentBrowserAccess),
-            Effect.catch((cause) =>
-              Effect.logWarning(
-                "Could not read server settings; withholding agent browser access for this session.",
-                { cause },
-              ).pipe(Effect.as(false)),
-            ),
-          ),
-      });
+      const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
       const projectionStore = yield* ProjectionStoreV2;
+      const agentBrowserAccessEnabled = Effect.fn(
+        "ProviderSessionManagerV2.agentBrowserAccessEnabled",
+      )(function* (threadId: ThreadId) {
+        if (Option.isNone(serverSettings)) return true;
+        return yield* Effect.gen(function* () {
+          const settings = yield* serverSettings.value.getSettings;
+          if (Object.keys(settings.projectAgentBrowserAccessOverrides).length === 0) {
+            return settings.enableAgentBrowserAccess;
+          }
+          if (Option.isNone(projectService)) return false;
+          const thread = yield* projectionStore.getThread(threadId);
+          const project = yield* projectService.value.getById(thread.projectId);
+          if (Option.isNone(project)) return false;
+          return resolveProjectAgentBrowserAccess(settings, project.value.id);
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning(
+              "Could not resolve agent browser access; withholding it for this session.",
+              { threadId, cause },
+            ).pipe(Effect.as(false)),
+          ),
+        );
+      });
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const nextSubscriberId = yield* Ref.make(0);
@@ -317,7 +330,7 @@ export const layerWithOptions = (
        */
       const mcpCredentialReservations = new Map<string, number>();
       const mcpReservationKey = (threadId: ThreadId, mcpCredentialId: string) =>
-        `${threadId} ${mcpCredentialId}`;
+        `${threadId}\0${mcpCredentialId}`;
       const reserveMcpCredential = (threadId: ThreadId, mcpCredentialId: string) => {
         const key = mcpReservationKey(threadId, mcpCredentialId);
         mcpCredentialReservations.set(key, (mcpCredentialReservations.get(key) ?? 0) + 1);
@@ -358,7 +371,7 @@ export const layerWithOptions = (
                 // the credential it started with, so a thread that detaches and
                 // re-attaches across a workspace handoff must come back to the
                 // same token or the process's tool calls fail auth.
-                const browserToolsAvailable = yield* agentBrowserAccessEnabled;
+                const browserToolsAvailable = yield* agentBrowserAccessEnabled(threadId);
                 const existing = McpProviderSession.readMcpProviderSession(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot

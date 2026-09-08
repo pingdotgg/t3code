@@ -15,11 +15,10 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 export {
   normalizeCompactToolLabel,
-  summarizeToolGroup,
   toolGroupAction,
-  workLogEntryIsLocalCodeSearch,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
+  deriveRevertTurnCountByUserMessageId,
   formatDuration,
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
@@ -181,7 +180,7 @@ export interface TimelineEndState {
  * while streaming content grows under the viewport, so follow re-arms within
  * this distance of the real content bottom instead.
  */
-export const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
+const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
 
 export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
   if (!state) {
@@ -271,9 +270,9 @@ export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number)
   return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }
 
-export const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
-export const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
-export const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
+const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
+const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
+const TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH = "22rem";
 
 /**
  * The minimap overlays the viewport's left edge while the content column is
@@ -934,9 +933,21 @@ export function deriveMessagesTimelineRows(input: {
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt?: string | null;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
-  revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
+  supportsConversationRollback: boolean;
 }): MessagesTimelineRow[] {
+  const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  for (const summary of input.turnDiffSummaries) {
+    if (summary.assistantMessageId) {
+      turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
+    }
+  }
+  const revertTurnCountByUserMessageId = input.supportsConversationRollback
+    ? deriveRevertTurnCountByUserMessageId({
+        timelineEntries: input.timelineEntries,
+        checkpoints: input.turnDiffSummaries,
+      })
+    : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
@@ -1352,11 +1363,11 @@ export function deriveMessagesTimelineRows(input: {
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
-          ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+          ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
           : undefined,
       revertTurnCount:
         timelineEntry.message.role === "user"
-          ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
+          ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
     });
   }
@@ -1383,13 +1394,13 @@ export interface MessagesTimelineRowsProjection {
 }
 
 function sameCheckpointSummaries(
-  previous: MessagesTimelineRowsInput["turnDiffSummaryByAssistantMessageId"],
-  next: MessagesTimelineRowsInput["turnDiffSummaryByAssistantMessageId"],
+  previous: MessagesTimelineRowsInput["turnDiffSummaries"],
+  next: MessagesTimelineRowsInput["turnDiffSummaries"],
 ): boolean {
   if (previous === next) return true;
-  if (previous.size !== next.size) return false;
-  for (const [id, summary] of previous) {
-    if (!shallow(summary, next.get(id))) return false;
+  if (previous.length !== next.length) return false;
+  for (const [index, summary] of previous.entries()) {
+    if (!shallow(summary, next[index])) return false;
   }
   return true;
 }
@@ -1401,15 +1412,19 @@ function replaceStreamingMessageRows(
   const {
     timelineEntries: previousEntries,
     latestRun: previousRun,
-    turnDiffSummaryByAssistantMessageId: previousCheckpoints,
-    revertTurnCountByUserMessageId: previousReverts,
+    turnDiffSummaries: previousCheckpoints,
+    expandedRunIds: previousExpandedRuns,
+    expandedAttemptIds: previousExpandedAttempts,
+    expandedWorkGroupIds: previousExpandedGroups,
     ...previousContext
   } = previous.input;
   const {
     timelineEntries,
     latestRun,
-    turnDiffSummaryByAssistantMessageId,
-    revertTurnCountByUserMessageId,
+    turnDiffSummaries,
+    expandedRunIds,
+    expandedAttemptIds,
+    expandedWorkGroupIds,
     ...context
   } = input;
   // V2 shell and checkpoint selectors produce fresh summaries for each event.
@@ -1418,8 +1433,10 @@ function replaceStreamingMessageRows(
     timelineEntries.length !== previousEntries.length ||
     !shallow(previousContext, context) ||
     !shallow(previousRun, latestRun) ||
-    !shallow(previousReverts, revertTurnCountByUserMessageId) ||
-    !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaryByAssistantMessageId)
+    !shallow(previousExpandedRuns, expandedRunIds) ||
+    !shallow(previousExpandedAttempts, expandedAttemptIds) ||
+    !shallow(previousExpandedGroups, expandedWorkGroupIds) ||
+    !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaries)
   ) {
     return null;
   }

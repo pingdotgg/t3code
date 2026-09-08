@@ -50,6 +50,8 @@ interface LegacyThreadRow {
   readonly pinned_at: string | null;
   readonly pin_order_key: string | null;
   readonly linked_pull_request_json: string | null;
+  readonly branch_pull_request_json: string | null;
+  readonly active_order_key: string | null;
   readonly deleted_at: string | null;
 }
 
@@ -144,6 +146,11 @@ function linkedPullRequestFor(row: LegacyThreadRow) {
   return Option.getOrNull(decodeLinkedPullRequest(parseJson(row.linked_pull_request_json)));
 }
 
+function branchPullRequestFor(row: LegacyThreadRow) {
+  if (row.branch_pull_request_json === null) return null;
+  return Option.getOrNull(decodeLinkedPullRequest(parseJson(row.branch_pull_request_json)));
+}
+
 function runtimeModeFor(value: string): OrchestrationV2AppThread["runtimeMode"] {
   return value === "approval-required" ||
     value === "auto-accept-edits" ||
@@ -187,6 +194,8 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     branch,
     worktreePath,
     linkedPullRequest: linkedPullRequestFor(row),
+    branchPullRequest: branchPullRequestFor(row),
+    activeOrderKey: row.active_order_key?.trim() || null,
     activeProviderThreadId: null,
     historyOrigin: "v1_import",
     lineage: {
@@ -408,6 +417,8 @@ const make = Effect.gen(function* () {
         thread.pinned_at,
         thread.pin_order_key,
         thread.linked_pull_request_json,
+        thread.branch_pull_request_json,
+        thread.active_order_key,
         thread.deleted_at,
         projection.payload_json
       FROM orchestration_v2_legacy_imports AS legacy_import
@@ -421,6 +432,8 @@ const make = Effect.gen(function* () {
          OR json_type(projection.payload_json, '$.snoozedAt') IS NULL
          OR json_type(projection.payload_json, '$.unsettledAt') IS NULL
          OR json_type(projection.payload_json, '$.linkedPullRequest') IS NULL
+         OR json_type(projection.payload_json, '$.branchPullRequest') IS NULL
+         OR json_type(projection.payload_json, '$.activeOrderKey') IS NULL
       ORDER BY thread.created_at ASC, thread.thread_id ASC
     `;
     let repairedThreadCount = 0;
@@ -441,6 +454,12 @@ const make = Effect.gen(function* () {
           current.linkedPullRequest === undefined
             ? legacy.linkedPullRequest
             : current.linkedPullRequest,
+        branchPullRequest:
+          current.branchPullRequest === undefined
+            ? legacy.branchPullRequest
+            : current.branchPullRequest,
+        activeOrderKey:
+          current.activeOrderKey === undefined ? legacy.activeOrderKey : current.activeOrderKey,
       };
       yield* eventSink.write({
         events: [
@@ -477,6 +496,8 @@ const make = Effect.gen(function* () {
         thread.pinned_at,
         thread.pin_order_key,
         thread.linked_pull_request_json,
+        thread.branch_pull_request_json,
+        thread.active_order_key,
         thread.deleted_at
       FROM projection_threads AS thread
       WHERE NOT EXISTS (

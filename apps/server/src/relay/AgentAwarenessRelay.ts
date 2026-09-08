@@ -62,8 +62,17 @@ export function eventThreadId(event: OrchestrationV2DomainEvent): ThreadId {
 }
 
 export function shouldPublishAgentAwarenessEvent(
-  event: Pick<OrchestrationV2DomainEvent, "type">,
+  event: Pick<OrchestrationV2DomainEvent, "type"> & { readonly payload?: unknown },
 ): boolean {
+  if (
+    event.type === "thread.created" &&
+    typeof event.payload === "object" &&
+    event.payload !== null &&
+    "historyOrigin" in event.payload &&
+    event.payload.historyOrigin === "v1_import"
+  ) {
+    return false;
+  }
   // projectThreadAwarenessV2 reads thread metadata, run status, and pending requests.
   // Message bodies and tool progress cannot change the published activity.
   switch (event.type) {
@@ -72,6 +81,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.unarchived":
     case "thread.deleted":
     case "thread.metadata-updated":
+    case "thread.pull-request-synced":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "run.created":
@@ -85,6 +95,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.visited":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
@@ -135,10 +146,6 @@ export function agentAwarenessPublishIdentity(state: RelayAgentActivityState | n
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
   return JSON.stringify(meaningfulState);
-}
-
-export function isAgentActivityPublishingEnabled(value: string | null): boolean {
-  return isAgentActivityPublishingEnabledValue(value);
 }
 
 export function resolveAgentActivityPublishingStartupState(input: {
@@ -358,7 +365,7 @@ export const make = Effect.gen(function* () {
   });
 
   const readPublishAgentActivityEnabled = readSecretString(PUBLISH_AGENT_ACTIVITY_SECRET).pipe(
-    Effect.map(isAgentActivityPublishingEnabled),
+    Effect.map(isAgentActivityPublishingEnabledValue),
   );
 
   const makeRelayClient = (relayConfig: {

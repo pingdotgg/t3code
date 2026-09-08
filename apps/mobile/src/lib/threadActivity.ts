@@ -154,6 +154,12 @@ export type ThreadFeedEntry =
       readonly runId: RunId;
       readonly label: string;
       readonly expanded: boolean;
+    }
+  | {
+      readonly type: "thinking";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
     };
 
 export interface ThreadFeedLatestRun {
@@ -161,6 +167,46 @@ export interface ThreadFeedLatestRun {
   readonly status: OrchestrationV2RunStatus;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+}
+
+export interface AgentSpawnSummary {
+  readonly title: string;
+  readonly status: string;
+  readonly tone: "working" | "completed" | "failed" | "stopped";
+  readonly members: ReadonlyArray<{
+    readonly title: string;
+    readonly status: string;
+    readonly tone: "working" | "completed" | "failed" | "stopped";
+    readonly detail: string | undefined;
+    readonly updatedAt: string;
+  }>;
+}
+
+function compactWorkEntryText(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function stripShellWrapper(value: string): string {
+  const trimmed = value.trim();
+  const match = /^\/bin\/zsh -lc ['"]?([\s\S]*?)['"]?$/u.exec(trimmed);
+  return (match?.[1] ?? trimmed).trim();
+}
+
+/** Expanded work rows keep their detail while compact rows show a stable one-line label. */
+export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
+  const presentation = resolveWorkEntryToolPresentation(entry);
+  if (presentation) return presentation.displayName;
+  if (expanded && entry.command?.trim()) return "Command";
+  const preview =
+    entry.command ??
+    entry.detail ??
+    (entry.changedFiles?.length
+      ? entry.changedFiles.length === 1
+        ? entry.changedFiles[0]!
+        : `${entry.changedFiles[0]!} +${entry.changedFiles.length - 1} more`
+      : null);
+  if (expanded) return preview?.trim() || entry.label;
+  return preview ? compactWorkEntryText(stripShellWrapper(preview)) || entry.label : entry.label;
 }
 
 type ThreadFeedActivityGroup = Extract<ThreadFeedEntry, { readonly type: "activity-group" }>;
@@ -191,6 +237,7 @@ const runFoldRowsCache = new WeakMap<
   ThreadFeedEntry,
   Extract<ThreadFeedEntry, { readonly type: "run-fold" }>
 >();
+let cachedThinkingRow: Extract<ThreadFeedEntry, { readonly type: "thinking" }> | null = null;
 
 export function isContextCompactionActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
@@ -857,7 +904,8 @@ export function deriveThreadFeedPresentation(
   activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
   const sourceFeed = feed.filter(
-    (entry) => entry.type !== "run-fold" && entry.type !== "work-toggle",
+    (entry) =>
+      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "thinking",
   );
   const activeTailGroup = sourceFeed.at(-1);
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
@@ -912,12 +960,30 @@ export function deriveThreadFeedPresentation(
       );
     }
   }
+  // Keep exactly one live slot while a run is working. When no tool row can
+  // carry it yet (or the latest call failed), the slot reads "Thinking".
+  if (
+    activeWorkStartedAt !== null &&
+    !result.some((row) => row.type === "work-toggle" && row.shimmer)
+  ) {
+    result.push(thinkingRow(activeWorkStartedAt, activeRunId));
+  }
   return result;
+}
+
+/** Shared by the trailing live tool row and its Thinking fallback. */
+export const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
+
+function thinkingRow(createdAt: string, runId: RunId | null) {
+  if (cachedThinkingRow?.createdAt !== createdAt || cachedThinkingRow.runId !== runId) {
+    cachedThinkingRow = { type: "thinking", id: LIVE_ACTIVITY_ROW_ID, createdAt, runId };
+  }
+  return cachedThinkingRow;
 }
 
 function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
-  entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" }>,
+  entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>,
   expandedWorkGroupIds: ReadonlySet<string>,
   activeRunId: RunId | null,
   isWorking: boolean,
@@ -1025,12 +1091,16 @@ function appendToolGroupRows(
   activeTail: boolean,
 ): void {
   const expanded = expandedWorkGroupIds.has(groupId);
-  const latestInProgressActivity = activities.findLast(
+  const latestActiveActivity = activities.findLast(
     (activity) =>
       isWorking && activity.lifecycleStatus === "inProgress" && activity.runId === activeRunId,
   );
-  const live = activeTail || latestInProgressActivity !== undefined;
-  const latestActivity = latestInProgressActivity ?? activities.at(-1)!;
+  const active = latestActiveActivity !== undefined;
+  const live = activeTail || active;
+  const latestActivity = latestActiveActivity ?? activities.at(-1)!;
+  // A successful trailing call remains the live slot until the next activity.
+  // Failed/stopped calls hand that slot to the Thinking row.
+  const shimmer = activeTail && (active || latestActivity.status === "success");
   const singleActivity = activities.length === 1 ? latestActivity : null;
   const groupSummary = summarizeToolGroup(activities.map((activity) => activity.workEntry));
   const summary = live
@@ -1072,7 +1142,7 @@ function appendToolGroupRows(
       : undefined;
   result.push({
     type: "work-toggle",
-    id: `${live ? "work-live" : "work-toggle"}:${groupId}`,
+    id: shimmer ? LIVE_ACTIVITY_ROW_ID : `${live ? "work-live" : "work-toggle"}:${groupId}`,
     createdAt: sourceGroup.createdAt,
     runId: sourceGroup.runId,
     groupId,
@@ -1092,10 +1162,7 @@ function appendToolGroupRows(
       );
     })(),
     live,
-    shimmer:
-      isWorking &&
-      latestActivity.lifecycleStatus === "inProgress" &&
-      latestActivity.runId === activeRunId,
+    shimmer,
   });
   if (!expanded) return;
   result.push({
