@@ -1,4 +1,9 @@
-import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
+import type {
+  CodeViewItem,
+  DiffLineAnnotation,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -40,6 +45,7 @@ import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDet
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
+  buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   fnv1a32,
@@ -115,13 +121,30 @@ const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 const PULL_REQUEST_VIEWED_FILES_STORAGE_KEY = "t3code.pullRequestViewedFiles";
 
 /**
- * The file keys stored are per-file identities (previous path and path), not the render keys
- * collapse uses: those bake in the theme, the page cursor and the whole slice's hash, so a
- * mark stored under one would not survive a push, a theme switch or repaging. A rename or a
- * removal strands its key, which the caps in `toggleViewedFile` absorb.
+ * The file keys stored are the paths plus a content fingerprint, not the render keys collapse
+ * uses: those bake in the theme, the page cursor and the whole slice's hash, so a mark stored
+ * under one would not survive a theme switch or repaging. The fingerprint gives the marks
+ * GitHub's lifetime: a push that changes the file changes its key, un-viewing exactly the
+ * files whose diff the reader has not seen. Every stranded key that leaves behind is absorbed
+ * by the caps in `toggleViewedFile`.
  */
 const ViewedFilesByPullRequestSchema = Schema.Record(Schema.String, Schema.Array(Schema.String));
 const NO_VIEWED_FILES: ViewedFilesByPullRequest = {};
+
+/**
+ * The git object ids name the exact before and after contents, so they are the fingerprint
+ * wherever the host's patch carries them. One without ids falls back to a hash of the parsed
+ * diff, which answers the same question except that expanding hidden context grows what is
+ * hashed; a mark ticked after expanding can then fail to match on the next load and simply
+ * reads as not viewed.
+ */
+const buildViewedFileKey = (fileDiff: FileDiffMetadata): string => {
+  const fingerprint =
+    fileDiff.prevObjectId || fileDiff.newObjectId
+      ? `${fileDiff.prevObjectId ?? ""}:${fileDiff.newObjectId ?? ""}`
+      : String(buildFileDiffContentVersion(fileDiff));
+  return `${buildFileDiffIdentityKey(fileDiff)}\u0000${fingerprint}`;
+};
 
 /**
  * The marks read straight from storage, as the fold default a scope opens with: a file already
@@ -545,7 +568,7 @@ function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const viewedKey = buildFileDiffIdentityKey(fileDiff);
+        const viewedKey = buildViewedFileKey(fileDiff);
         const collapsed = isFileDiffCollapsed(
           fileKey,
           foldOverride,
@@ -842,10 +865,10 @@ function PullRequestCodeTab({
           <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
             <Checkbox
               className="size-3.5 sm:size-3.5"
-              checked={viewedFiles.has(buildFileDiffIdentityKey(item.fileDiff))}
+              checked={viewedFiles.has(buildViewedFileKey(item.fileDiff))}
               onCheckedChange={(checked) => {
                 if (checked !== (item.collapsed === true)) toggleFile(item.id);
-                toggleFileViewed(buildFileDiffIdentityKey(item.fileDiff));
+                toggleFileViewed(buildViewedFileKey(item.fileDiff));
               }}
             />
             Viewed
