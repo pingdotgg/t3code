@@ -36,6 +36,23 @@ interface SourceFileSurfaceProps {
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
 
+function useSourcePullToRefresh(onRefresh: SourceFileSurfaceProps["onRefresh"]) {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    if (!onRefresh) {
+      return;
+    }
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [onRefresh]);
+
+  return { handleRefresh, isRefreshing };
+}
+
 const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
   readonly index: number;
@@ -157,18 +174,7 @@ function NativeSourceFileSurface(
   const appTheme = useUniwindTheme();
   const { width: viewportWidth } = useWindowDimensions();
   const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
-  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullToRefresh = useCallback(async () => {
-    if (!onRefresh) {
-      return;
-    }
-    setIsPullRefreshing(true);
-    try {
-      await onRefresh();
-    } finally {
-      setIsPullRefreshing(false);
-    }
-  }, [onRefresh]);
+  const { handleRefresh, isRefreshing } = useSourcePullToRefresh(onRefresh);
   const tokensJson = useMemo(() => JSON.stringify(buildNativeSourceTokens(tokens)), [tokens]);
   const selectedRowIdsJson = useMemo(
     () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
@@ -202,8 +208,8 @@ function NativeSourceFileSurface(
         tokensJson={tokensJson}
         {...(onRefresh
           ? {
-              refreshing: isPullRefreshing,
-              onPullToRefresh: () => void handlePullToRefresh(),
+              refreshing: isRefreshing,
+              onPullToRefresh: () => void handleRefresh(),
             }
           : {})}
       />
@@ -214,6 +220,7 @@ function NativeSourceFileSurface(
 function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
+  const { handleRefresh, isRefreshing } = useSourcePullToRefresh(props.onRefresh);
   const listRef = useRef<FlatList<string>>(null);
 
   useEffect(() => {
@@ -248,6 +255,12 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       initialNumToRender={80}
       maxToRenderPerBatch={80}
       windowSize={12}
+      {...(props.onRefresh
+        ? {
+            refreshing: isRefreshing,
+            onRefresh: () => void handleRefresh(),
+          }
+        : {})}
       {...(codeWordBreak
         ? {}
         : {
