@@ -26,7 +26,7 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
-export const USAGE_SCAN_CACHE_VERSION = 3 as const;
+export const USAGE_SCAN_CACHE_VERSION = 4 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -346,21 +346,43 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
 /**
  * Within-file de-duplication, applied before an entry is cached.
  *
- * Callers stitching an incremental parse together pass one `seen` set across
+ * A dedupe group resolves to the record with the largest `outputTokens`.
+ * Claude Code sometimes writes progressive usage across the content-block
+ * records of one message, where the first block carries a partial output
+ * count and the last carries the final one; keeping the first record
+ * undercounted output by about a third on a real workload. Input and cache
+ * buckets are identical across the group, so the choice only affects output.
+ *
+ * Callers stitching an incremental parse together pass one `seen` map across
  * the line and tail record batches so the whole file stays deduplicated as a
- * unit; the set is mutated in place.
+ * unit; the map is mutated in place. A larger record whose earlier sibling
+ * landed in a previous batch cannot be reached from here and is dropped; the
+ * next parse of the file sees both in one batch and settles it.
  */
 export function dedupeWithinFile(
   records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
+  seen: Map<string, UsageRecord> = new Map(),
 ): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
+  const keptIndex = new Map<string, number>();
   for (const record of records) {
-    if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+    const key = record.dedupeKey;
+    if (key === null) {
+      kept.push(record);
+      continue;
     }
-    kept.push(record);
+    const prior = seen.get(key);
+    if (prior === undefined) {
+      seen.set(key, record);
+      keptIndex.set(key, kept.length);
+      kept.push(record);
+      continue;
+    }
+    if (record.totals.outputTokens > prior.totals.outputTokens) {
+      seen.set(key, record);
+      const index = keptIndex.get(key);
+      if (index !== undefined) kept[index] = record;
+    }
   }
   return kept;
 }
