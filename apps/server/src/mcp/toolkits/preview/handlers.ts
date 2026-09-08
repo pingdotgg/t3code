@@ -166,8 +166,8 @@ const handlers = {
   preview_set_appearance: (input) =>
     invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
   preview_snapshot: (input) => {
-    // Output selection is MCP-only; the browser still produces a complete snapshot.
-    const { includeImage: _includeImage, ...operationInput } = input ?? {};
+    // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
+    const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
     return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
   },
   preview_click: (input) =>
@@ -176,7 +176,9 @@ const handlers = {
   preview_press: (input) => invokeTargeted<void>("press", input).pipe(Effect.as({})),
   preview_scroll: (input) => invokeTargeted<void>("scroll", input).pipe(Effect.as({})),
   preview_evaluate: (input) =>
-    invokeTargeted<unknown>("evaluate", input).pipe(Effect.map((result) => result ?? null)),
+    invokeTargeted<unknown>("evaluate", input).pipe(
+      Effect.map((result) => ({ value: result ?? null })),
+    ),
   preview_wait_for: (input) =>
     invokeTargeted<void>("waitFor", input, input.timeoutMs).pipe(Effect.as({})),
   preview_recording_start: (input) =>
