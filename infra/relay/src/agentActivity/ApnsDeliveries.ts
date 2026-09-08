@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import {
   isExpiredAgentActivityState,
   isTerminalPhase,
+  notificationForActivity,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
 } from "./agentActivityPayloads.ts";
@@ -41,6 +42,19 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import { withSpanAttributes } from "../observability.ts";
+
+import {
+  alertForAttentionTransition,
+  alertForNewlyTerminal,
+  alertForTerminalAggregate,
+  newlyTerminalRows,
+  shouldAlertForActivity,
+} from "./agentActivityAlerts.ts";
+export {
+  alertForAttentionTransition,
+  alertForNewlyTerminal,
+  alertForTerminalAggregate,
+} from "./agentActivityAlerts.ts";
 
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 // How long a just-armed card may sit with an empty aggregate before an end is
@@ -146,148 +160,6 @@ function aggregateNeedsAttention(aggregate: RelayAgentActivityAggregateState): b
   );
 }
 
-function isAttentionPhase(phase: string): boolean {
-  return phase === "waiting_for_approval" || phase === "waiting_for_input";
-}
-
-// Honors the same per-event notification switches the push channel uses; a
-// missing/corrupt preferences blob only disables nothing (matching how the
-// liveActivitiesEnabled check treats it), since every registration writes one.
-function alertAllowedForPhase(
-  preferences: RelayAgentAwarenessPreferences | null,
-  phase: string,
-): boolean {
-  if (preferences === null) {
-    return true;
-  }
-  switch (phase) {
-    case "waiting_for_approval":
-      return preferences.notifyOnApproval;
-    case "waiting_for_input":
-      return preferences.notifyOnInput;
-    case "completed":
-      return preferences.notifyOnCompletion;
-    case "failed":
-      return preferences.notifyOnFailure;
-    default:
-      return false;
-  }
-}
-
-// Alert copy for an update whose aggregate contains threads that were NOT in an
-// attention phase in the previously delivered aggregate. A null previous
-// aggregate means there is no known baseline (fresh registration, replay after
-// data loss) — alerting there would buzz on reconnect, not on a transition.
-export function alertForAttentionTransition(input: {
-  readonly previousAggregate: RelayAgentActivityAggregateState | null;
-  readonly nextAggregate: RelayAgentActivityAggregateState;
-  readonly preferences: RelayAgentAwarenessPreferences | null;
-}): ApnsLiveActivityAlert | null {
-  if (input.previousAggregate === null) {
-    return null;
-  }
-  const previouslyAttention = new Set(
-    input.previousAggregate.activities
-      .filter((row) => isAttentionPhase(row.phase))
-      .map((row) => row.threadId),
-  );
-  const newlyAttention = input.nextAggregate.activities.filter(
-    (row) =>
-      isAttentionPhase(row.phase) &&
-      !previouslyAttention.has(row.threadId) &&
-      alertAllowedForPhase(input.preferences, row.phase),
-  );
-  const first = newlyAttention[0];
-  if (!first) {
-    return null;
-  }
-  if (newlyAttention.length === 1) {
-    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
-  }
-  return {
-    title: `${newlyAttention.length} agents need attention`,
-    body: newlyAttention.map((row) => row.threadTitle).join(", "),
-  };
-}
-
-// Alert copy for an update whose aggregate contains threads that finished
-// (Done/Failed) since the previously delivered aggregate — the mid-flight
-// completion buzz while other agents keep the activity alive. Requires the
-// thread to have been present and non-terminal before, so a baseline-less
-// replay or a row that merely fell off the display cap never rings.
-function newlyTerminalRows(
-  previousAggregate: RelayAgentActivityAggregateState | null,
-  nextAggregate: RelayAgentActivityAggregateState,
-): ReadonlyArray<RelayAgentActivityAggregateState["activities"][number]> {
-  if (previousAggregate === null) {
-    return [];
-  }
-  const previousPhases = new Map(
-    previousAggregate.activities.map((row) => [row.threadId, row.phase]),
-  );
-  return nextAggregate.activities.filter((row) => {
-    if (row.phase !== "completed" && row.phase !== "failed") {
-      return false;
-    }
-    const previousPhase = previousPhases.get(row.threadId);
-    return (
-      previousPhase !== undefined && previousPhase !== "completed" && previousPhase !== "failed"
-    );
-  });
-}
-
-function isFreshTerminalRow(
-  row: RelayAgentActivityAggregateState["activities"][number],
-  nowMs: number,
-): boolean {
-  const updatedAtMs = Option.match(DateTime.make(row.updatedAt), {
-    onNone: () => null,
-    onSome: (dt) => dt.epochMilliseconds,
-  });
-  return updatedAtMs !== null && nowMs - updatedAtMs <= TERMINAL_NOTIFICATION_FRESHNESS_MS;
-}
-
-export function alertForNewlyTerminal(input: {
-  readonly previousAggregate: RelayAgentActivityAggregateState | null;
-  readonly nextAggregate: RelayAgentActivityAggregateState;
-  readonly preferences: RelayAgentAwarenessPreferences | null;
-  readonly nowMs: number;
-}): ApnsLiveActivityAlert | null {
-  const newlyTerminal = newlyTerminalRows(input.previousAggregate, input.nextAggregate).filter(
-    (row) =>
-      alertAllowedForPhase(input.preferences, row.phase) &&
-      // Replays of old aggregates (server restarts, redeliveries) repaint
-      // state without ringing; only fresh completions buzz.
-      isFreshTerminalRow(row, input.nowMs),
-  );
-  const first = newlyTerminal[0];
-  if (!first) {
-    return null;
-  }
-  if (newlyTerminal.length === 1) {
-    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
-  }
-  return {
-    title: `${newlyTerminal.length} agents finished`,
-    body: newlyTerminal.map((row) => row.threadTitle).join(", "),
-  };
-}
-
-// Alert copy for an end event carrying a terminal (Done/Failed) aggregate.
-export function alertForTerminalAggregate(input: {
-  readonly aggregate: RelayAgentActivityAggregateState | null;
-  readonly preferences: RelayAgentAwarenessPreferences | null;
-}): ApnsLiveActivityAlert | null {
-  const row = input.aggregate?.activities[0];
-  if (!row || (row.phase !== "completed" && row.phase !== "failed")) {
-    return null;
-  }
-  if (!alertAllowedForPhase(input.preferences, row.phase)) {
-    return null;
-  }
-  return { title: row.threadTitle, body: `${row.status}: ${row.projectTitle}` };
-}
-
 function shouldUpdateLiveActivity(input: {
   readonly previousAggregate: RelayAgentActivityAggregateState | null;
   readonly nextAggregate: RelayAgentActivityAggregateState;
@@ -309,7 +181,7 @@ function shouldUpdateLiveActivity(input: {
   // A thread finishing must never be throttled away: when a completion and a
   // new start land in the same window, activeCount is unchanged and the Done
   // transition (and its alert) would otherwise be suppressed.
-  if (newlyTerminalRows(input.previousAggregate, input.nextAggregate).length > 0) {
+  if (newlyTerminalRows(input.previousAggregate, input.nextAggregate, true).length > 0) {
     return true;
   }
   const lastDeliveryAtMs =
@@ -328,7 +200,6 @@ function shouldUpdateLiveActivity(input: {
 
 // Completions replayed long after the fact (server restarts republish every
 // recently-finished thread) must not ring the device again.
-const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
 
 function notificationForAggregate(input: {
   readonly target: LiveActivities.TargetRow;
@@ -346,32 +217,8 @@ function notificationForAggregate(input: {
   if (!activity) {
     return null;
   }
-  if (activity.phase === "completed" || activity.phase === "failed") {
-    const updatedAtMs = Option.match(DateTime.make(activity.updatedAt), {
-      onNone: () => null,
-      onSome: (dt) => dt.epochMilliseconds,
-    });
-    if (updatedAtMs === null || input.nowMs - updatedAtMs > TERMINAL_NOTIFICATION_FRESHNESS_MS) {
-      return null;
-    }
-  }
-  const enabled =
-    (activity.phase === "waiting_for_approval" && preferences.notifyOnApproval) ||
-    (activity.phase === "waiting_for_input" && preferences.notifyOnInput) ||
-    (activity.phase === "completed" && preferences.notifyOnCompletion) ||
-    (activity.phase === "failed" && preferences.notifyOnFailure);
-  if (!enabled) {
-    return null;
-  }
-  return {
-    title: activity.threadTitle,
-    body: `${activity.status}: ${activity.projectTitle}`,
-    environmentId: activity.environmentId,
-    threadId: activity.threadId,
-    deepLink: activity.deepLink,
-    phase: activity.phase,
-    updatedAt: activity.updatedAt,
-  };
+  if (!shouldAlertForActivity({ ...activity, preferences, nowMs: input.nowMs })) return null;
+  return notificationForActivity(activity);
 }
 
 // "suppressed" means a Live Activity owns this state but no update is due
@@ -381,6 +228,7 @@ function chooseLiveActivityDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
+  readonly replay?: boolean;
 }): ChosenLiveActivityDelivery | "suppressed" | null {
   const preferences = parsePreferences(input.target.preferences_json);
   if (preferences?.liveActivitiesEnabled === false) {
@@ -439,18 +287,20 @@ function chooseLiveActivityDelivery(input: {
         kind: "live_activity_update",
         token: input.target.activity_push_token,
         aggregate: nextAggregate,
-        alert:
-          alertForAttentionTransition({
-            previousAggregate,
-            nextAggregate,
-            preferences,
-          }) ??
-          alertForNewlyTerminal({
-            previousAggregate,
-            nextAggregate,
-            preferences,
-            nowMs: input.nowMs,
-          }),
+        alert: input.replay
+          ? null
+          : (alertForAttentionTransition({
+              previousAggregate,
+              nextAggregate,
+              preferences,
+            }) ??
+            alertForNewlyTerminal({
+              previousAggregate,
+              nextAggregate,
+              preferences,
+              nowMs: input.nowMs,
+              includeUnobserved: true,
+            })),
       }
     : "suppressed";
 }
@@ -459,6 +309,7 @@ function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
   readonly nowMs: number;
+  readonly replay?: boolean;
 }): ChosenDelivery | null {
   const liveActivityDelivery = chooseLiveActivityDelivery(input);
   if (liveActivityDelivery === "suppressed") {
@@ -467,7 +318,7 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = notificationForAggregate(input);
+  const notification = input.replay ? null : notificationForAggregate(input);
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -584,9 +435,9 @@ interface LiveActivityDeliveryTarget {
 // DeviceTokenNotForTopic/BadDeviceToken, so per-device values override the
 // relay-wide defaults when present.
 function credentialsForTarget(
-  credentials: RelayConfiguration.RelayConfiguration["Service"]["apns"],
+  credentials: RelayConfiguration.ApnsCredentials,
   target: LiveActivityDeliveryTarget,
-): RelayConfiguration.RelayConfiguration["Service"]["apns"] {
+): RelayConfiguration.ApnsCredentials {
   return {
     ...credentials,
     ...(target.bundle_id ? { bundleId: target.bundle_id } : {}),
@@ -672,6 +523,7 @@ export class ApnsDeliveries extends Context.Service<
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
       readonly nowMs: number;
+      readonly replay?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
     readonly sendPushNotificationForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
@@ -805,7 +657,7 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const isCurrentSignedJobToken = Effect.fnUntraced(function* (input: {
+  const currentSignedJobTarget = Effect.fnUntraced(function* (input: {
     readonly target: LiveActivityDeliveryTarget;
     readonly kind: RelayDeliveryKind;
     readonly token: string;
@@ -813,10 +665,10 @@ export const make = Effect.gen(function* () {
     return yield* liveActivities.listTargets({ userId: input.target.user_id }).pipe(
       Effect.map((targets) => {
         const currentTarget = targets.find((row) => row.device_id === input.target.device_id);
-        return (
-          currentTarget !== undefined &&
+        return currentTarget &&
           expectedCurrentToken({ target: currentTarget, kind: input.kind }) === input.token
-        );
+          ? currentTarget
+          : null;
       }),
     );
   });
@@ -832,11 +684,7 @@ export const make = Effect.gen(function* () {
     const now = yield* DateTime.now;
     const aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
-    const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
-      apns,
-      { ...input, aggregate } as SendLiveActivityDeliveryInput,
-      now,
-    );
+    let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
       recoverApnsDeliveryTransportError(
         {
@@ -862,17 +710,36 @@ export const make = Effect.gen(function* () {
       if (claim === "in_flight") {
         return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
       }
-      const tokenIsCurrent = yield* isCurrentSignedJobToken({
+      const currentTarget = yield* currentSignedJobTarget({
         target: input.target,
         kind: input.kind,
         token: input.token,
       });
-      if (!tokenIsCurrent) {
+      if (!currentTarget) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale APNs delivery job skipped.",
         });
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+      }
+      if (alert) {
+        const preferences = parsePreferences(currentTarget.preferences_json);
+        const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
+        alert =
+          !preferences?.notificationsEnabled || !aggregate
+            ? null
+            : (alertForAttentionTransition({
+                previousAggregate,
+                nextAggregate: aggregate,
+                preferences,
+              }) ??
+              alertForNewlyTerminal({
+                previousAggregate,
+                nextAggregate: aggregate,
+                preferences,
+                nowMs: now.epochMilliseconds,
+                includeUnobserved: true,
+              }));
       }
       if (
         input.kind !== "live_activity_start" &&
@@ -905,6 +772,11 @@ export const make = Effect.gen(function* () {
       }
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
+    const { epochSeconds, iso, request } = makeLiveActivityDeliveryRequest(
+      apns,
+      { ...input, aggregate, alert } as SendLiveActivityDeliveryInput,
+      now,
+    );
     const result = yield* apns
       .sendLiveActivityRequest({
         credentials: credentialsForTarget(config.apns, input.target),
@@ -1012,12 +884,12 @@ export const make = Effect.gen(function* () {
       if (claim === "in_flight") {
         return yield* new ApnsDeliveryJobClaimInFlight({ sourceJobId: input.sourceJobId });
       }
-      const tokenIsCurrent = yield* isCurrentSignedJobToken({
+      const currentTarget = yield* currentSignedJobTarget({
         target: input.target,
         kind: "push_notification",
         token: input.token,
       });
-      if (!tokenIsCurrent) {
+      if (!currentTarget) {
         yield* attempts.completeSourceJob({
           sourceJobId: input.sourceJobId,
           apnsReason: "Stale APNs delivery job skipped.",
@@ -1041,6 +913,24 @@ export const make = Effect.gen(function* () {
           deviceId: input.target.device_id,
           kind: "push_notification",
         });
+      }
+      const preferences = parsePreferences(currentTarget.preferences_json);
+      const alertAllowed =
+        notification.phase !== undefined && notification.updatedAt !== undefined
+          ? shouldAlertForActivity({
+              ...notification,
+              phase: notification.phase,
+              updatedAt: notification.updatedAt,
+              preferences,
+              nowMs: now.epochMilliseconds,
+            })
+          : preferences?.notificationsEnabled === true;
+      if (!alertAllowed) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Notification is disabled or no longer fresh.",
+        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: "push_notification" });
       }
     }
     const result = yield* apns
@@ -1210,6 +1100,7 @@ export const make = Effect.gen(function* () {
         target: input.target,
         aggregate: input.aggregate,
         nowMs: input.nowMs,
+        replay: input.replay ?? false,
       });
       if (!delivery) {
         return null;
@@ -1225,17 +1116,20 @@ export const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = notificationForAggregate({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: input.nowMs,
-      });
+      const notification = input.replay
+        ? null
+        : notificationForAggregate({
+            target: input.target,
+            aggregate: input.aggregate,
+            nowMs: input.nowMs,
+          });
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
       // stays silent; otherwise the end itself carries the alert so LA-only
       // users still get the buzz.
-      const alert =
-        delivery.kind === "live_activity_end"
+      const alert = input.replay
+        ? null
+        : delivery.kind === "live_activity_end"
           ? notification && input.target.push_token
             ? null
             : alertForTerminalAggregate({
