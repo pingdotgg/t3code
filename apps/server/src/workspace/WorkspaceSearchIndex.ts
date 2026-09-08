@@ -237,11 +237,16 @@ function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">)
   if (input.caseSensitive) {
     return { searchQuery: input.query, regexMode: input.useRegex };
   }
-  // Plain mode relies on smart case: an all-lowercase needle matches
-  // case-insensitively. Regex mode needs an explicit inline flag instead.
-  return input.useRegex
-    ? { searchQuery: `(?i)${input.query}`, regexMode: true }
-    : { searchQuery: input.query.toLowerCase(), regexMode: false };
+  // Plain-mode match ranges miss Unicode case variants. Enable Unicode regex
+  // folding, encoding literal punctuation so the native query parser cannot
+  // reinterpret it as a path/glob constraint before regex matching.
+  const query = input.useRegex
+    ? input.query
+    : input.query.replace(
+        /[/\\^$*+?.()|[\]{}]/g,
+        (character) => `\\x${character.charCodeAt(0).toString(16)}`,
+      );
+  return { searchQuery: `(?iu)${query}`, regexMode: true };
 }
 
 function mapContentMatchRanges(
