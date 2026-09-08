@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-const MOUSE_MOVE_INTERVAL_MS = 40;
 const RESIZE_SETTLE_MS = 150;
 const RETRY_STREAM_MS = 1000;
 const MOUSE_BUTTONS: Record<number, PreviewMouseButton> = { 0: "left", 1: "middle", 2: "right" };
@@ -24,17 +23,41 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
   const resize = useAtomCommand(previewEnvironment.resize);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const lastMoveAtRef = useRef(0);
+  const pendingRef = useRef<{
+    move: PreviewInputEvent | undefined;
+    wheel: PreviewInputEvent | undefined;
+  }>({
+    move: undefined,
+    wheel: undefined,
+  });
+  const inFlightRef = useRef(false);
   const [streamAttempt, setStreamAttempt] = useState(0);
 
   const send = useCallback(
-    (event: PreviewInputEvent) => {
-      void sendInput({
+    (event: PreviewInputEvent) =>
+      sendInput({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId, tabId, event },
+      }),
+    [sendInput, tabId, threadRef.environmentId, threadRef.threadId],
+  );
+
+  // Moves and wheel deltas arrive faster than one page round trip. Only one is
+  // in flight at a time and the newest waiting one replaces the older ones.
+  const flushPending = useCallback(
+    function flush() {
+      const pending = pendingRef.current;
+      const event = pending.move ?? pending.wheel;
+      if (inFlightRef.current || event === undefined) return;
+      if (event === pending.move) pending.move = undefined;
+      else pending.wheel = undefined;
+      inFlightRef.current = true;
+      void send(event).finally(() => {
+        inFlightRef.current = false;
+        flush();
       });
     },
-    [sendInput, tabId, threadRef.environmentId, threadRef.threadId],
+    [send],
   );
 
   // Frames are viewport-sized and drawn top-left with object-contain, so one
@@ -85,25 +108,32 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
       const point = pagePoint(event.clientX, event.clientY);
       if (!point) return;
       event.preventDefault();
-      send({ type: "wheel", ...point, deltaX: event.deltaX, deltaY: event.deltaY });
+      const waiting = pendingRef.current.wheel;
+      pendingRef.current.wheel = {
+        type: "wheel",
+        ...point,
+        deltaX: event.deltaX + (waiting?.type === "wheel" ? waiting.deltaX : 0),
+        deltaY: event.deltaY + (waiting?.type === "wheel" ? waiting.deltaY : 0),
+      };
+      flushPending();
     };
     container.addEventListener("wheel", onWheel, { passive: false });
     return () => container.removeEventListener("wheel", onWheel);
-  }, [pagePoint, send]);
+  }, [flushPending, pagePoint]);
 
   const handlePointer = (type: "mouseDown" | "mouseUp") => (event: React.PointerEvent) => {
     const button = MOUSE_BUTTONS[event.button];
     const point = pagePoint(event.clientX, event.clientY);
     if (!button || !point) return;
     if (type === "mouseDown") containerRef.current?.focus();
-    send({ type, ...point, button });
+    void send({ type, ...point, button });
   };
 
   const handleKey = (type: "keyDown" | "keyUp") => (event: React.KeyboardEvent) => {
     // App shortcuts keep the modifier key. The page gets everything else.
     if (event.metaKey || event.key === "Escape") return;
     event.preventDefault();
-    send({ type, key: event.key });
+    void send({ type, key: event.key });
   };
 
   return (
@@ -112,12 +142,10 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
       tabIndex={0}
       className="relative h-full w-full cursor-default overflow-hidden bg-white outline-none select-none"
       onPointerMove={(event) => {
-        const now = event.timeStamp;
-        if (now - lastMoveAtRef.current < MOUSE_MOVE_INTERVAL_MS) return;
         const point = pagePoint(event.clientX, event.clientY);
         if (!point) return;
-        lastMoveAtRef.current = now;
-        send({ type: "mouseMove", ...point });
+        pendingRef.current.move = { type: "mouseMove", ...point };
+        flushPending();
       }}
       onPointerDown={handlePointer("mouseDown")}
       onPointerUp={handlePointer("mouseUp")}

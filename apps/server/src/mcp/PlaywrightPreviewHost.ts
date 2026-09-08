@@ -115,7 +115,9 @@ const ENGINE_NAMES = Object.keys(ENGINES) as ReadonlyArray<PreviewBrowserEngine>
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 const IDLE_CLOSE_MS = 10 * 60_000;
-const FRAME_JPEG_QUALITY = 70;
+const FRAME_JPEG_QUALITY = 80;
+/** View pages render at 2x so frames stay sharp on a retina display. */
+const FRAME_SCALE = 2;
 const MAX_LOG_ENTRIES = 200;
 const MAX_ELEMENTS = 200;
 const MAX_EVALUATE_RESULT_CHARS = 64_000;
@@ -350,7 +352,10 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       try: async () => {
         const browser = await ENGINES[engine].browserType.launch({ executablePath: path });
         try {
-          const page = await browser.newPage({ viewport: DEFAULT_VIEWPORT });
+          const page = await browser.newPage({
+            viewport: DEFAULT_VIEWPORT,
+            ...(view === undefined ? {} : { deviceScaleFactor: FRAME_SCALE }),
+          });
           return { browser, page };
         } catch (cause) {
           await browser.close().catch(() => undefined);
@@ -774,12 +779,16 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
 
   const resizeView: PlaywrightPreviewHost["Service"]["resizeView"] = (tabId, viewport) => {
     const tab = viewTab(tabId);
-    if (tab === undefined) return Effect.void;
+    if (tab?.view === undefined) return Effect.void;
+    const { page, view } = tab;
     const size = viewport._tag === "fill" ? DEFAULT_VIEWPORT : viewport;
     tab.viewportSetting = viewport;
-    return ignoreFailure(() =>
-      tab.page.setViewportSize({ width: size.width, height: size.height }),
-    );
+    return ignoreFailure(async () => {
+      await page.setViewportSize({ width: size.width, height: size.height });
+      if (view.frameSinks.size === 0) return;
+      await page.screencast.stop();
+      await startScreencast(page, view);
+    });
   };
 
   const sendInput: PlaywrightPreviewHost["Service"]["sendInput"] = (tabId, event) => {
@@ -815,6 +824,19 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     }
   };
 
+  // Playwright fixes the frame size when the screencast starts and downsizes to
+  // 800px when no size is given. Frames match the page's device pixels instead.
+  const startScreencast = (page: Page, view: EngineViewState) => {
+    const viewport = page.viewportSize() ?? DEFAULT_VIEWPORT;
+    return page.screencast.start({
+      size: { width: viewport.width * FRAME_SCALE, height: viewport.height * FRAME_SCALE },
+      quality: FRAME_JPEG_QUALITY,
+      onFrame: ({ data }) => {
+        for (const sink of view.frameSinks) Queue.offerUnsafe(sink, data);
+      },
+    });
+  };
+
   const frames: PlaywrightPreviewHost["Service"]["frames"] = (tabId, secret) => {
     const tab = viewTab(tabId);
     if (tab?.view === undefined || tab.view.secret !== secret) return undefined;
@@ -824,13 +846,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
         Effect.acquireRelease(
           Effect.promise(async () => {
             view.frameSinks.add(queue);
-            if (view.frameSinks.size > 1) return;
-            await page.screencast.start({
-              quality: FRAME_JPEG_QUALITY,
-              onFrame: ({ data }) => {
-                for (const sink of view.frameSinks) Queue.offerUnsafe(sink, data);
-              },
-            });
+            if (view.frameSinks.size === 1) await startScreencast(page, view);
           }),
           () =>
             Effect.promise(async () => {
