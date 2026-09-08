@@ -18,7 +18,11 @@ export function SettingsScopeNotice({
   const choices: { label: string; search: SettingsScopeSearch }[] =
     target === "environment"
       ? environments.map((entry) => ({
-          label: entry.label,
+          label: environments.some(
+            (other) => other.environmentId !== entry.environmentId && other.label === entry.label,
+          )
+            ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
+            : entry.label,
           search: { machine: entry.environmentId },
         }))
       : [
@@ -35,7 +39,7 @@ export function SettingsScopeNotice({
           <AlertAction className="flex-wrap gap-2">
             {choices.map((choice) => (
               <Button
-                key={choice.label}
+                key={JSON.stringify(choice.search)}
                 size="sm"
                 variant="outline"
                 onClick={() => selectScope(choice.search)}
