@@ -1574,8 +1574,12 @@ private final class MultiEnvironmentFixture {
             try await receipts.waitForHTTP(id, count: targets[id]!)
             if requireConfiguration { try await receipts.waitForConfiguration(id) }
         }
+        let needsPublishedConfiguration = requireConfiguration
         return try await recorder!.wait { snapshot in
             ids.allSatisfy { id in
+                // The configuration receipt precedes publication. Wait for
+                // the same event consumer to observe settings in its snapshot.
+                if needsPublishedConfiguration && snapshot.preferencesByEnvironment?[id] == nil { return false }
                 guard let state = snapshot.environments.first(where: { $0.id == id })?.connectionState else { return false }
                 return state == .connected || state == .disconnected
             }
