@@ -246,25 +246,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const summary = yield* host.summary;
       if (!summary.platforms.some((platform) => platform.available)) return null;
       const ready = yield* host
-        .ensureAgentReady((phase) =>
-          publish((state) => ({ ...state, hostStatus: phase, hostStatusDetail: undefined })).pipe(
-            Effect.asVoid,
-          ),
-        )
+        .ensureAgentReady((phase) => setHostStatus(host.id, { status: phase }).pipe(Effect.asVoid))
         .pipe(
           Effect.tapError((error) =>
-            publish((state) => ({
-              ...state,
-              hostStatus: "failed",
-              hostStatusDetail: error.message,
-            })),
+            setHostStatus(host.id, { status: "failed", detail: error.message }),
           ),
           Effect.mapError(
             (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
           ),
         );
       const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
-      yield* publish((state) => ({ ...state, hosts: hostSummaries, hostStatus: "ready" }));
+      yield* publish((state) => ({ ...state, hosts: hostSummaries }));
+      yield* setHostStatus(host.id, { status: "ready" });
       return { hostId: host.id, ...ready };
     }, lifecycleLock.withPermit);
 
@@ -354,6 +347,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         return yield* publish((state) => ({
           ...state,
           hosts: hostSummaries,
+          ...(ready.hostId === LOCAL_DEVICE_HOST_ID ? { hostStatusDetail: detail } : {}),
           devices: [
             ...state.devices.filter((device) => device.hostId !== ready.hostId),
             ...devices,
@@ -421,6 +415,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ...state,
             hostStatus: nextEnabled ? "idle" : "disabled",
             hostStatusDetail: undefined,
+            hostStatuses: {},
             devices: nextEnabled ? state.devices : [],
             sessions: nextEnabled ? state.sessions : [],
             bootingDevices: nextEnabled ? state.bootingDevices : [],

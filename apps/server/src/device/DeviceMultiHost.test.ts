@@ -74,5 +74,13 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.sessions.map((session) => session.hostId)).toEqual(["b"]);
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
-  }).pipe(Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true }))),
+    yield* service.agentReadinessIfSupported("b");
+    expect((yield* service.state).hostStatuses.b?.status).toBe("ready");
+    yield* service.configure({ enabled: false });
+    expect((yield* service.state).hostStatuses).toEqual({});
+  }).pipe(
+    Effect.provide(
+      ServerSettingsService.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+    ),
+  ),
 );
