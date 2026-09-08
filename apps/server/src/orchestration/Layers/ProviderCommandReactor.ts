@@ -1210,7 +1210,11 @@ const make = Effect.gen(function* () {
         ),
         Effect.retry({
           while: (cause) => !Cause.hasInterrupts(cause),
-          schedule: Schedule.exponential("100 millis"),
+          schedule: Schedule.exponential("100 millis").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.seconds(5))),
+            ),
+          ),
         }),
         Effect.catch((cause) => Effect.failCause(cause)),
       );

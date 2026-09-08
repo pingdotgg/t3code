@@ -1943,6 +1943,127 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("reconstructs submitted turn identity for orphan reconciliation", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-submitted-restart',
+          'Submitted Restart Project',
+          '/tmp/project-submitted-restart',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-09-08T04:00:00.000Z',
+          '2026-09-08T04:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-submitted-restart',
+          'project-submitted-restart',
+          'Submitted Restart Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          '2026-09-08T04:00:02.000Z',
+          0,
+          0,
+          0,
+          '2026-09-08T04:00:02.000Z',
+          '2026-09-08T04:00:02.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          submitted_turn_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          'thread-submitted-restart',
+          NULL,
+          'message-submitted-restart',
+          'turn-submitted-restart',
+          NULL,
+          NULL,
+          NULL,
+          'submitted',
+          '2026-09-08T04:00:02.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+      const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.deepEqual(commandReadModel.threads[0]?.submittedTurnStarts, [
+        {
+          messageId: asMessageId("message-submitted-restart"),
+          turnId: asTurnId("turn-submitted-restart"),
+        },
+      ]);
+    }),
+  );
+
   it.effect("searches active user messages and canonical assistant outputs", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
