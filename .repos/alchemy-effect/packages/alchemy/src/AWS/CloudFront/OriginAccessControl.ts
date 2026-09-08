@@ -76,14 +76,15 @@ export interface OriginAccessControl extends Resource<
  *
  * `OriginAccessControl` is the recommended CloudFront access model for private
  * S3 origins and newer signed-origin integrations.
- * @resource
- * @section Creating Origin Access Controls
- * @example S3 Origin Access Control
+ * ### Creating Origin Access Controls
+ * **Example:** S3 Origin Access Control
  * ```typescript
  * const oac = yield* OriginAccessControl("SiteOriginAccess", {
  *   originType: "s3",
  * });
  * ```
+ *
+ * @resource
  */
 export const OriginAccessControl = Resource<OriginAccessControl>(
   "AWS.CloudFront.OriginAccessControl",

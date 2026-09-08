@@ -38,7 +38,7 @@ import {
 } from "./ResourceTelemetryHistory.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 
-export class ResourceTelemetryRefreshFailed extends Schema.TaggedErrorClass<ResourceTelemetryRefreshFailed>()(
+export class ResourceTelemetryRefreshFailed extends Schema.TaggedError<ResourceTelemetryRefreshFailed>()(
   "ResourceTelemetryRefreshFailed",
   {
     operation: Schema.String,

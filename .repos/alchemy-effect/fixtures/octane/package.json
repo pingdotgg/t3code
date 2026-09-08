@@ -1,0 +1,28 @@
+{
+  "name": "@fixtures/octane",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts dev --port 3112",
+    "build": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "pretest": "playwright install chromium && bun run build"
+  },
+  "dependencies": {
+    "@octanejs/adapter-cloudflare": "catalog:frontend",
+    "@octanejs/vite-plugin": "catalog:frontend",
+    "octane": "catalog:frontend",
+    "vite": "catalog:build"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@playwright/test": "catalog:testing",
+    "@types/node": "^24.12.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -11,9 +11,8 @@ import type { DataSet } from "./DataSet.ts";
  * The data set id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataExchange.ListDataSetRevisionsHttp)`.
- * @binding
- * @section Reading Data Sets
- * @example Find The Latest Finalized Revision
+ * ### Reading Data Sets
+ * **Example:** Find The Latest Finalized Revision
  * ```typescript
  * const listRevisions = yield* AWS.DataExchange.ListDataSetRevisions(dataSet);
  *
@@ -21,6 +20,8 @@ import type { DataSet } from "./DataSet.ts";
  * const { Revisions } = yield* listRevisions();
  * const latest = (Revisions ?? []).find((r) => r.Finalized);
  * ```
+ *
+ * @binding
  */
 export interface ListDataSetRevisions extends Binding.Service<
   ListDataSetRevisions,

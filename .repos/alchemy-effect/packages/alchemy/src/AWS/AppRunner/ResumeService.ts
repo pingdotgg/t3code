@@ -12,14 +12,15 @@ import type { Service } from "./Service.ts";
  * Provide `AppRunner.ResumeServiceHttp` on the hosting function's Effect to
  * implement the binding.
  *
- * @binding
- * @section Pausing and Resuming
- * @example Resume a paused service
+ * ### Pausing and Resuming
+ * **Example:** Resume a paused service
  * ```typescript
  * const resumeService = yield* AppRunner.ResumeService(service);
  * const { Service: resumed } = yield* resumeService();
  * // resumed.Status -> "OPERATION_IN_PROGRESS" (settles to "RUNNING")
  * ```
+ *
+ * @binding
  */
 export interface ResumeService extends Binding.Service<
   ResumeService,

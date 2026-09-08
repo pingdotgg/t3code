@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
@@ -13,11 +13,14 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "pngjs": "7.0.0"
+    "pngjs": "7.0.0",
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/pngjs": "6.0.5",
+    "typescript": "catalog:",
+    "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"
   }
 }

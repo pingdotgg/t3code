@@ -1,5 +1,6 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { pullRequestHostOf, resolveEnvironmentMachineKind, ThreadId } from "@t3tools/contracts";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { Spinner } from "~/components/ui/spinner";
+import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   ProjectId,
@@ -26,10 +27,8 @@ import {
   LayersIcon,
   ListChecksIcon,
   PenLineIcon,
-  LoaderIcon,
   Maximize2Icon,
   Minimize2Icon,
-  RefreshCwIcon,
   SearchIcon,
 } from "lucide-react";
 import {
@@ -120,8 +119,12 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../
 import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
+import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
+import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { toastManager } from "../components/ui/toast";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
+  PULL_REQUESTS_PANEL_REF,
   pullRequestSurfaceId,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
@@ -205,15 +208,6 @@ const PAGE_SIZE = 99;
 const MAX_PAGE_SIZE = 500;
 /** Stable empty map so the memos below do not see a new object on every render. */
 const EMPTY_VIEWERS: PullRequestListResult["viewers"] = {};
-/** The list owns one environment-scoped right panel rather than borrowing a real thread's. */
-const PULL_REQUESTS_PANEL_ID = ThreadId.make("pull-requests-panel");
-/**
- * A fixed sentinel, not a real server: the panel is one workspace-level surface list (each
- * surface already carries the server it was read from), so its store key must not move when a
- * capable server disconnects or reconnects. Real environment ids are server-generated UUIDs, so
- * this string can never collide with one.
- */
-const PULL_REQUESTS_PANEL_ENVIRONMENT_ID = "pull-requests-panel" as EnvironmentId;
 /** Stable so a read that is not wanted right now does not re-key on every render. */
 const NO_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> = [];
 const EMPTY_PREVIEW_SESSIONS = {};
@@ -424,13 +418,8 @@ function PullRequestsRouteView() {
   // read from, so tabs from two of them sit side by side instead of replacing each other. Its ref
   // uses a fixed sentinel environment, not whichever server happens to sort first, so the tab
   // strip survives a capable server disconnecting or losing the pull-requests capability.
-  const rightPanelRef = useMemo(
-    () =>
-      capableEnvironments.length === 0
-        ? null
-        : scopeThreadRef(PULL_REQUESTS_PANEL_ENVIRONMENT_ID, PULL_REQUESTS_PANEL_ID),
-    [capableEnvironments.length],
-  );
+  const rightPanelRef = capableEnvironments.length === 0 ? null : PULL_REQUESTS_PANEL_REF;
+  const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(rightPanelRef);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, rightPanelRef),
   );
@@ -453,7 +442,7 @@ function PullRequestsRouteView() {
     rightPanelState.isOpen && selectedPullRequestSurface !== null,
     rightPanelPresenceValue,
     panelAnimationsActive,
-    rightPanelRef === null ? null : PULL_REQUESTS_PANEL_ID,
+    rightPanelRef?.threadId ?? null,
     panelAnimationDurationMs,
   );
   const rightPanelPresent = rightPanelPresence.present;
@@ -1581,7 +1570,11 @@ function PullRequestsRouteView() {
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} />
       ) : listQuery.error && entries.length === 0 ? (
-        <PullRequestsUnavailableState error={listQuery.error} onRetry={() => listQuery.refresh()} />
+        <PullRequestsUnavailableState
+          error={listQuery.error}
+          refreshing={listQuery.isPending}
+          onRetry={() => listQuery.refresh()}
+        />
       ) : carriedToNothing ? (
         <PullRequestListGhost rows={7} />
       ) : entries.length === 0 ? (
@@ -1658,7 +1651,7 @@ function PullRequestsRouteView() {
         <div className="flex justify-center py-3 text-xs text-muted-foreground">
           {loadingMore ? (
             <span className="flex items-center gap-2">
-              <LoaderIcon aria-hidden className="size-3.5 animate-spin" />
+              <Spinner aria-hidden className="size-3.5" />
               {sentCursors === null ? "Updating pull requests" : "Loading more"}
             </span>
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
@@ -1848,8 +1841,27 @@ function PullRequestsRouteView() {
     selectSurfaceInUrl(null);
   };
 
-  // This page has no ChatView, so the shared panel handles `rightPanel.close`
-  // itself. With nothing open the event falls through to its native meaning.
+  // This page has no ChatView, so it handles the shared panel shortcuts itself.
+  const copyPullRequestFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!openPanelPullRequestUrl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.repeat) return;
+    const url = openPanelPullRequestUrl;
+    void writeTextToClipboard(url, "pull request link").then(
+      (didCopy) => {
+        if (didCopy)
+          toastManager.add({ type: "success", title: "PR link copied", description: url });
+      },
+      (error) => {
+        toastManager.add({
+          type: "error",
+          title: "Failed to copy PR link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      },
+    );
+  });
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (activePullRequestSurface === null) return;
     event.preventDefault();
@@ -1863,6 +1875,7 @@ function PullRequestsRouteView() {
         context: { terminalFocus: isTerminalFocused() },
       });
       if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
+      if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -2318,7 +2331,7 @@ function PullRequestRefreshControl({
       onClick={onRefresh}
       disabled={refreshing}
     >
-      <RefreshCwIcon className={cn("size-4", refreshing && "animate-spin")} />
+      <RefreshIcon className="size-4" refreshing={refreshing} />
     </Button>
   );
 }

@@ -54,7 +54,7 @@ const AgentAwarenessOperation = Schema.Literals([
   "prime-live-activity",
 ]);
 
-export class AgentAwarenessOperationError extends Schema.TaggedErrorClass<AgentAwarenessOperationError>()(
+export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwarenessOperationError>()(
   "AgentAwarenessOperationError",
   {
     operation: AgentAwarenessOperation,

@@ -11,6 +11,7 @@ namespace facebook::react {
 static constexpr Float ParagraphStyleEncodingOffset = 1000;
 static constexpr auto FileAttachmentNativeIdPrefix = "t3-file:";
 static constexpr auto SkillAttachmentNativeIdPrefix = "t3-skill:";
+static constexpr auto LinkAttachmentNativeIdPrefix = "t3-link:";
 
 static void applyParagraphStyles(
     NSMutableAttributedString *attributedString,
@@ -192,6 +193,7 @@ Size T3MarkdownTextShadowNode::measureContent(
               utf16Offset,
               1,
               props.nativeId.substr(std::char_traits<char>::length(FileAttachmentNativeIdPrefix)),
+              false,
           });
         } else if (
             props.nativeId.rfind(SkillAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
@@ -200,6 +202,15 @@ Size T3MarkdownTextShadowNode::measureContent(
               1,
               props.nativeId.substr(
                   std::char_traits<char>::length(SkillAttachmentNativeIdPrefix)),
+              false,
+          });
+        } else if (
+            props.nativeId.rfind(LinkAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
+          attachmentRanges.push_back(T3MarkdownTextAttachmentRange{
+              utf16Offset,
+              1,
+              props.nativeId.substr(std::char_traits<char>::length(LinkAttachmentNativeIdPrefix)),
+              true,
           });
         }
         utf16Offset += fragmentLength;

@@ -1,21 +1,96 @@
 import type { Input } from "../../Input.ts";
+import type { Certificate } from "../ACM/Certificate.ts";
+import type { Distribution } from "../CloudFront/Distribution.ts";
+import type { Records } from "../Route53/Records.ts";
+import type { AssetFileOption } from "./AssetDeployment.ts";
 import type { Bucket } from "../S3/Bucket.ts";
 
-export interface WebsiteDomainProps {
+/**
+ * Same-stack resources a Router-attached site binds its concrete hostnames
+ * onto, so declaring `domain: { name, router }` on the site alone is enough
+ * for the hostname to be fully provisioned — distribution alias, certificate
+ * SAN, and Route 53 record. Populated by `AWS.Website.Router` when it owns a
+ * `domain`; absent on cross-stack references (bindings are same-stack), in
+ * which case the site registers KV host-matching only and the hostname must
+ * be covered by the Router's own `domain` configuration.
+ */
+export interface WebsiteRouterBindTargets {
   /**
-   * Primary domain name for the website or router.
+   * The Router's CloudFront distribution — bound hostnames become
+   * distribution aliases.
+   */
+  distribution?: Distribution;
+  /**
+   * The Router's managed ACM certificate — bound hostnames become
+   * certificate SANs (a SAN change replaces the certificate, create-first).
+   * Absent when the Router uses a user-provided `domain.cert`, which must
+   * then already cover attached-site hostnames (e.g. a wildcard
+   * certificate).
+   */
+  certificate?: Certificate;
+  /**
+   * The Router's Route 53 alias record set — bound hostnames get A-alias
+   * records pointing at the distribution. Absent when the Router's domain
+   * sets `dns: false`. Without an explicit `hostedZoneId`, the set infers
+   * its zone from the first bound hostname.
+   */
+  records?: Records;
+}
+
+/**
+ * Structural slice of an `AWS.Website.Router` that a site attaches to via
+ * `domain.router` — satisfied by the Router's own return value.
+ */
+export interface WebsiteRouterRef {
+  kvStoreArn: Input<string>;
+  kvNamespace: Input<string>;
+  distributionId: Input<string>;
+  distributionArn: Input<string>;
+  url: Input<string>;
+  /**
+   * Same-stack bind targets for attached-site hostnames (see
+   * {@link WebsiteRouterBindTargets}). Cross-stack refs omit this — the
+   * attached site then falls back to KV host-matching only.
+   */
+  bindTargets?: WebsiteRouterBindTargets | undefined;
+}
+
+/**
+ * A standalone custom domain: the site (or Router) owns its own CloudFront
+ * distribution, and the domain is attached as a distribution alias with an
+ * ACM certificate and Route 53 records.
+ */
+export interface WebsiteStandaloneDomainProps {
+  /**
+   * The canonical hostname (e.g. `"www.example.com"`). Attached to the
+   * distribution as an alias — certificate and Route 53 records are managed
+   * automatically (see {@link cert} and {@link dns} to opt out).
+   *
+   * When set, `https://<name>` is the site's primary `url` output.
    */
   name: string;
   /**
-   * Hosted zone used for Route 53 automation.
+   * Hosted zone used for Route 53 automation. Optional — when omitted,
+   * the most specific PUBLIC hosted zone in the account containing each
+   * hostname is inferred by walking its parent domains; the deploy fails
+   * actionably when no zone matches. Pass an explicit id to pin the zone
+   * (e.g. when several zones could match).
    */
   hostedZoneId?: string;
   /**
-   * Additional aliases that should point at the same distribution.
+   * Additional hostnames that serve the site (e.g. `"example.com"`,
+   * `"docs.example.com"`). Each is attached as its own distribution alias,
+   * certificate SAN, and Route 53 record. Order matters: aliases follow
+   * `name` in the `urls` output.
    */
   aliases?: string[];
   /**
-   * Optional aliases that should redirect to the primary domain.
+   * Hostnames that permanently redirect (HTTP 301, path and query
+   * preserved) to {@link name} — e.g. `"old.example.com"`. Each is attached
+   * as a distribution alias (for TLS) with a certificate SAN and Route 53
+   * record, and the generated viewer-request CloudFront Function issues the
+   * redirect. Redirect hostnames serve no content, so they appear in the
+   * `domain` output but never in `urls`.
    */
   redirects?: string[];
   /**
@@ -26,7 +101,99 @@ export interface WebsiteDomainProps {
    * Disable Route 53 automation. When set, no DNS records are created.
    */
   dns?: false;
+  /**
+   * Never set on a standalone domain — attach to a Router by setting
+   * {@link WebsiteRouterDomainProps.router}.
+   */
+  router?: undefined;
+  /**
+   * Never set on a standalone domain — `path` only applies to
+   * Router-attached sites ({@link WebsiteRouterDomainProps.path}).
+   */
+  path?: undefined;
 }
+
+/**
+ * A Router-attached domain: the site owns no distribution — it registers
+ * itself in the Router's KV store and is served through the Router's
+ * distribution, matched by host pattern and path prefix.
+ */
+export interface WebsiteRouterDomainProps {
+  /**
+   * Host pattern this site is served for on the Router — an exact hostname
+   * (`"docs.example.com"`) or a wildcard pattern (`"*.example.com"`). When
+   * omitted, the site matches any host on the Router.
+   *
+   * Pattern semantics exist ONLY in Router mode: a standalone
+   * {@link WebsiteStandaloneDomainProps.name} is always a concrete
+   * hostname.
+   *
+   * A concrete hostname on a same-stack Router that owns a `domain` is
+   * fully provisioned from this declaration alone: the site binds it onto
+   * the Router's distribution (alias), certificate (SAN), and Route 53
+   * record set (see {@link WebsiteRouterBindTargets}). Wildcard patterns
+   * bind nothing concrete — a wildcard-matched site still needs the
+   * Router's own `domain`/certificate to cover its hostnames (e.g. a
+   * wildcard alias on the Router). The same applies to cross-stack Router
+   * references, where bindings cannot flow.
+   */
+  name?: string;
+  /**
+   * Additional host patterns that serve the site through the Router. Each
+   * registers its own KV route entry. Requires {@link name}. Order
+   * matters: aliases follow `name` in the `urls` output.
+   */
+  aliases?: string[];
+  /**
+   * Exact hostnames that permanently redirect (HTTP 301, path and query
+   * preserved) to {@link name}. The Router's edge function issues the
+   * redirect when a matched request arrives on one of these hosts.
+   * Requires a concrete (non-wildcard) {@link name}. Redirect hostnames
+   * appear in the `domain` output but never in `urls`.
+   */
+  redirects?: string[];
+  /**
+   * The `AWS.Website.Router` to attach to (or any structural slice with
+   * its KV store, namespace, distribution, and URL outputs).
+   */
+  router: WebsiteRouterRef;
+  /**
+   * Path prefix the site is served under (e.g. `"/docs"`).
+   * @default "/"
+   */
+  path?: string;
+}
+
+/**
+ * A website's custom-domain configuration: either a standalone domain (the
+ * site owns its own CloudFront distribution) or a Router attachment (the
+ * site is served through an existing `AWS.Website.Router`).
+ */
+export type WebsiteDomainProps =
+  | WebsiteStandaloneDomainProps
+  | WebsiteRouterDomainProps;
+
+/**
+ * Accepted `domain` prop shape: a bare hostname string (shorthand for
+ * `{ name }`), a full config object, or `null` to explicitly clear.
+ */
+export type WebsiteDomainInput = string | WebsiteDomainProps | null;
+
+/**
+ * Normalize the accepted `domain` prop shapes (`string` shorthand, `null`
+ * clear) into the object form. A bare string is always a standalone
+ * canonical hostname, so the shorthand result satisfies any accepted
+ * domain shape.
+ * @internal
+ */
+export const normalizeWebsiteDomain = <D extends WebsiteDomainProps>(
+  domain: string | D | null | undefined,
+): D | undefined =>
+  domain == null
+    ? undefined
+    : typeof domain === "string"
+      ? ({ name: domain } as D)
+      : domain;
 
 export interface WebsiteRewrite {
   /**
@@ -95,6 +262,10 @@ export interface StaticSiteBuildProps {
    */
   output: string;
   /**
+   * Environment variables exposed to the build command.
+   */
+  env?: Record<string, Input<string>>;
+  /**
    * Glob patterns of files to hash. Paths are relative to `path`.
    * When the hash of matched files changes, the build will re-run.
    *
@@ -144,14 +315,15 @@ export interface StaticSiteAssetsProps {
   textEncoding?: WebsiteTextEncoding;
 }
 
-export interface StaticSiteRouterProps {
+/**
+ * Static-asset upload configuration for the website composites:
+ * {@link StaticSiteAssetsProps} plus per-file overrides.
+ */
+export interface WebsiteAssetsConfig extends StaticSiteAssetsProps {
   /**
-   * Optional path prefix used when composing with `AWS.Website.Router`.
-   * This is metadata only; `StaticSite` still returns `routeTarget` for
-   * explicit router composition.
-   * @default "/"
+   * Per-file overrides for content type and cache-control.
    */
-  path?: string;
+  fileOptions?: AssetFileOption[];
 }
 
 export interface RouterUrlRouteProps {
@@ -208,9 +380,22 @@ export type RouterRoute = string | RouterUrlRouteProps | RouterBucketRouteProps;
 
 export interface RouterProps {
   /**
-   * Optional custom domain managed through Route 53.
+   * Optional custom domain managed through Route 53. A string is shorthand
+   * for `{ name }`; `null` explicitly clears a previously set domain.
    */
-  domain?: WebsiteDomainProps;
+  domain?: string | WebsiteStandaloneDomainProps | null;
+  /**
+   * Serve the Router at its CloudFront default domain
+   * (`https://dxxxx.cloudfront.net`). The default domain cannot be removed
+   * from a distribution, so `false` is emulated at the edge: the Router's
+   * viewer-request CloudFront Function 301s requests that arrive on the
+   * default domain to `https://<domain.name>` (path and query preserved),
+   * and the default domain is excluded from the `urls` output.
+   *
+   * Requires `domain` when `false` (the Router would be unreachable).
+   * @default true
+   */
+  cloudfrontUrl?: boolean;
   /**
    * Optional inline routes keyed by path pattern.
    * Sites register lazily via the KV store; inline routes are for
@@ -231,11 +416,6 @@ export interface RouterProps {
    */
   tags?: Record<string, string>;
 }
-
-/**
- * The bucket route a `StaticSite` exposes for explicit `Router` composition.
- */
-export type StaticSiteRouteTarget = RouterBucketRouteProps;
 
 /**
  * Route targets returned by `SsrSite` for composition with

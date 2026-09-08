@@ -1,0 +1,44 @@
+name: Release queue
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    branches: [main, v4/next-minor, v4/next-major]
+  push:
+    branches: [main, v4/next-minor, v4/next-major]
+
+permissions: {}
+
+jobs:
+  approval-gate:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    environment: fork
+    steps:
+      - run: echo "Fork PR approved by maintainer."
+
+  update:
+    needs: [approval-gate]
+    if: always() && (needs.approval-gate.result == 'success' || needs.approval-gate.result == 'skipped')
+    name: Update
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.EFFECT_BOT_GH }}
+      - run: gh pr checkout ${{ github.event.pull_request.number }}
+        if: github.event.pull_request
+        env:
+          GITHUB_TOKEN: ${{ secrets.EFFECT_BOT_GH }}
+      - uses: Effect-TS/next-release-action@63daaa626282bc42fad44dcb89c7f7db9c53b786
+        with:
+          github_token: ${{ secrets.EFFECT_BOT_GH }}
+          base_branch: main
+          eligible_branches: v4/next-minor,v4/next-major
+          git_user: effect-bot
+          git_email: tech-ops@effectful.co

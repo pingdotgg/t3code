@@ -36,9 +36,8 @@ export interface GroupMembership extends Resource<
  *
  * `GroupMembership` models the exact set of users in a group, making membership
  * reconciliation explicit instead of spreading it across user or group resources.
- * @resource
- * @section Managing Group Membership
- * @example Sync a Group's Members
+ * ### Managing Group Membership
+ * **Example:** Sync a Group's Members
  * ```typescript
  * const admins = yield* Group("Admins", {
  *   groupName: "admins",
@@ -57,6 +56,8 @@ export interface GroupMembership extends Resource<
  *   userNames: [alice.userName, bob.userName],
  * });
  * ```
+ *
+ * @resource
  */
 export const GroupMembership = Resource<GroupMembership>(
   "AWS.IAM.GroupMembership",

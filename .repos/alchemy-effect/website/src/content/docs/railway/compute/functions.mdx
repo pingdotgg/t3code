@@ -1,0 +1,187 @@
+---
+title: Functions, templates & VMs
+description: Effect-native canvas Functions, marketplace templates, sandboxes, and cloud agents on Railway.
+---
+
+A [`Railway.Function`](/providers/railway/function) is an Effect
+program on Railway's canvas Function runtime: a **single TypeScript
+file** on Bun. No GitHub repo. No Docker. No registry. Distinct from
+Effect-native [`Service({ main })`](/railway/compute/services),
+which uploads a generated Dockerfile. Cap is 96KB once encoded.
+
+Marketplace [`Template`](/providers/railway/template)s deploy a
+serialized config into a Project. [`Sandbox`](/providers/railway/sandbox)
+is an ephemeral Linux VM. [`CloudAgent`](/providers/railway/cloudagent)
+is a coding-agent VM.
+
+## Declare an Effect-native Function
+
+A Function is a class. Props describe the canvas Function. The Effect
+is the program that runs in it.
+
+```typescript
+// src/ping.ts
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Site } from "./project.ts";
+
+export default class Ping extends Railway.Function<Ping>()(
+  "Ping",
+  {
+    project: Site,
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("ok")),
+    };
+  }),
+) {}
+```
+
+`main: import.meta.url` is the bundle entrypoint. Alchemy bundles
+this file with Rolldown into one JS file and writes it as the
+Function's `startCommand`. Railway does **not** pull a registry
+image.
+
+## Schemaless RPC
+
+Return methods next to `fetch`. Call `enableRailwayRpc()` in init
+(the canvas start command is capped at 96KB, so the dispatcher is
+opt-in). Another Function or Service binds the class and calls
+them over `{name}.railway.internal` with a shared token. Public
+`*.up.railway.app` traffic to `/__rpc__/*` gets 401 even with the
+token — this is not a public API.
+
+```typescript
+export default class Query extends Railway.Function<Query>()(
+  "Query",
+  { project: Site, main: import.meta.url },
+  Effect.gen(function* () {
+    Railway.enableRailwayRpc();
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+    };
+  }),
+) {}
+```
+
+```typescript
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  { project: Site, main: import.meta.url },
+  Effect.gen(function* () {
+    const query = yield* Railway.bindFunction(Query);
+    return {
+      fetch: query
+        .greet("sam")
+        .pipe(Effect.map((greeting) => HttpServerResponse.text(greeting))),
+    };
+  }),
+) {}
+```
+
+`bindService` is the same stub for a tagged Service. Calls are
+`POST http://{dnsName}:{port}/__rpc__/{method}` on the private mesh.
+Do not send `rpcToken` to the browser.
+
+## Inline source
+
+Pass inline `source` (or `path` to a `.ts` file) instead of `main`
+when the Function is not an Effect class. Alchemy generates a
+`*.up.railway.app` domain unless `http: false` or a cron schedule is
+set.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const ping = yield* Railway.Function("Ping", {
+  project: site,
+  source: `
+    Bun.serve({
+      hostname: "0.0.0.0",
+      port: Number(process.env.PORT ?? 3000),
+      fetch() { return new Response("ok"); },
+    });
+  `,
+});
+```
+
+`path` is the CLI `--path` equivalent. The file is read at
+plan/reconcile.
+
+```typescript
+const ping = yield* Railway.Function("Ping", {
+  project: site,
+  path: "./fn.ts",
+});
+```
+
+## Cron Function
+
+`cronSchedule` runs the Function on a cron expression (`--cron`).
+HTTP domains are skipped unless `http: true` is set explicitly.
+
+```typescript
+const job = yield* Railway.Function("Cleanup", {
+  project: site,
+  source: `console.log("tick");`,
+  cronSchedule: "0 * * * *",
+});
+```
+
+## Marketplace templates
+
+`templateId` is a marketplace UUID or code (`postgres`). Pass a
+Project to deploy into it, or omit `project` and Alchemy creates one.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const db = yield* Railway.Template("Postgres", {
+  templateId: "postgres",
+  project: site,
+});
+```
+
+## Sandboxes
+
+An ephemeral Linux VM. Create it, `execSandbox` commands, snapshot
+with checkpoints, destroy it when the task is done. Sandboxes are
+Priority Boarding.
+
+```typescript
+const box = yield* Railway.Sandbox("Box", {
+  environment: site,
+  idleTimeoutMinutes: 5,
+});
+yield* Railway.execSandbox({
+  sandboxId: box.sandboxId,
+  environmentId: box.environmentId,
+  command: "echo hello",
+});
+```
+
+## Cloud agents
+
+A persistent coding-agent VM. Sleep keeps the disk; wake re-runs the
+entrypoint. Variables are create-only and may use
+[`Railway.ref`](/providers/railway/ref).
+
+```typescript
+const agent = yield* Railway.CloudAgent("Coder", {
+  environment: site,
+  variables: {
+    DATABASE_URL: Railway.ref(db, "DATABASE_URL"),
+  },
+});
+```
+
+## Where next
+
+[Services](/railway/compute/services) is the container when you need
+Docker (`main`). Functions stay on the canvas runtime.
+The [`Function`](/providers/railway/function),
+[`Template`](/providers/railway/template),
+[`Sandbox`](/providers/railway/sandbox), and
+[`CloudAgent`](/providers/railway/cloudagent) references list every
+prop.

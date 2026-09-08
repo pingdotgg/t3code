@@ -82,16 +82,15 @@ export interface BrowserCustom extends Resource<
  * session recording. All configuration is create-only (the API has no update
  * operation); property changes trigger a replacement.
  *
- * @resource
- * @section Creating Browsers
- * @example Public-Egress Browser
+ * ### Creating Browsers
+ * **Example:** Public-Egress Browser
  * ```typescript
  * import * as AgentCore from "alchemy/AWS/BedrockAgentCore";
  *
  * const browser = yield* AgentCore.BrowserCustom("AgentBrowser", {});
  * ```
  *
- * @example Browser with Session Recording
+ * **Example:** Browser with Session Recording
  * ```typescript
  * const browser = yield* AgentCore.BrowserCustom("RecordedBrowser", {
  *   executionRoleArn: role.roleArn,
@@ -101,6 +100,8 @@ export interface BrowserCustom extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const BrowserCustom = Resource<BrowserCustom>(
   "AWS.BedrockAgentCore.BrowserCustom",

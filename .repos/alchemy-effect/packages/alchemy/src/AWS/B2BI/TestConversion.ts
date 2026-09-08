@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * X12 EDI document — the inline counterpart of an outbound transformer's
  * conversion step. Provide the implementation with
  * `Effect.provide(AWS.B2BI.TestConversionHttp)`.
- * @binding
- * @section Converting Documents to EDI
- * @example Convert JSON to an X12 850
+ * ### Converting Documents to EDI
+ * **Example:** Convert JSON to an X12 850
  * ```typescript
  * // init — account-level, no resource argument
  * const testConversion = yield* AWS.B2BI.TestConversion();
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.convertedFileContent — the generated X12 document
  * ```
+ *
+ * @binding
  */
 export interface TestConversion extends Binding.Service<
   TestConversion,

@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
+import * as GlobalFlag from "effect/unstable/cli/GlobalFlag";
 
 import { AdoptPolicy } from "../../AdoptPolicy.ts";
 import { AlchemyContext } from "../../AlchemyContext.ts";
@@ -18,6 +19,7 @@ import { withProfileOverride } from "../../Auth/Profile.ts";
 import * as CLI from "../../Cli/Cli.ts";
 import * as Plan from "../../Plan.ts";
 import { Stage } from "../../Stage.ts";
+import { isTelemetryDisabled } from "../../Telemetry/Attributes.ts";
 import { loadConfigProvider } from "../../Util/ConfigProvider.ts";
 import { fileLogger } from "../../Util/FileLogger.ts";
 
@@ -67,7 +69,7 @@ const adopt = Flag.boolean("adopt").pipe(
   Flag.withDefault(false),
 );
 
-export const execStack = Effect.fn(function* ({
+const runStack = Effect.fn(function* ({
   main,
   stage,
   envFile,
@@ -80,6 +82,22 @@ export const execStack = Effect.fn(function* ({
   adopt = false,
 }: ExecStackOptions) {
   const stackEffect = yield* importStack(main);
+
+  // `--log-level <x>` has to actually put log records on the user's
+  // terminal. With telemetry on (the default) `TelemetryLive` deliberately
+  // drops the console logger, so every record lands in `.alchemy/log/out`
+  // and nothing reaches stderr — which is how a stalled deploy produced ten
+  // minutes of `--log-level debug` and zero bytes of output (#1231). Re-add
+  // a console sink for that run only. With telemetry off the default
+  // console logger is still in the set, and adding a second would
+  // double-print every line.
+  const askedForLogs = Option.isSome(
+    Option.flatten(yield* Effect.serviceOption(GlobalFlag.LogLevel)),
+  );
+  const consoleSink =
+    askedForLogs && !(yield* isTelemetryDisabled)
+      ? [Logger.consolePretty()]
+      : [];
 
   const services = Layer.mergeAll(
     Layer.effect(
@@ -112,7 +130,9 @@ export const execStack = Effect.fn(function* ({
     ConfigProvider.layer(
       withProfileOverride(yield* loadConfigProvider(envFile), profile),
     ),
-    Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
+    Logger.layer([fileLogger("out"), ...consoleSink], {
+      mergeWithExisting: true,
+    }),
     Layer.succeed(Stage, stage),
   );
 
@@ -121,20 +141,9 @@ export const execStack = Effect.fn(function* ({
     const stack = yield* stackEffect;
 
     yield* Effect.gen(function* () {
-      const updatePlan = yield* Plan.make(
-        destroy
-          ? {
-              ...stack,
-              // zero these out (destroy will treat all as orphans)
-              // TODO(sam): probably better to have Plan.destroy and Plan.update
-              resources: {},
-              bindings: {},
-              actions: {},
-              output: {},
-            }
-          : stack,
-        { force },
-      );
+      const updatePlan = destroy
+        ? yield* Plan.destroy(stack)
+        : yield* Plan.make(stack, { force });
       if (dryRun) {
         yield* cli.displayPlan(updatePlan);
       } else {
@@ -151,6 +160,14 @@ export const execStack = Effect.fn(function* ({
             return;
           }
         }
+        // Smoke-test kill switch: `ALCHEMY_DEV_ONCE=1 alchemy dev` exits after
+        // the first apply instead of keeping the dev session alive — apply
+        // failures propagate (non-zero exit) instead of being swallowed, so
+        // scripts and CI can assert "dev deploys cleanly" without a timeout.
+        const devOnce =
+          dev &&
+          (process.env.ALCHEMY_DEV_ONCE === "1" ||
+            process.env.ALCHEMY_DEV_ONCE === "true");
         // In dev, a failed apply must not drain the keep-alive below:
         // `alchemy dev` runs under `bun --watch`, which cancels watch mode
         // entirely on a clean exit (oven-sh/bun#10983), so completing here
@@ -159,17 +176,18 @@ export const execStack = Effect.fn(function* ({
         // renderer only shows the failure status) so the keep-alive engages
         // and the rest of the stack keeps serving, but re-propagate a pure
         // interruption (Ctrl-C / fiber kill) so dev still shuts down cleanly.
-        const applyPlan = dev
-          ? apply(updatePlan).pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Console.error(
-                      `alchemy dev: apply failed; keeping dev alive so healthy resources keep serving.\n${Cause.pretty(cause)}`,
-                    ).pipe(Effect.as(undefined)),
-              ),
-            )
-          : apply(updatePlan);
+        const applyPlan =
+          dev && !devOnce
+            ? apply(updatePlan).pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.failCause(cause)
+                    : Console.error(
+                        `alchemy dev: apply failed; keeping dev alive so healthy resources keep serving.\n${Cause.pretty(cause)}`,
+                      ).pipe(Effect.as(undefined)),
+                ),
+              )
+            : apply(updatePlan);
         const outputs = yield* applyPlan;
 
         if (outputs !== undefined) {
@@ -177,12 +195,40 @@ export const execStack = Effect.fn(function* ({
         }
 
         if (dev) {
+          if (devOnce) {
+            return;
+          }
           return yield* Effect.never;
         }
       }
     }).pipe(Effect.provide(stack.services));
   }).pipe(Effect.provide(services));
 });
+
+// In dev, failures OUTSIDE the apply guard above must not exit the process
+// either: the user saves mid-edit states where importing the stack module
+// itself throws (missing export, module-evaluation crash), or planning fails
+// against the half-edited program. Those failures escape `runStack` before
+// the apply-level guard exists, and exiting here kills the `--watch` session
+// (oven-sh/bun#10983), so dev would stop reloading on subsequent saves. Log
+// the cause and park forever; the watcher restarts the run on the next file
+// change. Pure interruption (Ctrl-C / fiber kill) still propagates so dev
+// shuts down cleanly.
+export const devKeepAlive = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  effect.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.failCause(cause)
+        : Console.error(
+            `alchemy dev: run failed; waiting for the next file change to retry.\n${Cause.pretty(cause)}`,
+          ).pipe(Effect.andThen(Effect.never)),
+    ),
+  );
+
+export const execStack = (options: ExecStackOptions) =>
+  options.dev ? devKeepAlive(runStack(options)) : runStack(options);
 
 export const deployCommand = Command.make(
   "deploy",

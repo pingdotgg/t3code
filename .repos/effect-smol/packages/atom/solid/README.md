@@ -1,7 +1,14 @@
-# `@effect/atom-solid`
+# @effect/atom-solid
 
-SolidJS bindings for the Effect Atom modules.
+[SolidJS](https://www.solidjs.com) bindings for Atom, the reactive state management modules for Effect.
+
+## Installation
+
+```sh
+npm install effect@rc @effect/atom-solid@rc
+```
 
 ## Documentation
 
-- **API Reference**: [View the full documentation](https://effect-ts.github.io/effect/docs/atom-solid).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/atom-solid)

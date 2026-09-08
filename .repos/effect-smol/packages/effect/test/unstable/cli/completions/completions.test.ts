@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, expect, it } from "@effect/vitest"
 import { Argument, Command, Flag } from "effect/unstable/cli"
 import * as Completions from "effect/unstable/cli/Completions"
 import * as Bash from "effect/unstable/cli/internal/completions/bash"
@@ -44,7 +44,8 @@ const withSubcommands = (() => {
   }).pipe(Command.withDescription("Stop the server"))
 
   return Command.make("server", {
-    verbose: Flag.boolean("verbose").pipe(Flag.withAlias("v"))
+    verbose: Flag.boolean("verbose").pipe(Flag.withAlias("v")),
+    config: Flag.string("config")
   }).pipe(
     Command.withDescription("Server management"),
     Command.withSubcommands([start, stop])
@@ -60,6 +61,32 @@ const withChoices = Command.make("deploy", {
   )
 }).pipe(Command.withDescription("Deploy application"))
 
+const trickyValues = [
+  "it's-fine",
+  "node:20",
+  "with space",
+  "(whoami)",
+  "#tag",
+  "$HOME",
+  "back\\slash",
+  `say"hi"`,
+  "a*b",
+  "a;b",
+  "~x",
+  "foo'",
+  "a!b",
+  "\u{1F680}"
+]
+
+const withTrickyChoices = Command.make("deploy", {
+  mode: Flag.choice("mode", trickyValues).pipe(
+    Flag.withDescription("Deploy mode")
+  ),
+  target: Argument.choice("target", ["o'clock", "a:b", "{x,y}", "a\u{1F600}b"]).pipe(
+    Argument.withDescription("Deployment target")
+  )
+}).pipe(Command.withDescription("Deploy application"))
+
 const withPaths = Command.make("process", {
   input: Flag.file("input").pipe(Flag.withDescription("Input file")),
   outDir: Flag.directory("output-dir").pipe(Flag.withDescription("Output directory")),
@@ -67,6 +94,17 @@ const withPaths = Command.make("process", {
     Argument.withDescription("Source file")
   )
 }).pipe(Command.withDescription("Process files"))
+
+const withOptionalDirectoryAndSubcommands = Command.make("example", {
+  directory: Argument.directory("directory").pipe(
+    Argument.withDescription("Directory to start in"),
+    Argument.optional
+  )
+}).pipe(
+  Command.withSubcommands([
+    Command.make("serve").pipe(Command.withDescription("Start the server"))
+  ])
+)
 
 const nested3Levels = (() => {
   const leaf = Command.make("action", {
@@ -86,17 +124,72 @@ const emptyCmd = Command.make("noop").pipe(
   Command.withDescription("Does nothing")
 )
 
+const choicesHelperSource = (script: string): string => {
+  const start = script.indexOf("_deploy--choices()")
+  const end = script.indexOf("\n}\n", start)
+  return script.slice(start, end + 2)
+}
+
+const linesWith = (script: string, needle: string): string =>
+  script.split("\n").filter((line) => line.includes(needle)).map((line) => line.trim()).join("\n")
+
 // ---------------------------------------------------------------------------
 // Bash completions
 // ---------------------------------------------------------------------------
 
 describe("Bash completions", () => {
+  it("completes the active positional argument instead of always using the first", () => {
+    const descriptor: Completions.CommandDescriptor = {
+      name: "tool",
+      description: undefined,
+      flags: [
+        {
+          name: "verbose",
+          aliases: ["v"],
+          description: undefined,
+          type: { _tag: "Boolean" }
+        },
+        {
+          name: "format",
+          aliases: ["f"],
+          description: undefined,
+          type: { _tag: "Choice", values: ["json", "text"] }
+        }
+      ],
+      arguments: [
+        {
+          name: "source",
+          description: undefined,
+          required: true,
+          variadic: false,
+          type: { _tag: "Choice", values: ["one"] }
+        },
+        {
+          name: "target",
+          description: undefined,
+          required: true,
+          variadic: false,
+          type: { _tag: "Choice", values: ["two"] }
+        }
+      ],
+      subcommands: []
+    }
+    const script = Bash.generate("tool", descriptor)
+
+    assert.include(script, `for ((i = _command_index + 1; i < cword; i++)); do`)
+    assert.include(script, `--verbose|-v|--no-verbose) ;;`)
+    assert.include(script, `--format|-f) _skip_next=1 ;;`)
+    assert.include(script, `--format=*|-f=*) ;;`)
+    assert.include(script, `0)\n      _tool--choices "$cur" "$_comp_word" 'one'`)
+    assert.include(script, `1)\n      _tool--choices "$cur" "$_comp_word" 'two'`)
+  })
+
   it("generates completion function for root command", () => {
     const desc = fromCommand(simpleCmd)
     const script = Bash.generate("greet", desc)
     assert.include(script, "_greet()")
     assert.include(script, "complete -F _greet greet")
-    assert.include(script, "_init_completion || return")
+    assert.include(script, `_init_completion -n "$COMP_WORDBREAKS" || return`)
   })
 
   it("includes subcommand names in word list", () => {
@@ -104,6 +197,23 @@ describe("Bash completions", () => {
     const script = Bash.generate("server", desc)
     assert.include(script, "start)")
     assert.include(script, "stop)")
+  })
+
+  it("does not dispatch subcommands from flag values", () => {
+    const desc = fromCommand(withSubcommands)
+    const script = Bash.generate("server", desc)
+    assert.include(
+      script,
+      `for ((i = _command_index + 1; i < cword; i++)); do
+    if (( _skip_next )); then
+      _skip_next=0
+      continue
+    fi
+    case "\${words[i]}" in
+      --config) _skip_next=1 ;;
+      --config=*) ;;
+      start)`
+    )
   })
 
   it("includes long flag names with -- prefix", () => {
@@ -140,7 +250,71 @@ describe("Bash completions", () => {
   it("inlines choice values for choice flags", () => {
     const desc = fromCommand(withChoices)
     const script = Bash.generate("deploy", desc)
-    assert.include(script, "dev staging prod")
+    assert.include(script, `_deploy--choices "$cur" "$_comp_word" 'dev' 'staging' 'prod'`)
+  })
+
+  it("quotes choice values instead of exposing them to compgen -W re-expansion", () => {
+    const script = Bash.generate("deploy", fromCommand(withTrickyChoices))
+    expect(linesWith(script, `_deploy--choices "$cur"`)).toMatchInlineSnapshot(`
+      "_deploy--choices "$cur" "$_comp_word" 'it'\\''s-fine' 'node:20' 'with space' '(whoami)' '#tag' '$HOME' 'back\\slash' 'say"hi"' 'a*b' 'a;b' '~x' 'foo'\\''' 'a!b' '🚀'
+      _deploy--choices "$cur" "$_comp_word" 'o'\\''clock' 'a:b' '{x,y}' 'a😀b'"
+    `)
+    assert.notInclude(script, `compgen -W 'it`)
+  })
+
+  it("splits words on whitespace only, so a value holding a word-break character stays one word", () => {
+    const script = Bash.generate("deploy", fromCommand(withTrickyChoices))
+    assert.include(script, `_init_completion -n "$COMP_WORDBREAKS" || return`)
+  })
+
+  it("emits the choice helper", () => {
+    const script = Bash.generate("deploy", fromCommand(withTrickyChoices))
+    expect(choicesHelperSource(script)).toMatchInlineSnapshot(`
+      "_deploy--choices()
+      {
+        local _cur="$1" _word="$2"; shift 2
+
+        local _head="\${_cur%"$_word"}"
+        local _open=""
+        case "$_head" in
+          *\\') _open="'" ;;
+          *\\") _open='"' ;;
+        esac
+
+        local _prefix="$_cur" _committed="$_head"
+        _prefix=\${_prefix//\\\\/}; _prefix=\${_prefix//\\"/}; _prefix=\${_prefix//\\'/}
+        _committed=\${_committed//\\\\/}; _committed=\${_committed//\\"/}; _committed=\${_committed//\\'/}
+
+        COMPREPLY=()
+        local _choice _rest _match
+        for _choice in "$@"; do
+          [[ "$_choice" == "$_prefix"* ]] || continue
+          _rest="\${_choice#"$_committed"}"
+          case "$_open" in
+            "'")
+              if [[ "$_head" == "'" ]]; then
+                _match=\${_rest//\\'/\\'\\\\\\'\\'}
+              else
+                [[ "$_rest" == *\\'* ]] && continue
+                _match="$_rest"
+              fi
+              ;;
+            '"')
+              _match="\${_rest//\\\\/\\\\\\\\}"
+              _match="\${_match//\\$/\\\\$}"
+              _match="\${_match//\\\`/\\\\\\\`}"
+              _match="\${_match//\\"/\\\\\\"}"
+              ;;
+            *)
+              printf -v _match '%q' "$_rest"
+              [[ -z "$_head" && "$_match" == '~'* ]] && _match="\\\\$_match"
+              ;;
+          esac
+          [[ -n "$_open" && "$_match" == *"$_open" ]] && _match+="$_open"
+          COMPREPLY+=("$_match")
+        done
+      }"
+    `)
   })
 
   it("generates separate functions for nested subcommands", () => {
@@ -149,6 +323,7 @@ describe("Bash completions", () => {
     assert.include(script, "_server()")
     assert.include(script, "_server_start()")
     assert.include(script, "_server_stop()")
+    assert.include(script, `_server_start "$i"`)
   })
 
   it("handles commands with no subcommands", () => {
@@ -176,12 +351,10 @@ describe("Bash completions", () => {
   it("groups flag aliases for used-flag filtering", () => {
     const desc = fromCommand(simpleCmd)
     const script = Bash.generate("greet", desc)
-    // All forms of --loud share the same group index
-    assert.include(script, "_flag_groups[--loud]=0")
-    assert.include(script, "_flag_groups[-l]=0")
-    assert.include(script, "_flag_groups[--no-loud]=0")
-    // --times has a different group index
-    assert.include(script, "_flag_groups[--times]=1")
+    assert.include(script, "--loud|-l|--no-loud) _used_0=1 ;;")
+    assert.include(script, "--times) _used_1=1 ;;")
+    assert.include(script, `[[ -n "$_used_0" ]] || _filtered_flags+=" --loud -l --no-loud"`)
+    assert.include(script, `[[ -n "$_used_1" ]] || _filtered_flags+=" --times"`)
     // Uses _filtered_flags instead of a static word list
     assert.include(script, "compgen -W \"$_filtered_flags\"")
   })
@@ -189,8 +362,14 @@ describe("Bash completions", () => {
   it("does not generate flag groups for commands with no flags", () => {
     const desc = fromCommand(emptyCmd)
     const script = Bash.generate("noop", desc)
-    assert.notInclude(script, "_flag_groups")
+    assert.notInclude(script, "_used_0")
     assert.notInclude(script, "_filtered_flags")
+  })
+
+  it("uses no bash 4 syntax, so the script runs on the bash macOS ships", () => {
+    const script = Bash.generate("comprehensive", fromCommand(ComprehensiveCli))
+    assert.notInclude(script, "local -A")
+    assert.notInclude(script, "declare -A")
   })
 
   it("includes inline _init_completion fallback", () => {
@@ -198,9 +377,9 @@ describe("Bash completions", () => {
     const script = Bash.generate("greet", desc)
     assert.include(script, "if ! type _init_completion &>/dev/null; then")
     assert.include(script, "COMPREPLY=()")
-    assert.include(script, "cur=\"${COMP_WORDS[COMP_CWORD]}\"")
-    assert.include(script, "cword=$COMP_CWORD")
-    assert.include(script, "fi")
+    assert.include(script, `if [[ "$_line" == [[:blank:]]* ]]; then`)
+    assert.include(script, "((_i == COMP_CWORD)) && cword=$_j")
+    assert.include(script, `cur="\${words[cword]}"`)
   })
 })
 
@@ -276,6 +455,37 @@ describe("Zsh completions", () => {
     assert.include(script, "(us-east eu-west ap-south)")
   })
 
+  it("escapes choice values for both the spec quoting and the action list re-parse", () => {
+    const script = Zsh.generate("deploy", fromCommand(withTrickyChoices))
+    expect(linesWith(script, ":value:(")).toMatchInlineSnapshot(
+      `"'(--mode)--mode[Deploy mode]:value:(it\\'\\''s-fine node\\:20 with\\ space \\(whoami\\) \\#tag \\$HOME back\\\\slash say\\"hi\\" a\\*b a\\;b \\~x foo\\'\\'' a\\!b \\🚀)'"`
+    )
+    expect(linesWith(script, "Deployment target")).toMatchInlineSnapshot(
+      `"':Deployment target:(o\\'\\''clock a\\:b \\{x,y\\} a\\😀b)'"`
+    )
+  })
+
+  it("uses alternative argument sets for positional arguments and subcommands", () => {
+    const desc = fromCommand(withOptionalDirectoryAndSubcommands)
+    const script = Zsh.generate("example", desc)
+
+    assert.include(
+      script,
+      `    -
+    parent-arguments
+    ':Directory to start in:_directories'
+    -
+    subcommands
+    '1:command:->command'
+    '*::arg:->args'`
+    )
+    assert.notInclude(
+      script,
+      `    ':Directory to start in:_directories'
+    '1:command:->command'`
+    )
+  })
+
   it("starts with #compdef directive", () => {
     const desc = fromCommand(simpleCmd)
     const script = Zsh.generate("greet", desc)
@@ -339,6 +549,38 @@ describe("Zsh completions", () => {
 // ---------------------------------------------------------------------------
 
 describe("Fish completions", () => {
+  it("scopes nested completions by the full command path", () => {
+    const leaf = (name: string, flag: string): Completions.CommandDescriptor => ({
+      name,
+      description: undefined,
+      flags: [{ name: flag, aliases: [], description: undefined, type: { _tag: "Boolean" } }],
+      arguments: [],
+      subcommands: []
+    })
+    const descriptor: Completions.CommandDescriptor = {
+      name: "tool",
+      description: undefined,
+      flags: [],
+      arguments: [],
+      subcommands: [
+        {
+          name: "alpha",
+          description: undefined,
+          flags: [],
+          arguments: [],
+          subcommands: [leaf("common", "alpha-only")]
+        },
+        { name: "beta", description: undefined, flags: [], arguments: [], subcommands: [leaf("common", "beta-only")] }
+      ]
+    }
+    const lines = Fish.generate("tool", descriptor).split("\n")
+    const alphaOnly = lines.find((line) => line.includes("-l alpha-only"))!
+    const betaOnly = lines.find((line) => line.includes("-l beta-only"))!
+
+    assert.include(alphaOnly, "__fish_seen_subcommand_from alpha; and __fish_seen_subcommand_from common")
+    assert.include(betaOnly, "__fish_seen_subcommand_from beta; and __fish_seen_subcommand_from common")
+  })
+
   it("generates complete commands for root subcommands", () => {
     const desc = fromCommand(withSubcommands)
     const script = Fish.generate("server", desc)
@@ -371,6 +613,22 @@ describe("Fish completions", () => {
     const desc = fromCommand(withChoices)
     const script = Fish.generate("deploy", desc)
     assert.include(script, "-r -f -a 'dev staging prod'")
+  })
+
+  it("escapes choice values for both the string quoting and the expansion of the -a list", () => {
+    const script = Fish.generate("deploy", fromCommand(withTrickyChoices))
+    expect(linesWith(script, "-r -f -a")).toMatchInlineSnapshot(`
+      "complete -c deploy -n 'begin; not __fish_contains_opt mode; or contains -- (commandline -poc)[-1] --mode; end' -l mode -d 'Deploy mode' -r -f -a 'it\\\\\\'s-fine node\\\\:20 with\\\\ space \\\\(whoami\\\\) \\\\#tag \\\\$HOME back\\\\\\\\slash say\\\\"hi\\\\" a\\\\*b a\\\\;b \\\\~x foo\\\\\\' a\\\\!b \\\\🚀'
+      complete -c deploy -r -f -a 'o\\\\\\'clock a\\\\:b \\\\{x,y\\\\} a\\\\😀b' -d 'Deployment target'"
+    `)
+  })
+
+  it("escapes backslashes in descriptions before quotes", () => {
+    const trailingBackslash = Command.make("deploy", {
+      mode: Flag.choice("mode", ["a"]).pipe(Flag.withDescription("Path like C:\\"))
+    })
+    const script = Fish.generate("deploy", fromCommand(trailingBackslash))
+    assert.include(script, `-d 'Path like C:\\\\'`)
   })
 
   it("uses -n conditions for nested subcommand flags", () => {
@@ -414,31 +672,32 @@ describe("Fish completions", () => {
     assert.include(script, "###-end-greet-completions-###")
   })
 
-  it("generates __fish_contains_opt conditions for boolean flags", () => {
+  it("generates used-flag dedup conditions", () => {
     const desc = fromCommand(simpleCmd)
     const script = Fish.generate("greet", desc)
     // --loud is boolean with alias -l — gets dedup condition on the -l entry
     assert.include(script, "not __fish_contains_opt -s l loud no-loud")
-    // --times is a value-taking flag — its -l entry has NO dedup (would suppress
-    // value completions), but its bare-TAB -a entry DOES use dedup
     const lines = script.split("\n")
     const timesLongEntry = lines.find((l) => l.includes("-l times"))!
-    assert.notInclude(timesLongEntry, "__fish_contains_opt")
+    assert.include(
+      timesLongEntry,
+      "-n 'begin; not __fish_contains_opt times; or contains -- (commandline -poc)[-1] --times; end'"
+    )
     const timesArgEntry = lines.find((l) => l.includes("-a '--times'"))!
     assert.include(timesArgEntry, "not __fish_contains_opt times")
   })
 
-  it("combines subcommand and boolean dedup conditions", () => {
+  it("combines subcommand and dedup conditions", () => {
     const desc = fromCommand(withSubcommands)
     const script = Fish.generate("server", desc)
     // daemon is boolean — gets subcommand + dedup condition on -l entry
     assert.include(script, "__fish_seen_subcommand_from start; and not __fish_contains_opt daemon no-daemon")
-    // port is value-taking — its -l entry has only subcommand condition (no dedup),
-    // but its bare-TAB -a entry DOES use dedup
     const lines = script.split("\n")
     const portLongEntry = lines.find((l) => l.includes("-l port"))!
-    assert.include(portLongEntry, "-n '__fish_seen_subcommand_from start'")
-    assert.notInclude(portLongEntry, "__fish_contains_opt")
+    assert.include(
+      portLongEntry,
+      "-n '__fish_seen_subcommand_from start; and begin; not __fish_contains_opt -s p port; or contains -- (commandline -poc)[-1] --port -p; end'"
+    )
     const portArgEntry = lines.find((l) => l.includes("-a '--port'"))!
     assert.include(portArgEntry, "not __fish_contains_opt -s p port")
   })

@@ -17,9 +17,8 @@ export interface SubmitJobRequest extends Omit<
  * Submit a job to an AWS Batch job queue against a bound job definition —
  * fire-and-forget heavy work from a Lambda or Task.
  *
- * @binding
- * @section Submitting Jobs
- * @example Submit from a Lambda
+ * ### Submitting Jobs
+ * **Example:** Submit from a Lambda
  * ```typescript
  * const submitJob = yield* Batch.SubmitJob(queue, jobDef);
  * const { jobId } = yield* submitJob({
@@ -27,6 +26,8 @@ export interface SubmitJobRequest extends Omit<
  *   containerOverrides: { command: ["echo", "hello"] },
  * });
  * ```
+ *
+ * @binding
  */
 export interface SubmitJob extends Binding.Service<
   SubmitJob,

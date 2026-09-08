@@ -1,7 +1,14 @@
-# `@effect/sql-pglite`
+# @effect/sql-pglite
 
-An Effect SQL implementation using the `@electric-sql/pglite` library.
+An Effect SQL client for [PGlite](https://pglite.dev), a WASM build of PostgreSQL that runs in the browser, Node.js, and Bun.
+
+## Installation
+
+```sh
+npm install effect@rc @effect/sql-pglite@rc
+```
 
 ## Documentation
 
-- **API Reference**: [View the full documentation](https://effect-ts.github.io/effect/docs/sql-pglite).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/sql-pglite)

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * recorded no anomalies. Rate-limited by AWS to two requests per second,
  * per account, per Region. Provide the implementation with
  * `Effect.provide(AWS.CloudTrail.ListInsightsDataHttp)`.
- * @binding
- * @section Reading Insights Events
- * @example List Insights Events
+ * ### Reading Insights Events
+ * **Example:** List Insights Events
  * ```typescript
  * // init — account-level binding takes no resource
  * const listInsightsData = yield* AWS.CloudTrail.ListInsightsData();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * console.log((result.Events ?? []).map((e) => e.EventName));
  * ```
+ *
+ * @binding
  */
 export interface ListInsightsData extends Binding.Service<
   ListInsightsData,

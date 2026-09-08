@@ -35,7 +35,7 @@ export class CloudTrailLakeTestFunction extends Lambda.Function<Lambda.Function>
 export default CloudTrailLakeTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // A fresh store settles through CREATED/STARTING_INGESTION before the
     // first query is accepted; the /query/run retry must fit the invocation.
     timeout: Duration.seconds(60),

@@ -2,7 +2,6 @@
  * @since 4.0.0
  */
 
-import { getCurrentSuite } from "@vitest/runner"
 import * as Cause from "effect/Cause"
 import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
@@ -19,6 +18,8 @@ import * as TestClock from "effect/testing/TestClock"
 import * as TestConsole from "effect/testing/TestConsole"
 import * as V from "vitest"
 import type * as Vitest from "../index.ts"
+
+const getCurrentSuite = V.TestRunner.getCurrentSuite
 
 const runPromise: <E, A>(
   _: Effect.Effect<A, E, never>,
@@ -128,7 +129,7 @@ const makeTester = <R>(
     if (Array.isArray(arbitraries)) {
       const arbs = arbitraries.map((arbitrary) => {
         if (Schema.isSchema(arbitrary)) {
-          return Schema.toArbitrary(arbitrary)
+          return Schema.toArbitrary(arbitrary)(fc)
         }
         return arbitrary as fc.Arbitrary<any>
       })
@@ -149,7 +150,7 @@ const makeTester = <R>(
     const arbs = fc.record(
       Object.keys(arbitraries).reduce(function(result, key) {
         const arb: any = arbitraries[key]
-        Rec.assignProperty(result, key, Schema.isSchema(arb) ? Schema.toArbitrary(arb) : arb)
+        Rec.assignProperty(result, key, Schema.isSchema(arb) ? Schema.toArbitrary(arb)(fc) : arb)
         return result
       }, {} as Record<string, fc.Arbitrary<any>>)
     )

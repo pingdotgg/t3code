@@ -15,15 +15,16 @@ export interface GetReadSetMetadataRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.GetReadSetMetadataHttp)`.
- * @binding
- * @section Read Sets
- * @example Bind GetReadSetMetadata to a SequenceStore
+ * ### Read Sets
+ * **Example:** Bind GetReadSetMetadata to a SequenceStore
  * ```typescript
  * // init
  * const getReadSetMetadata = yield* AWS.Omics.GetReadSetMetadata(store);
  * // runtime
  * const result = yield* getReadSetMetadata({});
  * ```
+ *
+ * @binding
  */
 export interface GetReadSetMetadata extends Binding.Service<
   GetReadSetMetadata,

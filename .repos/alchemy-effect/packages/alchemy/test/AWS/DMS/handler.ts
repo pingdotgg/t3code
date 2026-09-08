@@ -17,7 +17,7 @@ export class DmsTestFunction extends Lambda.Function<Lambda.Function>()(
 export default DmsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // A DMS endpoint is metadata-only (free, fast) — the bindings exercise

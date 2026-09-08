@@ -61,6 +61,21 @@ describe("applyUsageLimitsUpdate", () => {
       applyUsageLimitsUpdate({ previous: published, checkedAt, update: { windows: [] } }),
     ).toBe(published);
   });
+
+  it("preserves reset credits when a streamed window update changes usage", () => {
+    const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
+    const next = applyUsageLimitsUpdate({
+      previous: { ...published, resetCredits },
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      update: { windows: [{ ...session, usedPercent: 55 }] },
+    });
+
+    expect(next).toEqual({
+      checkedAt: "2026-09-03T12:00:05.000Z",
+      windows: [{ ...session, usedPercent: 55 }, weekly],
+      resetCredits,
+    });
+  });
 });
 
 describe("resolveUsageLimitsAfterProbe", () => {

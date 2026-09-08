@@ -14,6 +14,35 @@ const serviceLease = makeAppRegistryTestLease();
 beforeAll(serviceLease.acquire, { timeout: 3_600_000 });
 afterAll(serviceLease.release);
 
+// AWS Service Catalog AppRegistry entered maintenance mode on July 30, 2026.
+// Accounts without pre-existing AppRegistry resources are treated as "new
+// customers" and every create is denied with AccessDeniedException. The full
+// lifecycle/binding suites are gated behind AWS_TEST_APPREGISTRY=1 for
+// accounts that retain access; the ungated probe below pins the typed
+// maintenance-mode rejection on everything else.
+const gated = !process.env.AWS_TEST_APPREGISTRY;
+
+// Probe only makes sense on an account WITHOUT AppRegistry access — an
+// entitled account (AWS_TEST_APPREGISTRY=1) would successfully create the
+// application instead, so the probe is skipped there and the real lifecycle
+// tests run in its place.
+test.provider.skipIf(!gated)(
+  "createApplication is denied with the typed maintenance-mode AccessDeniedException",
+  () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        appregistry.createApplication({
+          name: "alchemy-appregistry-maintenance-probe",
+          clientToken: "alchemy-appregistry-maintenance-probe",
+        }),
+      );
+      expect(error._tag).toBe("AccessDeniedException");
+      if (error._tag === "AccessDeniedException") {
+        expect(error.message).toContain("maintenance mode");
+      }
+    }),
+);
+
 class ApplicationStillExists extends Data.TaggedError(
   "ApplicationStillExists",
 )<{ specifier: string }> {}
@@ -33,7 +62,7 @@ const assertApplicationGone = (specifier: string) =>
     }),
   );
 
-test.provider(
+test.provider.skipIf(gated)(
   "creates, updates, replaces, and deletes an application",
   (stack) =>
     Effect.gen(function* () {

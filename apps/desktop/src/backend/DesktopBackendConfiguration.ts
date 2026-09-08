@@ -21,7 +21,7 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
 
-export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedErrorClass<DesktopBackendObservabilitySettingsReadError>()(
+export class DesktopBackendObservabilitySettingsReadError extends Schema.TaggedError<DesktopBackendObservabilitySettingsReadError>()(
   "DesktopBackendObservabilitySettingsReadError",
   {
     settingsPath: Schema.String,
@@ -243,7 +243,7 @@ const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
 const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
 
-export const parseWslRuntimeArchiveHash = (value: string): string | null => {
+const parseWslRuntimeArchiveHash = (value: string): string | null => {
   const trimmed = value.trim();
   return SHA256_HEX_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 };
@@ -737,6 +737,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   } satisfies DesktopBackendManager.DesktopBackendStartConfig;
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

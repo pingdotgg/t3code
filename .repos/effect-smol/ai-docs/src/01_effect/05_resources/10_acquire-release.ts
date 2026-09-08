@@ -8,7 +8,7 @@
 import { Config, Context, Effect, Layer, Redacted, Schema } from "effect"
 import * as NodeMailer from "nodemailer"
 
-export class SmtpError extends Schema.ErrorClass<SmtpError>("SmtpError")({
+export class SmtpError extends Schema.Error<SmtpError>("SmtpError")({
   cause: Schema.Defect()
 }) {}
 
@@ -70,7 +70,7 @@ export class Smtp extends Context.Service<Smtp, {
 // We can then use the `Smtp` service in another service, and the transporter
 // will be properly managed by the Layer system.
 
-export class MailerError extends Schema.TaggedErrorClass<MailerError>()("MailerError", {
+export class MailerError extends Schema.TaggedError<MailerError>()("MailerError", {
   reason: SmtpError
 }) {}
 

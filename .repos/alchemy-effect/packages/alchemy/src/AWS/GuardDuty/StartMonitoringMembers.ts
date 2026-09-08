@@ -10,9 +10,8 @@ import type { Detector } from "./Detector.ts";
  * The detector id is injected from the bound {@link Detector}.
  * Provide the implementation with
  * `Effect.provide(AWS.GuardDuty.StartMonitoringMembersHttp)`.
- * @binding
- * @section Member Administration
- * @example Resume Monitoring
+ * ### Member Administration
+ * **Example:** Resume Monitoring
  * ```typescript
  * // init
  * const startMonitoringMembers = yield* AWS.GuardDuty.StartMonitoringMembers(detector);
@@ -20,6 +19,8 @@ import type { Detector } from "./Detector.ts";
  * // runtime
  * yield* startMonitoringMembers({ AccountIds: ["111122223333"] });
  * ```
+ *
+ * @binding
  */
 export interface StartMonitoringMembers extends Binding.Service<
   StartMonitoringMembers,

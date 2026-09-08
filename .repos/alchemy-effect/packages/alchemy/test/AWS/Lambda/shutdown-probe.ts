@@ -20,7 +20,7 @@ export default class ShutdownProbe extends AWS.Lambda.Function<ShutdownProbe>()(
   "ShutdownProbe",
   {
     main: import.meta.url,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(10),
   },
   Effect.gen(function* () {
