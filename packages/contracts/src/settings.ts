@@ -842,6 +842,72 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
 /**
+ * Permission policy for headless Command Code runs. Print mode never shows
+ * interactive prompts: file writes and shell commands are hard-blocked
+ * unless the CLI is launched with `--yolo`, so "auto-accept" is the only
+ * mode that lets the agent actually modify the workspace. "standard" keeps
+ * the CLI's fail-closed headless policy (read-only tools).
+ */
+export const COMMAND_CODE_PERMISSION_MODES = [
+  { value: "auto-accept", label: "Auto-accept (--yolo)" },
+  { value: "standard", label: "Standard (read-only tools)" },
+] as const satisfies ReadonlyArray<ProviderSettingsFormOption>;
+export const CommandCodePermissionMode = Schema.Literals(
+  COMMAND_CODE_PERMISSION_MODES.map((mode) => mode.value),
+);
+export type CommandCodePermissionMode = typeof CommandCodePermissionMode.Type;
+
+export const CommandCodeSettings = makeProviderSettingsSchema(
+  {
+    // Off by default like Cursor, Grok and OpenCode: headless Command Code
+    // is only useful on environments that already run the CLI. Users opt in.
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("command-code").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description:
+          "Path to the Command Code CLI. Use `command-code` (never the bare `cmd`, which is cmd.exe on Windows).",
+        providerSettingsForm: {
+          placeholder: "command-code",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    permissionMode: CommandCodePermissionMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed("auto-accept" as const)),
+      Schema.annotateKey({
+        title: "Permission mode",
+        description:
+          "Auto-accept launches the CLI with --yolo so it can edit files and run commands. Standard keeps headless Command Code's default: read-only tools only.",
+        providerSettingsForm: {
+          control: "select",
+          options: COMMAND_CODE_PERMISSION_MODES,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed to Command Code on every turn.",
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "permissionMode", "launchArgs"],
+  },
+);
+export type CommandCodeSettings = typeof CommandCodeSettings.Type;
+
+/**
  * A read-only quota source outside this environment's provider CLIs. The
  * only kind today is a CLIProxyAPI hub, whose management API reports the
  * windows of every pooled account. The key travels in settings for now, like
@@ -1044,6 +1110,7 @@ export const ServerSettings = Schema.Struct({
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    commandCode: CommandCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1216,6 +1283,14 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const CommandCodeSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  permissionMode: Schema.optionalKey(CommandCodePermissionMode),
+  launchArgs: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -1274,6 +1349,7 @@ export const ServerSettingsPatch = Schema.Struct({
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
+      commandCode: Schema.optionalKey(CommandCodeSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

@@ -6,6 +6,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  CommandCodeSettings,
   DEFAULT_SERVER_SETTINGS,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -19,6 +20,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeCommandCodeSettings = Schema.decodeUnknownSync(CommandCodeSettings);
 
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
@@ -102,6 +104,35 @@ describe("custom model settings", () => {
     ).toEqual([{ slug: "x", capabilities }]);
     expect(() =>
       decodeServerSettingsPatch({ providers: { codex: { customModels: [{ name: "no slug" }] } } }),
+    ).toThrow();
+  });
+});
+
+describe("CommandCodeSettings", () => {
+  it("defaults to opt-in, command-code binary and auto-accept permissions", () => {
+    const decoded = decodeCommandCodeSettings({});
+    expect(decoded.enabled).toBe(false);
+    expect(decoded.binaryPath).toBe("command-code");
+    expect(decoded.permissionMode).toBe("auto-accept");
+    expect(decoded.launchArgs).toBe("");
+    // The legacy mirror default stays disabled, like Cursor/Grok/OpenCode.
+    expect(decodeServerSettings({}).providers.commandCode.enabled).toBe(false);
+  });
+
+  it("falls back to the command-code binary when the path is blank", () => {
+    expect(decodeCommandCodeSettings({ binaryPath: "  " }).binaryPath).toBe("command-code");
+  });
+
+  it("accepts a permission-mode change at the settings patch boundary", () => {
+    expect(
+      decodeServerSettingsPatch({
+        providers: { commandCode: { permissionMode: "standard" } },
+      }).providers?.commandCode?.permissionMode,
+    ).toBe("standard");
+    expect(() =>
+      decodeServerSettingsPatch({
+        providers: { commandCode: { permissionMode: "yolo" as "standard" } },
+      }),
     ).toThrow();
   });
 });
@@ -546,6 +577,7 @@ describe("provider enabled defaults", () => {
     expect(decoded.providers.cursor.enabled).toBe(false);
     expect(decoded.providers.grok.enabled).toBe(false);
     expect(decoded.providers.opencode.enabled).toBe(false);
+    expect(decoded.providers.commandCode.enabled).toBe(false);
   });
 
   it("keeps Cursor enabled when an existing user explicitly opted in", () => {
