@@ -150,7 +150,7 @@ type SnapshotMetadata = {
  * interactive elements until the JSON fits. Returns the text plus notes on
  * what is missing so the agent can reach for preview_evaluate.
  */
-export const boundSnapshotMetadata = (
+const boundSnapshotMetadata = (
   metadata: SnapshotMetadata,
 ): { readonly text: string; readonly omitted: ReadonlyArray<string> } => {
   const omitted: Array<string> = [];
