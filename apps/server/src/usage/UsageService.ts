@@ -153,6 +153,11 @@ export const make = Effect.gen(function* () {
   // whatever entries happen to be cached would pin itself to the oldest one
   // and stop age pruning altogether.
   let retentionHorizonMs = Number.POSITIVE_INFINITY;
+  // Scans for different windows run concurrently and each persists when it
+  // finishes. Snapshot and write hold this so a later, fuller snapshot cannot
+  // start writing until the earlier one has landed, which is what makes the
+  // last write to disk the newest cache state.
+  const scanCacheLock = yield* Semaphore.make(1);
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
@@ -301,21 +306,30 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const persistScanCache = Effect.fn("UsageService.persistScanCache")(function* () {
-    if (!cacheDirty) return;
-    // Cleared only after the write lands, so a failed persist is retried on
-    // the next scan instead of leaving disk permanently stale.
-    yield* encodeScanCacheFile(
-      encodeScanCache(fileCache, { retainSinceMs: retentionHorizonMs }),
-    ).pipe(
-      Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
-      Effect.map(() => {
+  const persistScanCache = scanCacheLock
+    .withPermit(
+      Effect.gen(function* () {
+        if (!cacheDirty) return;
+        // Cleared before the write, not after: a scan still walking while this
+        // write is in flight dirties the cache again, and clearing afterwards
+        // would swallow that and leave its entries unpersisted. A failed write
+        // restores the flag so the next scan retries instead of leaving disk
+        // permanently stale.
         cacheDirty = false;
+        yield* encodeScanCacheFile(
+          encodeScanCache(fileCache, { retainSinceMs: retentionHorizonMs }),
+        ).pipe(
+          Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
+          // A cache we cannot write is a slower next start, not a failed read.
+          Effect.catchCause(() =>
+            Effect.sync(() => {
+              cacheDirty = true;
+            }),
+          ),
+        );
       }),
-      // A cache we cannot write is a slower next start, not a failed read.
-      Effect.catchCause(() => Effect.void),
-    );
-  });
+    )
+    .pipe(Effect.withSpan("UsageService.persistScanCache"));
 
   /**
    * Parses one transcript, reusing the cached result when it is unchanged.
@@ -560,7 +574,7 @@ export const make = Effect.gen(function* () {
       retentionCutoffMs: Math.min(boundedRetentionMs, retentionHorizonMs),
     });
     if (pruned > 0) cacheDirty = true;
-    yield* persistScanCache();
+    yield* persistScanCache;
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;

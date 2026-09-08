@@ -23,7 +23,12 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { decodeScanCache, encodeScanCache, type ScanCache } from "./usageScanCache.ts";
+import {
+  decodeScanCache,
+  decodeScanCacheRetainSince,
+  encodeScanCache,
+  type ScanCache,
+} from "./usageScanCache.ts";
 import * as UsageService from "./UsageService.ts";
 
 function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
@@ -291,6 +296,86 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(
           serviceLayers({ prefix: "usage-service-concurrent-prune-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("never lets an earlier, smaller snapshot land after a fuller one", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      // Only the all-time scan lists this one, so its snapshot is the only one
+      // carrying the entry and the retention marker.
+      const oldTranscript = NodePath.join(NodePath.dirname(transcript), "old.jsonl");
+      yield* Effect.promise(() => NodeFSP.writeFile(oldTranscript, claudeLine(2, 7)));
+      const nowMs = yield* Clock.currentTimeMillis;
+      const staleMtimeSeconds = (nowMs - 200 * 24 * 60 * 60 * 1000) / 1000;
+      yield* Effect.promise(() =>
+        NodeFSP.utimes(oldTranscript, staleMtimeSeconds, staleMtimeSeconds),
+      );
+      const allTime: UsageSummaryInput = { ...WINDOW, sinceDay: UsageDay.make("2020-01-01") };
+      const grokDir = NodePath.join(home, "grok", "sessions");
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cachePath = NodePath.join(config.stateDir, "usage-scan-cache.json");
+        const firstWriteStarted = yield* Deferred.make<void>();
+        const releaseFirstWrite = yield* Deferred.make<void>();
+        const allTimeWalked = yield* Deferred.make<void>();
+        // Cache writes land here in completion order rather than on disk, so
+        // the test sees exactly which snapshot won.
+        const landed: string[] = [];
+        let cacheWrites = 0;
+        let grokProbes = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            // Grok is walked last: its probe resolving means the walk is done.
+            exists: (path) =>
+              fileSystem.exists(path).pipe(
+                Effect.tap(() => {
+                  if (path !== grokDir) return Effect.void;
+                  grokProbes += 1;
+                  return grokProbes === 2
+                    ? Deferred.succeed(allTimeWalked, undefined)
+                    : Effect.void;
+                }),
+              ),
+            writeFileString: (path, data, options) => {
+              if (path !== cachePath) return fileSystem.writeFileString(path, data, options);
+              cacheWrites += 1;
+              const land = Effect.sync(() => {
+                landed.push(data);
+              });
+              if (cacheWrites !== 1) return land;
+              return Deferred.succeed(firstWriteStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirstWrite)),
+                Effect.andThen(land),
+              );
+            },
+          }),
+        );
+
+        const bounded = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
+        yield* Deferred.await(firstWriteStarted);
+        // The all-time scan adds the old transcript and lowers the horizon
+        // while the bounded snapshot, which has neither, is still being written.
+        const allTimeScan = yield* service.readSummary(allTime).pipe(Effect.forkChild);
+        yield* Deferred.await(allTimeWalked);
+        yield* Deferred.succeed(releaseFirstWrite, undefined);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(bounded)), 5);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(allTimeScan)), 12);
+
+        assert.strictEqual(landed.length, 2);
+        const final = decodeJsonDocument(landed[1]);
+        assert.isTrue(decodeScanCache(final).has(transcript));
+        assert.isTrue(decodeScanCache(final).has(oldTranscript));
+        assert.isNotNull(decodeScanCacheRetainSince(final));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-write-barrier-test", home, settings }),
         ),
       );
     }).pipe(Effect.scoped),
