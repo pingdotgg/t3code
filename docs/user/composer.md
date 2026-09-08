@@ -68,8 +68,8 @@ navigate to their sources.
 On web and desktop, Enter sends the prompt and Shift+Enter starts a new line. If
 you keep sending drafts early, switch Settings → General → Behavior →
 **Send prompt with** to `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and
-Linux. Enter then starts a new line, and `Shift+Cmd+Enter` starts a new thread
-in the background. On phones, Enter always starts a new line.
+Linux. Enter then starts a new line, and `Shift+Cmd+Enter` on macOS or
+`Shift+Ctrl+Enter` on Windows and Linux starts a new thread in the background.
 
 ## Recall a sent prompt
 
