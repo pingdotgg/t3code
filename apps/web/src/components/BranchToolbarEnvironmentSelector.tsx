@@ -113,13 +113,17 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       >
         {autoEnvironmentLabel ? (
           <ScaleIcon
-            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+            className={
+              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
+            }
             aria-hidden="true"
           />
         ) : (
           <EnvironmentMachineIcon
             kind={activeEnvironment?.machine ?? "server"}
-            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
+            className={
+              displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"
+            }
           />
         )}
         <span
