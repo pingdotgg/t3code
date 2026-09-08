@@ -4005,6 +4005,86 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
       }),
     );
 
+    it.effect("preserves submitted turn correlation across a revert", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-submitted-revert");
+        const messageId = MessageId.make("message-submitted-revert");
+        const turnId = TurnId.make("turn-submitted-revert");
+        const createdAt = "2026-02-26T13:40:00.000Z";
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-submitted-revert-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-submitted-revert-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-submitted-revert-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "approval-required",
+            createdAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-submitted-revert-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-submitted-revert-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-submitted-revert-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: createdAt,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.reverted",
+          eventId: EventId.make("evt-submitted-revert-complete"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-submitted-revert-complete"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-submitted-revert-complete"),
+          metadata: {},
+          payload: { threadId, turnCount: 0 },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly messageId: string;
+          readonly state: string;
+          readonly submittedTurnId: string | null;
+        }>`
+          SELECT
+            pending_message_id AS "messageId",
+            state,
+            submitted_turn_id AS "submittedTurnId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+        `;
+        assert.deepEqual(rows, [
+          {
+            messageId: "message-submitted-revert",
+            state: "submitted",
+            submittedTurnId: "turn-submitted-revert",
+          },
+        ]);
+      }),
+    );
+
     it.effect("keeps newer pending turn starts when a stale session reaches a terminal state", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;

@@ -196,6 +196,9 @@ const PendingTurnStartRowSchema = Schema.Struct({
   messageId: MessageId,
   requestedAt: IsoDateTime,
 });
+const PendingTurnStartRowsInput = Schema.Struct({
+  throughSequence: NonNegativeInt,
+});
 const ThreadActivityKindsLookupInput = Schema.Struct({
   threadId: ThreadId,
   activityKinds: Schema.Array(Schema.String),
@@ -1173,18 +1176,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   });
 
   const listPendingTurnStartRows = SqlSchema.findAll({
-    Request: Schema.Struct({}),
+    Request: PendingTurnStartRowsInput,
     Result: PendingTurnStartRowSchema,
-    execute: () => sql`
+    execute: ({ throughSequence }) => sql`
       SELECT
-        thread_id AS "threadId",
-        pending_message_id AS "messageId",
-        requested_at AS "requestedAt"
-      FROM projection_turns
-      WHERE turn_id IS NULL
-        AND state = 'pending'
-        AND pending_message_id IS NOT NULL
-      ORDER BY row_id ASC
+        pending.thread_id AS "threadId",
+        pending.pending_message_id AS "messageId",
+        pending.requested_at AS "requestedAt"
+      FROM projection_turns AS pending
+      WHERE pending.turn_id IS NULL
+        AND pending.state = 'pending'
+        AND pending.pending_message_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM orchestration_events AS requested
+          WHERE requested.aggregate_kind = 'thread'
+            AND requested.stream_id = pending.thread_id
+            AND requested.event_type = 'thread.turn-start-requested'
+            AND requested.sequence <= ${throughSequence}
+            AND json_extract(requested.payload_json, '$.messageId') = pending.pending_message_id
+        )
+      ORDER BY pending.row_id ASC
     `,
   });
 
@@ -2994,8 +3006,10 @@ pending_approval_requests AS (
     }));
   });
 
-  const listPendingTurnStarts: ProjectionSnapshotQueryShape["listPendingTurnStarts"] = () =>
-    listPendingTurnStartRows({}).pipe(
+  const listPendingTurnStarts: ProjectionSnapshotQueryShape["listPendingTurnStarts"] = (
+    throughSequence,
+  ) =>
+    listPendingTurnStartRows({ throughSequence }).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProjectionSnapshotQuery.listPendingTurnStarts:query",

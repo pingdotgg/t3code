@@ -175,6 +175,8 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly turnStartBeforeStart?: "one" | "two";
+    readonly failPendingTurnStartSnapshot?: boolean;
+    readonly turnStartDuringPendingSnapshot?: boolean;
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -415,6 +417,43 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const reactorProjectionSnapshotLayer = Layer.effect(
+      ProjectionSnapshotQuery,
+      Effect.gen(function* () {
+        const query = yield* ProjectionSnapshotQuery;
+        const engine = yield* OrchestrationEngineService;
+        return {
+          ...query,
+          listPendingTurnStarts: (throughSequence) => {
+            if (input?.failPendingTurnStartSnapshot === true) {
+              return Effect.die(new Error("Injected pending turn-start snapshot failure"));
+            }
+            return (query.listPendingTurnStarts?.(throughSequence) ?? Effect.succeed([])).pipe(
+              Effect.tap(() =>
+                input?.turnStartDuringPendingSnapshot === true
+                  ? engine
+                      .dispatch({
+                        type: "thread.turn.start",
+                        commandId: CommandId.make("cmd-turn-start-during-pending-snapshot"),
+                        threadId: ThreadId.make("thread-1"),
+                        message: {
+                          messageId: MessageId.make("message-turn-start-during-pending-snapshot"),
+                          role: "user",
+                          text: "Retain the turn committed during reactor startup",
+                          attachments: [],
+                        },
+                        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+                        runtimeMode: "approval-required",
+                        createdAt: now,
+                      })
+                      .pipe(Effect.orDie)
+                  : Effect.void,
+              ),
+            );
+          },
+        } satisfies ProjectionSnapshotQuery["Service"];
+      }),
+    ).pipe(Layer.provide(projectionSnapshotLayer), Layer.provide(orchestrationLayer));
     const awaitCheckpointSequence = vi.fn(
       (sequence: number) => input?.awaitCheckpointSequenceEffect?.(sequence) ?? Effect.void,
     );
@@ -453,7 +492,7 @@ describe("ProviderCommandReactor", () => {
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
-      Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(reactorProjectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
@@ -1930,6 +1969,27 @@ describe("ProviderCommandReactor", () => {
           activity.payload.detail.includes("server restarted"),
       ),
     ).toBe(true);
+  });
+
+  it("fails reactor startup when pending turn starts cannot be read", async () => {
+    await expect(createHarness({ failPendingTurnStartSnapshot: true })).rejects.toThrow(
+      "Injected pending turn-start snapshot failure",
+    );
+  });
+
+  it("processes a turn committed during the startup snapshot handoff", async () => {
+    const harness = await createHarness({ turnStartDuringPendingSnapshot: true });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(async () => (await harness.readPendingTurnStarts()).length === 0);
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      input: "Retain the turn committed during reactor startup",
+    });
+    expect(await harness.readPendingTurnStarts()).toEqual([]);
   });
 
   it("continues clearing startup title regeneration state after one completion fails", async () => {

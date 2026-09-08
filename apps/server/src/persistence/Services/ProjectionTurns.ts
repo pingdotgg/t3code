@@ -37,6 +37,7 @@ export type ProjectionTurnState = typeof ProjectionTurnState.Type;
 export const ProjectionTurn = Schema.Struct({
   threadId: ThreadId,
   turnId: Schema.NullOr(TurnId),
+  submittedTurnId: Schema.NullOr(TurnId),
   pendingMessageId: Schema.NullOr(MessageId),
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
@@ -78,6 +79,12 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   requestedAt: IsoDateTime,
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;
+
+export const ProjectionSubmittedTurnStart = Schema.Struct({
+  ...ProjectionPendingTurnStart.fields,
+  turnId: TurnId,
+});
+export type ProjectionSubmittedTurnStart = typeof ProjectionSubmittedTurnStart.Type;
 
 export const ListProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -152,6 +159,11 @@ export interface ProjectionTurnRepositoryShape {
    */
   readonly insertPendingTurnStart: (
     row: ProjectionPendingTurnStart,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Restores an accepted placeholder without making it eligible for startup resubmission. */
+  readonly insertSubmittedTurnStart: (
+    row: ProjectionSubmittedTurnStart,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /** Marks one correlated start as accepted by the provider so startup does not replay it. */

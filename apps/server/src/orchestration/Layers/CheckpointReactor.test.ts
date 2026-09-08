@@ -2000,6 +2000,77 @@ describe("CheckpointReactor", () => {
     }),
   );
 
+  effectIt.effect("removes files captured by a failed turn when reverting", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false }),
+      );
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const failedFile = NodePath.join(harness.cwd, "failed-turn.txt");
+
+      yield* harness.checkpointStore.captureCheckpoint({
+        cwd: harness.cwd,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 0),
+      });
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+      yield* harness.checkpointStore.captureCheckpoint({
+        cwd: harness.cwd,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+      });
+      NodeFS.writeFileSync(failedFile, "created by failed turn\n", "utf8");
+      yield* harness.checkpointStore.captureCheckpoint({
+        cwd: harness.cwd,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 2),
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-failed-checkpoint"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+      for (const [turnCount, status] of [
+        [1, "ready"],
+        [2, "error"],
+      ] as const) {
+        yield* harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(`cmd-failed-checkpoint-diff-${turnCount}`),
+          threadId,
+          turnId: asTurnId(`turn-failed-checkpoint-${turnCount}`),
+          completedAt: createdAt,
+          checkpointRef: checkpointRefForThreadTurn(threadId, turnCount),
+          status,
+          files: [],
+          checkpointTurnCount: turnCount,
+          createdAt,
+        });
+      }
+
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-revert-failed-checkpoint"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+
+      expect(NodeFS.existsSync(failedFile)).toBe(false);
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+    }),
+  );
+
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
     const createdAt = "2026-01-01T00:00:00.000Z";

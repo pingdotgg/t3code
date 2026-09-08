@@ -1664,13 +1664,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               turn.turnId === null
                 ? turn.pendingMessageId === null
                   ? Effect.void
-                  : projectionTurnRepository.insertPendingTurnStart({
-                      threadId: turn.threadId,
-                      messageId: turn.pendingMessageId,
-                      sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
-                      sourceProposedPlanId: turn.sourceProposedPlanId,
-                      requestedAt: turn.requestedAt,
-                    })
+                  : turn.state === "submitted" && turn.submittedTurnId !== null
+                    ? projectionTurnRepository.insertSubmittedTurnStart({
+                        threadId: turn.threadId,
+                        messageId: turn.pendingMessageId,
+                        turnId: turn.submittedTurnId,
+                        sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
+                        sourceProposedPlanId: turn.sourceProposedPlanId,
+                        requestedAt: turn.requestedAt,
+                      })
+                    : projectionTurnRepository.insertPendingTurnStart({
+                        threadId: turn.threadId,
+                        messageId: turn.pendingMessageId,
+                        sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
+                        sourceProposedPlanId: turn.sourceProposedPlanId,
+                        requestedAt: turn.requestedAt,
+                      })
                 : projectionTurnRepository.upsertByTurnId({
                     ...turn,
                     turnId: turn.turnId,

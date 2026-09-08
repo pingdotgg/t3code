@@ -20,6 +20,7 @@ import {
   GetProjectionTurnByTurnIdInput,
   ListProjectionTurnsByThreadInput,
   ProjectionPendingTurnStart,
+  ProjectionSubmittedTurnStart,
   ProjectionTurn,
   ProjectionTurnById,
   ProjectionTurnRepository,
@@ -56,6 +57,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           thread_id,
           turn_id,
           pending_message_id,
+          submitted_turn_id,
           source_proposed_plan_thread_id,
           source_proposed_plan_id,
           assistant_message_id,
@@ -72,6 +74,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.threadId},
           ${row.turnId},
           ${row.pendingMessageId},
+          NULL,
           ${row.sourceProposedPlanThreadId},
           ${row.sourceProposedPlanId},
           ${row.assistantMessageId},
@@ -149,6 +152,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           thread_id,
           turn_id,
           pending_message_id,
+          submitted_turn_id,
           source_proposed_plan_thread_id,
           source_proposed_plan_id,
           assistant_message_id,
@@ -165,10 +169,52 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.threadId},
           NULL,
           ${row.messageId},
+          NULL,
           ${row.sourceProposedPlanThreadId},
           ${row.sourceProposedPlanId},
           NULL,
           'pending',
+          ${row.requestedAt},
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `,
+  });
+
+  const insertSubmittedProjectionTurn = SqlSchema.void({
+    Request: ProjectionSubmittedTurnStart,
+    execute: (row) =>
+      sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          submitted_turn_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          ${row.threadId},
+          NULL,
+          ${row.messageId},
+          ${row.turnId},
+          ${row.sourceProposedPlanThreadId},
+          ${row.sourceProposedPlanId},
+          NULL,
+          'submitted',
           ${row.requestedAt},
           NULL,
           NULL,
@@ -274,6 +320,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           turn_id AS "turnId",
+          submitted_turn_id AS "submittedTurnId",
           pending_message_id AS "pendingMessageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
@@ -371,6 +418,18 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       ),
     );
 
+  const insertSubmittedTurnStart: ProjectionTurnRepositoryShape["insertSubmittedTurnStart"] = (
+    row,
+  ) =>
+    insertSubmittedProjectionTurn(row).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionTurnRepository.insertSubmittedTurnStart:query",
+          "ProjectionTurnRepository.insertSubmittedTurnStart:encodeRequest",
+        ),
+      ),
+    );
+
   const markPendingTurnStartSubmitted: ProjectionTurnRepositoryShape["markPendingTurnStartSubmitted"] =
     (input) =>
       markPendingProjectionTurnSubmitted(input).pipe(
@@ -462,6 +521,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
   return {
     upsertByTurnId,
     insertPendingTurnStart,
+    insertSubmittedTurnStart,
     markPendingTurnStartSubmitted,
     deleteSubmittedTurnStartsByTurnId,
     getPendingTurnStartByThreadId,

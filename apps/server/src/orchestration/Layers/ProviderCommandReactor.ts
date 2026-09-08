@@ -44,7 +44,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
+import * as CheckpointReactor from "../Services/CheckpointReactor.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -324,7 +324,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
-  const checkpointReactor = yield* CheckpointReactor;
+  const checkpointReactor = yield* CheckpointReactor.CheckpointReactor;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1841,19 +1841,11 @@ const make = Effect.gen(function* () {
         ).pipe(Effect.as([]));
       }),
     );
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    const handoffSequence = yield* orchestrationEngine.latestSequence;
     const interruptedTurnStarts = yield* (
-      projectionSnapshotQuery.listPendingTurnStarts?.() ?? Effect.succeed([])
-    ).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.interrupt;
-        }
-        return Effect.logWarning(
-          "provider command reactor failed to find interrupted turn starts",
-          { cause: Cause.pretty(cause) },
-        ).pipe(Effect.as([]));
-      }),
-    );
+      projectionSnapshotQuery.listPendingTurnStarts?.(handoffSequence) ?? Effect.succeed([])
+    ).pipe(Effect.orDie);
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
@@ -1869,9 +1861,9 @@ const make = Effect.gen(function* () {
       }
     });
 
-    // Subscribe before returning, even while event handling waits for server activation.
-    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
-    yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+    const liveDomainEvents = domainEvents.pipe(
+      Stream.filter((event) => event.sequence > handoffSequence),
+    );
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
@@ -1913,8 +1905,11 @@ const make = Effect.gen(function* () {
     const activation = yield* ServerActivation;
     if (activation === undefined) {
       yield* clearInterrupted;
+      yield* forkParked(Stream.runForEach(liveDomainEvents, processEvent));
     } else {
-      yield* forkParked(clearInterrupted);
+      yield* forkParked(
+        clearInterrupted.pipe(Effect.andThen(Stream.runForEach(liveDomainEvents, processEvent))),
+      );
     }
   });
 

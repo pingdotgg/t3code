@@ -792,7 +792,7 @@ const make = Effect.gen(function* () {
     const fromCheckpointRef = thread.checkpoints
       .filter(
         (checkpoint) =>
-          checkpoint.status === "ready" && checkpoint.checkpointTurnCount <= currentTurnCount,
+          checkpoint.status !== "missing" && checkpoint.checkpointTurnCount <= currentTurnCount,
       )
       .toSorted((left, right) => right.checkpointTurnCount - left.checkpointTurnCount)
       .at(0)?.checkpointRef;
