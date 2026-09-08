@@ -1479,7 +1479,7 @@ public final class FeatureRootModel {
             role: .user,
             text: submission.text,
             createdAt: submission.identity.createdAt,
-            state: .queued,
+            state: pendingCompletionSubmissionIDs.contains(submission.id) ? .complete : .queued,
             attachments: submission.attachments.enumerated().map { index, attachment in
                 FeatureMessageAttachment(
                     id: "\(submission.id)-attachment-\(index)",
@@ -1569,6 +1569,8 @@ public final class FeatureRootModel {
     private func completeQueuedSubmission(_ submission: FeatureQueuedSubmission) async -> Bool {
         pendingCompletionSubmissionIDs.insert(submission.id)
         pendingDiscardSubmissionIDs.remove(submission.id)
+        // Server acceptance is independent of clearing its local durable copy.
+        markQueuedMessageDelivered(submission)
         do {
             try await outboxStore.remove(id: submission.id)
         } catch {
@@ -1579,20 +1581,23 @@ public final class FeatureRootModel {
         pendingSubmissionsByID.removeValue(forKey: submission.id)
         setAttachmentOutboxOwnership(false, for: submission)
         pendingThreadsByID.removeValue(forKey: submission.threadID)
-        markQueuedMessageDelivered(submission)
         outboxRetryAttempt = 0
         return true
     }
 
     private func markQueuedMessageDelivered(_ submission: FeatureQueuedSubmission) {
+        guard var message = details[submission.threadID]?.messages.first(where: {
+            $0.id == submission.identity.messageID
+        }), message.state != .complete else { return }
+        message.state = .complete
         mutateDetail(
             id: submission.threadID,
-            change: .delta(FeatureDetailDelta(changedMessages: []))
+            change: .delta(FeatureDetailDelta(changedMessages: [message]))
         ) { detail in
             guard let index = detail.messages.firstIndex(where: {
                 $0.id == submission.identity.messageID
             }) else { return }
-            detail.messages[index].state = .complete
+            detail.messages[index] = message
         }
     }
 
