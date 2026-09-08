@@ -1218,6 +1218,46 @@ struct NativePassiveThreadRefreshTests {
         await fixture.client.disconnect()
     }
 
+    @Test("Failed environment writes preserve the passive worker", arguments: [false, true])
+    func failedEnvironmentWritePreservesWorker(removal: Bool) async throws {
+        let clock = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            aggregatePeerRefreshSleep: { _, interval in try await clock.sleep(for: interval) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        _ = await clock.waitUntilRequested(count: 1)
+        let worker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
+        let catalog = fixture.directory.appendingPathComponent("environments.json")
+        let data = try Data(contentsOf: catalog)
+        try FileManager.default.removeItem(at: catalog)
+        try FileManager.default.createDirectory(at: catalog, withIntermediateDirectories: false)
+        do {
+            if removal { try await fixture.client.removeEnvironment(id: "two") }
+            else { try await fixture.client.setEnvironmentEnabled(id: "two", enabled: false) }
+            Issue.record("The blocked catalog write unexpectedly succeeded")
+        } catch {
+            #expect(!worker.isCancelled)
+            #expect(fixture.client.aggregateRefreshWorkers["two"] != nil)
+        }
+        try FileManager.default.removeItem(at: catalog)
+        try data.write(to: catalog)
+        #expect(try await fixture.runtime.environments().contains { $0.id == "two" && $0.isEnabled })
+        let probe = ThreadTitleEventProbe(
+            events: fixture.client.events(),
+            threadID: FeatureScopedID.thread(environmentID: "two", wireID: "thread-two"),
+            title: "Still updating"
+        )
+        probe.start()
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Still updating", snapshotSequence: 2
+        ), host: "two.example")
+        await clock.resume()
+        await probe.waitUntilObserved()
+        #expect(probe.didObserveTitle())
+        await fixture.client.disconnect()
+    }
+
     @Test("Removal cancels a held peer and its late response never returns a row", .timeLimit(.minutes(1)))
     func removedPeerCannotPublishLateResponse() async throws {
         let removedClock = ControllableAggregateRefreshSleep()
