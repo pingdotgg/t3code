@@ -14,6 +14,7 @@ import {
   type PreviewCloseInput,
   type PreviewEvent,
   type PreviewError,
+  type PreviewInputInput,
   PreviewInvalidUrlError,
   type PreviewListInput,
   type PreviewListResult,
@@ -56,6 +57,8 @@ export class PreviewManager extends Context.Service<
       input: PreviewResizeInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
     readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
+    /** Forwards user input to an engine page. No-op for docked tabs. */
+    readonly input: (input: PreviewInputInput) => Effect.Effect<void, PreviewError>;
     readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
     readonly events: Stream.Stream<PreviewEvent>;
@@ -127,6 +130,7 @@ const buildSnapshot = (input: {
   readonly viewport: PreviewViewportSetting;
   readonly profileId?: string | undefined;
   readonly engine?: PreviewBrowserEngine | undefined;
+  readonly frameUrl?: string | undefined;
   readonly updatedAt: string;
 }): PreviewSessionSnapshot => ({
   threadId: input.threadId,
@@ -137,6 +141,7 @@ const buildSnapshot = (input: {
   viewport: input.viewport,
   ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
   ...(input.engine === undefined ? {} : { engine: input.engine }),
+  ...(input.frameUrl === undefined ? {} : { frameUrl: input.frameUrl }),
   updatedAt: input.updatedAt,
 });
 
@@ -145,6 +150,7 @@ const fixedFields = (snapshot: PreviewSessionSnapshot) => ({
   viewport: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
   ...(snapshot.profileId === undefined ? {} : { profileId: snapshot.profileId }),
   ...(snapshot.engine === undefined ? {} : { engine: snapshot.engine }),
+  ...(snapshot.frameUrl === undefined ? {} : { frameUrl: snapshot.frameUrl }),
 });
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -218,15 +224,15 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   const open: PreviewManager["Service"]["open"] = Effect.fn("PreviewManager.open")(
     function* (input) {
       const url = input.url === undefined ? undefined : yield* normalizeUrl(input.url);
-      const window =
+      const view =
         input.engine === undefined
           ? undefined
-          : yield* host.openWindow({
-              owner: `window:${input.threadId}`,
+          : yield* host.openView({
+              owner: `view:${input.threadId}`,
               engine: input.engine,
               url,
             });
-      const tabId = window?.tabId ?? newPreviewTabId();
+      const tabId = view?.tabId ?? newPreviewTabId();
       const updatedAt = yield* currentIsoTimestamp;
       // Clients with a configured default send the viewport up front so the
       // session is born at the right size; older clients omit it and keep the
@@ -238,6 +244,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         viewport: input.viewport ?? FILL_PREVIEW_VIEWPORT,
         profileId: input.engine === undefined ? input.profileId : undefined,
         engine: input.engine,
+        frameUrl: view?.frameUrl,
         updatedAt,
       });
       yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
@@ -261,16 +268,16 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           return [snapshot, { sessions, revision }] as const;
         }),
       );
-      if (window !== undefined) {
-        yield* Stream.runForEach(window.events, (event) =>
+      if (view !== undefined) {
+        yield* Stream.runForEach(view.events, (event) =>
           event.type === "closed"
             ? close({ threadId: input.threadId, tabId })
             : reportStatus({
                 threadId: input.threadId,
                 tabId,
                 navStatus: event.navStatus,
-                canGoBack: false,
-                canGoForward: false,
+                canGoBack: event.canGoBack,
+                canGoForward: event.canGoForward,
               }).pipe(Effect.ignore),
         ).pipe(Effect.forkIn(scope));
       }
@@ -289,7 +296,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           const previousTitle =
             session.snapshot.navStatus._tag === "Idle" ? "" : session.snapshot.navStatus.title;
           const resolvedTitle = input.resolvedTitle ?? previousTitle;
-          // The docked view navigates itself and reports back. An engine window
+          // The docked view navigates itself and reports back. An engine page
           // navigates below, so its status starts at Loading.
           const snapshot: PreviewSessionSnapshot = {
             threadId: session.threadId,
@@ -317,7 +324,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
         }),
       );
       if (snapshot.engine !== undefined) {
-        yield* Effect.forkIn(host.navigateWindow(input.tabId, url), scope);
+        yield* Effect.forkIn(host.navigateView(input.tabId, url), scope);
       }
       return snapshot;
     },
@@ -370,7 +377,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const resize: PreviewManager["Service"]["resize"] = Effect.fn("PreviewManager.resize")(
     function* (input) {
-      return yield* mutateExistingSession(
+      const snapshot = yield* mutateExistingSession(
         input.threadId,
         input.tabId,
         Effect.fn("PreviewManager.resizeSession")(function* (session) {
@@ -393,6 +400,19 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           };
         }),
       );
+      if (snapshot.engine !== undefined) {
+        yield* Effect.forkIn(host.resizeView(input.tabId, input.viewport), scope);
+      }
+      return snapshot;
+    },
+  );
+
+  const input: PreviewManager["Service"]["input"] = Effect.fn("PreviewManager.input")(
+    function* (request) {
+      const engine = yield* mutateExistingSession(request.threadId, request.tabId, (session) =>
+        Effect.succeed({ next: session, emit: null, result: session.snapshot.engine }),
+      );
+      if (engine !== undefined) yield* host.sendInput(request.tabId, request.event);
     },
   );
 
@@ -403,7 +423,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       const engine = yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
         Effect.succeed({ next: session, emit: null, result: session.snapshot.engine }),
       );
-      if (engine !== undefined) yield* Effect.forkIn(host.reloadWindow(input.tabId), scope);
+      if (engine !== undefined) yield* Effect.forkIn(host.reloadView(input.tabId), scope);
     },
   );
 
@@ -443,7 +463,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       });
       yield* Effect.forEach(
         closed.filter((target) => target.snapshot.engine !== undefined),
-        (target) => Effect.forkIn(host.closeWindow(target.tabId), scope),
+        (target) => Effect.forkIn(host.closeView(target.tabId), scope),
         { discard: true },
       );
     },
@@ -471,6 +491,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     reportStatus,
     resize,
     refresh,
+    input,
     close,
     list,
     events,

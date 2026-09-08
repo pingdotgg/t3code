@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import {
   PreviewAutomationEngineError,
   PreviewAutomationEngineUnavailableError,
@@ -18,6 +20,7 @@ import {
   type PreviewAutomationTypeInput,
   type PreviewAutomationWaitForInput,
   PreviewEngineLaunchError,
+  type PreviewInputEvent,
   type PreviewNavStatus,
   PreviewTabId,
   type PreviewBrowserEngine,
@@ -49,21 +52,30 @@ export interface PlaywrightPreviewInvokeInput {
   readonly timeoutMs?: number;
 }
 
-export type EngineWindowEvent =
-  | { readonly type: "status"; readonly navStatus: PreviewNavStatus }
+export type EngineViewEvent =
+  | {
+      readonly type: "status";
+      readonly navStatus: PreviewNavStatus;
+      readonly canGoBack: boolean;
+      readonly canGoForward: boolean;
+    }
   | { readonly type: "closed" };
 
-export interface EngineWindow {
+export interface EngineView {
   readonly tabId: PreviewTabId;
-  /** Ends when the window closes. */
-  readonly events: Stream.Stream<EngineWindowEvent>;
+  /** Server-relative MJPEG stream URL. The path carries a per-tab secret. */
+  readonly frameUrl: string;
+  /** Ends when the page closes. */
+  readonly events: Stream.Stream<EngineViewEvent>;
 }
 
-export interface EngineWindowOpenInput {
+export interface EngineViewOpenInput {
   readonly owner: string;
   readonly engine: PreviewBrowserEngine;
   readonly url?: string | undefined;
 }
+
+export const ENGINE_FRAMES_ROUTE_PREFIX = "/api/preview/frames";
 
 export class PlaywrightPreviewHost extends Context.Service<
   PlaywrightPreviewHost,
@@ -72,16 +84,23 @@ export class PlaywrightPreviewHost extends Context.Service<
     readonly invoke: <A = unknown>(
       input: PlaywrightPreviewInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
-    /** Opens a visible browser window on the host. Page failures arrive as `status` events. */
-    readonly openWindow: (
-      input: EngineWindowOpenInput,
+    /** Opens a headless page a browser tab drives. Page failures arrive as `status` events. */
+    readonly openView: (
+      input: EngineViewOpenInput,
     ) => Effect.Effect<
-      EngineWindow,
+      EngineView,
       PreviewAutomationEngineUnavailableError | PreviewEngineLaunchError
     >;
-    readonly navigateWindow: (tabId: PreviewTabId, url: string) => Effect.Effect<void>;
-    readonly reloadWindow: (tabId: PreviewTabId) => Effect.Effect<void>;
-    readonly closeWindow: (tabId: PreviewTabId) => Effect.Effect<void>;
+    readonly navigateView: (tabId: PreviewTabId, url: string) => Effect.Effect<void>;
+    readonly reloadView: (tabId: PreviewTabId) => Effect.Effect<void>;
+    readonly resizeView: (
+      tabId: PreviewTabId,
+      viewport: PreviewViewportSetting,
+    ) => Effect.Effect<void>;
+    readonly sendInput: (tabId: PreviewTabId, event: PreviewInputEvent) => Effect.Effect<void>;
+    /** JPEG frames while the page repaints. `undefined` when the tab or secret is unknown. */
+    readonly frames: (tabId: PreviewTabId, secret: string) => Stream.Stream<Uint8Array> | undefined;
+    readonly closeView: (tabId: PreviewTabId) => Effect.Effect<void>;
   }
 >()("t3/mcp/PlaywrightPreviewHost") {}
 
@@ -96,6 +115,7 @@ const ENGINE_NAMES = Object.keys(ENGINES) as ReadonlyArray<PreviewBrowserEngine>
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 const IDLE_CLOSE_MS = 10 * 60_000;
+const FRAME_JPEG_QUALITY = 70;
 const MAX_LOG_ENTRIES = 200;
 const MAX_ELEMENTS = 200;
 const MAX_EVALUATE_RESULT_CHARS = 64_000;
@@ -208,12 +228,21 @@ const INTERACTIVE_ELEMENTS_SCRIPT = String.raw`(limit) => {
   return results;
 }`;
 
+interface EngineViewState {
+  readonly secret: string;
+  readonly events: Queue.Queue<EngineViewEvent, Cause.Done<void>>;
+  readonly frameSinks: Set<Queue.Queue<Uint8Array, Cause.Done>>;
+  /** Set by a back or forward move so the next navigation keeps the forward count. */
+  historyMove: boolean;
+  forwardSteps: number;
+}
+
 interface EngineTab {
   readonly tabId: PreviewTabId;
   readonly owner: string;
   readonly engine: PreviewBrowserEngine;
-  /** Present on visible windows the user drives from a browser tab. */
-  readonly window: Queue.Queue<EngineWindowEvent, Cause.Done<void>> | undefined;
+  /** Present on pages a browser tab drives. */
+  readonly view: EngineViewState | undefined;
   readonly browser: Browser;
   readonly page: Page;
   readonly consoleEntries: Array<PreviewAutomationSnapshot["consoleEntries"][number]>;
@@ -295,7 +324,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     const now = yield* Clock.currentTimeMillis;
     yield* Effect.forEach(
       Array.from(tabs.values()).filter(
-        (tab) => tab.window === undefined && now - tab.lastUsedAt > IDLE_CLOSE_MS,
+        (tab) => tab.view === undefined && now - tab.lastUsedAt > IDLE_CLOSE_MS,
       ),
       closeTab,
       { discard: true },
@@ -306,9 +335,8 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   const openTab = Effect.fn("PlaywrightPreviewHost.openTab")(function* (
     owner: string,
     engine: PreviewBrowserEngine,
-    window?: Queue.Queue<EngineWindowEvent, Cause.Done<void>>,
+    view?: EngineViewState,
   ) {
-    const headed = window !== undefined;
     const path = yield* executablePath(engine);
     if (path === undefined) {
       return yield* new PreviewAutomationEngineUnavailableError({
@@ -320,13 +348,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     const tabId = PreviewTabId.make(`${ENGINE_TAB_PREFIX}${engine}-${++tabSequence}`);
     const { browser, page } = yield* Effect.tryPromise({
       try: async () => {
-        const browser = await ENGINES[engine].browserType.launch({
-          executablePath: path,
-          headless: !headed,
-        });
+        const browser = await ENGINES[engine].browserType.launch({ executablePath: path });
         try {
-          // A fixed viewport in a headed window leaves dead space when the user resizes it.
-          const page = await browser.newPage({ viewport: headed ? null : DEFAULT_VIEWPORT });
+          const page = await browser.newPage({ viewport: DEFAULT_VIEWPORT });
           return { browser, page };
         } catch (cause) {
           await browser.close().catch(() => undefined);
@@ -345,7 +369,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       tabId,
       owner,
       engine,
-      window,
+      view,
       browser,
       page,
       consoleEntries: [],
@@ -638,16 +662,22 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     return (yield* invokeOnTab(tab, input.operation, input.input, timeout)) as A;
   });
 
-  const reportWindow = (tab: EngineTab, navStatus: PreviewNavStatus) => {
-    if (tab.window !== undefined) Queue.offerUnsafe(tab.window, { type: "status", navStatus });
+  const reportView = (tab: EngineTab, navStatus: PreviewNavStatus, canGoBack = false) => {
+    if (tab.view === undefined) return;
+    Queue.offerUnsafe(tab.view.events, {
+      type: "status",
+      navStatus,
+      canGoBack,
+      canGoForward: tab.view.forwardSteps > 0,
+    });
   };
 
-  const gotoWindow = (tab: EngineTab, url: string) =>
+  const gotoView = (tab: EngineTab, url: string) =>
     Effect.promise(() =>
       tab.page.goto(url).then(
         () => undefined,
         (cause: unknown) =>
-          reportWindow(tab, {
+          reportView(tab, {
             _tag: "LoadFailed",
             url,
             title: "",
@@ -657,11 +687,17 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       ),
     );
 
-  const openWindow: PlaywrightPreviewHost["Service"]["openWindow"] = Effect.fn(
-    "PlaywrightPreviewHost.openWindow",
+  const openView: PlaywrightPreviewHost["Service"]["openView"] = Effect.fn(
+    "PlaywrightPreviewHost.openView",
   )(function* (input) {
-    const queue = yield* Queue.unbounded<EngineWindowEvent, Cause.Done<void>>();
-    const tab = yield* openTab(input.owner, input.engine, queue).pipe(
+    const view: EngineViewState = {
+      secret: NodeCrypto.randomBytes(18).toString("base64url"),
+      events: yield* Queue.unbounded<EngineViewEvent, Cause.Done<void>>(),
+      frameSinks: new Set(),
+      historyMove: false,
+      forwardSteps: 0,
+    };
+    const tab = yield* openTab(input.owner, input.engine, view).pipe(
       Effect.catchTag(
         "PreviewAutomationEngineError",
         (error) => new PreviewEngineLaunchError({ engine: input.engine, detail: error.detail }),
@@ -669,59 +705,142 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     );
     const { page } = tab;
     page.on("framenavigated", (frame) => {
-      if (frame === page.mainFrame()) {
-        reportWindow(tab, { _tag: "Loading", url: frame.url(), title: "" });
-      }
+      if (frame !== page.mainFrame()) return;
+      if (!view.historyMove) view.forwardSteps = 0;
+      view.historyMove = false;
+      reportView(tab, { _tag: "Loading", url: frame.url(), title: "" });
     });
     page.on("load", () => {
       const url = page.url();
-      void page
-        .title()
-        .catch(() => "")
-        .then((title) => reportWindow(tab, { _tag: "Success", url, title }));
+      void Promise.all([
+        page.title().catch(() => ""),
+        page.evaluate("history.length > 1").catch(() => false),
+      ]).then(([title, canGoBack]) =>
+        reportView(tab, { _tag: "Success", url, title }, canGoBack === true),
+      );
     });
     page.on("close", () => {
-      Queue.offerUnsafe(queue, { type: "closed" });
-      Queue.endUnsafe(queue);
+      Queue.offerUnsafe(view.events, { type: "closed" });
+      Queue.endUnsafe(view.events);
+      for (const sink of view.frameSinks) Queue.endUnsafe(sink);
+      view.frameSinks.clear();
     });
-    if (input.url !== undefined) yield* Effect.forkIn(gotoWindow(tab, input.url), scope);
-    return { tabId: tab.tabId, events: Stream.fromQueue(queue) };
+    if (input.url !== undefined) yield* Effect.forkIn(gotoView(tab, input.url), scope);
+    return {
+      tabId: tab.tabId,
+      frameUrl: `${ENGINE_FRAMES_ROUTE_PREFIX}/${tab.tabId}/${view.secret}`,
+      events: Stream.fromQueue(view.events),
+    };
   });
 
-  const windowTab = (tabId: PreviewTabId) => {
+  const viewTab = (tabId: PreviewTabId) => {
     const tab = tabs.get(tabId);
-    return tab?.window === undefined ? undefined : tab;
+    return tab?.view === undefined ? undefined : tab;
   };
 
-  const navigateWindow: PlaywrightPreviewHost["Service"]["navigateWindow"] = (tabId, url) => {
-    const tab = windowTab(tabId);
-    return tab === undefined ? Effect.void : gotoWindow(tab, url);
+  const ignoreFailure = (run: () => Promise<unknown>) =>
+    Effect.promise(() =>
+      run().then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+
+  const navigateView: PlaywrightPreviewHost["Service"]["navigateView"] = (tabId, url) => {
+    const tab = viewTab(tabId);
+    return tab === undefined ? Effect.void : gotoView(tab, url);
   };
 
-  const reloadWindow: PlaywrightPreviewHost["Service"]["reloadWindow"] = (tabId) => {
-    const tab = windowTab(tabId);
-    return tab === undefined
-      ? Effect.void
-      : Effect.promise(() =>
-          tab.page.reload().then(
-            () => undefined,
-            () => undefined,
-          ),
-        );
+  const reloadView: PlaywrightPreviewHost["Service"]["reloadView"] = (tabId) => {
+    const tab = viewTab(tabId);
+    return tab === undefined ? Effect.void : ignoreFailure(() => tab.page.reload());
   };
 
-  const closeWindow: PlaywrightPreviewHost["Service"]["closeWindow"] = (tabId) => {
-    const tab = windowTab(tabId);
+  const resizeView: PlaywrightPreviewHost["Service"]["resizeView"] = (tabId, viewport) => {
+    const tab = viewTab(tabId);
+    if (tab === undefined) return Effect.void;
+    const size = viewport._tag === "fill" ? DEFAULT_VIEWPORT : viewport;
+    tab.viewportSetting = viewport;
+    return ignoreFailure(() =>
+      tab.page.setViewportSize({ width: size.width, height: size.height }),
+    );
+  };
+
+  const sendInput: PlaywrightPreviewHost["Service"]["sendInput"] = (tabId, event) => {
+    const tab = viewTab(tabId);
+    if (tab === undefined || tab.view === undefined) return Effect.void;
+    const { page, view } = tab;
+    switch (event.type) {
+      case "mouseMove":
+        return ignoreFailure(() => page.mouse.move(event.x, event.y));
+      case "mouseDown":
+        return ignoreFailure(async () => {
+          await page.mouse.move(event.x, event.y);
+          await page.mouse.down({ button: event.button });
+        });
+      case "mouseUp":
+        return ignoreFailure(async () => {
+          await page.mouse.move(event.x, event.y);
+          await page.mouse.up({ button: event.button });
+        });
+      case "wheel":
+        return ignoreFailure(async () => {
+          await page.mouse.move(event.x, event.y);
+          await page.mouse.wheel(event.deltaX, event.deltaY);
+        });
+      case "keyDown":
+        return ignoreFailure(() => page.keyboard.down(event.key));
+      case "keyUp":
+        return ignoreFailure(() => page.keyboard.up(event.key));
+      case "history":
+        view.historyMove = true;
+        view.forwardSteps += event.delta === -1 ? 1 : -1;
+        return ignoreFailure(() => (event.delta === -1 ? page.goBack() : page.goForward()));
+    }
+  };
+
+  const frames: PlaywrightPreviewHost["Service"]["frames"] = (tabId, secret) => {
+    const tab = viewTab(tabId);
+    if (tab?.view === undefined || tab.view.secret !== secret) return undefined;
+    const { page, view } = tab;
+    return Stream.callback<Uint8Array>(
+      (queue) =>
+        Effect.acquireRelease(
+          Effect.promise(async () => {
+            view.frameSinks.add(queue);
+            if (view.frameSinks.size > 1) return;
+            await page.screencast.start({
+              quality: FRAME_JPEG_QUALITY,
+              onFrame: ({ data }) => {
+                for (const sink of view.frameSinks) Queue.offerUnsafe(sink, data);
+              },
+            });
+          }),
+          () =>
+            Effect.promise(async () => {
+              view.frameSinks.delete(queue);
+              if (view.frameSinks.size === 0) await page.screencast.stop().catch(() => undefined);
+            }),
+        ),
+      { bufferSize: 2, strategy: "sliding" },
+    );
+  };
+
+  const closeView: PlaywrightPreviewHost["Service"]["closeView"] = (tabId) => {
+    const tab = viewTab(tabId);
     return tab === undefined ? Effect.void : closeTab(tab);
   };
 
   return PlaywrightPreviewHost.of({
     installedEngines,
     invoke,
-    openWindow,
-    navigateWindow,
-    reloadWindow,
-    closeWindow,
+    openView,
+    navigateView,
+    reloadView,
+    resizeView,
+    sendInput,
+    frames,
+    closeView,
   });
 });
 

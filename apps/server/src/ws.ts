@@ -2651,6 +2651,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewInput]: (input) =>
+          observeRpcEffect(WS_METHODS.previewInput, previewManager.input(input), {
+            "rpc.aggregate": "preview",
+          }),
         [WS_METHODS.previewClose]: (input) =>
           observeRpcEffect(WS_METHODS.previewClose, previewManager.close(input), {
             "rpc.aggregate": "preview",

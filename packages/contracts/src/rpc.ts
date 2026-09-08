@@ -170,6 +170,7 @@ import {
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewInputInput,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -303,6 +304,7 @@ export const WS_METHODS = {
   previewNavigate: "preview.navigate",
   previewResize: "preview.resize",
   previewRefresh: "preview.refresh",
+  previewInput: "preview.input",
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
@@ -1013,6 +1015,11 @@ const WsPreviewRefreshRpc = Rpc.make(WS_METHODS.previewRefresh, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsPreviewInputRpc = Rpc.make(WS_METHODS.previewInput, {
+  payload: PreviewInputInput,
+  error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
+});
+
 const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
   payload: PreviewCloseInput,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
@@ -1282,6 +1289,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewNavigateRpc,
   WsPreviewResizeRpc,
   WsPreviewRefreshRpc,
+  WsPreviewInputRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,

@@ -134,6 +134,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewNavigate]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewResize]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewRefresh]: AuthOrchestrationOperateScope,
+  [WS_METHODS.previewInput]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewClose]: AuthOrchestrationOperateScope,
   [WS_METHODS.previewList]: AuthOrchestrationReadScope,
   [WS_METHODS.previewReportStatus]: AuthOrchestrationOperateScope,

@@ -143,7 +143,7 @@ vi.mock("~/state/environments", () => ({
 }));
 
 vi.mock("~/state/preview", () => ({
-  previewEnvironment: { open: {}, resize: {} },
+  previewEnvironment: { open: {}, resize: {}, navigate: {}, refresh: {}, input: {} },
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
@@ -251,6 +251,7 @@ vi.mock("./ZoomIndicator", () => ({ ZoomIndicator: () => null }));
 vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
+vi.mock("./useInstalledBrowserEngines", () => ({ useInstalledBrowserEngines: () => [] }));
 
 import { PreviewView } from "./PreviewView";
 import { toastManager } from "~/components/ui/toast";

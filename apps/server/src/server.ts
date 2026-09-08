@@ -57,6 +57,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PlaywrightPreviewHost from "./mcp/PlaywrightPreviewHost.ts";
+import { engineFramesRouteLayer } from "./preview/engineFramesRoute.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -551,6 +552,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    engineFramesRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),

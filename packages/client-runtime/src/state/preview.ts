@@ -77,6 +77,16 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    input: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:input",
+      tag: WS_METHODS.previewInput,
+      scheduler: statusScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:close",
       tag: WS_METHODS.previewClose,

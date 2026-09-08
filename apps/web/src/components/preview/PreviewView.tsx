@@ -41,7 +41,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { previewBridge } from "./previewBridge";
 import { subscribePreviewAction } from "./previewActionBus";
 import { addBrowserSurface } from "./addBrowserSurface";
-import { EngineWindowNotice } from "./EngineWindowNotice";
+import { EngineFrameSurface } from "./EngineFrameSurface";
 import { openPreviewSession } from "./openPreviewSession";
 import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewEmptyState } from "./PreviewEmptyState";
@@ -132,6 +132,7 @@ export function PreviewView({
   const open = useAtomCommand(previewEnvironment.open);
   const navigate = useAtomCommand(previewEnvironment.navigate);
   const refresh = useAtomCommand(previewEnvironment.refresh);
+  const sendInput = useAtomCommand(previewEnvironment.input);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
 
   usePreviewSession(threadRef);
@@ -154,8 +155,8 @@ export function PreviewView({
         : findActiveBrowserRecordingRuntimeTabId(threadRef, tabId)
       : null;
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
-  // Set when the page renders in a Playwright window on the host. The docked
-  // bridge actions do not apply; navigation goes through the server RPCs.
+  // Set when a headless Playwright page on the host renders the tab. The docked
+  // bridge actions do not apply. Navigation and input go through the server RPCs.
   const engine = snapshot?.engine;
   const engineTab = engine !== undefined && tabId !== null ? { engine, tabId } : null;
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
@@ -337,13 +338,28 @@ export function PreviewView({
     return subscribeBrowserViewportChange(runtimeTabId, handleViewportChange);
   }, [handleViewportChange, runtimeTabId]);
 
-  const handleBack = useCallback(() => {
-    if (previewBridge && runtimeTabId) void previewBridge.goBack(runtimeTabId);
-  }, [runtimeTabId]);
-
-  const handleForward = useCallback(() => {
-    if (previewBridge && runtimeTabId) void previewBridge.goForward(runtimeTabId);
-  }, [runtimeTabId]);
+  const moveInHistory = useCallback(
+    (delta: -1 | 1) => {
+      if (engineTab) {
+        void sendInput({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            tabId: engineTab.tabId,
+            event: { type: "history", delta },
+          },
+        });
+        return;
+      }
+      if (!previewBridge || !runtimeTabId) return;
+      void (delta === -1
+        ? previewBridge.goBack(runtimeTabId)
+        : previewBridge.goForward(runtimeTabId));
+    },
+    [engineTab, runtimeTabId, sendInput, threadRef],
+  );
+  const handleBack = useCallback(() => moveInHistory(-1), [moveInHistory]);
+  const handleForward = useCallback(() => moveInHistory(1), [moveInHistory]);
 
   const handleOpenInBrowser = useCallback(() => {
     if (!localApi || !url) return;
@@ -822,8 +838,15 @@ export function PreviewView({
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {engineTab && snapshot && !showEmptyState ? (
-          <EngineWindowNotice engine={engineTab.engine} url={url} loading={loading} />
+        {engineTab && snapshot?.frameUrl && environmentHttpBaseUrl && !showEmptyState ? (
+          <EngineFrameSurface
+            key={engineTab.tabId}
+            threadRef={threadRef}
+            tabId={engineTab.tabId}
+            frameUrl={snapshot.frameUrl}
+            httpBaseUrl={environmentHttpBaseUrl}
+            visible={visible && !isUnreachable}
+          />
         ) : null}
         {runtimeTabId && snapshot && !showEmptyState && !engineTab ? (
           <BrowserSurfaceSlot

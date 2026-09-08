@@ -4,6 +4,7 @@ import { EnvironmentId, PreviewTabId, type PreviewAutomationSnapshot } from "@t3
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 
 import * as PlaywrightPreviewHost from "./PlaywrightPreviewHost.ts";
 
@@ -80,6 +81,44 @@ describe("PlaywrightPreviewHost", () => {
         .pipe(Effect.flip);
       expect(untargeted._tag).toBe("PreviewAutomationEngineError");
     }).pipe(Effect.provide(noBrowsers)),
+  );
+
+  it.live(
+    "streams frames and takes input for a tab-driven page in each installed engine",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+        for (const engine of yield* host.installedEngines) {
+          const view = yield* host.openView({ owner: "view:test", engine });
+          const [, tabId, secret] = view.frameUrl
+            .slice(PlaywrightPreviewHost.ENGINE_FRAMES_ROUTE_PREFIX.length)
+            .split("/");
+          expect(tabId).toBe(view.tabId);
+          expect(host.frames(view.tabId, "wrong")).toBeUndefined();
+          const frames = host.frames(view.tabId, secret ?? "");
+          if (frames === undefined) throw new Error("frames missing");
+
+          yield* host.navigateView(
+            view.tabId,
+            "data:text/html,<title>Frames</title><body style='background:%23f00'>",
+          );
+          const frame = yield* Stream.runHead(frames);
+          expect(frame._tag).toBe("Some");
+          if (frame._tag !== "Some") return;
+          expect(Array.from(frame.value.slice(0, 2))).toEqual([0xff, 0xd8]);
+
+          yield* host.sendInput(view.tabId, { type: "mouseMove", x: 10, y: 10 });
+          yield* host.sendInput(view.tabId, { type: "keyDown", key: "a" });
+          yield* host.sendInput(view.tabId, { type: "keyUp", key: "a" });
+          yield* host.resizeView(view.tabId, { _tag: "freeform", width: 640, height: 480 });
+
+          yield* host.closeView(view.tabId);
+          const events = yield* Stream.runCollect(view.events);
+          expect(events.at(-1)).toEqual({ type: "closed" });
+          expect(events.some((event) => event.type === "status")).toBe(true);
+        }
+      }).pipe(Effect.provide(realHost)),
+    { timeout: 120_000 },
   );
 
   // Runs against every engine found on this host. Passes without checking

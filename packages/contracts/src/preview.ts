@@ -180,13 +180,56 @@ export const PreviewSessionSnapshot = Schema.Struct({
    */
   profileId: Schema.optional(BrowserProfileId),
   /**
-   * Set when the page renders in a Playwright browser window on the server
-   * host instead of the docked Chromium view. Fixed at open.
+   * Set when a headless Playwright page on the server host renders the tab
+   * instead of the docked Chromium view. Fixed at open.
    */
   engine: Schema.optional(PreviewBrowserEngine),
+  /** Server-relative MJPEG stream of the engine page. Present with `engine`. */
+  frameUrl: Schema.optional(Schema.String),
   updatedAt: Schema.String,
 });
 export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
+
+export const PreviewMouseButton = Schema.Literals(["left", "middle", "right"]);
+export type PreviewMouseButton = typeof PreviewMouseButton.Type;
+
+const PreviewKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
+
+/** Coordinates are CSS pixels inside the engine page viewport. */
+export const PreviewInputEvent = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("mouseMove"), x: Schema.Number, y: Schema.Number }),
+  Schema.Struct({
+    type: Schema.Literal("mouseDown"),
+    x: Schema.Number,
+    y: Schema.Number,
+    button: PreviewMouseButton,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("mouseUp"),
+    x: Schema.Number,
+    y: Schema.Number,
+    button: PreviewMouseButton,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("wheel"),
+    x: Schema.Number,
+    y: Schema.Number,
+    deltaX: Schema.Number,
+    deltaY: Schema.Number,
+  }),
+  /** `key` is a `KeyboardEvent.key` value, which Playwright accepts as is. A space is " ". */
+  Schema.Struct({ type: Schema.Literal("keyDown"), key: PreviewKey }),
+  Schema.Struct({ type: Schema.Literal("keyUp"), key: PreviewKey }),
+  Schema.Struct({ type: Schema.Literal("history"), delta: Schema.Literals([-1, 1]) }),
+]);
+export type PreviewInputEvent = typeof PreviewInputEvent.Type;
+
+export const PreviewInputInput = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  event: PreviewInputEvent,
+});
+export type PreviewInputInput = typeof PreviewInputInput.Type;
 
 export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,

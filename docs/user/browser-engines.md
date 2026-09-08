@@ -10,10 +10,11 @@ In the right panel, open the "+" menu and hover Browser. Below the profiles, pic
 open browser tab has "Open in Firefox (Gecko)" and "Open in Safari (WebKit)" in its three-dot
 menu. Those open the current page in a new tab.
 
-The page opens in a real browser window on the machine that runs the server. The T3 Code tab
-shows the engine, the address bar, and the refresh button. Type a URL or refresh in the tab, and
-the window follows. Close the window to close the tab, or close the tab to close the window.
-Screenshots, element picking, and the device toolbar are not available in these tabs.
+The page runs headless on the machine that runs the server. The tab shows a live video of the
+page and sends your clicks, scrolls, and keys to it. The address bar, back, forward, and refresh
+work as in a Chromium tab. Screenshots, element picking, recording, and the device toolbar are
+not available in these tabs. The page has no sound. Keyboard shortcuts with the Command or
+Windows key stay with T3 Code.
 
 Engines that are not installed do not appear in the menus.
 
@@ -35,4 +36,4 @@ npx playwright-core@<version> install firefox
 ```
 
 Run it on the machine that runs the server. Playwright downloads the browser into its own cache.
-Stock Firefox and Safari installs cannot be used. Recording is not available in these tabs.
+Stock Firefox and Safari installs cannot be used.
