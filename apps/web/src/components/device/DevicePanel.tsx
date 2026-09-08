@@ -35,6 +35,7 @@ import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { deviceEnvironment, useDeviceHubAccess, useDeviceState } from "~/state/device";
+import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceStreamView, type DeviceStreamHandle } from "./DeviceStreamView";
 import { DeviceSetup } from "./DeviceSetup";
@@ -67,6 +68,7 @@ export function DevicePanel(props: {
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [pendingDeviceKey, setPendingDeviceKey] = useState<string | null>(null);
   const [handle, setHandle] = useState<DeviceStreamHandle | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -102,9 +104,10 @@ export function DevicePanel(props: {
       if (value === NEW_DEVICE_VALUE) return;
       const device = state.devices.find((candidate) => deviceKey(candidate) === value);
       if (!device) return;
+      setOperationError(null);
       setPendingDeviceKey(value);
       try {
-        await open({
+        const result = await open({
           environmentId,
           input: {
             threadId,
@@ -113,6 +116,7 @@ export function DevicePanel(props: {
             platform: device.platform,
           },
         });
+        if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
       } finally {
         setPendingDeviceKey(null);
       }
@@ -123,9 +127,12 @@ export function DevicePanel(props: {
   const closeActive = useCallback(
     (powerOff: boolean) => {
       if (!activeSession) return;
+      setOperationError(null);
       void close({
         environmentId,
         input: { threadId, deviceId: activeSession.deviceId, shutdown: powerOff },
+      }).then((result) => {
+        if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
       });
     },
     [activeSession, close, environmentId, threadId],
@@ -278,6 +285,22 @@ export function DevicePanel(props: {
       {bootingDevices.length > 0 ? (
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
           Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a minute.
+        </div>
+      ) : null}
+      {operationError ? (
+        <div
+          role="alert"
+          className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        >
+          <p className="min-w-0 flex-1 whitespace-pre-wrap break-words">{operationError}</p>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Dismiss device error"
+            onClick={() => setOperationError(null)}
+          >
+            <X className="size-3" />
+          </Button>
         </div>
       ) : null}
       <div className="@container relative flex min-h-0 flex-1">
