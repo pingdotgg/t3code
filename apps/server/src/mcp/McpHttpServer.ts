@@ -388,16 +388,14 @@ const imageToolFailure =
  * result carries a `screenshot` field are registered by hand so the PNG goes
  * out as an image block and the rest of the payload as JSON metadata.
  */
-const registerImageTool = <T extends Tool.Any, R>(
+const registerImageTool = <T extends Tool.Any, E, R>(
   tool: T,
-  handle: (
-    payload: Tool.Parameters<T>,
-  ) => Effect.Effect<{ readonly encodedResult: unknown }, unknown, R>,
+  handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   provide: (
-    effect: Effect.Effect<{ readonly encodedResult: unknown }, unknown, R>,
+    effect: Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   ) => Effect.Effect<
     { readonly encodedResult: unknown },
-    unknown,
+    E,
     McpInvocationContext.McpInvocationContext
   >,
   operation: string,

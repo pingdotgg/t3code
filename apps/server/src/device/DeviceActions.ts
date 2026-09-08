@@ -431,7 +431,7 @@ export const readDeviceDetail = Effect.fn("DeviceActions.readDetail")(function* 
     : yield* readAndroid(ready.run, deviceId);
 });
 
-const quiet = <A>(effect: Effect.Effect<A, unknown>) =>
+const quiet = <A, E>(effect: Effect.Effect<A, E>) =>
   effect.pipe(Effect.orElseSucceed((): A | undefined => undefined));
 
 const readIos = Effect.fn("DeviceActions.readIos")(function* (
