@@ -545,10 +545,10 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Load earlier activity"');
-    expect(markup).toContain("Load earlier activity");
+    expect(markup).toContain('aria-label="Load earlier turns"');
+    expect(markup).toContain("Load earlier turns");
     expect(markup).toContain("Earlier activity could not be loaded.");
-    expect(markup.indexOf("Load earlier activity")).toBeLessThan(markup.indexOf("Recent activity"));
+    expect(markup.indexOf("Load earlier turns")).toBeLessThan(markup.indexOf("Recent activity"));
   });
 
   it("keeps an empty bounded timeline actionable while earlier history loads", () => {
@@ -565,7 +565,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Loading earlier activity…");
+    expect(markup).toContain("Loading earlier turns…");
     expect(markup).toContain("disabled");
     expect(markup).not.toContain("Send a message to start the conversation.");
   });
