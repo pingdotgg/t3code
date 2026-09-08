@@ -26,7 +26,7 @@ const parameters = Schema.Struct({
 });
 const success = Schema.Struct({ processId: Schema.String, subscribed: Schema.Boolean });
 
-export const MonitorStartTool = Tool.make("monitor_start", {
+const MonitorStartTool = Tool.make("monitor_start", {
   description:
     "Start a background command that wakes a new agent turn when it emits a complete output line, exits, or fails to launch. Use this when asked to wait, watch, monitor, or notify later, including timers, instead of sleeping or polling in the current turn. Returns immediately; finish your turn after scheduling.",
   parameters: Schema.Struct({
@@ -45,7 +45,7 @@ export const MonitorStartTool = Tool.make("monitor_start", {
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, monitoringEnabled);
 
-export const MonitorUnsubscribeTool = Tool.make("monitor_unsubscribe", {
+const MonitorUnsubscribeTool = Tool.make("monitor_unsubscribe", {
   description:
     "Unsubscribe from the background process selected by processId and discard its pending wakes. The process continues running.",
   parameters,
