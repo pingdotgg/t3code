@@ -185,6 +185,7 @@ import {
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { BrowserSettingsReadError } from "../browser/openFileInPreview";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
+import { useInstalledBrowserEngines } from "./preview/useInstalledBrowserEngines";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -1886,6 +1887,7 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
+  const installedBrowserEngines = useInstalledBrowserEngines(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = useMemo(
     () =>
@@ -8605,7 +8607,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={(profileId) => createBrowserSurface({ profileId })}
           onAddBrowserInEngine={(engine) => createBrowserSurface({ engine })}
-          browserEngines={activePreviewState.engines}
+          browserEngines={installedBrowserEngines}
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
@@ -8657,7 +8659,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddBrowser={() => createBrowserSurface()}
             onAddBrowserInProfile={(profileId) => createBrowserSurface({ profileId })}
             onAddBrowserInEngine={(engine) => createBrowserSurface({ engine })}
-            browserEngines={activePreviewState.engines}
+            browserEngines={installedBrowserEngines}
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}

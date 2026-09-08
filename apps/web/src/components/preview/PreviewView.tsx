@@ -60,6 +60,7 @@ import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { useInstalledBrowserEngines } from "./useInstalledBrowserEngines";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
@@ -114,6 +115,7 @@ export function PreviewView({
   const threadRefRef = useRef(threadRef);
   threadRefRef.current = threadRef;
   const previewState = useThreadPreviewState(threadRef);
+  const installedEngines = useInstalledBrowserEngines(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
     BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -801,7 +803,7 @@ export function PreviewView({
         trailingActions={
           previewBridge && !engineTab ? (
             <PreviewMoreMenu
-              engines={previewState.engines}
+              engines={installedEngines}
               onOpenInEngine={handleOpenInEngine}
               environmentId={threadRef.environmentId}
               profileId={activeProfileId}
