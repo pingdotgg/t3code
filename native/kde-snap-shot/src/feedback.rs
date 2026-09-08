@@ -221,9 +221,12 @@ mod tests {
         let f = crate::transport_tests::Fixture::new();
         let (send, commands) = async_channel::bounded(4);
         let (done, finished) = mpsc::sync_channel(1);
-        f.client
-            .object_server()
-            .at(
+        // Build with the bridge registered so zbus waits for its method-call listener.
+        // Registering it after build can drop the first call while that listener starts.
+        let bridge = Builder::address(f.address.as_str())
+            .unwrap()
+            .method_timeout(DEADLINE)
+            .serve_at(
                 OBJECT,
                 Bridge {
                     owner: f._server.unique_name().unwrap().to_string(),
@@ -231,8 +234,10 @@ mod tests {
                     done,
                 },
             )
+            .unwrap()
+            .build()
             .unwrap();
-        let destination = f.client.unique_name().unwrap().to_string();
+        let destination = bridge.unique_name().unwrap().to_string();
         let stranger = Builder::address(f.address.as_str())
             .unwrap()
             .method_timeout(DEADLINE)
@@ -275,10 +280,7 @@ mod tests {
         kwin.call::<_, _, ()>("Event", &("{\"event\":\"done\"}",))
             .unwrap();
         finished.recv_timeout(DEADLINE).unwrap();
-        f.client
-            .object_server()
-            .remove::<Bridge, _>(OBJECT)
-            .unwrap();
+        bridge.object_server().remove::<Bridge, _>(OBJECT).unwrap();
     }
 
     #[test]
