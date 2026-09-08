@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 /** Coding agent home directories the scanner knows how to read. */
@@ -102,6 +108,73 @@ export const AgentSessionImportResult = Schema.Struct({
   skippedCount: NonNegativeInt,
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
+
+export const CLAUDE_SESSION_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export const AgentSessionSelection = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: TrimmedNonEmptyString.check(Schema.isPattern(CLAUDE_SESSION_ID_PATTERN)),
+});
+export type AgentSessionSelection = typeof AgentSessionSelection.Type;
+
+export const AgentSessionListInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: TrimmedNonEmptyString,
+  cursor: Schema.optional(Schema.String),
+});
+export type AgentSessionListInput = typeof AgentSessionListInput.Type;
+
+export const AgentSessionAttachInput = Schema.Struct({
+  projectId: ProjectId,
+  expectedWorkspaceRoot: TrimmedNonEmptyString,
+  ...AgentSessionSelection.fields,
+});
+export type AgentSessionAttachInput = typeof AgentSessionAttachInput.Type;
+
+export const AgentSessionPreviewInput = Schema.Struct({
+  ...AgentSessionAttachInput.fields,
+  before: Schema.optional(NonNegativeInt),
+});
+export type AgentSessionPreviewInput = typeof AgentSessionPreviewInput.Type;
+
+export const AgentSessionSummary = Schema.Struct({
+  ...AgentSessionSelection.fields,
+  title: Schema.String,
+  firstRequest: Schema.String,
+  updatedAt: IsoDateTime,
+  cwd: TrimmedNonEmptyString,
+  branch: Schema.NullOr(Schema.String),
+  existingThreadId: Schema.NullOr(ThreadId),
+});
+export type AgentSessionSummary = typeof AgentSessionSummary.Type;
+
+export const AgentSessionListResult = Schema.Struct({
+  sessions: Schema.Array(AgentSessionSummary),
+  nextCursor: Schema.NullOr(Schema.String),
+  truncated: Schema.Boolean,
+});
+export type AgentSessionListResult = typeof AgentSessionListResult.Type;
+
+export const AgentSessionPreviewResult = Schema.Struct({
+  messages: Schema.Array(
+    Schema.Struct({
+      id: NonNegativeInt,
+      role: Schema.Literals(["user", "assistant"]),
+      text: Schema.String,
+      createdAt: IsoDateTime,
+    }),
+  ),
+  nextBefore: Schema.NullOr(NonNegativeInt),
+  truncated: Schema.Boolean,
+});
+export type AgentSessionPreviewResult = typeof AgentSessionPreviewResult.Type;
+export const AgentSessionAttachResult = Schema.Struct({ threadId: ThreadId });
+
+export class AgentSessionUnavailableError extends Schema.TaggedErrorClass<AgentSessionUnavailableError>()(
+  "AgentSessionUnavailableError",
+  { message: Schema.String },
+) {}
 
 export class AgentSessionScanError extends Schema.TaggedErrorClass<AgentSessionScanError>()(
   "AgentSessionScanError",

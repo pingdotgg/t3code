@@ -5367,6 +5367,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (error._tag === "AgentSessionImportProjectNotFoundError") {
         assert.equal(error.projectId, projectId);
       }
+      const input = {
+        projectId,
+        expectedWorkspaceRoot: "/missing-project",
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        providerSessionId: "123e4567-e89b-42d3-a456-426614174000",
+      };
+      const errors = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.all([
+            client[WS_METHODS.agentSessionsList](input).pipe(Effect.flip),
+            client[WS_METHODS.agentSessionsPreview](input).pipe(Effect.flip),
+            client[WS_METHODS.agentSessionsAttach](input).pipe(Effect.flip),
+          ]),
+        ),
+      );
+      assert.deepEqual(
+        errors.map((failure) => failure._tag),
+        Array(3).fill("AgentSessionImportProjectNotFoundError"),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

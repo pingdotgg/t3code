@@ -19,6 +19,23 @@ export const agentSessionScan = createEnvironmentRpcQueryAtomFamily(connectionAt
   idleTtlMs: 5 * 60_000,
 });
 
+export const agentSessionList = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:list",
+  tag: WS_METHODS.agentSessionsList,
+  staleTimeMs: 0,
+  idleTtlMs: 30_000,
+});
+export const agentSessionPreview = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:preview",
+  tag: WS_METHODS.agentSessionsPreview,
+  staleTimeMs: 0,
+  idleTtlMs: 30_000,
+});
+export const agentSessionAttach = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:agent-sessions:attach",
+  tag: WS_METHODS.agentSessionsAttach,
+});
+
 export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,

@@ -909,11 +909,24 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           "None",
         );
       }
+      const candidateIds = [
+        ...Array.from({ length: 501 }, (_, index) => ThreadId.make(`missing-${index}`)),
+        ThreadId.make("thread-active"),
+        ThreadId.make("thread-archived"),
+      ];
+      assert.deepEqual(yield* snapshotQuery.getThreadProjectIds(candidateIds), [
+        {
+          threadId: ThreadId.make("thread-active"),
+          projectId: asProjectId("project-archive-test"),
+        },
+      ]);
+      assert.deepEqual(yield* snapshotQuery.getThreadProjectIds([]), []);
       yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-06T00:00:08.000Z' WHERE thread_id = 'thread-active'`;
       assert.equal(
         (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
         "None",
       );
+      assert.deepEqual(yield* snapshotQuery.getThreadProjectIds(candidateIds), []);
     }),
   );
 

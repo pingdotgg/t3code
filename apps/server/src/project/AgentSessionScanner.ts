@@ -13,11 +13,17 @@
  *
  * @module project/AgentSessionScanner
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 
 import {
   AgentSessionScanError,
+  AgentSessionUnavailableError,
+  type AgentSessionSelection,
+  type AgentSessionListResult,
+  type AgentSessionPreviewResult,
   ClaudeSettings,
+  CLAUDE_SESSION_ID_PATTERN,
   CodexSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -94,6 +100,9 @@ const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
 const MAX_IMPORT_RECORDS = 100_000;
+const SESSION_LIST_PAGE_SIZE = 40;
+const SESSION_LIST_TTL_MS = 5 * 60 * 1000;
+const MAX_SESSION_LIST_SNAPSHOTS = 8;
 
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
@@ -116,6 +125,7 @@ const TranscriptRecord = Schema.Struct({
   cwd: Schema.optional(Schema.String),
   sessionId: Schema.optional(Schema.String),
   aiTitle: Schema.optional(Schema.String),
+  gitBranch: Schema.optional(Schema.String),
   isSidechain: Schema.optional(Schema.Boolean),
   isMeta: Schema.optional(Schema.Boolean),
   isCompactSummary: Schema.optional(Schema.Boolean),
@@ -189,6 +199,32 @@ export class AgentSessionScanner extends Context.Service<
      * error directly — there is no server-local context worth wrapping.
      */
     readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
+    readonly claudeSessionHomes: Effect.Effect<
+      ReadonlyMap<ProviderInstanceId, string>,
+      AgentSessionScanError
+    >;
+    readonly list: (
+      workspaceRoot: string,
+      cursor?: string,
+    ) => Effect.Effect<
+      AgentSessionListResult,
+      AgentSessionScanError | AgentSessionUnavailableError
+    >;
+    readonly preview: (
+      workspaceRoot: string,
+      selection: AgentSessionSelection,
+      before?: number,
+    ) => Effect.Effect<
+      AgentSessionPreviewResult,
+      AgentSessionScanError | AgentSessionUnavailableError
+    >;
+    readonly selectedThread: (
+      workspaceRoot: string,
+      selection: AgentSessionSelection,
+    ) => Effect.Effect<
+      Extract<AgentSessionRecentThread, { _tag: "Importable" }>,
+      AgentSessionScanError | AgentSessionUnavailableError
+    >;
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
@@ -263,6 +299,30 @@ function extractText(
     .map((block) => block.text?.trim() ?? "")
     .filter((text) => text.length > 0)
     .join("\n");
+}
+
+function claudeVisibleMessage(
+  record: DecodedTranscriptRecord,
+  fallbackTimestamp: string,
+): AgentSessionThreadMessage | null {
+  if (
+    record.isSidechain ||
+    record.isMeta ||
+    record.isCompactSummary ||
+    (record.type !== "user" && record.type !== "assistant")
+  )
+    return null;
+  const text = extractText(record.message?.content);
+  if (
+    !text ||
+    /^<(?:local-command-caveat|local-command-stdout|command-name|system-reminder)>/.test(text)
+  )
+    return null;
+  return {
+    role: record.type,
+    text,
+    createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+  };
 }
 
 function normalizeTimestamp(value: string | undefined, fallback: string): string {
@@ -409,18 +469,9 @@ function parseAgentSessionRecords(
       // Claude uses this sentinel for local error responses. It is not a
       // model ID that can be selected when the imported session resumes.
       if (messageModel && messageModel !== "<synthetic>") model = messageModel;
-      if (record.type !== "user" && record.type !== "assistant") {
-        continue;
-      }
-
-      const text = extractText(record.message?.content);
-      if (text.length === 0) continue;
-      retainMessage({
-        role: record.type,
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      const message = claudeVisibleMessage(record, fallbackTimestamp);
+      if (message === null) continue;
+      retainMessage({ ...message, codexResponseUser: false });
       continue;
     }
 
@@ -818,8 +869,13 @@ export const make = Effect.gen(function* () {
     expected: ReturnType<typeof transcriptIdentity>,
     recordLimit: number,
     source: AgentSessionSource,
+    prefixOnly = false,
   ) {
-    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    if (!prefixOnly && expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    const maxBytes = prefixOnly
+      ? Math.min(expected.size, MAX_TRANSCRIPT_SCAN_BYTES)
+      : expected.size;
+    const missingPrefixFields = new Set(["metadata", "request"]);
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
@@ -853,17 +909,23 @@ export const make = Effect.gen(function* () {
               if (Option.isSome(decoded) && shouldRetainDecodedRecord(source, decoded.value)) {
                 records.push(decoded.value);
                 historyBytes += recordBytes;
+                if (prefixOnly) {
+                  if (decoded.value.cwd && decoded.value.sessionId)
+                    missingPrefixFields.delete("metadata");
+                  if (claudeVisibleMessage(decoded.value, "")?.role === "user")
+                    missingPrefixFields.delete("request");
+                }
               }
               recordBytes = 0;
               reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
               decoder = new TextDecoder();
               recordStarted = false;
-              return true;
+              return !prefixOnly || missingPrefixFields.size > 0;
             };
 
-            while (bytesRead < expected.size) {
+            while (bytesRead < maxBytes) {
               const next = yield* file.readAlloc(
-                Math.min(TRANSCRIPT_PREFIX_BYTES, expected.size - bytesRead),
+                Math.min(TRANSCRIPT_PREFIX_BYTES, maxBytes - bytesRead),
               );
               if (Option.isNone(next)) {
                 return null;
@@ -883,10 +945,20 @@ export const make = Effect.gen(function* () {
                 }
                 return true;
               });
-              if (!withinBudget) return null;
+              if (!withinBudget) {
+                if (prefixOnly && missingPrefixFields.size === 0) break;
+                return null;
+              }
             }
 
-            if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
+            if (
+              recordStarted &&
+              bytesRead === expected.size &&
+              !(yield* Effect.try(finishRecord)) &&
+              (!prefixOnly || missingPrefixFields.size > 0)
+            )
+              return null;
+            if (prefixOnly && missingPrefixFields.size > 0) return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
               ? { records, recordCount }
               : null;
@@ -921,7 +993,12 @@ export const make = Effect.gen(function* () {
   };
 
   const discoverClaudeTranscripts = Effect.fn("AgentSessionScanner.discoverClaudeTranscripts")(
-    function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
+    function* (
+      homePath: string,
+      providerInstanceId: ProviderInstanceId,
+      operationBudget: number,
+      strict = false,
+    ) {
       const projectsDir = path.join(homePath, "projects");
       let operationsRemaining = operationBudget;
       let truncated = false;
@@ -931,7 +1008,19 @@ export const make = Effect.gen(function* () {
           return Effect.succeed<ReadonlyArray<string>>([]);
         }
         operationsRemaining -= 1;
-        return listDirectory(directory);
+        return strict
+          ? fileSystem.readDirectory(directory).pipe(
+              Effect.catch((cause) => {
+                if (directory === projectsDir && cause.reason._tag !== "NotFound") {
+                  return Effect.fail(
+                    new AgentSessionScanError({ operation: "read-projects", cause }),
+                  );
+                }
+                if (directory !== projectsDir) truncated = true;
+                return Effect.succeed<ReadonlyArray<string>>([]);
+              }),
+            )
+          : listDirectory(directory);
       };
       const projectDirectories = yield* readDirectory(projectsDir);
       const transcripts: Array<TranscriptCandidate> = [];
@@ -958,6 +1047,7 @@ export const make = Effect.gen(function* () {
             stats.value.type !== "File" ||
             Option.isNone(stats.value.mtime)
           ) {
+            if (strict) truncated = true;
             continue;
           }
           transcripts.push({
@@ -1081,80 +1171,105 @@ export const make = Effect.gen(function* () {
     }));
   });
 
-  const collectCandidates = Effect.fn("AgentSessionScanner.collectCandidates")(function* () {
+  const resolveSourceHomes = Effect.fn("AgentSessionScanner.resolveSourceHomes")(function* (
+    source: AgentSessionSource,
+  ) {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
     );
+    const instances: Array<{
+      readonly instanceId: ProviderInstanceId;
+      readonly config: ProviderInstanceConfig;
+    }> = Object.entries(settings.providerInstances)
+      .filter(([, instance]) => instance.driver === source)
+      .map(([instanceId, config]) => ({
+        instanceId: ProviderInstanceId.make(instanceId),
+        config,
+      }));
+    if (!Object.hasOwn(settings.providerInstances, source)) {
+      const legacyInstance = {
+        instanceId: ProviderInstanceId.make(source),
+        config: {
+          driver: ProviderDriverKind.make(source),
+          config: settings.providers[source],
+        },
+      };
+      instances.push(legacyInstance);
+    }
 
+    // A shared home contains one copy of each session. Prefer the built-in
+    // instance as its owner, then keep configured order for custom accounts.
+    instances.sort((left, right) => {
+      const leftDefault = left.instanceId === source ? 0 : 1;
+      const rightDefault = right.instanceId === source ? 0 : 1;
+      return leftDefault - rightDefault;
+    });
+    const homes: Array<{
+      homePath: string;
+      homeKey: string;
+      providerInstanceId: ProviderInstanceId;
+      enabled: boolean;
+    }> = [];
+    const identityByPath = new Map<string, string>();
+    for (const { instanceId, config: instance } of instances) {
+      const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+      const environmentHome =
+        instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
+        hostEnvironment[homeVariable];
+
+      let homePath: string;
+      if (source === "claudeAgent") {
+        const config = decodeClaudeSettings(instance.config ?? {});
+        if (Option.isNone(config)) continue;
+        homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+      } else {
+        const config = decodeCodexSettings(instance.config ?? {});
+        if (Option.isNone(config)) continue;
+        const codexSettings =
+          config.value.homePath.trim().length === 0 &&
+          config.value.shadowHomePath.trim().length === 0 &&
+          environmentHome?.trim()
+            ? { ...config.value, homePath: environmentHome }
+            : config.value;
+        const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
+          Effect.provideService(Path.Path, path),
+        );
+        homePath = layout.sharedHomePath;
+      }
+
+      const homeKey = identityByPath.get(homePath) ?? (yield* directoryIdentity(homePath));
+      identityByPath.set(homePath, homeKey);
+      homes.push({
+        homePath,
+        homeKey,
+        providerInstanceId: instanceId,
+        enabled: resolveProviderInstanceEnabled(instance),
+      });
+    }
+
+    return homes;
+  });
+
+  const claudeSessionHomes = resolveSourceHomes("claudeAgent").pipe(
+    Effect.map((homes) => new Map(homes.map((home) => [home.providerInstanceId, home.homeKey]))),
+  );
+
+  const collectCandidates = Effect.fn("AgentSessionScanner.collectCandidates")(function* (
+    claudeOnly = false,
+    claudeHomes?: Effect.Success<ReturnType<typeof resolveSourceHomes>>,
+  ) {
     const raw: Array<RawCandidate> = [];
     let truncated = false;
-
     for (const source of ["claudeAgent", "codex"] as const) {
-      const instances: Array<{
-        readonly instanceId: ProviderInstanceId;
-        readonly config: ProviderInstanceConfig;
-      }> = Object.entries(settings.providerInstances)
-        .filter(
-          ([, instance]) => instance.driver === source && resolveProviderInstanceEnabled(instance),
-        )
-        .map(([instanceId, config]) => ({
-          instanceId: ProviderInstanceId.make(instanceId),
-          config,
-        }));
-      if (!Object.hasOwn(settings.providerInstances, source)) {
-        const legacyInstance = {
-          instanceId: ProviderInstanceId.make(source),
-          config: {
-            driver: ProviderDriverKind.make(source),
-            config: settings.providers[source],
-          },
-        };
-        if (resolveProviderInstanceEnabled(legacyInstance.config)) {
-          instances.push(legacyInstance);
-        }
-      }
-
-      // A shared home contains one copy of each session. Prefer the built-in
-      // instance as its owner, then keep configured order for custom accounts.
-      instances.sort((left, right) => {
-        const leftDefault = left.instanceId === source ? 0 : 1;
-        const rightDefault = right.instanceId === source ? 0 : 1;
-        return leftDefault - rightDefault;
-      });
-      const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
+      if (claudeOnly && source !== "claudeAgent") continue;
+      const sourceHomes =
+        source === "claudeAgent" && claudeHomes ? claudeHomes : yield* resolveSourceHomes(source);
       const seenHomes = new Set<string>();
-      for (const { instanceId, config: instance } of instances) {
-        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
-        const environmentHome =
-          instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
-          hostEnvironment[homeVariable];
-
-        let homePath: string;
-        if (source === "claudeAgent") {
-          const config = decodeClaudeSettings(instance.config ?? {});
-          if (Option.isNone(config)) continue;
-          homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
-        } else {
-          const config = decodeCodexSettings(instance.config ?? {});
-          if (Option.isNone(config)) continue;
-          const codexSettings =
-            config.value.homePath.trim().length === 0 &&
-            config.value.shadowHomePath.trim().length === 0 &&
-            environmentHome?.trim()
-              ? { ...config.value, homePath: environmentHome }
-              : config.value;
-          const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
-            Effect.provideService(Path.Path, path),
-          );
-          homePath = layout.sharedHomePath;
-        }
-
-        const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
-        if (seenHomes.has(homeKey)) continue;
-        seenHomes.add(homeKey);
-        homes.push({ homePath, providerInstanceId: instanceId });
-      }
-
+      const homes = sourceHomes.filter((home) => {
+        if (!home.enabled || seenHomes.has(home.homeKey)) return false;
+        seenHomes.add(home.homeKey);
+        return true;
+      });
       const transcriptCandidates: Array<TranscriptCandidate> = [];
       const baseOperationBudget = Math.floor(
         MAX_DISCOVERY_OPERATIONS_PER_SOURCE / Math.max(1, homes.length),
@@ -1167,7 +1282,12 @@ export const make = Effect.gen(function* () {
           continue;
         }
         const discovered = yield* source === "claudeAgent"
-          ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
+          ? discoverClaudeTranscripts(
+              home.homePath,
+              home.providerInstanceId,
+              operationBudget,
+              claudeOnly,
+            )
           : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
         truncated ||= discovered.truncated;
         transcriptCandidates.push(...discovered.transcripts);
@@ -1488,7 +1608,370 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  const unavailable = () =>
+    new AgentSessionUnavailableError({
+      message: "This session is unavailable or changed. Refresh the session list.",
+    });
+
+  const sessionLocators = new Map<
+    string,
+    { transcript: Omit<TranscriptCandidate, "size">; homePath: string }
+  >();
+  const locatorKey = (root: string, home: string, sessionId: string) =>
+    `${root}\0${home}\0${sessionId}`;
+  const scopedTranscripts = Effect.fn("AgentSessionScanner.scopedTranscripts")(function* (
+    workspaceRoot: string,
+    configuredHomes?: Effect.Success<ReturnType<typeof resolveSourceHomes>>,
+  ) {
+    const rootIdentity = yield* directoryIdentity(workspaceRoot);
+    const homes = configuredHomes ?? (yield* resolveSourceHomes("claudeAgent"));
+    const homeByInstance = new Map(homes.map((home) => [home.providerInstanceId, home]));
+    const discovered = yield* collectCandidates(true, homes);
+    const transcripts: Array<Omit<TranscriptCandidate, "size">> = [];
+    for (const candidate of discovered.candidates) {
+      if (
+        !path.isAbsolute(candidate.cwd) ||
+        (yield* directoryIdentity(candidate.cwd)) !== rootIdentity
+      )
+        continue;
+      for (const transcript of candidate.transcripts) {
+        if (
+          transcript.mtimeMs === null ||
+          !CLAUDE_SESSION_ID_PATTERN.test(path.basename(transcript.filePath, ".jsonl"))
+        )
+          continue;
+        transcripts.push({
+          ...transcript,
+          mtimeMs: transcript.mtimeMs,
+          providerInstanceId: candidate.providerInstanceId,
+        });
+      }
+    }
+    transcripts.sort((a, b) => b.mtimeMs - a.mtimeMs || a.filePath.localeCompare(b.filePath));
+    const seen = new Set<string>();
+    return {
+      transcripts: transcripts.filter((transcript) => {
+        const key = `${transcript.providerInstanceId}\0${path.basename(transcript.filePath)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        const home = homeByInstance.get(transcript.providerInstanceId);
+        if (!home) return false;
+        const cacheKey = locatorKey(
+          rootIdentity,
+          home.homeKey,
+          path.basename(transcript.filePath, ".jsonl"),
+        );
+        sessionLocators.delete(cacheKey);
+        if (sessionLocators.size >= MAX_TRANSCRIPTS_PER_SOURCE) {
+          const oldest = sessionLocators.keys().next().value;
+          if (oldest !== undefined) sessionLocators.delete(oldest);
+        }
+        sessionLocators.set(cacheKey, { transcript, homePath: home.homePath });
+        return true;
+      }),
+      truncated: discovered.truncated,
+    };
+  });
+
+  const readWindow = Effect.fn("AgentSessionScanner.readWindow")(function* (
+    identity: ReturnType<typeof transcriptIdentity>,
+    end: number,
+    maxBytes: number,
+  ) {
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fileSystem.open(identity.filePath, { flag: "r" });
+        if (
+          !sameTranscriptIdentity(identity, transcriptIdentity(identity.filePath, yield* file.stat))
+        )
+          return yield* unavailable();
+        const start = Math.max(0, end - maxBytes);
+        yield* file.seek(start, "start");
+        const bytes = new Uint8Array(end - start);
+        let filled = 0;
+        while (filled < bytes.length) {
+          const chunk = yield* file.readAlloc(bytes.length - filled);
+          if (Option.isNone(chunk) || chunk.value.length === 0) return yield* unavailable();
+          bytes.set(chunk.value, filled);
+          filled += chunk.value.length;
+        }
+        const rows: Array<{ record: DecodedTranscriptRecord; start: number }> = [];
+        let offset = start === 0 ? 0 : bytes.indexOf(10) + 1;
+        const oversizedRecord = start > 0 && (offset === 0 || offset === bytes.length);
+        const nextBefore = start === 0 ? null : oversizedRecord ? start : start + offset;
+        let truncated = oversizedRecord;
+        while (offset < bytes.length) {
+          const newline = bytes.indexOf(10, offset);
+          if (newline === -1 && end !== identity.size) break;
+          const decoded = decodeTranscriptRecord(
+            new TextDecoder().decode(
+              bytes.subarray(offset, newline === -1 ? bytes.length : newline),
+            ),
+          );
+          if (Option.isSome(decoded)) rows.push({ record: decoded.value, start: start + offset });
+          else truncated = true;
+          if (newline === -1) break;
+          offset = newline + 1;
+        }
+        if (
+          !sameTranscriptIdentity(identity, transcriptIdentity(identity.filePath, yield* file.stat))
+        )
+          return yield* unavailable();
+        return { rows, nextBefore, truncated };
+      }),
+    ).pipe(Effect.mapError(() => unavailable()));
+  });
+
+  const inspect = Effect.fn("AgentSessionScanner.inspect")(function* (
+    workspaceRoot: string,
+    transcript: Omit<TranscriptCandidate, "size">,
+  ) {
+    const stats = yield* statOption(transcript.filePath);
+    if (Option.isNone(stats) || stats.value.type !== "File") return yield* unavailable();
+    const identity = transcriptIdentity(transcript.filePath, stats.value);
+    const prefix = yield* readTranscript(
+      identity.filePath,
+      identity,
+      MAX_METADATA_RECORDS_PER_TRANSCRIPT,
+      "claudeAgent",
+      true,
+    );
+    if (prefix === null) return yield* unavailable();
+    const sessionId = path.basename(transcript.filePath, ".jsonl");
+    const metadata = prefix.records.find(
+      (record) => record.cwd !== undefined && record.sessionId !== undefined,
+    );
+    if (
+      !metadata?.cwd ||
+      metadata.sessionId !== sessionId ||
+      metadata.isSidechain ||
+      !path.isAbsolute(metadata.cwd) ||
+      (yield* directoryIdentity(metadata.cwd)) !== (yield* directoryIdentity(workspaceRoot))
+    )
+      return yield* unavailable();
+    if (
+      prefix.records.some(
+        (record) =>
+          record.isSidechain || (record.sessionId !== undefined && record.sessionId !== sessionId),
+      )
+    )
+      return yield* unavailable();
+    const updatedAt = DateTime.formatIso(
+      DateTime.makeUnsafe(identity.mtimeMs ?? transcript.mtimeMs),
+    );
+    const firstRequest = prefix.records
+      .map((record) => claudeVisibleMessage(record, updatedAt))
+      .find((message) => message?.role === "user");
+    if (!firstRequest) return yield* unavailable();
+    const tail = yield* readWindow(identity, identity.size, 64 * 1024);
+    const title =
+      tail.rows.findLast(({ record }) => record.aiTitle?.trim())?.record.aiTitle ??
+      firstRequest.text.split("\n")[0]?.slice(0, 100) ??
+      "Untitled session";
+    return {
+      identity,
+      summary: {
+        providerInstanceId: transcript.providerInstanceId,
+        providerSessionId: sessionId,
+        title: title.slice(0, 300),
+        firstRequest: firstRequest.text.slice(0, 500),
+        updatedAt,
+        cwd: metadata.cwd,
+        branch:
+          tail.rows.findLast(({ record }) => record.gitBranch)?.record.gitBranch ??
+          metadata.gitBranch ??
+          null,
+        existingThreadId: null,
+      },
+    };
+  });
+
+  interface ListingSnapshot {
+    readonly rootIdentity: string;
+    readonly homes: Effect.Success<ReturnType<typeof resolveSourceHomes>>;
+    readonly expiresAt: number;
+    readonly transcripts: Effect.Success<ReturnType<typeof scopedTranscripts>>["transcripts"];
+    readonly truncated: boolean;
+    readonly pages: Map<number, AgentSessionListResult>;
+    readonly lock: Semaphore.Semaphore;
+  }
+  const listingSnapshots = new Set<ListingSnapshot>();
+  const listingCursors = new Map<string, { snapshot: ListingSnapshot; offset: number }>();
+  const discardListing = (snapshot: ListingSnapshot) => {
+    listingSnapshots.delete(snapshot);
+    for (const [cursor, page] of listingCursors) {
+      if (page.snapshot === snapshot) listingCursors.delete(cursor);
+    }
+  };
+  const listingUnavailable = () =>
+    new AgentSessionUnavailableError({
+      message: "This session listing expired or changed. Refresh the session list.",
+    });
+
+  const list: AgentSessionScanner["Service"]["list"] = Effect.fn("AgentSessionScanner.list")(
+    function* (workspaceRoot, cursor) {
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      for (const snapshot of listingSnapshots) {
+        if (snapshot.expiresAt <= now) discardListing(snapshot);
+      }
+      const homes = yield* resolveSourceHomes("claudeAgent");
+      const rootIdentity = yield* directoryIdentity(workspaceRoot);
+      let snapshot: ListingSnapshot;
+      let offset = 0;
+      if (cursor !== undefined) {
+        const page = listingCursors.get(cursor);
+        if (
+          !page ||
+          page.snapshot.rootIdentity !== rootIdentity ||
+          page.snapshot.homes.length !== homes.length ||
+          homes.some((home, index) => {
+            const previous = page.snapshot.homes[index];
+            return (
+              !previous ||
+              home.providerInstanceId !== previous.providerInstanceId ||
+              home.homePath !== previous.homePath ||
+              home.homeKey !== previous.homeKey ||
+              home.enabled !== previous.enabled
+            );
+          })
+        )
+          return yield* listingUnavailable();
+        snapshot = page.snapshot;
+        offset = page.offset;
+      } else {
+        const discovered = yield* scopedTranscripts(workspaceRoot, homes);
+        snapshot = {
+          ...discovered,
+          rootIdentity,
+          homes,
+          expiresAt: now + SESSION_LIST_TTL_MS,
+          pages: new Map(),
+          lock: yield* Semaphore.make(1),
+        };
+        while (listingSnapshots.size >= MAX_SESSION_LIST_SNAPSHOTS) {
+          const oldest = listingSnapshots.values().next().value;
+          if (oldest) discardListing(oldest);
+        }
+        listingSnapshots.add(snapshot);
+      }
+      return yield* Effect.gen(function* () {
+        if (
+          !listingSnapshots.has(snapshot) ||
+          snapshot.expiresAt <= DateTime.toEpochMillis(yield* DateTime.now)
+        )
+          return yield* listingUnavailable();
+        const cached = snapshot.pages.get(offset);
+        if (cached) return cached;
+        const sessions: AgentSessionListResult["sessions"][number][] = [];
+        let incomplete = snapshot.truncated;
+        for (const transcript of snapshot.transcripts.slice(
+          offset,
+          offset + SESSION_LIST_PAGE_SIZE,
+        )) {
+          const result = yield* inspect(workspaceRoot, transcript).pipe(Effect.result);
+          if (result._tag === "Success") sessions.push(result.success.summary);
+          else incomplete = true;
+        }
+        if (
+          !listingSnapshots.has(snapshot) ||
+          snapshot.expiresAt <= DateTime.toEpochMillis(yield* DateTime.now)
+        ) {
+          discardListing(snapshot);
+          return yield* listingUnavailable();
+        }
+        const nextOffset = offset + SESSION_LIST_PAGE_SIZE;
+        const nextCursor =
+          nextOffset < snapshot.transcripts.length ? NodeCrypto.randomUUID() : null;
+        if (nextCursor !== null) listingCursors.set(nextCursor, { snapshot, offset: nextOffset });
+        const result = { sessions, nextCursor, truncated: incomplete };
+        snapshot.pages.set(offset, result);
+        return result;
+      }).pipe(snapshot.lock.withPermits(1));
+    },
+  );
+
+  const resolveSelection = Effect.fn("AgentSessionScanner.resolveSelection")(function* (
+    workspaceRoot: string,
+    selection: AgentSessionSelection,
+  ) {
+    const homes = yield* resolveSourceHomes("claudeAgent");
+    const home = homes.find(
+      (entry) => entry.providerInstanceId === selection.providerInstanceId && entry.enabled,
+    );
+    if (!home) return yield* unavailable();
+    const key = locatorKey(
+      yield* directoryIdentity(workspaceRoot),
+      home.homeKey,
+      selection.providerSessionId,
+    );
+    const cached = sessionLocators.get(key);
+    if (cached && (yield* directoryIdentity(cached.homePath)) === home.homeKey) {
+      const inspected = yield* inspect(workspaceRoot, cached.transcript).pipe(Effect.result);
+      if (inspected._tag === "Success") return inspected.success;
+    }
+    sessionLocators.delete(key);
+    yield* scopedTranscripts(workspaceRoot, homes);
+    const locator = sessionLocators.get(key);
+    if (!locator) return yield* unavailable();
+    return yield* inspect(workspaceRoot, locator.transcript);
+  });
+
+  const preview: AgentSessionScanner["Service"]["preview"] = Effect.fn(
+    "AgentSessionScanner.preview",
+  )(function* (workspaceRoot, selection, before) {
+    const { identity, summary } = yield* resolveSelection(workspaceRoot, selection);
+    const end = before ?? identity.size;
+    if (end > identity.size) return yield* unavailable();
+    const window = yield* readWindow(identity, end, 256 * 1024);
+    const visible = window.rows.flatMap(({ record, start }) => {
+      const message = claudeVisibleMessage(record, summary.updatedAt);
+      return message === null ? [] : [{ message, start }];
+    });
+    const page = visible.slice(-30);
+    return {
+      messages: page.map(({ message, start }) => ({ ...message, id: start })),
+      nextBefore: visible.length > 30 ? (page[0]?.start ?? window.nextBefore) : window.nextBefore,
+      truncated: window.truncated,
+    };
+  });
+
+  const selectedThread: AgentSessionScanner["Service"]["selectedThread"] = Effect.fn(
+    "AgentSessionScanner.selectedThread",
+  )(function* (workspaceRoot, selection) {
+    const { identity, summary } = yield* resolveSelection(workspaceRoot, selection);
+    const snapshot = yield* readTranscript(
+      identity.filePath,
+      identity,
+      MAX_IMPORT_RECORDS,
+      "claudeAgent",
+    ).pipe(importReadLock.withPermits(1));
+    if (snapshot === null) return yield* unavailable();
+    const thread = parseAgentSessionRecords(
+      {
+        source: "claudeAgent",
+        ...selection,
+        fallbackSessionId: selection.providerSessionId,
+        lastActiveAtMs: identity.mtimeMs ?? 0,
+      },
+      snapshot.records,
+    );
+    if (thread === null || thread.providerSessionId !== selection.providerSessionId)
+      return yield* unavailable();
+    return {
+      _tag: "Importable",
+      thread: { ...thread, title: summary.title },
+      source: { ...identity, provider: "claudeAgent", ...selection },
+    };
+  });
+
+  return AgentSessionScanner.of({
+    scan,
+    recentThreads,
+    list,
+    preview,
+    selectedThread,
+    claudeSessionHomes,
+  });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make);

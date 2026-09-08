@@ -14,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -57,6 +58,7 @@ const makeProjectionSnapshotQueryLayer = (importedWorkspaceRoots: ReadonlyArray<
     getThreadCheckpointContext: () => Effect.die("unused"),
     getFullThreadDiffContext: () => Effect.die("unused"),
     getThreadShellById: () => Effect.die("unused"),
+    getThreadProjectIds: () => Effect.die("unused"),
     getThreadRuntimeContext: () => Effect.die("unused"),
     getTurnStartMessage: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
@@ -79,7 +81,7 @@ interface ScannerTestInput {
 
 const makeScannerTestLayer = (input: ScannerTestInput) =>
   AgentSessionScanner.layer.pipe(
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         ServerSettings.layerTest({
           providers: {
@@ -177,6 +179,494 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
 }
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
+  const sessionId = (index: number) => `123e4567-e89b-42d3-a456-${String(index).padStart(12, "0")}`;
+  const sessionRecord = (cwd: string, id: string, text: string, extra = {}) =>
+    JSON.stringify({
+      type: "user",
+      cwd,
+      sessionId: id,
+      timestamp: "2025-01-01T00:00:00.000Z",
+      message: { content: text },
+      ...extra,
+    }) + "\n";
+
+  it.effect(
+    "lists older sessions by directory and configured provider, omitting malformed and subagent files",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* makeTempDir("session-browser-");
+        const cwd = `${root}/workspace`;
+        yield* fs.makeDirectory(cwd);
+        const alias = `${root}/workspace-alias`;
+        yield* fs.symlink(cwd, alias);
+        const home = `${root}/claude`;
+        for (let index = 0; index < 43; index++) {
+          yield* writeTranscript({
+            filePath: `${home}/projects/project/${sessionId(index)}.jsonl`,
+            contents: sessionRecord(alias, sessionId(index), `Request ${index}`, {
+              gitBranch: "feature",
+            }),
+            mtimeMs: 1_735_689_600_000 + index * 1000,
+          });
+        }
+        for (const [index, contents] of [
+          [50, sessionRecord(`${root}/other`, sessionId(50), "Wrong cwd")],
+          [51, sessionRecord(cwd, sessionId(51), "Subagent", { isSidechain: true })],
+          [52, "malformed\n"],
+        ] as const)
+          yield* writeTranscript({
+            filePath: `${home}/projects/project/${sessionId(index)}.jsonl`,
+            contents,
+            mtimeMs: 1_735_689_600_000,
+          });
+        yield* writeTranscript({
+          filePath: `${home}/projects/project/subagents/${sessionId(53)}.jsonl`,
+          contents: sessionRecord(cwd, sessionId(53), "Nested subagent"),
+          mtimeMs: 1_735_689_600_000,
+        });
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const canonicalCwd = yield* fs.realPath(cwd);
+          const first = yield* scanner.list(canonicalCwd.replace(/^\/private\/tmp\//, "/tmp/"));
+          expect(first.sessions).toHaveLength(40);
+          expect(first.sessions[0]).toMatchObject({
+            title: "Request 42",
+            branch: "feature",
+            providerInstanceId: "claudeAgent",
+          });
+          expect(first.nextCursor).toEqual(expect.any(String));
+          const next = yield* scanner.list(cwd, first.nextCursor ?? undefined);
+          expect([...first.sessions, ...next.sessions]).toHaveLength(43);
+          expect(next.nextCursor).toBeNull();
+        }).pipe(
+          Effect.provide(
+            makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }),
+          ),
+        );
+      }),
+  );
+
+  it.effect("keeps the original listing order when sessions change between pages", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* makeTempDir("session-pagination-");
+      const cwd = `${root}/workspace`;
+      const home = `${root}/claude`;
+      yield* fs.makeDirectory(cwd);
+      for (let index = 0; index < 43; index++) {
+        yield* writeTranscript({
+          filePath: `${home}/projects/project/${sessionId(index)}.jsonl`,
+          contents: sessionRecord(cwd, sessionId(index), `Request ${index}`),
+          mtimeMs: 1_735_689_600_000 + index * 1000,
+        });
+      }
+      yield* Effect.gen(function* () {
+        const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+        const first = yield* scanner.list(cwd);
+        expect(first.sessions).toHaveLength(40);
+        expect(first.nextCursor).not.toBeNull();
+        yield* fs.utimes(
+          `${home}/projects/project/${sessionId(0)}.jsonl`,
+          1_735_700_000,
+          1_735_700_000,
+        );
+        yield* writeTranscript({
+          filePath: `${home}/projects/project/${sessionId(43)}.jsonl`,
+          contents: sessionRecord(cwd, sessionId(43), "New session"),
+          mtimeMs: 1_735_700_001_000,
+        });
+        const next = yield* scanner.list(cwd, first.nextCursor ?? undefined);
+        const ids = [...first.sessions, ...next.sessions].map(
+          (session) => session.providerSessionId,
+        );
+        expect(ids).toEqual(Array.from({ length: 43 }, (_, index) => sessionId(42 - index)));
+        expect(next.nextCursor).toBeNull();
+        yield* writeTranscript({
+          filePath: `${home}/projects/project/${sessionId(2)}.jsonl`,
+          contents: sessionRecord(cwd, sessionId(2), "Changed after reading page two"),
+          mtimeMs: 1_735_689_602_000,
+        });
+        const replay = yield* scanner.list(cwd, first.nextCursor ?? undefined);
+        expect(replay).toEqual(next);
+        const refreshed = yield* scanner.list(cwd);
+        expect(refreshed.sessions[0]?.providerSessionId).toBe(sessionId(43));
+        expect(refreshed.sessions[1]?.providerSessionId).toBe(sessionId(0));
+        yield* fs.makeDirectory(`${root}/other-project`);
+        for (const { workspaceRoot, cursor } of [
+          { workspaceRoot: `${root}/other-project`, cursor: first.nextCursor ?? "" },
+          { workspaceRoot: cwd, cursor: "not-a-cursor" },
+          { workspaceRoot: cwd, cursor: "" },
+        ]) {
+          const failed = yield* scanner.list(workspaceRoot, cursor).pipe(Effect.result);
+          expect(failed).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              _tag: "AgentSessionUnavailableError",
+              message: expect.stringContaining("Refresh"),
+            },
+          });
+        }
+        yield* TestClock.adjust("5 minutes");
+        expect(yield* scanner.list(cwd, first.nextCursor ?? "").pipe(Effect.result)).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "AgentSessionUnavailableError",
+            message: expect.stringContaining("expired"),
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("invalidates listing cursors after home changes and bounds retained snapshots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* makeTempDir("session-pagination-scope-");
+      const cwd = `${root}/workspace`;
+      const home = `${root}/claude`;
+      yield* fs.makeDirectory(cwd);
+      for (let index = 0; index < 41; index++) {
+        yield* writeTranscript({
+          filePath: `${home}/projects/project/${sessionId(index)}.jsonl`,
+          contents: sessionRecord(cwd, sessionId(index), `Request ${index}`),
+          mtimeMs: 1_735_689_600_000 + index * 1000,
+        });
+      }
+      yield* Effect.gen(function* () {
+        const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const first = yield* scanner.list(cwd);
+        expect(first.nextCursor).not.toBeNull();
+        yield* settings.updateSettings({
+          providers: { claudeAgent: { homePath: `${root}/different-home` } },
+        });
+        expect(yield* scanner.list(cwd, first.nextCursor ?? "").pipe(Effect.result)).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "AgentSessionUnavailableError" },
+        });
+        yield* settings.updateSettings({ providers: { claudeAgent: { homePath: home } } });
+        yield* fs.rename(home, `${root}/old-home`);
+        yield* fs.makeDirectory(home);
+        expect(yield* scanner.list(cwd, first.nextCursor ?? "").pipe(Effect.result)).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "AgentSessionUnavailableError" },
+        });
+        yield* fs.remove(home, { recursive: true });
+        yield* fs.rename(`${root}/old-home`, home);
+        for (let index = 0; index < 8; index++) yield* scanner.list(cwd);
+        expect(yield* scanner.list(cwd, first.nextCursor ?? "").pipe(Effect.result)).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "AgentSessionUnavailableError" },
+        });
+        const fresh = yield* scanner.list(cwd);
+        expect((yield* scanner.list(cwd, fresh.nextCursor ?? "")).sessions).toHaveLength(1);
+      }).pipe(
+        Effect.provide(
+          makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }),
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "pages actual conversation backwards without losing exchanges or showing tool/control records",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* makeTempDir("session-preview-");
+        const cwd = `${root}/workspace`;
+        yield* fs.makeDirectory(cwd);
+        const home = `${root}/claude`;
+        const selection = {
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          providerSessionId: sessionId(100),
+        };
+        const records = Array.from({ length: 91 }, (_, index) =>
+          sessionRecord(cwd, selection.providerSessionId, `Message ${index}`, {
+            type: index % 2 === 0 ? "user" : "assistant",
+          }),
+        );
+        records.splice(
+          3,
+          0,
+          sessionRecord(cwd, selection.providerSessionId, "Hidden metadata", { isMeta: true }),
+          sessionRecord(cwd, selection.providerSessionId, "", {
+            message: { content: [{ type: "tool_result", text: "Tool output" }] },
+          }),
+        );
+        yield* writeTranscript({
+          filePath: `${home}/projects/project/${selection.providerSessionId}.jsonl`,
+          contents: records.join(""),
+          mtimeMs: 1_735_689_600_000,
+        });
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          let page = yield* scanner.preview(cwd, selection);
+          expect(page.messages[0]?.text).toBe("Message 61");
+          const messages = [...page.messages];
+          while (page.nextBefore !== null) {
+            page = yield* scanner.preview(cwd, selection, page.nextBefore);
+            messages.unshift(...page.messages);
+          }
+          expect(messages.map((message) => message.text)).toEqual(
+            Array.from({ length: 91 }, (_, i) => `Message ${i}`),
+          );
+          const selected = yield* scanner.selectedThread(cwd, selection);
+          expect(selected.thread.providerSessionId).toBe(selection.providerSessionId);
+          expect(selected.thread.messages).toHaveLength(91);
+          expect(
+            (yield* scanner.preview(`${root}/other`, selection).pipe(Effect.result))._tag,
+          ).toBe("Failure");
+          yield* fs.writeFileString(
+            `${home}/projects/project/${selection.providerSessionId}.jsonl`,
+            sessionRecord(`${root}/other`, selection.providerSessionId, "Changed cwd"),
+          );
+          expect((yield* scanner.selectedThread(cwd, selection).pipe(Effect.result))._tag).toBe(
+            "Failure",
+          );
+        }).pipe(
+          Effect.provide(
+            makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }),
+          ),
+        );
+      }),
+  );
+
+  it.effect(
+    "bounds preview I/O for oversized records and honors provider-instance Claude homes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* makeTempDir("session-bounds-");
+        const cwd = `${root}/workspace`;
+        yield* fs.makeDirectory(cwd);
+        const home = `${root}/custom-claude`;
+        const selection = {
+          providerInstanceId: ProviderInstanceId.make("work-claude"),
+          providerSessionId: sessionId(200),
+        };
+        const filename = `${home}/projects/project/${selection.providerSessionId}.jsonl`;
+        yield* writeTranscript({
+          filePath: filename,
+          contents:
+            sessionRecord(cwd, selection.providerSessionId, "First request") +
+            sessionRecord(cwd, selection.providerSessionId, "x".repeat(2 * 1024 * 1024), {
+              type: "assistant",
+            }) +
+            sessionRecord(cwd, selection.providerSessionId, "Latest answer", { type: "assistant" }),
+          mtimeMs: 1_735_689_600_000,
+        });
+        let bytesRequested = 0;
+        let maxRead = Infinity;
+        const countedFs = {
+          ...fs,
+          open: (...args: Parameters<typeof fs.open>) =>
+            fs.open(...args).pipe(
+              Effect.map((file) => ({
+                ...file,
+                stat: file.stat,
+                seek: (offset: FileSystem.SizeInput, from: FileSystem.SeekMode) =>
+                  file.seek(offset, from),
+                readAlloc: (size: FileSystem.SizeInput) => {
+                  bytesRequested += Number(size);
+                  return file.readAlloc(Math.min(Number(size), maxRead));
+                },
+              })),
+            ),
+        };
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const page = yield* scanner.preview(cwd, selection);
+          expect(page.messages.map((message) => message.text)).toEqual(["Latest answer"]);
+          expect(page.nextBefore).not.toBeNull();
+          expect(bytesRequested).toBeLessThan(512 * 1024);
+          const previous = yield* scanner.preview(cwd, selection, page.nextBefore ?? 0);
+          expect(previous.truncated).toBe(true);
+          maxRead = 7;
+          yield* fs.writeFileString(
+            filename,
+            sessionRecord(cwd, selection.providerSessionId, "héllo 世界"),
+          );
+          expect(
+            (yield* scanner.preview(cwd, selection)).messages.map((message) => message.text),
+          ).toEqual(["héllo 世界"]);
+          expect(
+            (yield* scanner
+              .preview(cwd, {
+                ...selection,
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              })
+              .pipe(Effect.result))._tag,
+          ).toBe("Failure");
+        }).pipe(
+          Effect.provide(
+            makeScannerTestLayer({
+              claudeHomePath: `${root}/unused`,
+              codexHomePath: `${root}/codex`,
+              providerInstances: {
+                [ProviderInstanceId.make("claudeAgent")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  enabled: false,
+                  config: {},
+                },
+                [ProviderInstanceId.make("work-claude")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: {},
+                  environment: [{ name: "CLAUDE_CONFIG_DIR", value: home, sensitive: false }],
+                },
+              },
+            }).pipe(Layer.provide(Layer.succeed(FileSystem.FileSystem, countedFs))),
+          ),
+        );
+      }),
+  );
+  it.effect("finds the first request beyond a large initial control record", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* makeTempDir("session-prefix-");
+      const cwd = `${root}/workspace`;
+      const home = `${root}/claude`;
+      yield* fs.makeDirectory(cwd);
+      yield* writeTranscript({
+        filePath: `${home}/projects/project/${sessionId(201)}.jsonl`,
+        contents:
+          encodeTranscriptRecord({
+            type: "file-history-snapshot",
+            snapshot: "x".repeat(80 * 1024),
+          }) +
+          "\n" +
+          sessionRecord(cwd, sessionId(201), "First request after setup") +
+          sessionRecord(cwd, sessionId(201), "The answer", { type: "assistant" }),
+        mtimeMs: 1_735_689_600_000,
+      });
+      yield* Effect.gen(function* () {
+        const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+        const listed = yield* scanner.list(cwd);
+        expect(listed.sessions).toHaveLength(1);
+        expect(listed.sessions[0]?.firstRequest).toBe("First request after setup");
+        expect(listed.truncated).toBe(false);
+      }).pipe(
+        Effect.provide(
+          makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("keeps valid sessions when a child directory or transcript is unreadable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* makeTempDir("session-unreadable-");
+      const cwd = `${root}/workspace`;
+      const home = `${root}/claude`;
+      const blocked = `${home}/projects/blocked`;
+      yield* fs.makeDirectory(cwd);
+      yield* fs.makeDirectory(blocked, { recursive: true });
+      yield* writeTranscript({
+        filePath: `${home}/projects/project/${sessionId(202)}.jsonl`,
+        contents: sessionRecord(cwd, sessionId(202), "Readable session"),
+        mtimeMs: 1_735_689_600_000,
+      });
+      yield* fs.symlink(`${root}/missing`, `${home}/projects/project/${sessionId(203)}.jsonl`);
+      let blockedDirectory = blocked;
+      const simulatedFs = FileSystem.FileSystem.of({
+        ...fs,
+        readDirectory: (directory, options) =>
+          directory === blockedDirectory
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readDirectory",
+                  pathOrDescriptor: directory,
+                }),
+              )
+            : fs.readDirectory(directory, options),
+      });
+      yield* Effect.gen(function* () {
+        const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+        const listed = yield* scanner.list(cwd);
+        expect(listed.sessions.map((session) => session.firstRequest)).toEqual([
+          "Readable session",
+        ]);
+        expect(listed.truncated).toBe(true);
+        blockedDirectory = `${home}/projects`;
+        const failed = yield* scanner.list(cwd).pipe(Effect.result);
+        expect(failed).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "AgentSessionScanError",
+            operation: "read-projects",
+            cause: { reason: { _tag: "PermissionDenied", pathOrDescriptor: `${home}/projects` } },
+          },
+        });
+      }).pipe(
+        Effect.provide(
+          makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }).pipe(
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, simulatedFs)),
+          ),
+        ),
+      );
+    }),
+  );
+
+  it.effect(
+    "reuses selected locators without rescanning homes and rejects a replaced transcript",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* makeTempDir("session-locator-");
+        const cwd = `${root}/workspace`;
+        const home = `${root}/claude`;
+        const filename = `${home}/projects/project/${sessionId(204)}.jsonl`;
+        yield* fs.makeDirectory(cwd);
+        yield* writeTranscript({
+          filePath: filename,
+          contents: Array.from({ length: 61 }, (_, i) =>
+            sessionRecord(cwd, sessionId(204), `Message ${i}`),
+          ).join(""),
+          mtimeMs: 1_735_689_600_000,
+        });
+        let directoryReads = 0;
+        const countedFs = {
+          ...fs,
+          readDirectory: (...args: Parameters<typeof fs.readDirectory>) => {
+            directoryReads += 1;
+            return fs.readDirectory(...args);
+          },
+        };
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          yield* scanner.list(cwd);
+          const readsAfterListing = directoryReads;
+          const selection = {
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            providerSessionId: sessionId(204),
+          };
+          const latest = yield* scanner.preview(cwd, selection);
+          yield* scanner.preview(cwd, selection, latest.nextBefore ?? 0);
+          yield* scanner.selectedThread(cwd, selection);
+          expect(directoryReads).toBe(readsAfterListing);
+          yield* fs.writeFileString(
+            filename,
+            sessionRecord(`${root}/another-project`, sessionId(204), "Replaced session"),
+          );
+          expect((yield* scanner.preview(cwd, selection).pipe(Effect.result))._tag).toBe("Failure");
+        }).pipe(
+          Effect.provide(
+            makeScannerTestLayer({ claudeHomePath: home, codexHomePath: `${root}/codex` }).pipe(
+              Layer.provide(Layer.succeed(FileSystem.FileSystem, countedFs)),
+            ),
+          ),
+        );
+      }),
+  );
+
   describe("scan", () => {
     it.effect("reads Claude project cwds from transcripts, newest first", () =>
       Effect.gen(function* () {

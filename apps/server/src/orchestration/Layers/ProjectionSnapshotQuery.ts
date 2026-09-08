@@ -1102,6 +1102,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const getThreadProjectIdRows = SqlSchema.findAll({
+    Request: Schema.Array(ThreadId),
+    Result: Schema.Struct({ threadId: ThreadId, projectId: ProjectId }),
+    execute: (threadIds) => sql`
+      SELECT thread_id AS "threadId", project_id AS "projectId"
+      FROM projection_threads
+      WHERE ${sql.in("thread_id", threadIds)}
+        AND deleted_at IS NULL
+        AND archived_at IS NULL
+    `,
+  });
+
   const getThreadRuntimeContextRow = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadRuntimeContextDbRowSchema,
@@ -2930,6 +2942,24 @@ pending_approval_requests AS (
       } satisfies OrchestrationThreadShell);
     });
 
+  const getThreadProjectIds: ProjectionSnapshotQueryShape["getThreadProjectIds"] = (threadIds) =>
+    Effect.gen(function* () {
+      const rows: Array<{ threadId: ThreadId; projectId: ProjectId }> = [];
+      for (const batch of Arr.chunksOf(threadIds, 500)) {
+        rows.push(
+          ...(yield* getThreadProjectIdRows(batch).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getThreadProjectIds:query",
+                "ProjectionSnapshotQuery.getThreadProjectIds:decodeRows",
+              ),
+            ),
+          )),
+        );
+      }
+      return rows;
+    });
+
   const getThreadRuntimeContext: ProjectionSnapshotQueryShape["getThreadRuntimeContext"] =
     Effect.fn("ProjectionSnapshotQuery.getThreadRuntimeContext")(function* (threadId) {
       const context = yield* getThreadRuntimeContextRow({ threadId }).pipe(
@@ -3413,6 +3443,7 @@ pending_approval_requests AS (
     getThreadCheckpointContext,
     getFullThreadDiffContext,
     getThreadShellById,
+    getThreadProjectIds,
     getThreadRuntimeContext,
     getTurnStartMessage,
     getThreadDetailById,

@@ -25,6 +25,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
 import {
   ApprovalRequestId,
+  CLAUDE_SESSION_ID_PATTERN,
   classifyTaskAgentKind,
   type CanonicalItemType,
   type CanonicalRequestType,
@@ -358,7 +359,7 @@ export interface ClaudeAdapterLiveOptions {
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return CLAUDE_SESSION_ID_PATTERN.test(value);
 }
 
 function isSyntheticClaudeThreadId(value: string): boolean {

@@ -342,6 +342,7 @@ import {
 } from "./chat/ThreadErrorBanner";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSurface } from "./chat/ComposerSurface";
+import { AgentSessionImportDialog } from "./AgentSessionImportDialog";
 import {
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
@@ -8241,6 +8242,17 @@ export default function ChatView(props: ChatViewProps) {
                         </div>
                       </div>
                     </ComposerSurface.Shell>
+                    {isDraftHeroState && activeProject && activeProjectRef ? (
+                      <AgentSessionImportDialog
+                        key={`${activeProject.environmentId}:${activeProject.id}:${activeProject.workspaceRoot}`}
+                        projectRef={activeProjectRef}
+                        cwd={activeProject.workspaceRoot}
+                        machineName={
+                          environmentById.get(activeProject.environmentId)?.label ??
+                          activeProject.environmentId
+                        }
+                      />
+                    ) : null}
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"

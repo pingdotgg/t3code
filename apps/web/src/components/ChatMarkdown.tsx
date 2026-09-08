@@ -198,6 +198,8 @@ interface ChatMarkdownProps {
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
   parseRawHtml?: boolean;
+  /** Read-only transcript previews must not fetch linked media or rich link previews. */
+  previewOnly?: boolean;
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
@@ -3105,11 +3107,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const TRANSCRIPT_PREVIEW_COMPONENTS = {
+  ...CHAT_MARKDOWN_COMPONENTS,
+  img: ({ alt }) => (
+    <span className="text-muted-foreground">[Image not loaded{alt ? `: ${alt}` : ""}]</span>
+  ),
+  a: ({ children }) => <span className="underline">{children}</span>,
+} satisfies Components;
+
 function ChatMarkdown({
   text,
   className,
   lineBreaks = false,
   parseRawHtml = true,
+  previewOnly = false,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
@@ -3142,9 +3153,9 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={parseRawHtml && !previewOnly ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
           skipHtml={false}
-          components={CHAT_MARKDOWN_COMPONENTS}
+          components={previewOnly ? TRANSCRIPT_PREVIEW_COMPONENTS : CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
           {text}

@@ -126,7 +126,12 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
-import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
+import {
+  importRecentAgentThreads,
+  listAgentSessions,
+  previewAgentSession,
+  attachAgentSession,
+} from "./project/AgentSessionImporter.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -571,6 +576,13 @@ const makeWsRpcLayer = (
       });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
+      const agentSessionServices = Layer.mergeAll(
+        Layer.succeed(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
+        Layer.succeed(OrchestrationEngine.OrchestrationEngineService, orchestrationEngine),
+        Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projectionSnapshotQuery),
+        Layer.succeed(Crypto.Crypto, crypto),
+        Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, providerSessionDirectory),
+      );
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -2368,22 +2380,25 @@ const makeWsRpcLayer = (
         [WS_METHODS.agentSessionsImport]: (input) =>
           observeRpcEffect(
             WS_METHODS.agentSessionsImport,
-            importRecentAgentThreads(input).pipe(
-              Effect.provideService(AgentSessionScanner.AgentSessionScanner, agentSessionScanner),
-              Effect.provideService(
-                OrchestrationEngine.OrchestrationEngineService,
-                orchestrationEngine,
-              ),
-              Effect.provideService(
-                ProjectionSnapshotQuery.ProjectionSnapshotQuery,
-                projectionSnapshotQuery,
-              ),
-              Effect.provideService(Crypto.Crypto, crypto),
-              Effect.provideService(
-                ProviderSessionDirectory.ProviderSessionDirectory,
-                providerSessionDirectory,
-              ),
-            ),
+            importRecentAgentThreads(input).pipe(Effect.provide(agentSessionServices)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsList]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsList,
+            listAgentSessions(input).pipe(Effect.provide(agentSessionServices)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsPreview]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsPreview,
+            previewAgentSession(input).pipe(Effect.provide(agentSessionServices)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.agentSessionsAttach]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.agentSessionsAttach,
+            attachAgentSession(input).pipe(Effect.provide(agentSessionServices)),
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.assetsCreateUrl]: (input) =>

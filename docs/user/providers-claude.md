@@ -41,6 +41,24 @@ Claude Code's verbose mode can stay enabled when you use Claude for text generat
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
 
+## Continue an existing Claude Code session
+
+In web or desktop, select a project on the new-thread screen and choose
+**or, import an existing session** below the composer. The browser reads Claude
+sessions for that project's directory on its connected computer, using the
+configured Claude accounts. It does not transfer sessions between computers.
+
+Select a session to read its conversation before attaching it. Search covers the
+listed sessions; load older sessions to extend the search. **Attach & open** copies
+recent conversation text into a T3 thread without sending a prompt. Your next
+message resumes the original Claude session. Newly attached sessions use
+**Supervised** permissions. Sessions already in T3 open their existing thread and
+keep its settings.
+
+Avoid sending from the original terminal and T3 at the same time. Both continue
+the same native session. The imported timeline omits tool activity and attachments
+and retains bounded text history, even when the preview can show older messages.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

@@ -205,6 +205,14 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
+  /** Read project ownership for active candidate threads without hydrating their shells. */
+  readonly getThreadProjectIds: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly threadId: ThreadId; readonly projectId: ProjectId }>,
+    ProjectionRepositoryError
+  >;
+
   /** Read the active thread and session facts used to ingest provider events. */
   readonly getThreadRuntimeContext: (
     threadId: ThreadId,
