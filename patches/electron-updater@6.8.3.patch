@@ -1,0 +1,85 @@
+diff --git a/out/AppImageUpdater.js b/out/AppImageUpdater.js
+index 25cef3598cd278cc2a7f1432377c7a50048824b9..a6132439a056671777e10fcfdd96820e331e489b 100644
+--- a/out/AppImageUpdater.js
++++ b/out/AppImageUpdater.js
+@@ -6,6 +6,7 @@ const child_process_1 = require("child_process");
+ const fs_extra_1 = require("fs-extra");
+ const fs_1 = require("fs");
+ const path = require("path");
++const crypto = require("crypto");
+ const BaseUpdater_1 = require("./BaseUpdater");
+ const FileWithEmbeddedBlockMapDifferentialDownloader_1 = require("./differentialDownloader/FileWithEmbeddedBlockMapDifferentialDownloader");
+ const Provider_1 = require("./providers/Provider");
+@@ -74,8 +75,6 @@ class AppImageUpdater extends BaseUpdater_1.BaseUpdater {
+         if (appImageFile == null) {
+             throw (0, builder_util_runtime_1.newError)("APPIMAGE env is not defined", "ERR_UPDATER_OLD_FILE_NOT_FOUND");
+         }
+-        // https://stackoverflow.com/a/1712051/1910191
+-        (0, fs_1.unlinkSync)(appImageFile);
+         let destination;
+         const existingBaseName = path.basename(appImageFile);
+         const installerPath = this.installerPath;
+@@ -92,7 +91,62 @@ class AppImageUpdater extends BaseUpdater_1.BaseUpdater {
+         else {
+             destination = path.join(path.dirname(appImageFile), path.basename(installerPath));
+         }
+-        (0, child_process_1.execFileSync)("mv", ["-f", installerPath, destination]);
++        // Stage beside the destination: cache and AppImage may be on different filesystems.
++        const stageDir = fs_1.mkdtempSync(path.join(path.dirname(destination), ".t3-update-"));
++        const staged = path.join(stageDir, "update.AppImage");
++        this._logger.info(`Staging AppImage update for ${destination}`);
++        try {
++            const size = fs_1.statSync(installerPath).size;
++            fs_1.copyFileSync(installerPath, staged);
++            if (size === 0 || fs_1.statSync(staged).size !== size) {
++                throw new Error("Staged AppImage size mismatch");
++            }
++            const fd = fs_1.openSync(staged, "r+");
++            try {
++                const hash = crypto.createHash("sha512");
++                const buffer = Buffer.allocUnsafe(1024 * 1024);
++                let bytes;
++                while ((bytes = fs_1.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
++                    hash.update(buffer.subarray(0, bytes));
++                }
++                if (hash.digest("base64") !== this.downloadedUpdateHelper.downloadedFileInfo.sha512) {
++                    throw new Error("Staged AppImage sha512 mismatch");
++                }
++                fs_1.fchmodSync(fd, 0o755);
++                fs_1.fsyncSync(fd);
++            }
++            finally {
++                fs_1.closeSync(fd);
++            }
++            fs_1.renameSync(staged, destination);
++            if (process.platform === "linux") {
++                const directoryFd = fs_1.openSync(path.dirname(destination), "r");
++                try {
++                    fs_1.fsyncSync(directoryFd);
++                }
++                finally {
++                    fs_1.closeSync(directoryFd);
++                }
++            }
++            this._logger.info(`Installed verified AppImage at ${destination}`);
++        }
++        finally {
++            try {
++                fs_1.rmSync(stageDir, { recursive: true, force: true });
++            }
++            catch (error) {
++                this._logger.warn(`Could not remove AppImage staging directory: ${error}`);
++            }
++        }
++        // Cleanup must not turn a committed replacement into a failed install.
++        for (const obsolete of destination === appImageFile ? [installerPath] : [installerPath, appImageFile]) {
++            try {
++                fs_1.unlinkSync(obsolete);
++            }
++            catch (error) {
++                this._logger.warn(`Could not remove obsolete AppImage ${obsolete}: ${error}`);
++            }
++        }
+         if (destination !== appImageFile) {
+             this.emit("appimage-filename-updated", destination);
+         }

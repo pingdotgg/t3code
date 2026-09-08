@@ -6,6 +6,8 @@ import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
 
+import * as DesktopObservability from "../app/DesktopObservability.ts";
+
 type AutoUpdater = typeof autoUpdater;
 
 export type ElectronUpdaterFeedUrl = Parameters<AutoUpdater["setFeedURL"]>[0];
@@ -169,4 +171,28 @@ export const make = ElectronUpdater.of({
   },
 });
 
-export const layer = Layer.succeed(ElectronUpdater, make);
+export const layer = Layer.effect(
+  ElectronUpdater,
+  Effect.gen(function* () {
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
+    const logger = DesktopObservability.makeComponentLogger("desktop-updater");
+    const log = (effect: Effect.Effect<void>) =>
+      runSync(effect.pipe(Effect.withSpan("desktop.updater.log")));
+    const previousLogger = autoUpdater.logger;
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        autoUpdater.logger = {
+          info: (message) => log(logger.logInfo(String(message))),
+          warn: (message) => log(logger.logWarning(String(message))),
+          error: (message) => log(logger.logError(String(message))),
+          debug: (message) => log(logger.logDebug(String(message))),
+        };
+      }),
+      () =>
+        Effect.sync(() => {
+          autoUpdater.logger = previousLogger;
+        }),
+    );
+    return make;
+  }),
+);

@@ -1,5 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { autoUpdaterMock } = vi.hoisted(() => ({
@@ -11,6 +14,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     channel: "latest",
     disableDifferentialDownload: false,
     fullChangelog: false,
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
     on: vi.fn(),
@@ -27,6 +31,34 @@ vi.mock("electron-updater", () => ({
 import * as ElectronUpdater from "./ElectronUpdater.ts";
 
 describe("ElectronUpdater", () => {
+  it.effect(
+    "routes updater install logs through desktop observability and restores the logger",
+    () => {
+      const previousLogger = autoUpdaterMock.logger;
+      const records: unknown[] = [];
+      const logger = Logger.make(({ message, fiber }) => {
+        records.push({
+          message,
+          component: fiber.getRef(References.CurrentLogAnnotations).component,
+          span: fiber.currentSpan?._tag === "Span" ? fiber.currentSpan.name : undefined,
+        });
+      });
+      return Effect.gen(function* () {
+        yield* Effect.sync(() => autoUpdaterMock.logger.info("Installed verified AppImage")).pipe(
+          Effect.provide(ElectronUpdater.layer.pipe(Layer.provide(Logger.layer([logger])))),
+        );
+        assert.deepEqual(records, [
+          {
+            message: ["Installed verified AppImage"],
+            component: "desktop-updater",
+            span: "desktop.updater.log",
+          },
+        ]);
+        assert.strictEqual(autoUpdaterMock.logger, previousLogger);
+      });
+    },
+  );
+
   beforeEach(() => {
     autoUpdaterMock.allowDowngrade = false;
     autoUpdaterMock.allowPrerelease = false;
