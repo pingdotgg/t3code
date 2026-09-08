@@ -416,6 +416,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
             connector: SequencedConnector(connections: [connection]),
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
+        addTeardownBlock { await client.stop() }
         let request = Task {
             await gate.wait()
             return try await client.request("server.cancelledBeforeInstall", as: JSONValue.self)
@@ -430,6 +431,14 @@ final class WebSocketRPCRaceTests: XCTestCase {
         } catch is CancellationError {}
         let sentRequestCount = await connection.sentRequestCount()
         XCTAssertEqual(sentRequestCount, 0)
+        do {
+            _ = try await client.waitForConnection(after: nil)
+            XCTFail("An already-cancelled request must not start the connection loop")
+        } catch let error as RPCError {
+            guard case .disconnected = error else { throw error }
+        }
+        let response = try await client.request("server.afterCancelledRequest", as: JSONValue.self)
+        XCTAssertEqual(response, .object([:]))
         await client.stop()
     }
 
