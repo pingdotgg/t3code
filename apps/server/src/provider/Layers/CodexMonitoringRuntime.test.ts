@@ -183,6 +183,25 @@ it.effect("delivers wakes when a user turn completes before its start response",
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
+it.effect("keeps completed monitor wakes ready when completion precedes the start response", () =>
+  Effect.gen(function* () {
+    const { runtime, until, inspect, subscribe } = yield* setup();
+    yield* runtime.sendTurn({ input: "early-wake-completion" });
+    yield* until("turn/completed");
+    yield* subscribe;
+    for (let count = 1; count <= 2; count++) {
+      yield* runtime.compactThread;
+      yield* until("turn/completed");
+      yield* runtime.compactThread;
+      yield* until("backgroundMonitor/delivered");
+      const session = yield* runtime.getSession;
+      assert.equal(session.status, "ready");
+      assert.equal(session.activeTurnId, undefined);
+      assert.equal((yield* inspect).wakes.length, count);
+    }
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
+);
+
 it.effect("queues watcher events until the foreground turn completes", () =>
   Effect.gen(function* () {
     const { runtime, until, inspect, subscribe } = yield* setup();
