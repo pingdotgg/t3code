@@ -1,7 +1,13 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  MAX_VIEWED_FILES_PER_PULL_REQUEST,
+  MAX_VIEWED_PULL_REQUESTS,
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+  toggleViewedFile,
+} from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -77,5 +83,46 @@ describe("isFileDiffCollapsed", () => {
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("toggleViewedFile", () => {
+  it("ticks a file on, and off again", () => {
+    const ticked = toggleViewedFile({}, "pr-1", "a.ts");
+    expect(ticked).toEqual({ "pr-1": ["a.ts"] });
+    const both = toggleViewedFile(ticked, "pr-1", "b.ts");
+    expect(both["pr-1"]).toEqual(["a.ts", "b.ts"]);
+    expect(toggleViewedFile(both, "pr-1", "a.ts")).toEqual({ "pr-1": ["b.ts"] });
+  });
+
+  it("removes the pull request's entry when its last file is unticked", () => {
+    const current = { "pr-0": ["x.ts"], "pr-1": ["a.ts"] };
+    expect(toggleViewedFile(current, "pr-1", "a.ts")).toEqual({ "pr-0": ["x.ts"] });
+  });
+
+  it("moves the touched pull request to the record's end", () => {
+    // Insertion order is the eviction order, so touching one has to reinsert it.
+    const current = { "pr-1": ["a.ts"], "pr-2": ["b.ts"] };
+    const next = toggleViewedFile(current, "pr-1", "c.ts");
+    expect(Object.keys(next)).toEqual(["pr-2", "pr-1"]);
+  });
+
+  it("drops the pull request untouched longest past the cap", () => {
+    let current: ReturnType<typeof toggleViewedFile> = {};
+    for (let index = 0; index < MAX_VIEWED_PULL_REQUESTS; index++) {
+      current = toggleViewedFile(current, `pr-${index}`, "a.ts");
+    }
+    const next = toggleViewedFile(current, "pr-new", "a.ts");
+    expect(Object.keys(next)).toHaveLength(MAX_VIEWED_PULL_REQUESTS);
+    expect(next["pr-0"]).toBeUndefined();
+    expect(next["pr-new"]).toEqual(["a.ts"]);
+  });
+
+  it("keeps the newest file keys when a pull request passes its cap", () => {
+    const stored = Array.from({ length: MAX_VIEWED_FILES_PER_PULL_REQUEST }, (_, i) => `f${i}`);
+    const next = toggleViewedFile({ "pr-1": stored }, "pr-1", "newest.ts");
+    expect(next["pr-1"]).toHaveLength(MAX_VIEWED_FILES_PER_PULL_REQUEST);
+    expect(next["pr-1"]).not.toContain("f0");
+    expect(next["pr-1"]?.at(-1)).toBe("newest.ts");
   });
 });

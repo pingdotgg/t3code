@@ -41,3 +41,44 @@ export function isFileDiffCollapsed(
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
+
+/** Viewed marks per pull request, most recently touched pull request last. */
+export type ViewedFilesByPullRequest = {
+  readonly [pullRequestKey: string]: ReadonlyArray<string>;
+};
+
+/** How many pull requests keep their marks before the longest untouched fall off. */
+export const MAX_VIEWED_PULL_REQUESTS = 30;
+/** How many marks one pull request keeps, newest last, before the oldest fall off. */
+export const MAX_VIEWED_FILES_PER_PULL_REQUEST = 1000;
+
+/**
+ * Ticks or unticks one file's Viewed mark.
+ *
+ * The pull request's entry is rewritten at the record's end, so the eviction drops the pull
+ * requests untouched longest. Unticking the last file removes the entry entirely. Both caps
+ * bound what one browser profile can accumulate: the file keys are content-derived, so every
+ * push strands the keys of the files it changed.
+ */
+export function toggleViewedFile(
+  current: ViewedFilesByPullRequest,
+  pullRequestKey: string,
+  fileKey: string,
+): ViewedFilesByPullRequest {
+  const fileKeys = new Set(current[pullRequestKey] ?? []);
+  if (fileKeys.has(fileKey)) fileKeys.delete(fileKey);
+  else fileKeys.add(fileKey);
+  const next: Record<string, ReadonlyArray<string>> = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (key !== pullRequestKey) next[key] = value;
+  }
+  if (fileKeys.size > 0) {
+    next[pullRequestKey] = [...fileKeys].slice(-MAX_VIEWED_FILES_PER_PULL_REQUEST);
+  }
+  const pullRequestKeys = Object.keys(next);
+  const excess = Math.max(0, pullRequestKeys.length - MAX_VIEWED_PULL_REQUESTS);
+  for (const key of pullRequestKeys.slice(0, excess)) {
+    delete next[key];
+  }
+  return next;
+}

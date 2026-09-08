@@ -28,7 +28,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { getLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
@@ -64,6 +64,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   DropdownMenu,
@@ -79,7 +80,9 @@ import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  toggleViewedFile,
   type DiffFoldOverride,
+  type ViewedFilesByPullRequest,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import {
@@ -103,6 +106,33 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
+
+const PULL_REQUEST_VIEWED_FILES_STORAGE_KEY = "t3code.pullRequestViewedFiles";
+
+/**
+ * The file keys stored are the content-derived render keys collapse uses, so a push that
+ * changes a file un-views it on its own. An entry that fails to decode falls back to nothing
+ * viewed and is overwritten by the next tick, so the shape needs no version field.
+ */
+const ViewedFilesByPullRequestSchema = Schema.Record(Schema.String, Schema.Array(Schema.String));
+const NO_VIEWED_FILES: ViewedFilesByPullRequest = {};
+
+/**
+ * The marks read straight from storage, as the seed for `toggledFiles`: a file already viewed
+ * opens folded, the way GitHub keeps it. Read imperatively so the seed reflects the moment the
+ * scope changes rather than subscribing the reset to every tick.
+ */
+const readStoredViewedFileKeys = (referenceKey: string): Set<string> => {
+  try {
+    return new Set(
+      getLocalStorageItem(PULL_REQUEST_VIEWED_FILES_STORAGE_KEY, ViewedFilesByPullRequestSchema)?.[
+        referenceKey
+      ] ?? [],
+    );
+  } catch {
+    return new Set();
+  }
+};
 
 /** One answer from the host: a whole number of files, and where the next one carries on. */
 interface DiffSlice {
@@ -218,7 +248,11 @@ function PullRequestCodeTab({
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  // Seeded with the stored Viewed marks so a file already reviewed opens folded after a
+  // reload; from there the set carries the reader's own choices, viewed or not.
+  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() =>
+    readStoredViewedFileKeys(pullRequestReviewKey(reference)),
+  );
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
   // than a choice. The rest arrive ten at a time, on request.
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
@@ -253,6 +287,15 @@ function PullRequestCodeTab({
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
 
   const referenceKey = pullRequestReviewKey(reference);
+  const [viewedFilesByPullRequest, setViewedFilesByPullRequest] = useLocalStorage(
+    PULL_REQUEST_VIEWED_FILES_STORAGE_KEY,
+    NO_VIEWED_FILES,
+    ViewedFilesByPullRequestSchema,
+  );
+  const viewedFiles = useMemo(
+    () => new Set(viewedFilesByPullRequest[referenceKey] ?? []),
+    [viewedFilesByPullRequest, referenceKey],
+  );
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
@@ -262,13 +305,13 @@ function PullRequestCodeTab({
   useEffect(() => {
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(new Set());
+    setToggledFiles(readStoredViewedFileKeys(referenceKey));
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
     parseCache.current.clear();
-  }, [scopeKey]);
+  }, [scopeKey, referenceKey]);
 
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
@@ -486,6 +529,7 @@ function PullRequestCodeTab({
         }
 
         const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
+        const viewed = viewedFiles.has(fileKey);
 
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
@@ -501,7 +545,7 @@ function PullRequestCodeTab({
           // The viewer re-renders an item only when its version changes, so everything the
           // annotations show has to be part of it.
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${collapsed ? "1" : "0"}:${viewed ? "1" : "0"}:${annotations
               .map(
                 ({ side, lineNumber, metadata }) =>
                   `${side}:${lineNumber}:${metadata.draft ? "d" : ""}:${metadata.pending
@@ -539,6 +583,7 @@ function PullRequestCodeTab({
       pendingComments,
       placedThreadIds,
       toggledFiles,
+      viewedFiles,
     ],
   );
   const lineStat = useMemo(() => getDiffLineStat(files), [files]);
@@ -601,6 +646,12 @@ function PullRequestCodeTab({
         return next;
       }),
     [],
+  );
+
+  const toggleFileViewed = useCallback(
+    (fileKey: string) =>
+      setViewedFilesByPullRequest((current) => toggleViewedFile(current, referenceKey, fileKey)),
+    [referenceKey, setViewedFilesByPullRequest],
   );
 
   const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
@@ -754,14 +805,32 @@ function PullRequestCodeTab({
         if (withheld) ({ additions, deletions } = withheld);
       }
       return (
-        <PullRequestDiffStat
-          additions={additions}
-          deletions={deletions}
-          className="font-mono text-[11px]"
-        />
+        <div className="flex items-center gap-3">
+          <PullRequestDiffStat
+            additions={additions}
+            deletions={deletions}
+            className="font-mono text-[11px]"
+          />
+          {/* GitHub's semantics: ticking Viewed folds the file, unticking unfolds it. The
+              label is bailed on by the header's click-capture below, so the tick does not
+              also fire the header's own fold toggle. */}
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Checkbox
+              className="size-3.5 sm:size-3.5"
+              checked={viewedFiles.has(item.id)}
+              onCheckedChange={(checked) => {
+                if (checked !== (item.collapsed === true)) toggleFile(item.id);
+                toggleFileViewed(item.id);
+              }}
+            />
+            Viewed
+          </label>
+        </div>
       );
     },
-    [omittedFileStats],
+    // viewedFiles rebuilds the visible header portals on each tick. That is one discrete
+    // click, not the per-keystroke churn the identity comments above guard against.
+    [omittedFileStats, toggleFile, toggleFileViewed, viewedFiles],
   );
 
   const diffViewOptions = useMemo(
@@ -1360,10 +1429,15 @@ function PullRequestCodeTab({
             const composedPath = event.nativeEvent.composedPath?.() ?? [];
             for (const node of composedPath) {
               if (!(node instanceof HTMLElement)) continue;
-              // A control inside the header — the collapse chevron — handles itself, and
-              // this capture listener fires before its own click does. Leave it alone or
-              // the two toggles cancel out.
-              if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+              // A control inside the header (the collapse chevron, the Viewed checkbox and
+              // its label) handles itself, and this capture listener fires before its own
+              // click does. Leave it alone or the two toggles cancel out.
+              if (
+                node instanceof HTMLButtonElement ||
+                node instanceof HTMLAnchorElement ||
+                node instanceof HTMLLabelElement ||
+                node instanceof HTMLInputElement
+              ) {
                 return;
               }
               if (node.hasAttribute("data-diffs-header")) {
