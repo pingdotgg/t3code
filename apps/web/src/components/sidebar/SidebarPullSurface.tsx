@@ -101,6 +101,8 @@ export function SidebarPullSurface({
       }
       const dy = first.clientY - touch.y;
       if (dy <= 0 || Math.abs(first.clientX - touch.x) > dy) {
+        // Cancel the reveal; lift and retry to scroll. A browser may keep this
+        // touch sequence suppressed after an earlier prevented move.
         release();
         return;
       }
