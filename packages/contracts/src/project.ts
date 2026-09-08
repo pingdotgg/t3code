@@ -156,7 +156,7 @@ export const ProjectMutation = Schema.Union([
 ]);
 export type ProjectMutation = typeof ProjectMutation.Type;
 
-export class ProjectMutationError extends Schema.TaggedErrorClass<ProjectMutationError>()(
+export class ProjectMutationError extends Schema.TaggedError<ProjectMutationError>()(
   "ProjectMutationError",
   {
     commandId: CommandId,

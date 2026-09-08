@@ -23,7 +23,7 @@ export interface ProjectionVerificationV2 {
   readonly unexpectedThreadIds: ReadonlyArray<ThreadId>;
 }
 
-export class ProjectionMaintenanceError extends Schema.TaggedErrorClass<ProjectionMaintenanceError>()(
+export class ProjectionMaintenanceError extends Schema.TaggedError<ProjectionMaintenanceError>()(
   "ProjectionMaintenanceError",
   {
     operation: Schema.String,

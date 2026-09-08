@@ -150,7 +150,7 @@ export interface AcpSessionRequestLogEvent {
   readonly cause?: Cause.Cause<EffectAcpErrors.AcpError>;
 }
 
-export class AcpProcessGroupTerminationError extends Schema.TaggedErrorClass<AcpProcessGroupTerminationError>()(
+export class AcpProcessGroupTerminationError extends Schema.TaggedError<AcpProcessGroupTerminationError>()(
   "AcpProcessGroupTerminationError",
   {
     detail: Schema.String,

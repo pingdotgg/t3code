@@ -19,7 +19,7 @@ import {
 /**
  * ERRORS
  */
-export class RuntimePolicyResolveError extends Schema.TaggedErrorClass<RuntimePolicyResolveError>()(
+export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
   {
     projectId: ProjectId,

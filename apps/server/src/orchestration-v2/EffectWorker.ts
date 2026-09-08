@@ -33,7 +33,7 @@ import { ThreadManagementService } from "./ThreadManagementService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 
-export class OrchestrationEffectExecutionError extends Schema.TaggedErrorClass<OrchestrationEffectExecutionError>()(
+export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
   {
     effectId: Schema.String,
@@ -369,7 +369,7 @@ export const executorLayer: Layer.Layer<
   }),
 );
 
-export class OrchestrationEffectWorkerError extends Schema.TaggedErrorClass<OrchestrationEffectWorkerError>()(
+export class OrchestrationEffectWorkerError extends Schema.TaggedError<OrchestrationEffectWorkerError>()(
   "OrchestrationEffectWorkerError",
   {
     operation: Schema.String,

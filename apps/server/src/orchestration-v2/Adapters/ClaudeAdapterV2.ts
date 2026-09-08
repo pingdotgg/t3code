@@ -343,7 +343,7 @@ export interface ClaudeAgentSdkQuerySession {
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
 
-export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedErrorClass<ClaudeAgentSdkQueryRunnerError>()(
+export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAgentSdkQueryRunnerError>()(
   "ClaudeAgentSdkQueryRunnerError",
   {
     method: Schema.String,
