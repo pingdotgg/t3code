@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   CommandId,
   EventId,
+  MessageId,
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
@@ -1182,6 +1183,45 @@ const make = Effect.gen(function* () {
     processThreadTitleRegenerationSafely,
   );
 
+  const acknowledgeTurnStartSubmission = Effect.fn("acknowledgeTurnStartSubmission")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly turnId: TurnId;
+    }) {
+      const command = {
+        type: "thread.turn.start.acknowledge" as const,
+        commandId: yield* serverCommandId("thread-turn-start-acknowledge"),
+        threadId: input.threadId,
+        messageId: input.messageId,
+        turnId: input.turnId,
+      };
+      const dispatch = orchestrationEngine.dispatch(command).pipe(Effect.asVoid);
+      yield* dispatch.pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning("provider command reactor retrying turn start acknowledgement", {
+            threadId: input.threadId,
+            messageId: input.messageId,
+            cause: Cause.pretty(cause),
+          }).pipe(Effect.andThen(dispatch));
+        }),
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logError("provider command reactor failed to acknowledge turn start", {
+            threadId: input.threadId,
+            messageId: input.messageId,
+            cause: Cause.pretty(cause),
+          });
+        }),
+      );
+    },
+  );
+
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
@@ -1446,9 +1486,18 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.matchCauseEffect({
+        onFailure: recoverTurnStartFailure,
+        onSuccess: (turn) =>
+          acknowledgeTurnStartSubmission({
+            threadId: event.payload.threadId,
+            messageId: event.payload.messageId,
+            turnId: turn.turnId,
+          }),
+      }),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

@@ -1339,6 +1339,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnStartAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.start.acknowledge"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1374,6 +1382,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadTurnStartAcknowledgeCommand,
   ThreadTitleRegenerationCompleteCommand,
   ThreadPullRequestSyncCommand,
 ]);
@@ -1548,6 +1557,14 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   previousTitle: Schema.optional(TrimmedNonEmptyString),
   /** Pending state shared with clients. Null clears a matching request. */
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  /** Successful provider submission correlated to both the accepted message and provider turn.
+      Carried on the existing metadata event for compatibility with older clients. */
+  turnStartAcknowledged: Schema.optional(
+    Schema.Struct({
+      messageId: MessageId,
+      turnId: TurnId,
+    }),
+  ),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),

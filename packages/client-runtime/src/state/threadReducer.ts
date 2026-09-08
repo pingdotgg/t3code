@@ -266,6 +266,14 @@ export function applyThreadDetailEvent(
           ...(event.payload.activeOrderKey !== undefined
             ? { activeOrderKey: event.payload.activeOrderKey }
             : {}),
+          ...(event.payload.turnStartAcknowledged !== undefined
+            ? {
+                pendingTurnStartMessageId:
+                  event.payload.turnStartAcknowledged.messageId === thread.pendingTurnStartMessageId
+                    ? null
+                    : (thread.pendingTurnStartMessageId ?? null),
+              }
+            : {}),
           updatedAt: event.payload.updatedAt,
         },
       };

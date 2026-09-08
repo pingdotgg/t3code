@@ -3710,7 +3710,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         const threadId = ThreadId.make("thread-queued-adoption");
 
         for (const index of [1, 2]) {
-          const createdAt = `2026-02-26T13:00:0${index}.000Z`;
+          const createdAt = index === 1 ? "2026-02-26T13:00:02.000Z" : "2026-02-26T13:00:01.000Z";
           yield* eventStore.append({
             type: "thread.turn-start-requested",
             eventId: EventId.make(`evt-queued-adoption-${index}`),
@@ -3767,6 +3767,108 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         assert.deepEqual(rows, [
           { turnId: null, messageId: "message-queued-adoption-2" },
           { turnId: "turn-queued-adoption-1", messageId: "message-queued-adoption-1" },
+        ]);
+      }),
+    );
+
+    it.effect("adopts a provider acknowledgement only into its correlated turn", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-correlated-submission");
+        const messageId = MessageId.make("message-correlated-submission");
+        const targetTurnId = TurnId.make("turn-correlated-submission");
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-correlated-submission-requested"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:30:00.000Z",
+          commandId: CommandId.make("cmd-correlated-submission-requested"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-correlated-submission-requested"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "approval-required",
+            createdAt: "2026-02-26T13:30:00.000Z",
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-correlated-submission-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:30:01.000Z",
+          commandId: CommandId.make("cmd-correlated-submission-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-correlated-submission-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId: targetTurnId },
+            updatedAt: "2026-02-26T13:30:00.000Z",
+          },
+        });
+        for (const [index, session] of [
+          {
+            status: "running" as const,
+            activeTurnId: TurnId.make("turn-unrelated"),
+          },
+          { status: "ready" as const, activeTurnId: null },
+          { status: "running" as const, activeTurnId: targetTurnId },
+        ].entries()) {
+          const updatedAt = `2026-02-26T13:30:0${index + 2}.000Z`;
+          yield* eventStore.append({
+            type: "thread.session-set",
+            eventId: EventId.make(`evt-correlated-submission-session-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: updatedAt,
+            commandId: CommandId.make(`cmd-correlated-submission-session-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-correlated-submission-session-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: session.status,
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: session.activeTurnId,
+                lastError: null,
+                updatedAt,
+              },
+            },
+          });
+        }
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly turnId: string | null;
+          readonly messageId: string | null;
+          readonly state: string;
+        }>`
+          SELECT
+            turn_id AS "turnId",
+            pending_message_id AS "messageId",
+            state
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+          ORDER BY row_id ASC
+        `;
+        assert.deepEqual(rows, [
+          { turnId: "turn-unrelated", messageId: null, state: "completed" },
+          {
+            turnId: "turn-correlated-submission",
+            messageId: "message-correlated-submission",
+            state: "running",
+          },
         ]);
       }),
     );

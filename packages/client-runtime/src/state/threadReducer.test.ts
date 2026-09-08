@@ -486,6 +486,43 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.pendingTurnStartMessageId).toBe(newerMessageId);
       }
     });
+
+    it("only clears the pending turn start acknowledged by the provider", () => {
+      const newerMessageId = MessageId.make("message-newer-pending-turn-start");
+      const pendingThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: newerMessageId,
+      };
+      const acknowledge = (messageId: MessageId) =>
+        applyThreadDetailEvent(pendingThread, {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T05:00:01.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated" as const,
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: {
+              messageId,
+              turnId: TurnId.make("turn-provider-acknowledged"),
+            },
+            updatedAt: pendingThread.updatedAt,
+          },
+        });
+
+      const stale = acknowledge(MessageId.make("message-older-pending-turn-start"));
+      expect(stale.kind).toBe("updated");
+      if (stale.kind === "updated") {
+        expect(stale.thread.pendingTurnStartMessageId).toBe(newerMessageId);
+      }
+
+      const current = acknowledge(newerMessageId);
+      expect(current.kind).toBe("updated");
+      if (current.kind === "updated") {
+        expect(current.thread.pendingTurnStartMessageId).toBeNull();
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

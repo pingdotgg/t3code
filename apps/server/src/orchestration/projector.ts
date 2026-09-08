@@ -517,30 +517,42 @@ export function projectEvent(
 
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.title !== undefined ? { title: payload.title } : {}),
-            ...(payload.activeOrderKey !== undefined
-              ? { activeOrderKey: payload.activeOrderKey }
-              : {}),
-            ...(payload.titleRegeneration !== undefined
-              ? { titleRegeneration: payload.titleRegeneration }
-              : {}),
-            ...(payload.modelSelection !== undefined
-              ? { modelSelection: payload.modelSelection }
-              : {}),
-            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
-            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-            ...(payload.linkedPullRequest !== undefined
-              ? { linkedPullRequest: payload.linkedPullRequest }
-              : {}),
-            ...(payload.branchPullRequest !== undefined
-              ? { branchPullRequest: payload.branchPullRequest }
-              : {}),
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.title !== undefined ? { title: payload.title } : {}),
+              ...(payload.activeOrderKey !== undefined
+                ? { activeOrderKey: payload.activeOrderKey }
+                : {}),
+              ...(payload.titleRegeneration !== undefined
+                ? { titleRegeneration: payload.titleRegeneration }
+                : {}),
+              ...(payload.modelSelection !== undefined
+                ? { modelSelection: payload.modelSelection }
+                : {}),
+              ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+              ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+              ...(payload.linkedPullRequest !== undefined
+                ? { linkedPullRequest: payload.linkedPullRequest }
+                : {}),
+              ...(payload.branchPullRequest !== undefined
+                ? { branchPullRequest: payload.branchPullRequest }
+                : {}),
+              ...(payload.turnStartAcknowledged !== undefined
+                ? {
+                    pendingTurnStartMessageId:
+                      payload.turnStartAcknowledged.messageId === thread.pendingTurnStartMessageId
+                        ? null
+                        : (thread.pendingTurnStartMessageId ?? null),
+                  }
+                : {}),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.runtime-mode-set":

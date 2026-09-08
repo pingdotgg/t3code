@@ -26,6 +26,7 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 
 export const ProjectionTurnState = Schema.Literals([
   "pending",
+  "submitted",
   "running",
   "interrupted",
   "completed",
@@ -94,12 +95,33 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
 
+export const GetProjectionAdoptableTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+});
+export type GetProjectionAdoptableTurnStartInput = typeof GetProjectionAdoptableTurnStartInput.Type;
+
 export const DeleteProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
 });
 export type DeleteProjectionPendingTurnStartInput =
   typeof DeleteProjectionPendingTurnStartInput.Type;
+
+export const AcknowledgeProjectionPendingTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
+});
+export type AcknowledgeProjectionPendingTurnStartInput =
+  typeof AcknowledgeProjectionPendingTurnStartInput.Type;
+
+export const DeleteProjectionSubmittedTurnStartsInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+});
+export type DeleteProjectionSubmittedTurnStartsInput =
+  typeof DeleteProjectionSubmittedTurnStartsInput.Type;
 
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -129,12 +151,27 @@ export interface ProjectionTurnRepositoryShape {
     row: ProjectionPendingTurnStart,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /** Marks one correlated start as accepted by the provider so startup does not replay it. */
+  readonly markPendingTurnStartSubmitted: (
+    input: AcknowledgeProjectionPendingTurnStartInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Clears accepted steering placeholders correlated to a provider turn after it settles. */
+  readonly deleteSubmittedTurnStartsByTurnId: (
+    input: DeleteProjectionSubmittedTurnStartsInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
   /**
-   * Returns the oldest pending-start placeholder for a thread, which is the
-   * next request a provider lifecycle event can adopt.
+   * Returns the oldest start that has not yet been accepted by a provider.
+   * Startup reconciliation uses this to exclude acknowledged submissions.
    */
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
+  ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /** Returns the oldest pending start or acknowledgement belonging to this provider turn. */
+  readonly getAdoptableTurnStartByThreadId: (
+    input: GetProjectionAdoptableTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
   /**

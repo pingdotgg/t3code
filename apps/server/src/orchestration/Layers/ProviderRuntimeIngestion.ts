@@ -1392,9 +1392,10 @@ const make = Effect.gen(function* () {
 
   const getSourceProposedPlanReferenceForPendingTurnStart = Effect.fn(
     "getSourceProposedPlanReferenceForPendingTurnStart",
-  )(function* (threadId: ThreadId) {
-    const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+  )(function* (threadId: ThreadId, turnId: TurnId) {
+    const pendingTurnStart = yield* projectionTurnRepository.getAdoptableTurnStartByThreadId({
       threadId,
+      turnId,
     });
     if (Option.isNone(pendingTurnStart)) {
       return null;
@@ -1432,7 +1433,15 @@ const make = Effect.gen(function* () {
       return null;
     }
 
-    return yield* getSourceProposedPlanReferenceForPendingTurnStart(threadId);
+    const existingTurn = yield* projectionTurnRepository.getByTurnId({
+      threadId,
+      turnId: eventTurnId,
+    });
+    if (Option.isSome(existingTurn) && existingTurn.value.pendingMessageId !== null) {
+      return null;
+    }
+
+    return yield* getSourceProposedPlanReferenceForPendingTurnStart(threadId, eventTurnId);
   });
 
   const markSourceProposedPlanImplemented = Effect.fn("markSourceProposedPlanImplemented")(
@@ -1497,9 +1506,14 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         isTerminalTurn ||
         isCompactedThreadState
-          ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-              threadId: thread.id,
-            })
+          ? eventTurnId === undefined
+            ? yield* projectionTurnRepository.getPendingTurnStartByThreadId({
+                threadId: thread.id,
+              })
+            : yield* projectionTurnRepository.getAdoptableTurnStartByThreadId({
+                threadId: thread.id,
+                turnId: eventTurnId,
+              })
           : Option.none();
       const hasPendingTurnStart =
         Option.isSome(pendingTurnStart) && thread.session?.status === "starting";

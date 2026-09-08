@@ -626,6 +626,18 @@ describe("ProviderCommandReactor", () => {
             `;
           }),
         ),
+      readTurnStartPlaceholders: () =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            return yield* sql<{ readonly messageId: string; readonly state: string }>`
+              SELECT pending_message_id AS "messageId", state
+              FROM projection_turns
+              WHERE turn_id IS NULL
+              ORDER BY row_id ASC
+            `;
+          }),
+        ),
       tryHandlePromptCommand,
       startSession,
       sendTurn,
@@ -733,9 +745,95 @@ describe("ProviderCommandReactor", () => {
       expect(harness.sendTurn).toHaveBeenCalledTimes(1);
       const readModel = yield* Effect.promise(() => harness.readModel());
       expect(readModel.threads[0]?.messages.some((message) => message.id === messageId)).toBe(true);
-      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([
-        { threadId: "thread-1" },
-      ]);
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("does not replay a successful steering send after the active turn finishes", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-first-successful-send"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-first-successful-send"),
+          role: "user",
+          text: "Start the turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() =>
+        waitFor(() => harness.awaitCheckpointSequence.mock.calls.length === 1),
+      );
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-first-send-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-successful-steering-send"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-successful-steering-send"),
+          role: "user",
+          text: "Steer the active turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+      yield* Effect.promise(() =>
+        waitFor(() => harness.awaitCheckpointSequence.mock.calls.length === 2),
+      );
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      yield* Effect.promise(() =>
+        waitFor(async () => (await harness.readTurnStartPlaceholders()).length === 0),
+      );
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([]);
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-steered-turn-ready"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:04.000Z",
+        },
+        createdAt: "2026-01-01T00:00:04.000Z",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([]);
     }),
   );
 
@@ -1164,12 +1262,13 @@ describe("ProviderCommandReactor", () => {
         }),
       );
       expect(harness.sendTurn).toHaveBeenCalledTimes(1);
-      // Neither the original send nor the compact request received a
-      // correlated provider turn. Keep both durable; the later user turn was
+      // The original send was accepted but has not received a correlated
+      // provider turn, while the compact request has not been submitted yet.
+      // Keep both durable with their distinct states; the later user turn was
       // rejected while compaction was restoring the session and adds no row.
-      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([
-        { threadId: "thread-1" },
-        { threadId: "thread-1" },
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([
+        { messageId: "user-message-before-blocked-compact", state: "submitted" },
+        { messageId: "user-message-blocked-compact", state: "pending" },
       ]);
 
       yield* Deferred.succeed(releaseReadyDispatch, undefined);

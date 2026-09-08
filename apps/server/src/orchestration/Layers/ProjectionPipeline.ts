@@ -1282,6 +1282,28 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.meta-updated": {
+          const acknowledgement = event.payload.turnStartAcknowledged;
+          if (acknowledgement === undefined) return;
+          const existingTurn = yield* projectionTurnRepository.getByTurnId({
+            threadId: event.payload.threadId,
+            turnId: acknowledgement.turnId,
+          });
+          if (Option.isSome(existingTurn)) {
+            yield* projectionTurnRepository.deletePendingTurnStart({
+              threadId: event.payload.threadId,
+              messageId: acknowledgement.messageId,
+            });
+            return;
+          }
+          yield* projectionTurnRepository.markPendingTurnStartSubmitted({
+            threadId: event.payload.threadId,
+            messageId: acknowledgement.messageId,
+            turnId: acknowledgement.turnId,
+          });
+          return;
+        }
+
         case "thread.activity-appended": {
           if (
             event.payload.activity.kind === "context-compaction" ||
@@ -1334,6 +1356,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                     }),
               { concurrency: 1 },
             );
+            yield* Effect.forEach(
+              existingTurns.filter((turn) => turn.turnId !== null && turn.state === "running"),
+              (turn) =>
+                turn.turnId === null
+                  ? Effect.void
+                  : projectionTurnRepository.deleteSubmittedTurnStartsByTurnId({
+                      threadId: event.payload.threadId,
+                      turnId: turn.turnId,
+                    }),
+              { concurrency: 1 },
+            );
             return;
           }
 
@@ -1363,9 +1396,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: event.payload.threadId,
             turnId,
           });
-          const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId({
-            threadId: event.payload.threadId,
-          });
+          const adoptableTurnStart =
+            yield* projectionTurnRepository.getAdoptableTurnStartByThreadId({
+              threadId: event.payload.threadId,
+              turnId,
+            });
+          const pendingTurnStart =
+            Option.isSome(existingTurn) && existingTurn.value.pendingMessageId !== null
+              ? Option.none()
+              : adoptableTurnStart;
           if (Option.isSome(existingTurn)) {
             const nextState =
               existingTurn.value.state === "completed" || existingTurn.value.state === "error"

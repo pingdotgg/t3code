@@ -1007,6 +1007,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.turn.start.acknowledge": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          turnStartAcknowledged: {
+            messageId: command.messageId,
+            turnId: command.turnId,
+          },
+          // Submission state must not reorder the thread in clients.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.runtime-mode.set": {
       yield* requireThread({
         readModel,

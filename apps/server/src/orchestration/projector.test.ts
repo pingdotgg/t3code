@@ -593,6 +593,73 @@ describe("orchestration projector", () => {
     }),
   );
 
+  effectIt.effect("clears only the provider-acknowledged pending turn start", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-07T23:30:00.000Z";
+      const threadId = "thread-correlated-start-acknowledgement";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `correlated-start-acknowledgement-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Correlated acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "newer-request",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(3, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "older-request",
+            turnId: "turn-provider-acknowledged",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+
+      model = yield* projectEvent(
+        model,
+        event(4, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "newer-request",
+            turnId: "turn-provider-acknowledged",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+    }),
+  );
+
   effectIt.effect("keeps queued messages reserved when one of consecutive reverts fails", () =>
     Effect.gen(function* () {
       const now = "2026-09-08T00:00:00.000Z";
