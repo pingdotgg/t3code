@@ -35,6 +35,7 @@ artifacts/app-store/screenshots/
 native/**/target/
 node_modules/
 .alchemy/
+.commandcode/
 *.log
 .env*
 !.env.example
