@@ -598,7 +598,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
         await client.stop()
     }
 
-    func testConnectionSetupAndSubscribeRaceSendsOneWireRequest() async throws {
+    func testConnectionSetupAndSubscribeRaceSendsOnceAndDeliversEvents() async throws {
         let connection = SetupSubscriptionRaceConnection()
         let client = WebSocketRPCClient(
             connector: SequencedConnector(connections: [connection]),
@@ -621,8 +621,10 @@ final class WebSocketRPCRaceTests: XCTestCase {
             1,
             "Connection setup and subscribe() must not both own the same subscription send."
         )
-        _ = stream
         await connection.releaseSubscriptionSend()
+        var events = stream.makeAsyncIterator()
+        let value = try await events.next()
+        XCTAssertEqual(value, .number(42))
         await client.stop()
     }
 
@@ -959,6 +961,11 @@ private actor SetupSubscriptionRaceConnection: WebSocketConnection {
             subscriptionWaiters.removeAll()
             waiters.forEach { $0.resume() }
             await withCheckedContinuation { subscriptionSendContinuation = $0 }
+            enqueue(try JSONEncoder.t3.encode(JSONValue.object([
+                "_tag": .string("Chunk"),
+                "requestId": .number(Double(requestID)),
+                "values": .array([.number(42)]),
+            ])))
         }
     }
 
