@@ -102,9 +102,9 @@ describe("OrchestrationReactor", () => {
     await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
 
     expect(started).toEqual([
+      "checkpoint-reactor",
       "provider-runtime-ingestion",
       "provider-command-reactor",
-      "checkpoint-reactor",
       "thread-deletion-reactor",
       "thread-pull-request-reactor",
       "thread-settlement-reactor",

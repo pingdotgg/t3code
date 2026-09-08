@@ -263,29 +263,11 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         FROM projection_turns AS candidate
         WHERE candidate.thread_id = ${threadId}
           AND candidate.turn_id IS NULL
-          AND (
-            (candidate.state = 'submitted' AND candidate.submitted_turn_id = ${turnId})
-            OR (
-              candidate.state = 'pending'
-              AND (
-                SELECT COUNT(*)
-                FROM projection_turns AS pending
-                WHERE pending.thread_id = ${threadId}
-                  AND pending.turn_id IS NULL
-                  AND pending.state = 'pending'
-                  AND pending.pending_message_id IS NOT NULL
-                  AND pending.checkpoint_turn_count IS NULL
-              ) = 1
-            )
-          )
+          AND candidate.state = 'submitted'
+          AND candidate.submitted_turn_id = ${turnId}
           AND candidate.pending_message_id IS NOT NULL
           AND candidate.checkpoint_turn_count IS NULL
-        ORDER BY
-          CASE
-            WHEN candidate.state = 'submitted' AND candidate.submitted_turn_id = ${turnId} THEN 0
-            ELSE 1
-          END,
-          candidate.row_id ASC
+        ORDER BY candidate.row_id ASC
         LIMIT 1
       `,
   });
