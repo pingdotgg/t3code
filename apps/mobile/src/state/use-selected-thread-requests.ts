@@ -10,6 +10,7 @@ import { composerDraftsAtom, clearComposerDraft } from "./use-composer-drafts";
 import {
   composerAttachmentUploadsAtom,
   composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
 } from "./composer-attachment-uploads";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -149,6 +150,12 @@ export function useSelectedThreadRequests() {
               question.id,
             );
             const attachments = attachmentDrafts[key]?.attachments ?? [];
+            const uploadInput = {
+              environmentId: selectedThreadShell.environmentId,
+              attachments,
+              serverConfig: questionServerConfigs.get(selectedThreadShell.environmentId) ?? null,
+              states: uploadStates,
+            };
             return [
               question.id,
               {
@@ -164,13 +171,10 @@ export function useSelectedThreadRequests() {
                     questionServerConfigs.get(selectedThreadShell.environmentId)?.environment
                       .capabilities.questionAttachments !== true) ||
                   (preparationCounts[key] ?? 0) > 0 ||
+                  composerAttachmentsStillUploading(uploadInput) ||
                   composerAttachmentUploadBlockReason({
-                    environmentId: selectedThreadShell.environmentId,
-                    attachments,
+                    ...uploadInput,
                     connected: true,
-                    serverConfig:
-                      questionServerConfigs.get(selectedThreadShell.environmentId) ?? null,
-                    states: uploadStates,
                   }) !== null,
               },
             ];
