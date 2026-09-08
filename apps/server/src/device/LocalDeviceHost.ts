@@ -58,6 +58,20 @@ const DAEMON_POLL_MS = 100;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
+/**
+ * Written beside the agent-device state so a server that dies without running
+ * its finalizers (SIGKILL, dev-runner restarts) does not leave a hub bound to
+ * a loopback port forever. The next start reads it, kills only a process that
+ * is still that hub, and replaces the file.
+ */
+const HubStateFile = Schema.Struct({
+  pid: Schema.Int,
+  port: Schema.Int,
+  entryPath: Schema.String,
+});
+const decodeHubStateFile = Schema.decodeUnknownEffect(Schema.fromJsonString(HubStateFile));
+const encodeHubStateFile = Schema.encodeUnknownEffect(Schema.fromJsonString(HubStateFile));
+
 const AgentDeviceDaemonFile = Schema.Struct({
   httpPort: Schema.Int,
   token: Schema.String,
@@ -135,9 +149,75 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const stopHub = (hub: HubProcess | undefined) =>
     hub ? Scope.close(hub.scope, Exit.void).pipe(Effect.ignore) : Effect.void;
 
+  const hubStatePath = () => path.join(agentDeviceStateDir(path, config.stateDir), "hub.json");
+
+  const isProcessAlive = (pid: number) =>
+    Effect.sync(() => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+  /**
+   * A hub left behind by a previous server is identified by pid plus the
+   * command line's entry path, so a recycled pid belonging to something else
+   * is never touched.
+   */
+  const reapStaleHub = Effect.gen(function* () {
+    const previous = yield* fs
+      .readFileString(hubStatePath())
+      .pipe(Effect.flatMap(decodeHubStateFile), Effect.option);
+    if (previous._tag === "None") return;
+    const alive = yield* isProcessAlive(previous.value.pid);
+    if (alive) {
+      const commandLine = yield* runner
+        .run({
+          command: "ps",
+          args: ["-o", "command=", "-p", String(previous.value.pid)],
+          timeout: Duration.seconds(5),
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(
+          Effect.map((result) => result.stdout),
+          Effect.orElseSucceed(() => ""),
+        );
+      if (commandLine.includes(previous.value.entryPath)) {
+        yield* Effect.logWarning("Stopping a device hub left behind by a previous server", {
+          pid: previous.value.pid,
+          port: previous.value.port,
+        });
+        yield* Effect.sync(() => {
+          try {
+            process.kill(previous.value.pid, "SIGTERM");
+          } catch {
+            // Already gone.
+          }
+        });
+      }
+    }
+    yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
+  }).pipe(Effect.catchCause(() => Effect.void));
+
+  const recordHub = (hub: HubProcess, tools: DeviceToolchainPaths) =>
+    encodeHubStateFile({
+      pid: Number(hub.child.pid),
+      port: Number(new URL(hub.origin).port),
+      entryPath: tools.hub.entryPath,
+    }).pipe(
+      Effect.flatMap((json) => fs.writeFileString(hubStatePath(), json)),
+      Effect.ignore,
+    );
+
   const spawnHub = Effect.fn("LocalDeviceHost.spawnHub")(function* (
     tools: DeviceToolchainPaths,
   ): Effect.fn.Return<HubProcess, DeviceHostError> {
+    yield* reapStaleHub;
+    yield* fs
+      .makeDirectory(agentDeviceStateDir(path, config.stateDir), { recursive: true })
+      .pipe(Effect.ignore);
     const port = yield* net.reserveLoopbackPort("127.0.0.1").pipe(
       Effect.mapError(
         (cause) =>
@@ -203,6 +283,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.tapError(() => stopHub(hub)),
     );
+    yield* recordHub(hub, tools);
     yield* Effect.logInfo("Device hub started", { pid: Number(child.pid), port });
     return hub;
   });
@@ -399,6 +480,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.gen(function* () {
       const running = yield* Ref.getAndSet(runningRef, null);
       yield* stopHub(running?.hub);
+      yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
       yield* stopAgentDeviceDaemon(toolsRef);
     }),
   );
