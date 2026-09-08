@@ -23,12 +23,14 @@ import * as FileSystem from "effect/FileSystem";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PlaywrightPreviewHost from "../../PlaywrightPreviewHost.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   PreviewAutomationBroker.PreviewAutomationBroker,
+  PlaywrightPreviewHost.PlaywrightPreviewHost,
 ];
 
 const PreviewActionResult = Schema.Record(Schema.String, Schema.Never).annotate({
@@ -49,7 +51,7 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
+    "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. The engines field lists the rendering engines installed on the environment host.",
   parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
@@ -63,7 +65,7 @@ const PreviewStatusTool = Tool.make("preview_status", {
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Pass engine (gecko, webkit, or blink) to open a headless tab in that rendering engine on the environment host instead. The user cannot see that tab, so save preview_snapshot images as evidence. Pass the returned tabId to every later call.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,

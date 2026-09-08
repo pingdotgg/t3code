@@ -18,6 +18,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as PlaywrightPreviewHost from "./PlaywrightPreviewHost.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
@@ -334,6 +335,7 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const engineHost = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
   // The MCP tool runner only supplies the client, so hand the save path its services here.
   const saveServices = yield* Effect.context<
     ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path
@@ -368,6 +370,7 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
           Stream.run(Sink.last()),
           Effect.flatMap(Effect.fromOption),
           Effect.provideService(PreviewAutomationBroker.PreviewAutomationBroker, broker),
+          Effect.provideService(PlaywrightPreviewHost.PlaywrightPreviewHost, engineHost),
           Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
           Effect.flatMap(({ encodedResult }) =>
             Effect.gen(function* () {

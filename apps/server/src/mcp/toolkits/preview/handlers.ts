@@ -8,6 +8,7 @@ import {
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingArtifact,
   type ThreadId,
+  type PreviewAutomationError,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
@@ -15,6 +16,7 @@ import {
   type PreviewAutomationSetColorSchemeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
+  type PreviewBrowserEngine,
   type PreviewTabId,
 } from "@t3tools/contracts";
 
@@ -27,6 +29,7 @@ import {
 import { resolveAttachmentRelativePath } from "../../../attachmentPaths.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PlaywrightPreviewHost from "../../PlaywrightPreviewHost.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
@@ -49,38 +52,49 @@ export function normalizePreviewOpenInput(
   };
 }
 
-const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
-  operation: PreviewAutomationOperation,
-  input: unknown,
-  timeoutMs?: number,
-  tabId?: PreviewTabId,
-): Effect.fn.Return<
-  A,
-  import("@t3tools/contracts").PreviewAutomationError,
-  McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
-> {
-  const scope = yield* McpInvocationContext.requireMcpCapability("preview");
-  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-  return yield* broker.invoke<A>({
-    scope,
-    operation,
-    input,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    ...(tabId === undefined ? {} : { tabId }),
-  });
-});
+const noDesktopStatus: PreviewAutomationStatus = {
+  available: false,
+  visible: false,
+  tabId: null,
+  url: null,
+  title: null,
+  loading: false,
+};
 
-const invokeTargeted = <A>(
+const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   operation: PreviewAutomationOperation,
   input: {
     readonly tabId?: PreviewTabId | undefined;
+    readonly engine?: PreviewBrowserEngine | undefined;
     readonly [key: string]: unknown;
   },
   timeoutMs?: number,
-) => {
+): Effect.fn.Return<
+  A,
+  PreviewAutomationError,
+  | McpInvocationContext.McpInvocationContext
+  | PreviewAutomationBroker.PreviewAutomationBroker
+  | PlaywrightPreviewHost.PlaywrightPreviewHost
+> {
+  const scope = yield* McpInvocationContext.requireMcpCapability("preview");
   const { tabId, ...operationInput } = input;
-  return invoke<A>(operation, operationInput, timeoutMs, tabId);
-};
+  const request = {
+    operation,
+    input: operationInput,
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(tabId === undefined ? {} : { tabId }),
+  };
+  const isEngineTab =
+    tabId === undefined
+      ? operation === "open" && input.engine !== undefined
+      : PlaywrightPreviewHost.isEngineTabId(tabId);
+  if (isEngineTab) {
+    const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+    return yield* host.invoke<A>(request);
+  }
+  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  return yield* broker.invoke<A>({ scope, ...request });
+});
 
 const UploadedRecordingArtifact = Schema.Struct({
   ...PreviewAutomationRecordingArtifact.fields,
@@ -156,37 +170,42 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
 });
 
 const handlers = {
-  preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
+  preview_status: (input) =>
+    Effect.gen(function* () {
+      const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+      const engines = yield* host.installedEngines;
+      const status = yield* invoke<PreviewAutomationStatus>("status", input ?? {}).pipe(
+        Effect.catchTag("PreviewAutomationNoAvailableHostError", () =>
+          Effect.succeed(noDesktopStatus),
+        ),
+      );
+      return { ...status, engines };
+    }),
   preview_open: (input) =>
-    invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
-  preview_navigate: (input) =>
-    invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
+    invoke<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+  preview_navigate: (input) => invoke<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>
-    invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
+    invoke<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
-    invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
+    invoke<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
   preview_snapshot: (input) => {
     // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
-    return invokeTargeted<PreviewAutomationSnapshot>("snapshot", operationInput);
+    return invoke<PreviewAutomationSnapshot>("snapshot", operationInput);
   },
-  preview_click: (input) =>
-    invokeTargeted<void>("click", input, input.timeoutMs).pipe(Effect.as({})),
-  preview_type: (input) => invokeTargeted<void>("type", input, input.timeoutMs).pipe(Effect.as({})),
-  preview_press: (input) => invokeTargeted<void>("press", input).pipe(Effect.as({})),
-  preview_scroll: (input) => invokeTargeted<void>("scroll", input).pipe(Effect.as({})),
+  preview_click: (input) => invoke<void>("click", input, input.timeoutMs).pipe(Effect.as({})),
+  preview_type: (input) => invoke<void>("type", input, input.timeoutMs).pipe(Effect.as({})),
+  preview_press: (input) => invoke<void>("press", input).pipe(Effect.as({})),
+  preview_scroll: (input) => invoke<void>("scroll", input).pipe(Effect.as({})),
   preview_evaluate: (input) =>
-    invokeTargeted<unknown>("evaluate", input).pipe(
-      Effect.map((result) => ({ value: result ?? null })),
-    ),
-  preview_wait_for: (input) =>
-    invokeTargeted<void>("waitFor", input, input.timeoutMs).pipe(Effect.as({})),
+    invoke<unknown>("evaluate", input).pipe(Effect.map((result) => ({ value: result ?? null }))),
+  preview_wait_for: (input) => invoke<void>("waitFor", input, input.timeoutMs).pipe(Effect.as({})),
   preview_recording_start: (input) =>
-    invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
+    invoke<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
   preview_recording_stop: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.requireMcpCapability("preview");
-      const response = yield* invokeTargeted<unknown>(
+      const response = yield* invoke<unknown>(
         "recordingStop",
         { ...input, transferToEnvironment: true },
         PREVIEW_RECORDING_STOP_TIMEOUT_MS,

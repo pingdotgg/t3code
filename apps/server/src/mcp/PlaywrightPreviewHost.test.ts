@@ -1,0 +1,134 @@
+import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { PreviewTabId, type PreviewAutomationSnapshot } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+
+import * as PlaywrightPreviewHost from "./PlaywrightPreviewHost.ts";
+
+const noBrowsers = PlaywrightPreviewHost.layer.pipe(
+  Layer.provide(FileSystem.layerNoop({ exists: () => Effect.succeed(false) })),
+);
+
+const realHost = PlaywrightPreviewHost.layer.pipe(Layer.provide(NodeServices.layer));
+
+describe("resolveNavigationUrl", () => {
+  it("normalizes urls and builds environment-port targets", () => {
+    expect(PlaywrightPreviewHost.resolveNavigationUrl({ url: "t3.chat" })).toBe("https://t3.chat/");
+    expect(PlaywrightPreviewHost.resolveNavigationUrl({ url: "localhost:5173" })).toBe(
+      "http://localhost:5173/",
+    );
+    expect(
+      PlaywrightPreviewHost.resolveNavigationUrl({
+        target: { kind: "environment-port", port: 5173, path: "/settings?tab=a" },
+      }),
+    ).toBe("http://localhost:5173/settings?tab=a");
+    expect(
+      PlaywrightPreviewHost.resolveNavigationUrl({
+        target: { kind: "environment-port", port: 8443, protocol: "https" },
+      }),
+    ).toBe("https://localhost:8443");
+  });
+});
+
+describe("PlaywrightPreviewHost", () => {
+  it("routes only engine tab ids", () => {
+    expect(PlaywrightPreviewHost.isEngineTabId("engine-gecko-1")).toBe(true);
+    expect(PlaywrightPreviewHost.isEngineTabId("tab-1")).toBe(false);
+  });
+
+  it.effect("reports no engines and a matching install command when none are installed", () =>
+    Effect.gen(function* () {
+      const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+      expect(yield* host.installedEngines).toEqual([]);
+      const error = yield* host
+        .invoke<never>({ operation: "open", input: { engine: "gecko" } })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PreviewAutomationEngineUnavailableError");
+      if (error._tag !== "PreviewAutomationEngineUnavailableError") return;
+      expect(error.engine).toBe("gecko");
+      expect(error.installCommand).toMatch(/^npx playwright-core@\d+\.\d+\.\d+ install firefox$/);
+    }).pipe(Effect.provide(noBrowsers)),
+  );
+
+  it.effect("fails on unknown or missing engine tabs without touching a browser", () =>
+    Effect.gen(function* () {
+      const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+      const closed = yield* host
+        .invoke<never>({
+          operation: "snapshot",
+          input: {},
+          tabId: PreviewTabId.make("engine-webkit-9"),
+        })
+        .pipe(Effect.flip);
+      expect(closed._tag).toBe("PreviewAutomationEngineError");
+      const untargeted = yield* host
+        .invoke<never>({ operation: "click", input: {} })
+        .pipe(Effect.flip);
+      expect(untargeted._tag).toBe("PreviewAutomationEngineError");
+    }).pipe(Effect.provide(noBrowsers)),
+  );
+
+  // Runs against every engine found on this host. Passes without checking
+  // anything when none is installed.
+  it.effect(
+    "drives a real headless page in each installed engine",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+        const setHtml =
+          "document.body.innerHTML = \"<button id='go' onclick=\\\"document.title='Clicked'\\\">Go</button><input aria-label='Name'>\"";
+        for (const engine of yield* host.installedEngines) {
+          const opened = yield* host.invoke<{ tabId: string; engine: string }>({
+            operation: "open",
+            input: { engine },
+          });
+          expect(opened.engine).toBe(engine);
+          const tabId = PreviewTabId.make(opened.tabId);
+          const reused = yield* host.invoke<{ tabId: string }>({
+            operation: "open",
+            input: { engine },
+          });
+          expect(reused.tabId).toBe(opened.tabId);
+          yield* host.invoke({
+            operation: "evaluate",
+            input: { expression: setHtml },
+            tabId,
+          });
+          yield* host.invoke({
+            operation: "click",
+            input: { locator: "role=button[name='Go']" },
+            tabId,
+          });
+          yield* host.invoke({
+            operation: "type",
+            input: { locator: "#go ~ input", text: "Ada" },
+            tabId,
+          });
+          const value = yield* host.invoke({
+            operation: "evaluate",
+            input: { expression: "document.querySelector('input').value" },
+            tabId,
+          });
+          expect(value).toBe("Ada");
+          const snapshot = yield* host.invoke<PreviewAutomationSnapshot>({
+            operation: "snapshot",
+            input: {},
+            tabId,
+          });
+          expect(snapshot.title).toBe("Clicked");
+          expect(snapshot.interactiveElements.map((element) => element.role)).toEqual([
+            "button",
+            "textbox",
+          ]);
+          expect(snapshot.screenshot.data.length).toBeGreaterThan(0);
+          const recording = yield* host
+            .invoke<never>({ operation: "recordingStart", input: {}, tabId })
+            .pipe(Effect.flip);
+          expect(recording._tag).toBe("PreviewAutomationEngineError");
+        }
+      }).pipe(Effect.provide(realHost)),
+    { timeout: 120_000 },
+  );
+});

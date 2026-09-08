@@ -63,6 +63,9 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
+export const PreviewBrowserEngine = Schema.Literals(["blink", "gecko", "webkit"]);
+export type PreviewBrowserEngine = typeof PreviewBrowserEngine.Type;
+
 export const PreviewAutomationStatus = Schema.Struct({
   available: Schema.Boolean,
   visible: Schema.Boolean,
@@ -70,6 +73,8 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  engine: Schema.optional(PreviewBrowserEngine),
+  engines: Schema.optional(Schema.Array(PreviewBrowserEngine)),
   /** Optional for compatibility with desktop hosts predating viewport sizing. */
   viewportSetting: Schema.optional(PreviewViewportSetting),
   /** Measured guest-page viewport in CSS pixels when a webview is ready. */
@@ -98,6 +103,12 @@ export const PreviewAutomationOpenInput = Schema.Struct({
     Schema.Boolean.annotate({
       description:
         "Reuse tabId when supplied, otherwise this agent session's current tab. Defaults to true; set false to create a new tab.",
+    }),
+  ),
+  engine: Schema.optional(
+    PreviewBrowserEngine.annotate({
+      description:
+        "Open a headless tab in this rendering engine on the environment host instead of the desktop browser. Use gecko for Firefox, webkit for Safari, or blink for Chromium. preview_status lists the installed engines. Pass the returned tabId to every later call.",
     }),
   ),
 })
@@ -897,7 +908,38 @@ export class PreviewAutomationRecordingDeadlineExpiredError extends Schema.Tagge
   }
 }
 
+export class PreviewAutomationEngineUnavailableError extends Schema.TaggedError<PreviewAutomationEngineUnavailableError>()(
+  "PreviewAutomationEngineUnavailableError",
+  {
+    engine: PreviewBrowserEngine,
+    installedEngines: Schema.Array(PreviewBrowserEngine),
+    installCommand: Schema.String,
+  },
+) {
+  override get message(): string {
+    const installed =
+      this.installedEngines.length === 0 ? "none" : this.installedEngines.join(", ");
+    return `Browser engine ${this.engine} is not installed on the environment host. Installed engines: ${installed}. Install it with: ${this.installCommand}`;
+  }
+}
+
+export class PreviewAutomationEngineError extends Schema.TaggedError<PreviewAutomationEngineError>()(
+  "PreviewAutomationEngineError",
+  {
+    operation: PreviewAutomationOperation,
+    engine: Schema.optional(PreviewBrowserEngine),
+    tabId: Schema.optional(PreviewTabId),
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Preview automation ${this.operation} failed in ${this.engine ?? "engine"} tab${this.tabId ? ` ${this.tabId}` : ""}: ${this.detail}`;
+  }
+}
+
 export const PreviewAutomationError = Schema.Union([
+  PreviewAutomationEngineUnavailableError,
+  PreviewAutomationEngineError,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
   PreviewAutomationRecordingTooLargeError,

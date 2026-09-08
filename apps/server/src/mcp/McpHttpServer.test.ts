@@ -15,6 +15,7 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as PlaywrightPreviewHost from "./PlaywrightPreviewHost.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
@@ -45,6 +46,7 @@ const client = McpSchema.McpServerClient.of({
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
+  Layer.provideMerge(PlaywrightPreviewHost.layer),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -697,6 +699,31 @@ it.effect("registers annotated tools and preserves authenticated request context
         expect(result.structuredContent).toEqual({});
         expect(result.content).toEqual([{ type: "text", text: "{}" }]);
       }
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("reports installed engines when no desktop preview host is connected", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
+      const status = yield* server
+        .callTool({ name: "preview_status", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(status.isError).toBe(false);
+      expect(status.structuredContent).toEqual({
+        available: false,
+        visible: false,
+        tabId: null,
+        url: null,
+        title: null,
+        loading: false,
+        engines: yield* host.installedEngines,
+      });
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

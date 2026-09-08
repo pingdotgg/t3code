@@ -515,6 +515,9 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+      playwright-core:
+        specifier: 1.60.0
+        version: 1.60.0
       stream-chain:
         specifier: ^4.2.5
         version: 4.2.5
