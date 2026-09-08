@@ -4,12 +4,16 @@ import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { cn } from "~/lib/utils";
+import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
-export const PullRequestMarkdownContext = createContext<string | null>(null);
+export const PullRequestMarkdownContext = createContext<{
+  repositoryUrl: string | null;
+  threadRef: ScopedThreadRef | null;
+} | null>(null);
 
 /** Renders PR uploads inline, with retry and an original link when video playback fails. */
 export function PullRequestMarkdown({
@@ -27,7 +31,9 @@ export function PullRequestMarkdown({
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
-  const repositoryUrl = useContext(PullRequestMarkdownContext);
+  const context = useContext(PullRequestMarkdownContext);
+  const repositoryUrl = context?.repositoryUrl;
+  const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
     [repositoryUrl],
@@ -41,7 +47,8 @@ export function PullRequestMarkdown({
               key={segment.id}
               text={segment.text}
               cwd={cwd}
-              threadRef={threadRef ?? undefined}
+              threadRef={resolvedThreadRef}
+              pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
             />
