@@ -1464,6 +1464,7 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
+/** Render and coordinate the active thread workspace. */
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,

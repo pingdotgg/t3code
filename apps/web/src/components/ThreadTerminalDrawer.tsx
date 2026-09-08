@@ -1047,6 +1047,7 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
   );
 }
 
+/** Render and coordinate the active thread's terminal drawer or panel. */
 export default function ThreadTerminalDrawer({
   mode = "drawer",
   threadRef,
