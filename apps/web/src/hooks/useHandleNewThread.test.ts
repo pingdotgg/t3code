@@ -23,8 +23,8 @@ const testState = vi.hoisted(() => {
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
     getDraftThread: vi.fn(() => null),
-    getStickyRuntimeMode: vi.fn(() => null),
-    setStickyRuntimeMode: vi.fn(),
+    getLastUsedRuntimeMode: vi.fn(() => null),
+    setLastUsedRuntimeMode: vi.fn(),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
@@ -47,7 +47,7 @@ const testState = vi.hoisted(() => {
       draftStore.setRuntimeMode.mockClear();
       draftStore.setInteractionMode.mockClear();
       draftStore.setDraftThreadContext.mockClear();
-      draftStore.setStickyRuntimeMode.mockClear();
+      draftStore.setLastUsedRuntimeMode.mockClear();
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -205,7 +205,7 @@ describe("useNewThreadHandler", () => {
     expect(testState.router.navigate).toHaveBeenCalled();
   });
 
-  it("does not seed sticky from the machine default alone", async () => {
+  it("does not seed last-used from the machine default alone", async () => {
     testState.reset(null);
     const openThread = useNewThreadHandler();
     const pendingOpen = openThread({
@@ -216,6 +216,6 @@ describe("useNewThreadHandler", () => {
     testState.completeProjectFileRead(null);
     await pendingOpen;
 
-    expect(testState.draftStore.setStickyRuntimeMode).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLastUsedRuntimeMode).not.toHaveBeenCalled();
   });
 });

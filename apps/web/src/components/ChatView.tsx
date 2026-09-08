@@ -1499,8 +1499,8 @@ export default function ChatView(props: ChatViewProps) {
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
-  const setStickyRuntimeMode = useComposerDraftStore((store) => store.setStickyRuntimeMode);
-  const getStickyRuntimeMode = useComposerDraftStore((store) => store.getStickyRuntimeMode);
+  const setLastUsedRuntimeMode = useComposerDraftStore((store) => store.setLastUsedRuntimeMode);
+  const getLastUsedRuntimeMode = useComposerDraftStore((store) => store.getLastUsedRuntimeMode);
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
   const citationLocation = useLocation({
@@ -2267,7 +2267,7 @@ export default function ChatView(props: ChatViewProps) {
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
       const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
-        stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
+        lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: settings.defaultRuntimeMode,
       });
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
@@ -2288,7 +2288,7 @@ export default function ChatView(props: ChatViewProps) {
       draftId,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
-      getStickyRuntimeMode,
+      getLastUsedRuntimeMode,
       isServerThread,
       navigate,
       projectGroupingSettings,
@@ -4045,7 +4045,7 @@ export default function ChatView(props: ChatViewProps) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
       if (activeLogicalProjectKey) {
-        setStickyRuntimeMode(activeLogicalProjectKey, mode);
+        setLastUsedRuntimeMode(activeLogicalProjectKey, mode);
       }
       scheduleComposerFocus();
     },
@@ -4057,7 +4057,7 @@ export default function ChatView(props: ChatViewProps) {
       composerDraftTarget,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
-      setStickyRuntimeMode,
+      setLastUsedRuntimeMode,
     ],
   );
 

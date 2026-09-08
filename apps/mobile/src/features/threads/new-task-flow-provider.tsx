@@ -53,11 +53,11 @@ import {
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   setStickyComposerModelSelection,
-  setStickyComposerRuntimeMode,
+  setLastUsedComposerRuntimeMode,
   updateComposerDraftSettings,
   useComposerDraft,
   useStickyComposerModelSelection,
-  useStickyComposerRuntimeMode,
+  useLastUsedComposerRuntimeMode,
 } from "../../state/use-composer-drafts";
 import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import {
@@ -473,10 +473,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
-  const stickyRuntimeMode = useStickyComposerRuntimeMode(selectedProjectKey);
+  const lastUsedRuntimeMode = useLastUsedComposerRuntimeMode(selectedProjectKey);
   const runtimeMode = resolveNewThreadRuntimeMode({
     draftRuntimeMode: selectedProjectDraft.runtimeMode,
-    stickyRuntimeMode,
+    lastUsedRuntimeMode,
     configuredRuntimeMode: selectedEnvironmentServerConfig?.settings.defaultRuntimeMode,
   });
   const modelOptions = useMemo(
@@ -883,7 +883,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
       }
       if (selectedProjectKey) {
-        setStickyComposerRuntimeMode(selectedProjectKey, value);
+        setLastUsedComposerRuntimeMode(selectedProjectKey, value);
       }
     },
     [selectedProjectDraftKey, selectedProjectKey],
@@ -968,7 +968,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
       if (selectedProjectKey) {
-        setStickyComposerRuntimeMode(selectedProjectKey, runtimeMode);
+        setLastUsedComposerRuntimeMode(selectedProjectKey, runtimeMode);
       }
       return {
         environmentId: selectedProject.environmentId,

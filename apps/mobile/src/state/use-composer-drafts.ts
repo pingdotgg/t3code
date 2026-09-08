@@ -127,6 +127,8 @@ const PersistedComposerDraftsSchema = Schema.Struct({
   schemaVersion: Schema.Literal(COMPOSER_DRAFTS_SCHEMA_VERSION),
   drafts: Schema.Record(Schema.String, ComposerDraftSchema),
   stickyModelSelection: Schema.optional(ModelSelectionSchema),
+  lastUsedRuntimeModeByProjectKey: Schema.optional(Schema.Record(Schema.String, RuntimeModeSchema)),
+  /** @deprecated Renamed to lastUsedRuntimeModeByProjectKey. */
   stickyRuntimeModeByProjectKey: Schema.optional(Schema.Record(Schema.String, RuntimeModeSchema)),
   cloudAccountId: Schema.optional(Schema.String),
   signedOutDrafts: Schema.optional(
@@ -159,9 +161,9 @@ export const stickyComposerModelSelectionAtom = Atom.make<ModelSelection | null>
   Atom.withLabel("mobile:sticky-composer-model-selection"),
 );
 
-export const stickyComposerRuntimeModeByProjectKeyAtom = Atom.make<
+export const lastUsedComposerRuntimeModeByProjectKeyAtom = Atom.make<
   Partial<Record<string, RuntimeMode>>
->({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:sticky-composer-runtime-mode-by-project"));
+>({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:last-used-composer-runtime-mode-by-project"));
 
 interface SignedOutDrafts {
   readonly drafts: Record<string, ComposerDraft>;
@@ -278,7 +280,7 @@ export function migrateLegacyNewTaskDraft(
 export function decodePersistedComposerState(value: unknown): {
   readonly drafts: Record<string, ComposerDraft>;
   readonly stickyModelSelection: ModelSelection | null;
-  readonly stickyRuntimeModeByProjectKey: Partial<Record<string, RuntimeMode>>;
+  readonly lastUsedRuntimeModeByProjectKey: Partial<Record<string, RuntimeMode>>;
   readonly cloudDrafts: ComposerCloudDraftState;
 } {
   const parsed = decodePersistedComposerDraftsDocument(value);
@@ -313,8 +315,8 @@ export function decodePersistedComposerState(value: unknown): {
         .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0),
     ),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
-    stickyRuntimeModeByProjectKey: normalizeStickyRuntimeModeByProjectKey(
-      parsed.stickyRuntimeModeByProjectKey,
+    lastUsedRuntimeModeByProjectKey: normalizeLastUsedRuntimeModeByProjectKey(
+      parsed.lastUsedRuntimeModeByProjectKey ?? parsed.stickyRuntimeModeByProjectKey,
     ),
     cloudDrafts: {
       accountId: parsed.cloudAccountId ?? null,
@@ -337,7 +339,7 @@ export function decodePersistedComposerState(value: unknown): {
   };
 }
 
-function normalizeStickyRuntimeModeByProjectKey(
+function normalizeLastUsedRuntimeModeByProjectKey(
   value: Partial<Record<string, RuntimeMode>> | undefined,
 ): Partial<Record<string, RuntimeMode>> {
   if (!value) {
@@ -371,7 +373,7 @@ async function loadPersistedComposerState(): Promise<
       return {
         drafts: {},
         stickyModelSelection: null,
-        stickyRuntimeModeByProjectKey: {},
+        lastUsedRuntimeModeByProjectKey: {},
         cloudDrafts: { accountId: null, signedOut: {} },
       };
     }
@@ -392,8 +394,8 @@ async function loadPersistedComposerState(): Promise<
 async function writePersistedComposerState(
   drafts: Record<string, ComposerDraft>,
   stickyModelSelection: ModelSelection | null,
-  stickyRuntimeModeByProjectKey: Partial<Record<string, RuntimeMode>> = appAtomRegistry.get(
-    stickyComposerRuntimeModeByProjectKeyAtom,
+  lastUsedRuntimeModeByProjectKey: Partial<Record<string, RuntimeMode>> = appAtomRegistry.get(
+    lastUsedComposerRuntimeModeByProjectKeyAtom,
   ),
   cloudDrafts = appAtomRegistry.get(composerCloudDraftsAtom),
 ): Promise<void> {
@@ -404,8 +406,8 @@ async function writePersistedComposerState(
     const nonEmptyDrafts = Object.fromEntries(
       Object.entries(drafts).filter(([, draft]) => !isEmptyDraft(draft)),
     );
-    const stickyRuntimeModes = Object.fromEntries(
-      Object.entries(stickyRuntimeModeByProjectKey).filter(
+    const lastUsedRuntimeModes = Object.fromEntries(
+      Object.entries(lastUsedRuntimeModeByProjectKey).filter(
         (entry): entry is [string, RuntimeMode] => entry[1] !== undefined,
       ),
     );
@@ -413,8 +415,8 @@ async function writePersistedComposerState(
       schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
       drafts: nonEmptyDrafts,
       ...(stickyModelSelection ? { stickyModelSelection } : {}),
-      ...(Object.keys(stickyRuntimeModes).length > 0
-        ? { stickyRuntimeModeByProjectKey: stickyRuntimeModes }
+      ...(Object.keys(lastUsedRuntimeModes).length > 0
+        ? { lastUsedRuntimeModeByProjectKey: lastUsedRuntimeModes }
         : {}),
       ...(cloudDrafts.accountId ? { cloudAccountId: cloudDrafts.accountId } : {}),
       ...(Object.keys(cloudDrafts.signedOut).length > 0
@@ -667,7 +669,7 @@ function schedulePersistComposerState(): void {
         await writePersistedComposerState(
           appAtomRegistry.get(composerDraftsAtom),
           appAtomRegistry.get(stickyComposerModelSelectionAtom),
-          appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom),
+          appAtomRegistry.get(lastUsedComposerRuntimeModeByProjectKeyAtom),
         );
         persistRetryNeeded = false;
       } catch (error) {
@@ -700,10 +702,10 @@ export function ensureComposerDraftsLoaded(): void {
     ) {
       appAtomRegistry.set(stickyComposerModelSelectionAtom, persisted.stickyModelSelection);
     }
-    if (Object.keys(persisted.stickyRuntimeModeByProjectKey).length > 0) {
-      const current = appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom);
-      appAtomRegistry.set(stickyComposerRuntimeModeByProjectKeyAtom, {
-        ...persisted.stickyRuntimeModeByProjectKey,
+    if (Object.keys(persisted.lastUsedRuntimeModeByProjectKey).length > 0) {
+      const current = appAtomRegistry.get(lastUsedComposerRuntimeModeByProjectKeyAtom);
+      appAtomRegistry.set(lastUsedComposerRuntimeModeByProjectKeyAtom, {
+        ...persisted.lastUsedRuntimeModeByProjectKey,
         ...current,
       });
     }
@@ -938,15 +940,15 @@ export function setStickyComposerModelSelection(modelSelection: ModelSelection):
   schedulePersistComposerState();
 }
 
-export function getStickyComposerRuntimeMode(projectKey: string): RuntimeMode | null {
+export function getLastUsedComposerRuntimeMode(projectKey: string): RuntimeMode | null {
   const key = projectKey.trim();
   if (key.length === 0) {
     return null;
   }
-  return appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom)[key] ?? null;
+  return appAtomRegistry.get(lastUsedComposerRuntimeModeByProjectKeyAtom)[key] ?? null;
 }
 
-export function setStickyComposerRuntimeMode(
+export function setLastUsedComposerRuntimeMode(
   projectKey: string,
   runtimeMode: RuntimeMode | null | undefined,
 ): void {
@@ -954,7 +956,7 @@ export function setStickyComposerRuntimeMode(
   if (key.length === 0) {
     return;
   }
-  const current = appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom);
+  const current = appAtomRegistry.get(lastUsedComposerRuntimeModeByProjectKeyAtom);
   const nextMode = runtimeMode ?? null;
   if ((current[key] ?? null) === nextMode) {
     return;
@@ -965,7 +967,7 @@ export function setStickyComposerRuntimeMode(
   } else {
     next[key] = nextMode;
   }
-  appAtomRegistry.set(stickyComposerRuntimeModeByProjectKeyAtom, next);
+  appAtomRegistry.set(lastUsedComposerRuntimeModeByProjectKeyAtom, next);
   schedulePersistComposerState();
 }
 
@@ -1569,13 +1571,13 @@ export function useStickyComposerModelSelection(): ModelSelection | null {
   return selection;
 }
 
-export function useStickyComposerRuntimeMode(projectKey: string | null): RuntimeMode | null {
-  const stickyByProject = useAtomValue(stickyComposerRuntimeModeByProjectKeyAtom);
+export function useLastUsedComposerRuntimeMode(projectKey: string | null): RuntimeMode | null {
+  const lastUsedByProject = useAtomValue(lastUsedComposerRuntimeModeByProjectKeyAtom);
   useEffect(() => {
     ensureComposerDraftsLoaded();
   }, []);
   if (!projectKey) {
     return null;
   }
-  return stickyByProject[projectKey] ?? null;
+  return lastUsedByProject[projectKey] ?? null;
 }

@@ -3,37 +3,37 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveNewThreadRuntimeMode } from "./runtimeMode.ts";
 
 describe("resolveNewThreadRuntimeMode", () => {
-  it("prefers an explicit draft pick over carry, sticky, and configured", () => {
+  it("prefers an explicit draft pick over carry, last-used, and configured", () => {
     expect(
       resolveNewThreadRuntimeMode({
         draftRuntimeMode: "approval-required",
         carryRuntimeMode: "auto-accept-edits",
-        stickyRuntimeMode: "full-access",
+        lastUsedRuntimeMode: "full-access",
         configuredRuntimeMode: "auto",
       }),
     ).toBe("approval-required");
   });
 
-  it("prefers same-project carry over sticky and configured", () => {
+  it("prefers same-project carry over last-used and configured", () => {
     expect(
       resolveNewThreadRuntimeMode({
         carryRuntimeMode: "auto-accept-edits",
-        stickyRuntimeMode: "approval-required",
+        lastUsedRuntimeMode: "approval-required",
         configuredRuntimeMode: "auto",
       }),
     ).toBe("auto-accept-edits");
   });
 
-  it("uses project sticky when nothing carries", () => {
+  it("uses project last-used when nothing carries", () => {
     expect(
       resolveNewThreadRuntimeMode({
-        stickyRuntimeMode: "approval-required",
+        lastUsedRuntimeMode: "approval-required",
         configuredRuntimeMode: "auto",
       }),
     ).toBe("approval-required");
   });
 
-  it("uses the configured default when sticky is absent", () => {
+  it("uses the configured default when last-used is absent", () => {
     expect(
       resolveNewThreadRuntimeMode({
         configuredRuntimeMode: "auto",

@@ -178,9 +178,9 @@ import {
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
-  setStickyComposerRuntimeMode,
+  setLastUsedComposerRuntimeMode,
   stickyComposerModelSelectionAtom,
-  stickyComposerRuntimeModeByProjectKeyAtom,
+  lastUsedComposerRuntimeModeByProjectKeyAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
 } from "./use-composer-drafts";
@@ -204,7 +204,7 @@ afterEach(() => {
   appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(composerCloudDraftsAtom, { accountId: null, signedOut: {} });
   appAtomRegistry.set(stickyComposerModelSelectionAtom, null);
-  appAtomRegistry.set(stickyComposerRuntimeModeByProjectKeyAtom, {});
+  appAtomRegistry.set(lastUsedComposerRuntimeModeByProjectKeyAtom, {});
   appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
   composerAttachmentCleanupMocks.remove.mockClear();
   composerAttachmentCleanupMocks.releaseUploads.mockReset();
@@ -213,30 +213,44 @@ afterEach(() => {
   incomingShareStorageMocks.load.mockResolvedValue([]);
 });
 
-describe("mobile sticky runtime mode", () => {
-  it("round-trips sticky runtime modes per project", () => {
+describe("mobile last-used runtime mode", () => {
+  it("round-trips last-used runtime modes per project", () => {
     expect(
       decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {},
-        stickyRuntimeModeByProjectKey: {
+        lastUsedRuntimeModeByProjectKey: {
           "env:project-a": "approval-required",
           "env:project-b": "auto-accept-edits",
         },
-      }).stickyRuntimeModeByProjectKey,
+      }).lastUsedRuntimeModeByProjectKey,
     ).toEqual({
       "env:project-a": "approval-required",
       "env:project-b": "auto-accept-edits",
     });
   });
 
-  it("stores sticky runtime mode updates in memory", () => {
-    setStickyComposerRuntimeMode("env:project-a", "approval-required");
-    expect(appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom)).toEqual({
+  it("reads legacy stickyRuntimeModeByProjectKey as last-used", () => {
+    expect(
+      decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: {},
+        stickyRuntimeModeByProjectKey: {
+          "env:project-a": "approval-required",
+        },
+      }).lastUsedRuntimeModeByProjectKey,
+    ).toEqual({
       "env:project-a": "approval-required",
     });
-    setStickyComposerRuntimeMode("env:project-a", null);
-    expect(appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom)).toEqual({});
+  });
+
+  it("stores last-used runtime mode updates in memory", () => {
+    setLastUsedComposerRuntimeMode("env:project-a", "approval-required");
+    expect(appAtomRegistry.get(lastUsedComposerRuntimeModeByProjectKeyAtom)).toEqual({
+      "env:project-a": "approval-required",
+    });
+    setLastUsedComposerRuntimeMode("env:project-a", null);
+    expect(appAtomRegistry.get(lastUsedComposerRuntimeModeByProjectKeyAtom)).toEqual({});
   });
 });
 

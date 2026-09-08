@@ -150,7 +150,7 @@ function resetComposerDraftStore() {
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
-    stickyRuntimeModeByLogicalProjectKey: {},
+    lastUsedRuntimeModeByLogicalProjectKey: {},
   });
 }
 
@@ -732,7 +732,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
-      stickyRuntimeModeByLogicalProjectKey: {},
+      lastUsedRuntimeModeByLogicalProjectKey: {},
     });
   });
 
@@ -788,7 +788,7 @@ describe("composerDraftStore terminal contexts", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
-      stickyRuntimeModeByLogicalProjectKey: {},
+      lastUsedRuntimeModeByLogicalProjectKey: {},
     });
   });
 
@@ -2549,33 +2549,65 @@ describe("composerDraftStore provider-scoped option updates", () => {
   });
 });
 
-describe("composerDraftStore sticky runtime mode", () => {
+describe("composerDraftStore last-used runtime mode", () => {
   beforeEach(() => {
     resetComposerDraftStore();
   });
 
-  it("stores a sticky runtime mode per logical project", () => {
+  it("stores a last-used runtime mode per logical project", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setStickyRuntimeMode("project-a", "approval-required");
-    store.setStickyRuntimeMode("project-b", "auto-accept-edits");
+    store.setLastUsedRuntimeMode("project-a", "approval-required");
+    store.setLastUsedRuntimeMode("project-b", "auto-accept-edits");
 
-    expect(store.getStickyRuntimeMode("project-a")).toBe("approval-required");
-    expect(store.getStickyRuntimeMode("project-b")).toBe("auto-accept-edits");
-    expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({
+    expect(store.getLastUsedRuntimeMode("project-a")).toBe("approval-required");
+    expect(store.getLastUsedRuntimeMode("project-b")).toBe("auto-accept-edits");
+    expect(useComposerDraftStore.getState().lastUsedRuntimeModeByLogicalProjectKey).toEqual({
       "project-a": "approval-required",
       "project-b": "auto-accept-edits",
     });
   });
 
-  it("clears sticky runtime mode for a project", () => {
+  it("clears last-used runtime mode for a project", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setStickyRuntimeMode("project-a", "approval-required");
-    store.setStickyRuntimeMode("project-a", null);
+    store.setLastUsedRuntimeMode("project-a", "approval-required");
+    store.setLastUsedRuntimeMode("project-a", null);
 
-    expect(store.getStickyRuntimeMode("project-a")).toBeNull();
-    expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({});
+    expect(store.getLastUsedRuntimeMode("project-a")).toBeNull();
+    expect(useComposerDraftStore.getState().lastUsedRuntimeModeByLogicalProjectKey).toEqual({});
+  });
+
+  it("migrates legacy stickyRuntimeModeByLogicalProjectKey on hydrate", async () => {
+    vi.useFakeTimers();
+    try {
+      await useComposerDraftStore.persist.clearStorage();
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      expect(storage).toBeDefined();
+      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 9,
+        state: {
+          draftsByThreadKey: {},
+          draftThreadsByThreadKey: {},
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+          stickyRuntimeModeByLogicalProjectKey: {
+            "project-legacy": "auto",
+          },
+        },
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(useComposerDraftStore.getState().lastUsedRuntimeModeByLogicalProjectKey).toEqual({
+        "project-legacy": "auto",
+      });
+      expect(useComposerDraftStore.getState().getLastUsedRuntimeMode("project-legacy")).toBe(
+        "auto",
+      );
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
   });
 });
 

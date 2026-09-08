@@ -307,6 +307,8 @@ type LegacyV2StoreFields = {
   draftThreadsByThreadKey?: Record<string, PersistedDraftThreadState> | null;
   projectDraftThreadKeyByProjectKey?: Record<string, string> | null;
   logicalProjectDraftThreadKeyByLogicalProjectKey?: Record<string, string> | null;
+  /** @deprecated Renamed to lastUsedRuntimeModeByLogicalProjectKey. */
+  stickyRuntimeModeByLogicalProjectKey?: Record<string, RuntimeMode> | null;
 };
 
 type LegacyPersistedComposerDraftStoreState = PersistedComposerDraftStoreState &
@@ -347,7 +349,7 @@ const PersistedComposerDraftStoreState = Schema.Struct({
   ),
   stickyActiveProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   /** Last-used runtime/access mode keyed by logical project identity. */
-  stickyRuntimeModeByLogicalProjectKey: Schema.optionalKey(
+  lastUsedRuntimeModeByLogicalProjectKey: Schema.optionalKey(
     Schema.Record(Schema.String, RuntimeMode),
   ),
 });
@@ -481,7 +483,7 @@ interface ComposerDraftStoreState {
   backgroundSubmissionThreadKeys: Record<string, true>;
   stickyModelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
   stickyActiveProvider: ProviderInstanceId | null;
-  stickyRuntimeModeByLogicalProjectKey: Partial<Record<string, RuntimeMode>>;
+  lastUsedRuntimeModeByLogicalProjectKey: Partial<Record<string, RuntimeMode>>;
   /** Returns the editable composer content for a draft session or server thread. */
   getComposerDraft: (target: ComposerThreadTarget) => ComposerThreadDraftState | null;
   /** Looks up the active draft session for a logical project identity. */
@@ -563,8 +565,8 @@ interface ComposerDraftStoreState {
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
-  getStickyRuntimeMode: (logicalProjectKey: string) => RuntimeMode | null;
-  setStickyRuntimeMode: (
+  getLastUsedRuntimeMode: (logicalProjectKey: string) => RuntimeMode | null;
+  setLastUsedRuntimeMode: (
     logicalProjectKey: string,
     runtimeMode: RuntimeMode | null | undefined,
   ) => void;
@@ -740,7 +742,7 @@ function compactModelSelectionByProvider(
   return Object.fromEntries(entries) as DeepMutable<Record<ProviderInstanceId, ModelSelection>>;
 }
 
-function normalizeStickyRuntimeModeByLogicalProjectKey(
+function normalizeLastUsedRuntimeModeByLogicalProjectKey(
   value: unknown,
 ): Record<string, RuntimeMode> {
   if (!value || typeof value !== "object") {
@@ -763,7 +765,7 @@ const EMPTY_PERSISTED_DRAFT_STORE_STATE = Object.freeze<PersistedComposerDraftSt
   logicalProjectDraftThreadKeyByLogicalProjectKey: {},
   stickyModelSelectionByProvider: {},
   stickyActiveProvider: null,
-  stickyRuntimeModeByLogicalProjectKey: {},
+  lastUsedRuntimeModeByLogicalProjectKey: {},
 });
 
 const EMPTY_IMAGES: ComposerImageAttachment[] = [];
@@ -2255,8 +2257,8 @@ export function partializeComposerDraftStoreState(
       state.stickyModelSelectionByProvider,
     ),
     stickyActiveProvider: state.stickyActiveProvider,
-    stickyRuntimeModeByLogicalProjectKey: normalizeStickyRuntimeModeByLogicalProjectKey(
-      state.stickyRuntimeModeByLogicalProjectKey,
+    lastUsedRuntimeModeByLogicalProjectKey: normalizeLastUsedRuntimeModeByLogicalProjectKey(
+      state.lastUsedRuntimeModeByLogicalProjectKey,
     ),
   };
 }
@@ -2328,8 +2330,9 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(stickyModelSelectionByProvider),
     stickyActiveProvider,
-    stickyRuntimeModeByLogicalProjectKey: normalizeStickyRuntimeModeByLogicalProjectKey(
-      normalizedPersistedState.stickyRuntimeModeByLogicalProjectKey,
+    lastUsedRuntimeModeByLogicalProjectKey: normalizeLastUsedRuntimeModeByLogicalProjectKey(
+      normalizedPersistedState.lastUsedRuntimeModeByLogicalProjectKey ??
+        normalizedPersistedState.stickyRuntimeModeByLogicalProjectKey,
     ),
   };
 }
@@ -2558,7 +2561,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         backgroundSubmissionThreadKeys: {},
         stickyModelSelectionByProvider: {},
         stickyActiveProvider: null,
-        stickyRuntimeModeByLogicalProjectKey: {},
+        lastUsedRuntimeModeByLogicalProjectKey: {},
         getComposerDraft: (target) => getComposerDraftState(get(), target),
         getDraftThreadByLogicalProjectKey: (logicalProjectKey) => {
           return get().getDraftSessionByLogicalProjectKey(logicalProjectKey);
@@ -2977,31 +2980,31 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        getStickyRuntimeMode: (logicalProjectKey) => {
+        getLastUsedRuntimeMode: (logicalProjectKey) => {
           const key = logicalProjectDraftKey(logicalProjectKey);
           if (key.length === 0) {
             return null;
           }
-          return get().stickyRuntimeModeByLogicalProjectKey[key] ?? null;
+          return get().lastUsedRuntimeModeByLogicalProjectKey[key] ?? null;
         },
-        setStickyRuntimeMode: (logicalProjectKey, runtimeMode) => {
+        setLastUsedRuntimeMode: (logicalProjectKey, runtimeMode) => {
           const key = logicalProjectDraftKey(logicalProjectKey);
           if (key.length === 0) {
             return;
           }
           const nextRuntimeMode = isRuntimeMode(runtimeMode) ? runtimeMode : null;
           set((state) => {
-            const current = state.stickyRuntimeModeByLogicalProjectKey[key] ?? null;
+            const current = state.lastUsedRuntimeModeByLogicalProjectKey[key] ?? null;
             if (current === nextRuntimeMode) {
               return state;
             }
-            const nextMap = { ...state.stickyRuntimeModeByLogicalProjectKey };
+            const nextMap = { ...state.lastUsedRuntimeModeByLogicalProjectKey };
             if (nextRuntimeMode === null) {
               delete nextMap[key];
             } else {
               nextMap[key] = nextRuntimeMode;
             }
-            return { stickyRuntimeModeByLogicalProjectKey: nextMap };
+            return { lastUsedRuntimeModeByLogicalProjectKey: nextMap };
           });
         },
         applyStickyState: (threadRef) => {
@@ -4070,8 +4073,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             normalizedPersisted.logicalProjectDraftThreadKeyByLogicalProjectKey,
           stickyModelSelectionByProvider: normalizedPersisted.stickyModelSelectionByProvider ?? {},
           stickyActiveProvider: normalizedPersisted.stickyActiveProvider ?? null,
-          stickyRuntimeModeByLogicalProjectKey:
-            normalizedPersisted.stickyRuntimeModeByLogicalProjectKey ?? {},
+          lastUsedRuntimeModeByLogicalProjectKey:
+            normalizedPersisted.lastUsedRuntimeModeByLogicalProjectKey ?? {},
         };
       },
     },

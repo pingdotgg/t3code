@@ -1013,7 +1013,7 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Preferred access mode for new threads when nothing carries from the
-   * current view and the client has no sticky last-used mode for the project.
+   * current view and the client has no last-used mode for the project.
    */
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
