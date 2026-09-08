@@ -10,6 +10,7 @@ public protocol FeatureClient: AnyObject {
     func backgroundSnapshot() async throws -> FeatureSnapshot
     func events() -> AsyncStream<FeatureEvent>
     func resumeAfterBackground(reconnect: Bool) async
+    func suspendForBackground()
 
     func preuploadAttachment(
         _ attachment: FeatureUploadAttachment,
@@ -315,6 +316,8 @@ public extension FeatureClient {
     }
 
     func resumeAfterBackground(reconnect: Bool) async {}
+
+    func suspendForBackground() {}
 
     func preuploadAttachment(
         _ attachment: FeatureUploadAttachment,
