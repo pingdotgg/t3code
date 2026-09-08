@@ -1390,13 +1390,7 @@ public final class FeatureRootModel {
             }
 
             guard snapshot.threads.contains(where: { $0.id == submission.threadID }) else {
-                if pendingThreadsByID[submission.threadID] != nil {
-                    pendingSubmissionsByID[submission.id] = submission
-                } else if isEnvironmentConnected(submission.environmentID) {
-                    await discardRestoredSubmission(submission)
-                } else {
-                    pendingSubmissionsByID[submission.id] = submission
-                }
+                pendingSubmissionsByID[submission.id] = submission
                 continue
             }
             pendingSubmissionsByID[submission.id] = submission
@@ -1716,6 +1710,36 @@ public final class FeatureRootModel {
                     needsRetry = true
                 }
                 continue
+            }
+            let awaitingCreation = pendingSubmissionsByID.values.contains {
+                $0.creation != nil && $0.threadID == submission.threadID
+            }
+            if submission.creation == nil, !awaitingCreation,
+               !snapshot.threads.contains(where: { $0.id == submission.threadID }),
+               isEnvironmentConnected(submission.environmentID) {
+                do {
+                    let recovered = try await client.recoverQueuedThread(
+                        environmentID: submission.environmentID,
+                        wireID: submission.identity.threadID
+                    )
+                    guard !Task.isCancelled, outboxGeneration == generation else { return false }
+                    guard pendingSubmissionsByID[submission.id] != nil else { continue }
+                    guard let recovered else {
+                        if !(await discardQueuedSubmission(submission)) { needsRetry = true }
+                        continue
+                    }
+                    guard recovered.id == submission.threadID,
+                          recovered.environmentID == submission.environmentID else {
+                        needsRetry = true
+                        continue
+                    }
+                    upsert(recovered)
+                } catch {
+                    guard !Task.isCancelled, outboxGeneration == generation else { return false }
+                    // Lookup/auth/transport failures are not evidence that the thread was deleted.
+                    needsRetry = true
+                    continue
+                }
             }
             var policySnapshot = snapshot
             if pendingThreadsByID[submission.threadID] != nil {

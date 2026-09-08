@@ -1719,7 +1719,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             switch error {
             case .invalidResponse:
                 return true
-            case .status, .missingCredential, .incompatibleCredential,
+            case .status, .threadNotFound, .missingCredential, .incompatibleCredential,
                  .managedAuthorizationUnavailable, .unauthenticatedSession:
                 return false
             }
@@ -1820,6 +1820,36 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailCacheRecency.removeAll { $0 == route.uiID }
         await emitCachedSnapshot(for: route.environmentID)
         try? await refresh(client: route.client, includeArchived: true)
+    }
+
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread? {
+        guard let client = environmentClients[environmentID], client.environment.isEnabled else {
+            throw URLError(.notConnectedToInternet)
+        }
+        let generation = environmentGeneration
+        let supportsPagination = serverConfigsByEnvironmentID[environmentID]?
+            .threadSnapshotPagination == true
+        do {
+            let snapshot = try await client.threadSnapshot(
+                id: wireID,
+                turnLimit: supportsPagination ? 1 : nil
+            )
+            guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+                throw CancellationError()
+            }
+            guard snapshot.thread.id == wireID else { throw HTTPError.invalidResponse }
+            registerProvisionalThread(wireID: wireID, environmentID: environmentID)
+            return mapThread(snapshot.thread, environment: client.environment)
+        } catch {
+            guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+                throw CancellationError()
+            }
+            if let httpError = error as? HTTPError,
+               case .threadNotFound = httpError {
+                return nil
+            }
+            throw error
+        }
     }
 
     func loadThread(id: String) async throws -> FeatureThreadDetail {
@@ -2062,16 +2092,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let client = route.client
         let environmentID = route.environmentID
         let generation = environmentGeneration
-        guard let shellThread = shellsByEnvironmentID[environmentID]?.threads
-            .first(where: { $0.id == route.wireID }) else {
+        // Durable submissions carry their runtime mode. Their thread may have
+        // been recovered directly while the sidebar inventory is still partial.
+        let shellRuntimeMode = shellsByEnvironmentID[environmentID]?.threads
+            .first(where: { $0.id == route.wireID }).map { mapRuntimeMode($0.runtimeMode) }
+        guard let effectiveRuntimeMode = requestedRuntimeMode ?? shellRuntimeMode else {
             throw NativeFeatureClientError.threadNotFound
         }
         let model = selection.map(coreModelSelection)
         let uploads = try makeUploadAttachments(attachments)
         if !uploads.isEmpty { _ = try await client.serverConfig() }
-        let runtimeMode = coreRuntimeMode(
-            requestedRuntimeMode ?? mapRuntimeMode(shellThread.runtimeMode)
-        )
+        let runtimeMode = coreRuntimeMode(effectiveRuntimeMode)
         let interactionMode = InteractionMode.default
         let signature = TurnSubmissionSignature(
             text: text,

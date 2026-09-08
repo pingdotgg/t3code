@@ -220,8 +220,9 @@ public enum FeatureOutboxPolicy {
             return .wait
         }
         guard thread != nil else {
-            // A fully synchronized environment proves the thread was deleted.
-            return isConnected ? .discard : .wait
+            // Connected snapshots can omit archived threads while hydration is pending.
+            // The owning server must confirm deletion before the outbox removes a message.
+            return .wait
         }
         guard isConnected else { return .wait }
         return .send

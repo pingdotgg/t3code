@@ -5,6 +5,91 @@ import XCTest
 
 @MainActor
 final class NativeMultiEnvironmentTests: XCTestCase {
+    func testQueuedRecoveryRoutesAndSendsWithoutSidebarMembership() async throws {
+        let fixture = try await Self.makeFixture()
+        addTeardownBlock {
+            await fixture.client.disconnect()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        _ = try await fixture.client.initialSnapshot()
+        let wireID = "queued-archived"
+        let archived = multiEnvironmentDetail(
+            projectID: "project-two", threadID: wireID, archivedAt: "2026-07-31T12:00:00.000Z"
+        )
+        await fixture.transport.setDetail(archived, host: "two.example")
+        let thread = try await fixture.client.recoverQueuedThread(environmentID: "two", wireID: wireID)
+        XCTAssertEqual(thread?.environmentID, "two")
+        XCTAssertEqual(thread?.wireID, wireID)
+        XCTAssertEqual(thread?.isArchived, true)
+        let identity = FeatureSubmissionIdentity(threadID: wireID)
+        try await fixture.client.sendMessage(
+            threadID: XCTUnwrap(thread).id, text: "Recovered follow-up", selection: nil,
+            runtimeMode: .fullAccess, attachments: [], identity: identity
+        )
+        let requests = await fixture.transport.queuedRecoveryRequests()
+        XCTAssertTrue(requests.contains { $0 == "two.example/api/orchestration/threads/queued-archived" })
+        let dispatches = await fixture.transport.dispatchRecords()
+        let send = try XCTUnwrap(dispatches.last)
+        XCTAssertEqual(send.host, "two.example")
+        XCTAssertEqual(send.command["threadId"]?.stringValue, wireID)
+        XCTAssertEqual(send.command["commandId"]?.stringValue, identity.commandID)
+    }
+
+    func testQueuedRecoveryRecognizesOnlyStructuredThreadDeletion() async throws {
+        let fixture = try await Self.makeFixture()
+        addTeardownBlock {
+            await fixture.client.disconnect()
+            try? FileManager.default.removeItem(at: fixture.directory)
+        }
+        _ = try await fixture.client.initialSnapshot()
+        let cases = [
+            (404, #"{"code":"not_found","reason":"thread_not_found"}"#, true),
+            (404, #"{"message":"Proxy route missing"}"#, false),
+            (404, #"{"code":"other","reason":"thread_not_found"}"#, false),
+            (403, #"{"code":"not_found","reason":"thread_not_found"}"#, false),
+        ]
+        for (status, body, deleted) in cases {
+            await fixture.transport.setQueuedRecoveryResponse(status: status, body: body)
+            do {
+                let thread = try await fixture.client.recoverQueuedThread(environmentID: "two", wireID: "queued-archived")
+                XCTAssertTrue(deleted, "An unrecognized HTTP error must propagate")
+                XCTAssertNil(thread)
+            } catch {
+                XCTAssertFalse(deleted, "Structured deletion should return nil: \(error)")
+            }
+        }
+    }
+
+    func testQueuedRecoveryRejectsBothLateSuccessAndLateDeletionAfterDisconnect() async throws {
+        for deleted in [false, true] {
+            let fixture = try await Self.makeFixture()
+            addTeardownBlock {
+                await fixture.client.disconnect()
+                try? FileManager.default.removeItem(at: fixture.directory)
+            }
+            _ = try await fixture.client.initialSnapshot()
+            if deleted {
+                await fixture.transport.setQueuedRecoveryResponse(
+                    status: 404, body: #"{"code":"not_found","reason":"thread_not_found"}"#
+                )
+            }
+            let gate = PassiveRequestGate()
+            await fixture.transport.holdQueuedRecovery(gate)
+            let lookup = Task {
+                try await fixture.client.recoverQueuedThread(environmentID: "two", wireID: "queued-archived")
+            }
+            await gate.waitUntilEntered()
+            await fixture.client.disconnect()
+            await gate.release()
+            do {
+                _ = try await lookup.value
+                XCTFail("A stale lookup cannot authorize sending or deletion")
+            } catch is CancellationError {
+                // The environment generation, not response contents, owns this completion.
+            }
+        }
+    }
+
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
         let normalized = NativeFeatureClient.normalizedProviders([
             FeatureProvider(
@@ -1446,6 +1531,17 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var shellReadCounts: [String: Int] = [:]
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
+    private var queuedResponse: (Int, Data)?
+    private var queuedGate: PassiveRequestGate?
+    private var queuedRequests: [String] = []
+
+    func setQueuedRecoveryResponse(status: Int, body: String) {
+        queuedResponse = (status, Data(body.utf8))
+    }
+
+    func holdQueuedRecovery(_ gate: PassiveRequestGate) { queuedGate = gate }
+    func queuedRecoveryRequests() -> [String] { queuedRequests }
+
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -1497,7 +1593,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         hostsDroppingNextCreateReply.insert(host)
     }
 
-    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         let path = request.url?.path ?? ""
         if path == "/api/orchestration/shell" {
@@ -1513,6 +1609,18 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         }
         if path.hasPrefix("/api/orchestration/threads/") {
             let threadID = request.url?.lastPathComponent.removingPercentEncoding ?? "thread"
+            if threadID == "queued-archived" {
+                queuedRequests.append(host + path)
+                let response = queuedResponse
+                if let gate = queuedGate {
+                    queuedGate = nil
+                    await gate.enter()
+                }
+                if let (status, data) = response {
+                    return (data, HTTPURLResponse(url: request.url!, statusCode: status,
+                                                  httpVersion: "HTTP/1.1", headerFields: nil)!)
+                }
+            }
             if let data = detailData[host]?[threadID] {
                 return (data, multiEnvironmentResponse(request))
             }
@@ -1864,6 +1972,7 @@ func multiEnvironmentDetail(
     projectID: String,
     threadID: String,
     snapshotSequence: Int = 2,
+    archivedAt: String? = nil,
     settledOverride: String? = nil,
     settledAt: String? = nil,
     messages: [OrchestrationMessage] = []
@@ -1883,7 +1992,7 @@ func multiEnvironmentDetail(
             latestTurn: nil,
             createdAt: timestamp,
             updatedAt: timestamp,
-            archivedAt: nil,
+            archivedAt: archivedAt,
             settledOverride: settledOverride,
             settledAt: settledAt,
             snoozedUntil: nil,
@@ -1905,4 +2014,50 @@ private func multiEnvironmentResponse(_ request: URLRequest) -> HTTPURLResponse 
         httpVersion: "HTTP/1.1",
         headerFields: ["Content-Type": "application/json"]
     )!
+}
+
+private actor PassiveRequestGate {
+    private var cancellableEntryWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+    private var entered = false
+    private var released = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    var isHeld: Bool { entered && !released }
+
+    func enter() async {
+        entered = true
+        let pending = cancellableEntryWaiters.values
+        cancellableEntryWaiters.removeAll()
+        pending.forEach { $0.resume() }
+        entryWaiters.forEach { $0.resume() }
+        entryWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilEnteredCancellable() async throws {
+        try Task.checkCancellation()
+        guard !entered else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { cancellableEntryWaiters[id] = $0 }
+        } onCancel: {
+            Task { await self.cancelEntryWaiter(id) }
+        }
+    }
+
+    private func cancelEntryWaiter(_ id: UUID) {
+        cancellableEntryWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
+    }
 }

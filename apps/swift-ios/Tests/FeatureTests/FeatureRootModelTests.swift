@@ -10,6 +10,163 @@ import XCTest
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func queuedArchivedFollowUpWaitsForLookupThenSendsWithStableIdentity() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-outbox-recovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let threadID = FeatureScopedID.thread(environmentID: "studio", wireID: "archived-thread")
+        let submission = FeatureQueuedSubmission(
+            environmentID: "studio",
+            identity: FeatureSubmissionIdentity(threadID: "archived-thread"),
+            threadID: threadID,
+            text: "Keep my offline follow-up",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: []
+        )
+        try await store.enqueue(submission)
+        let started = AsyncStream<Void>.makeStream()
+        let response = AsyncStream<FeatureThread>.makeStream()
+        let sent = AsyncStream<Void>.makeStream()
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(id: "studio", name: "Studio", endpoint: "https://studio.example",
+                                 isActive: true, connectionState: .connected)]
+        )
+        client.queuedThreadRecovery = { environmentID, wireID in
+            #expect(environmentID == "studio")
+            #expect(wireID == "archived-thread")
+            started.continuation.yield(())
+            var iterator = response.stream.makeAsyncIterator()
+            guard let value = await iterator.next() else { throw CancellationError() }
+            return value
+        }
+        client.beforeSendMessage = { sent.continuation.yield(()) }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        let task = Task { await model.start() }
+        defer {
+            response.continuation.finish()
+            started.continuation.finish()
+            sent.continuation.finish()
+            client.finishEvents()
+            task.cancel()
+        }
+        var startedIterator = started.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+        #expect(try await store.submissions() == [submission])
+        #expect(client.sendMessageCallCount == 0)
+        response.continuation.yield(FeatureThread(
+            id: threadID, wireID: "archived-thread", projectID: "project", environmentID: "studio",
+            title: "Archived", isArchived: true
+        ))
+        var sentIterator = sent.stream.makeAsyncIterator()
+        _ = await sentIterator.next()
+        #expect(client.sendMessageCallCount == 1)
+        #expect(client.sentIdentities == [submission.identity])
+        #expect(model.snapshot.threads.contains(where: { $0.id == threadID && $0.isArchived }))
+        await model.disconnect()
+        client.finishEvents()
+        await task.value
+    }
+
+    @Test(arguments: [false, true])
+    func queuedRecoveryDiscardsOnlyAuthoritativelyMissingThreads(confirmsDeletion: Bool) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-outbox-deletion-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        func submission(_ wireID: String, at time: TimeInterval) -> FeatureQueuedSubmission {
+            FeatureQueuedSubmission(
+                environmentID: "studio",
+                identity: FeatureSubmissionIdentity(threadID: wireID, createdAt: Date(timeIntervalSince1970: time)),
+                threadID: FeatureScopedID.thread(environmentID: "studio", wireID: wireID),
+                text: "Retain unless deletion is confirmed", selection: nil,
+                runtimeMode: .fullAccess, interactionMode: .standard, attachments: []
+            )
+        }
+        let first = submission("missing", at: 1)
+        let second = submission("held", at: 2)
+        try await store.enqueue(first)
+        try await store.enqueue(second)
+        let reachedSecond = AsyncStream<Void>.makeStream()
+        let response = AsyncStream<FeatureThread>.makeStream()
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(id: "other", name: "Other", endpoint: "https://other.example", isActive: true,
+                      connectionState: .connected),
+                .init(id: "studio", name: "Studio", endpoint: "https://studio.example", isActive: false,
+                      connectionState: .connected),
+            ]
+        )
+        client.queuedThreadRecovery = { environmentID, wireID in
+            #expect(environmentID == "studio")
+            if wireID == "missing" {
+                if confirmsDeletion { return nil }
+                throw URLError(.userAuthenticationRequired)
+            }
+            #expect(wireID == "held")
+            reachedSecond.continuation.yield(())
+            var iterator = response.stream.makeAsyncIterator()
+            return await iterator.next()
+        }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        let task = Task { await model.start() }
+        defer {
+            response.continuation.finish()
+            reachedSecond.continuation.finish()
+            client.finishEvents()
+            task.cancel()
+        }
+        var iterator = reachedSecond.stream.makeAsyncIterator()
+        _ = await iterator.next()
+        // Reaching the next queued lookup proves that the first result was handled.
+        let remaining = try await store.submissions()
+        #expect(Set(remaining.map(\.id)) == Set((confirmsDeletion ? [second] : [first, second]).map(\.id)))
+        await model.disconnect()
+        // Cancellation of the second lookup must not turn its nil response into deletion.
+        #expect(try await store.submissions().contains(where: { $0.id == second.id }))
+        #expect(client.sendMessageCallCount == 0)
+        client.finishEvents()
+        await task.value
+    }
+
+    @Test
+    func queuedMessageSurvivesConnectedSnapshotBeforeArchivedInventoryArrives() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-outbox-inventory-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let submission = FeatureQueuedSubmission(
+            environmentID: "studio",
+            identity: FeatureSubmissionIdentity(threadID: "archived-thread"),
+            threadID: FeatureScopedID.thread(environmentID: "studio", wireID: "archived-thread"),
+            text: "Keep my offline follow-up",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: []
+        )
+        try await store.enqueue(submission)
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [.init(id: "studio", name: "Studio", endpoint: "https://studio.example",
+                                 isActive: true, connectionState: .connected)]
+        )
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.start()
+        await model.disconnect()
+        #expect(try await store.submissions() == [submission])
+        #expect(client.sendMessageCallCount == 0)
+    }
+
+    @Test
     func transcriptSkillPillsUseTheThreadWorkspaceCatalog() async {
         let skill = FeatureProviderSkill(name: "project-only", displayName: "Project only")
         var provider = FeatureProvider(
@@ -3583,6 +3740,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var startedWorktreePath: String?
     var startedFromOrigin = false
     var createThreadCallCount = 0
+    var sentIdentities: [FeatureSubmissionIdentity] = []
     var sendMessageCallCount = 0
     var sentRuntimeModes: [FeatureRuntimeMode] = []
     var setRuntimeModeCalls: [FeatureRuntimeMode] = []
@@ -3600,6 +3758,12 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var beforeSendMessage: (() throws -> Void)?
     var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
+    var queuedThreadRecovery: ((String, String) async throws -> FeatureThread?)?
+
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread? {
+        guard let queuedThreadRecovery else { throw URLError(.resourceUnavailable) }
+        return try await queuedThreadRecovery(environmentID, wireID)
+    }
     var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
     var preuploadHandler: ((FeatureUploadAttachment, String) async throws -> FeatureUploadedAttachmentReference?)?
     var beforeLoadThreadReturn: (() async -> Void)?
@@ -3780,9 +3944,10 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments _: [FeatureUploadAttachment],
-        identity _: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity
     ) async throws {
         sentRuntimeModes.append(runtimeMode)
+        sentIdentities.append(identity)
         try await sendMessage(threadID: threadID, text: text, selection: selection)
     }
 
