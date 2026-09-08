@@ -284,6 +284,31 @@ const locatorFor = (
   return target === undefined ? undefined : page.locator(target);
 };
 
+const viewSize = (tab: EngineTab) =>
+  tab.viewportSetting._tag === "fill" ? DEFAULT_VIEWPORT : tab.viewportSetting;
+
+// Firefox captures screencast frames from its window at device pixels, and a
+// Playwright viewport forces that window to 1x. A script-opened popup window
+// escapes the viewport, follows the devPixelsPerPx pref, and can resize itself.
+const openGeckoWindow = async (browser: Browser) => {
+  const context = await browser.newContext({ viewport: null });
+  const opener = await context.newPage();
+  const popup = context.waitForEvent("page");
+  await opener.evaluate(
+    `window.open("about:blank", "_blank", "width=${DEFAULT_VIEWPORT.width},height=${DEFAULT_VIEWPORT.height},toolbar=no,location=no,status=no,menubar=no")`,
+  );
+  const page = await popup;
+  await setViewSize(page, DEFAULT_VIEWPORT);
+  return page;
+};
+
+const setViewSize = (page: Page, size: { readonly width: number; readonly height: number }) =>
+  page.viewportSize() === null
+    ? page.evaluate(
+        `window.resizeTo(${size.width}, ${size.height} + window.outerHeight - window.innerHeight)`,
+      )
+    : page.setViewportSize({ width: size.width, height: size.height });
+
 const tabStatus = (tab: EngineTab): PreviewAutomationStatus => ({
   available: true,
   visible: false,
@@ -293,7 +318,7 @@ const tabStatus = (tab: EngineTab): PreviewAutomationStatus => ({
   loading: false,
   engine: tab.engine,
   viewportSetting: tab.viewportSetting,
-  viewport: tab.page.viewportSize() ?? DEFAULT_VIEWPORT,
+  viewport: tab.page.viewportSize() ?? viewSize(tab),
 });
 
 const make = Effect.gen(function* PlaywrightPreviewHostMake() {
@@ -363,12 +388,20 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     const tabId = PreviewTabId.make(`${ENGINE_TAB_PREFIX}${engine}-${++tabSequence}`);
     const { browser, page } = yield* Effect.tryPromise({
       try: async () => {
-        const browser = await ENGINES[engine].browserType.launch({ executablePath: path });
+        const browser = await ENGINES[engine].browserType.launch({
+          executablePath: path,
+          ...(view !== undefined && engine === "gecko"
+            ? { firefoxUserPrefs: { "layout.css.devPixelsPerPx": String(FRAME_SCALE) } }
+            : {}),
+        });
         try {
-          const page = await browser.newPage({
-            viewport: DEFAULT_VIEWPORT,
-            ...(view === undefined ? {} : { deviceScaleFactor: FRAME_SCALE }),
-          });
+          const page =
+            view !== undefined && engine === "gecko"
+              ? await openGeckoWindow(browser)
+              : await browser.newPage({
+                  viewport: DEFAULT_VIEWPORT,
+                  ...(view === undefined ? {} : { deviceScaleFactor: FRAME_SCALE }),
+                });
           return { browser, page };
         } catch (cause) {
           await browser.close().catch(() => undefined);
@@ -476,7 +509,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
         >,
         page.screenshot({ type: "png", timeout }),
       ]);
-      const viewport = page.viewportSize() ?? DEFAULT_VIEWPORT;
+      const viewport = page.viewportSize() ?? viewSize(tab);
       return {
         url: page.url(),
         title,
@@ -752,7 +785,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       for (const sink of view.frameSinks) Queue.endUnsafe(sink);
       view.frameSinks.clear();
     });
-    yield* Effect.forkIn(sendSettledFrames(tab, view), scope);
+    if (tab.engine !== "gecko") yield* Effect.forkIn(sendSettledFrames(tab, view), scope);
     if (input.url !== undefined) yield* Effect.forkIn(gotoView(tab, input.url), scope);
     return {
       tabId: tab.tabId,
@@ -801,13 +834,12 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     const tab = viewTab(tabId);
     if (tab?.view === undefined) return Effect.void;
     const { page, view } = tab;
-    const size = viewport._tag === "fill" ? DEFAULT_VIEWPORT : viewport;
     tab.viewportSetting = viewport;
     return ignoreFailure(async () => {
-      await page.setViewportSize({ width: size.width, height: size.height });
+      await setViewSize(page, viewSize(tab));
       if (view.frameSinks.size === 0) return;
       await stopScreencast(page, view);
-      await startScreencast(page, view);
+      await startScreencast(tab, view);
     });
   };
 
@@ -849,16 +881,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     for (const sink of view.frameSinks) Queue.offerUnsafe(sink, data);
   };
 
-  // Both engines cap screencast frames at the CSS viewport size, so motion
-  // streams at 1x. When frames stop, one 2x screenshot makes text sharp.
-  // It is dropped when a new frame lands while the screenshot is in flight.
-  // Firefox encodes PNG on the thread that takes input, 300 ms on a busy page,
-  // while its JPEG takes 30 ms. WebKit is the reverse.
-  const settledShot = (tab: EngineTab) =>
-    tab.engine === "gecko"
-      ? tab.page.screenshot({ type: "jpeg", quality: 85 })
-      : tab.page.screenshot({ type: "png" });
-
+  // WebKit caps screencast frames at the CSS viewport size, so motion streams
+  // at 1x. When frames stop, one 2x PNG screenshot makes text sharp. It is
+  // dropped when a new frame lands while the screenshot is in flight.
   const sendSettledFrames = (tab: EngineTab, view: EngineViewState) =>
     Effect.gen(function* () {
       const nextFrameWithin = (ms: number) =>
@@ -873,7 +898,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
         }
         let sent = false;
         if (!view.settleHold && (view.lastFrame?.byteLength ?? 0) <= SETTLE_MAX_FRAME_BYTES) {
-          const shot = yield* Effect.promise(() => settledShot(tab).catch(() => undefined));
+          const shot = yield* Effect.promise(() =>
+            tab.page.screenshot({ type: "png" }).catch(() => undefined),
+          );
           sent = shot !== undefined && view.frameSeq === seq && view.frameSinks.size > 0;
           if (sent && shot !== undefined) pushFrame(view, shot);
         }
@@ -886,9 +913,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   // Playwright fixes the frame size when the screencast starts and downsizes to
   // 800px when no size is given. Firefox repeats identical frames at 25 fps, so
   // duplicates are dropped here.
-  const startScreencast = (page: Page, view: EngineViewState) => {
-    const viewport = page.viewportSize() ?? DEFAULT_VIEWPORT;
-    return page.screencast.start({
+  const startScreencast = (tab: EngineTab, view: EngineViewState) => {
+    const viewport = viewSize(tab);
+    return tab.page.screencast.start({
       size: { width: viewport.width * FRAME_SCALE, height: viewport.height * FRAME_SCALE },
       quality: FRAME_JPEG_QUALITY,
       onFrame: ({ data }) => {
@@ -915,7 +942,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
         Effect.acquireRelease(
           Effect.promise(async () => {
             view.frameSinks.add(queue);
-            if (view.frameSinks.size === 1) await startScreencast(page, view);
+            if (view.frameSinks.size === 1) await startScreencast(tab, view);
           }),
           () =>
             Effect.promise(async () => {

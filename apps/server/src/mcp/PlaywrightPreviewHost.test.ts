@@ -44,6 +44,20 @@ describe("resolveNavigationUrl", () => {
   });
 });
 
+// Width from the first start-of-frame marker, 0xffc0 to 0xffcf except 0xffc4 and 0xffc8.
+const jpegWidth = (jpeg: Uint8Array) => {
+  const view = new DataView(jpeg.buffer, jpeg.byteOffset, jpeg.byteLength);
+  let offset = 2;
+  while (offset + 4 <= jpeg.byteLength) {
+    const marker = view.getUint16(offset);
+    if (marker >= 0xffc0 && marker <= 0xffcf && marker !== 0xffc4 && marker !== 0xffc8) {
+      return view.getUint16(offset + 7);
+    }
+    offset += 2 + view.getUint16(offset + 2);
+  }
+  return undefined;
+};
+
 describe("PlaywrightPreviewHost", () => {
   it("routes only engine tab ids", () => {
     expect(PlaywrightPreviewHost.isEngineTabId("engine-gecko-1")).toBe(true);
@@ -102,11 +116,14 @@ describe("PlaywrightPreviewHost", () => {
             view.tabId,
             "data:text/html,<title>Frames</title><body style='background:%23f00'>",
           );
-          // A static page yields one screencast frame, then the settled 2x shot.
-          const [first, settled] = yield* Stream.runCollect(Stream.take(frames, 2));
+          // Gecko frames come from a 2x window. WebKit frames are 1x, so a
+          // static page yields one screencast frame and then the settled 2x shot.
+          const [first, settled] = yield* Stream.runCollect(
+            Stream.take(frames, engine === "gecko" ? 1 : 2),
+          );
           expect(Array.from(first?.slice(0, 2) ?? [])).toEqual([0xff, 0xd8]);
-          expect(settled).toBeDefined();
-          expect(settled?.byteLength).not.toBe(first?.byteLength);
+          if (engine === "gecko") expect(jpegWidth(first ?? new Uint8Array())).toBe(2560);
+          else expect(settled?.byteLength).not.toBe(first?.byteLength);
 
           yield* host.sendInput(view.tabId, { type: "mouseMove", x: 10, y: 10 });
           yield* host.sendInput(view.tabId, { type: "keyDown", key: "a" });
