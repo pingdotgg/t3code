@@ -155,7 +155,7 @@ export interface PendingOrchestrationEffectV2 {
   readonly availableAt?: DateTime.Utc;
 }
 
-export class EffectOutboxError extends Schema.TaggedErrorClass<EffectOutboxError>()(
+export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
   "EffectOutboxError",
   {
     operation: Schema.String,

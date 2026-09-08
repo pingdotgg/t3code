@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 
-export class ContextHandoffPrepareError extends Schema.TaggedErrorClass<ContextHandoffPrepareError>()(
+export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
   "ContextHandoffPrepareError",
   {
     threadId: ThreadId,

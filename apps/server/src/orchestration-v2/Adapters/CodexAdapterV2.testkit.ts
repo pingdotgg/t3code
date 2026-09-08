@@ -23,7 +23,7 @@ import {
   CodexAppServerClientFactory,
 } from "./CodexAdapterV2.ts";
 
-export class CodexReplayTranscriptDecodeError extends Schema.TaggedErrorClass<CodexReplayTranscriptDecodeError>()(
+export class CodexReplayTranscriptDecodeError extends Schema.TaggedError<CodexReplayTranscriptDecodeError>()(
   "CodexReplayTranscriptDecodeError",
   {
     driver: Schema.optional(Schema.String),

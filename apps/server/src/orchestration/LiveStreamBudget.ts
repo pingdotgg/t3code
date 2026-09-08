@@ -9,7 +9,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-export class LiveStreamBufferError extends Schema.TaggedErrorClass<LiveStreamBufferError>()(
+export class LiveStreamBufferError extends Schema.TaggedError<LiveStreamBufferError>()(
   "LiveStreamBufferError",
   { message: Schema.String },
 ) {}

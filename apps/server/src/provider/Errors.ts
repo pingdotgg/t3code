@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
  * settings, or because routing is asked for an instance before the registry
  * has finished its first reload.
  */
-export class ProviderInstanceNotFoundError extends Schema.TaggedErrorClass<ProviderInstanceNotFoundError>()(
+export class ProviderInstanceNotFoundError extends Schema.TaggedError<ProviderInstanceNotFoundError>()(
   "ProviderInstanceNotFoundError",
   {
     instanceId: Schema.String,
@@ -26,7 +26,7 @@ export class ProviderInstanceNotFoundError extends Schema.TaggedErrorClass<Provi
  * instance. Surfaced to the registry, which marks the offending entry as
  * an "unavailable" shadow snapshot rather than crashing the server.
  */
-export class ProviderDriverError extends Schema.TaggedErrorClass<ProviderDriverError>()(
+export class ProviderDriverError extends Schema.TaggedError<ProviderDriverError>()(
   "ProviderDriverError",
   {
     driver: Schema.String,
@@ -44,7 +44,7 @@ export class ProviderDriverError extends Schema.TaggedErrorClass<ProviderDriverE
  * ProviderWorkspaceMissingError - The session's working directory no longer
  * exists on disk, so no provider process can start in it.
  */
-export class ProviderWorkspaceMissingError extends Schema.TaggedErrorClass<ProviderWorkspaceMissingError>()(
+export class ProviderWorkspaceMissingError extends Schema.TaggedError<ProviderWorkspaceMissingError>()(
   "ProviderWorkspaceMissingError",
   {
     threadId: Schema.String,

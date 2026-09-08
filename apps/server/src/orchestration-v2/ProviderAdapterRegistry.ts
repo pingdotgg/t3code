@@ -19,7 +19,7 @@ import {
 } from "./ProviderAdapterDriver.ts";
 import { ProviderAdapterV2, type ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 
-export class ProviderAdapterRegistryLookupError extends Schema.TaggedErrorClass<ProviderAdapterRegistryLookupError>()(
+export class ProviderAdapterRegistryLookupError extends Schema.TaggedError<ProviderAdapterRegistryLookupError>()(
   "ProviderAdapterRegistryLookupError",
   {
     instanceId: ProviderInstanceId,
@@ -30,7 +30,7 @@ export class ProviderAdapterRegistryLookupError extends Schema.TaggedErrorClass<
   }
 }
 
-export class ProviderAdapterRegistryMetadataError extends Schema.TaggedErrorClass<ProviderAdapterRegistryMetadataError>()(
+export class ProviderAdapterRegistryMetadataError extends Schema.TaggedError<ProviderAdapterRegistryMetadataError>()(
   "ProviderAdapterRegistryMetadataError",
   { instanceId: ProviderInstanceId, cause: Schema.Defect() },
 ) {}

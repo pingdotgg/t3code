@@ -99,7 +99,7 @@ export interface OrchestratorV2ScenarioResult {
   readonly capturedShellSnapshots: ReadonlyMap<string, OrchestrationV2ThreadShellSnapshot>;
 }
 
-export class OrchestratorV2ScenarioStepError extends Schema.TaggedErrorClass<OrchestratorV2ScenarioStepError>()(
+export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<OrchestratorV2ScenarioStepError>()(
   "OrchestratorV2ScenarioStepError",
   {
     scenario: Schema.String,
