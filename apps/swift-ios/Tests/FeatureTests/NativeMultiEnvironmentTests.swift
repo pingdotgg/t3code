@@ -2818,6 +2818,31 @@ private actor PassiveLiveConnection: WebSocketConnection {
 @Suite("Native incremental bootstrap")
 @MainActor
 struct NativeIncrementalBootstrapTests {
+    @Test("Environment-store failures remain visible to the root model")
+    func environmentStoreFailureIsNotCancellation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let catalog = directory.appendingPathComponent("environments.json")
+        try Data("invalid catalog".utf8).write(to: catalog)
+        let runtime = EnvironmentRuntime(environmentStore: EnvironmentStore(fileURL: catalog),
+                                         credentialStore: InMemoryCredentialStore())
+        let client = NativeFeatureClient(runtime: runtime)
+        do {
+            _ = try await client.initialSnapshot()
+            Issue.record("The invalid catalog unexpectedly loaded")
+        } catch {
+            #expect(error is DecodingError)
+            #expect(!(error is CancellationError))
+        }
+        let model = FeatureRootModel(client: client,
+            outboxStore: FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json")),
+            draftStore: FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json")))
+        await model.reload()
+        #expect(model.errorMessage?.isEmpty == false)
+        await model.disconnect()
+    }
+
     @Test("Pairing resets the previous environment's hydration and archive lifetime", .timeLimit(.minutes(1)), arguments: [false, true])
     func pairingReplacesHydrationLifetime(previousHydrated: Bool) async throws {
         let server = PassiveLiveServer()

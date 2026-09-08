@@ -302,7 +302,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         guard bootstrapID == foregroundBootstrapID else { throw CancellationError() }
         let environment = activeClient.environment
-        guard await adoptEnvironment(environment, client: activeClient) else { throw CancellationError() }
+        guard try await adoptEnvironment(environment, client: activeClient) else { throw CancellationError() }
         guard bootstrapID == foregroundBootstrapID,
               isCurrentSession(client: activeClient, generation: environmentGeneration) else {
             throw CancellationError()
@@ -530,7 +530,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             pairedClient = try await runtime.pair(url: endpoint, clientLabel: "T3 Code Swift")
         }
-        guard await adoptEnvironment(pairedClient.environment, client: pairedClient) else { throw CancellationError() }
+        guard try await adoptEnvironment(pairedClient.environment, client: pairedClient) else { throw CancellationError() }
         startAggregateRefresh(pairedClient)
         startPolling(pairedClient)
     }
@@ -595,7 +595,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environment,
             credential: savedCredential
         )
-        guard await adoptEnvironment(environment, client: managedClient) else { throw CancellationError() }
+        guard try await adoptEnvironment(environment, client: managedClient) else { throw CancellationError() }
         do {
             try await refresh(client: managedClient)
         } catch {
@@ -1057,11 +1057,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client
-    ) async -> Bool {
+    ) async throws -> Bool {
         let bootstrapID = foregroundBootstrapID
         let generation = environmentGeneration
         let adoptedConnectionID = await newClient.currentConnectionID()
-        let selectedClient = try? await runtime.activeClient()
+        let selectedClient = try await runtime.activeClient()
         guard bootstrapID == foregroundBootstrapID, generation == environmentGeneration,
               selectedClient === newClient, selectedClient?.environment == environment else { return false }
         cancelAggregateRefresh()
