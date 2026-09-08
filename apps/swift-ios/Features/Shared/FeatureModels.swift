@@ -1400,6 +1400,7 @@ public enum FeatureThreadSyncState: Sendable, Equatable {
 }
 
 public enum FeatureEvent: Sendable {
+    case threadReceipt(FeatureThreadReceipt)
     case snapshot(FeatureSnapshot)
     /// Active environment connection change. `environmentID` lets the model
     /// patch that environment's row without installing a whole snapshot.
