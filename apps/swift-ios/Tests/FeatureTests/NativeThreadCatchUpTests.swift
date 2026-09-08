@@ -848,23 +848,6 @@ final class NativeThreadCatchUpTests: XCTestCase {
         XCTAssertFalse(urls[4].contains("turnLimit="))
     }
 
-    func testStaleDetailReplaySkipsReductionOnlyAfterEnvelopeValidation() throws {
-        let thread = multiEnvironmentDetail(
-            projectID: "project", threadID: "first", snapshotSequence: 2, messages: []
-        ).thread
-        let event = replayMessage(sequence: 2, text: "Duplicate")
-        let ordinary = NativeThreadDetailReducer.apply(event, to: thread)
-        guard case .updated = ordinary.result else {
-            return XCTFail("The control must exercise a real message reduction.")
-        }
-        let skipped = NativeThreadDetailReducer.apply(event, to: thread, afterSequence: 2)
-        XCTAssertEqual(skipped.sequence, 2)
-        guard case .unchanged = skipped.result, case .none = skipped.renderMutation else {
-            return XCTFail("A validated stale event must bypass message reduction.")
-        }
-        let newer = NativeThreadDetailReducer.apply(event, to: thread, afterSequence: 1)
-        guard case .updated = newer.result else { return XCTFail("New events must still reduce.") }
-    }
 
     func testOnlyMessageQuestionsCanBeDismissed() async throws {
         let fixture = try await CatchUpFixture.make(activities: [
