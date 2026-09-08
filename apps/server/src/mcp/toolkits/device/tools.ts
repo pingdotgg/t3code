@@ -25,7 +25,13 @@ const dependencies = [McpInvocationContext.McpInvocationContext, DeviceService.D
 export const DeviceListTool = Tool.make("device_list", {
   description:
     "List iOS Simulators and Android Emulators on this environment's device hosts, which platforms each host can run, and which devices are already open in this thread's Device panel. Call this before device_open when you do not know a device id.",
-  parameters: Schema.Struct({}),
+  // An empty struct serializes as `anyOf [object, array]`, which some
+  // providers reject and then drop every tool on the server with it.
+  parameters: Schema.Struct({
+    hostId: Schema.optional(
+      Schema.String.annotate({ description: "Limit to one device host. Defaults to all hosts." }),
+    ),
+  }),
   success: DeviceToolListResult,
   failure: DeviceToolError,
   dependencies,

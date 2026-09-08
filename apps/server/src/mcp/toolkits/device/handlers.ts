@@ -101,15 +101,22 @@ const pickDevice = (
 const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
 
 const handlers = {
-  device_list: () =>
+  device_list: (input) =>
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const state = yield* devices.list;
+      const hostId = input?.hostId;
       const open = state.sessions
         .filter((session) => session.threadId === scope.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
-      return { hosts: state.hosts, devices: state.devices, open };
+      return {
+        hosts: hostId ? state.hosts.filter((host) => host.id === hostId) : state.hosts,
+        devices: hostId
+          ? state.devices.filter((device) => device.hostId === hostId)
+          : state.devices,
+        open,
+      };
     }).pipe(Effect.mapError(toolError)),
   device_open: (input) =>
     Effect.gen(function* () {
