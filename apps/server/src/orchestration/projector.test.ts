@@ -697,6 +697,7 @@ describe("orchestration projector", () => {
         event(6, "thread.turn-start-requested", {
           threadId,
           messageId: "steering-request",
+          expectsTurnStartAcknowledgement: true,
           runtimeMode: "full-access",
           interactionMode: "default",
           createdAt: now,
@@ -704,7 +705,22 @@ describe("orchestration projector", () => {
       );
       model = yield* projectEvent(
         model,
-        event(7, "thread.meta-updated", {
+        event(7, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(8, "thread.meta-updated", {
           threadId,
           turnStartAcknowledged: {
             messageId: "steering-request",
@@ -715,6 +731,7 @@ describe("orchestration projector", () => {
       );
       expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
       expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
     }),
   );
 

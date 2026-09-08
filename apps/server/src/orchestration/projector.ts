@@ -639,6 +639,8 @@ export function projectEvent(
           if (!thread) {
             return nextBase;
           }
+          const activeTurnId =
+            thread.session?.status === "running" ? thread.session.activeTurnId : null;
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -657,7 +659,15 @@ export function projectEvent(
                         ),
                         payload.messageId,
                       ],
-                      observedTurnIds: thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [],
+                      observedTurnIds:
+                        activeTurnId === null
+                          ? (thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [])
+                          : [
+                              ...(
+                                thread.turnStartSubmissionRendezvous?.observedTurnIds ?? []
+                              ).filter((turnId) => turnId !== activeTurnId),
+                              activeTurnId,
+                            ],
                     },
                   }
                 : {}),

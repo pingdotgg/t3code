@@ -618,6 +618,82 @@ describe("applyThreadDetailEvent", () => {
       expect(thread.turnStartSubmissionRendezvous).toBeNull();
     });
 
+    it("recognizes a reused running turn when its steering acknowledgement is late", () => {
+      const turnId = TurnId.make("turn-steering-late-ack");
+      const messageId = MessageId.make("message-steering-late-ack");
+      let thread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: baseThread.id,
+          status: "running",
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: "2026-04-01T05:30:00.000Z",
+        },
+      };
+      for (const event of [
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T05:30:01.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.turn-start-requested" as const,
+          payload: {
+            threadId: baseThread.id,
+            messageId,
+            expectsTurnStartAcknowledgement: true as const,
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            createdAt: "2026-04-01T05:30:01.000Z",
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 7,
+          occurredAt: "2026-04-01T05:30:02.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.session-set" as const,
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "ready" as const,
+              providerName: "claude",
+              runtimeMode: "full-access" as const,
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-04-01T05:30:02.000Z",
+            },
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 8,
+          occurredAt: "2026-04-01T05:30:03.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated" as const,
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: "2026-04-01T05:30:00.000Z",
+          },
+        },
+      ]) {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") thread = result.thread;
+      }
+
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+      expect(thread.turnStartSubmissionRendezvous).toBeNull();
+    });
+
     it("does not enroll legacy turn history in submission rendezvous state", () => {
       const requested = applyThreadDetailEvent(baseThread, {
         ...baseEventFields,

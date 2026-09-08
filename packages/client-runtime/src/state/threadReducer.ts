@@ -343,7 +343,9 @@ export function applyThreadDetailEvent(
       };
 
     // ── Turn lifecycle ──────────────────────────────────────────────
-    case "thread.turn-start-requested":
+    case "thread.turn-start-requested": {
+      const activeTurnId =
+        thread.session?.status === "running" ? thread.session.activeTurnId : null;
       return {
         kind: "updated",
         thread: {
@@ -363,13 +365,22 @@ export function applyThreadDetailEvent(
                     ),
                     event.payload.messageId,
                   ],
-                  observedTurnIds: thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [],
+                  observedTurnIds:
+                    activeTurnId === null
+                      ? (thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [])
+                      : [
+                          ...(thread.turnStartSubmissionRendezvous?.observedTurnIds ?? []).filter(
+                            (turnId) => turnId !== activeTurnId,
+                          ),
+                          activeTurnId,
+                        ],
                 },
               }
             : {}),
           updatedAt: event.occurredAt,
         },
       };
+    }
 
     case "thread.turn-interrupt-requested": {
       if (event.payload.turnId === undefined) {
