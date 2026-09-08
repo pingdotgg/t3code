@@ -329,8 +329,10 @@ it.effect(
           // Session reconciliation must leave them intact instead of clearing
           // unrelated pending work with an uncorrelated terminal status.
           pendingTurnMessageIds: pendingRows.map((row) => row.messageId),
-          settleSucceeded: Exit.isSuccess(settleExit),
-          snoozeSucceeded: Exit.isSuccess(snoozeExit),
+          // The provider reactor is intentionally mocked above, so both
+          // accepted starts remain queued and must still guard inbox actions.
+          settleBlockedByPendingTurn: Exit.isFailure(settleExit),
+          snoozeBlockedByPendingTurn: Exit.isFailure(snoozeExit),
           newTurnSucceeded: Exit.isSuccess(newTurnExit),
           bindingStatus: binding.status,
           resumeCursor: binding.resumeCursor,
@@ -350,8 +352,8 @@ it.effect(
           "message-pending-before-restart",
           "message-stopped-binding-pending-before-restart",
         ],
-        settleSucceeded: true,
-        snoozeSucceeded: true,
+        settleBlockedByPendingTurn: true,
+        snoozeBlockedByPendingTurn: true,
         newTurnSucceeded: true,
         bindingStatus: "stopped",
         resumeCursor,
