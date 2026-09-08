@@ -673,6 +673,8 @@ describe("settledPrHoverColorClass", () => {
   });
 
   it("keeps draft pull requests gray on row hover", () => {
-    expect(settledPrHoverColorClass("open", true)).toContain("group-hover/sidebar-row:text-zinc-500");
+    expect(settledPrHoverColorClass("open", true)).toContain(
+      "group-hover/sidebar-row:text-zinc-500",
+    );
   });
 });
