@@ -1,4 +1,4 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, ComposerSendKey } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -25,14 +25,23 @@ export function formatAssistantCitationForComposer(citation: AssistantCitation, 
 
 export function composerSubmissionIntentForEnter(input: {
   isMobileViewport: boolean;
+  sendKey: ComposerSendKey;
   shiftKey: boolean;
   modifierKey: boolean;
   isDraftThread: boolean;
 }): ComposerSubmissionIntent | null {
-  if (input.isMobileViewport || input.shiftKey) {
+  if (input.isMobileViewport) {
     return null;
   }
-  return input.modifierKey && input.isDraftThread ? "background" : "foreground";
+  const { sendKey, shiftKey, modifierKey } = input;
+  const sends = sendKey === "mod-enter" ? modifierKey : !shiftKey;
+  if (!sends) {
+    return null;
+  }
+  // Mod+Enter starts a draft in the background; when it is the send key itself,
+  // Shift+Mod+Enter takes over that role.
+  const background = sendKey === "mod-enter" ? modifierKey && shiftKey : modifierKey;
+  return background && input.isDraftThread ? "background" : "foreground";
 }
 
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";

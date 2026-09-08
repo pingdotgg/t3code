@@ -63,6 +63,14 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
+## Require Cmd+Enter to send
+
+On web and desktop, Enter sends the prompt and Shift+Enter starts a new line. If
+you keep sending drafts early, switch Settings → General → Behavior →
+**Send prompt with** to `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and
+Linux. Enter then starts a new line, and `Shift+Cmd+Enter` starts a new thread
+in the background. On phones, Enter always starts a new line.
+
 ## Recall a sent prompt
 
 Press `ArrowUp` in an empty composer to bring back the last prompt you sent in this thread. Press

@@ -50,6 +50,11 @@ export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 
+// Which Enter chord sends the composer prompt. "mod" is Cmd on macOS and Ctrl elsewhere.
+export const ComposerSendKey = Schema.Literals(["enter", "mod-enter"]);
+export type ComposerSendKey = typeof ComposerSendKey.Type;
+const DEFAULT_COMPOSER_SEND_KEY: ComposerSendKey = "enter";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -417,6 +422,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // Desktop resting composer: scrolling an existing thread's conversation
   // settles the composer into its single-line layout. Losing focus never does.
   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  composerSendKey: ComposerSendKey.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_SEND_KEY)),
+  ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
@@ -1473,6 +1481,7 @@ export const ClientSettingsPatch = Schema.Struct({
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
+  composerSendKey: Schema.optionalKey(ComposerSendKey),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),

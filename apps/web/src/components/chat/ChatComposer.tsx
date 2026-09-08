@@ -3718,12 +3718,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitCitationAndSend = useCallback(() => {
     const intent = composerSubmissionIntentForEnter({
       isMobileViewport,
+      sendKey: settings.composerSendKey,
       shiftKey: false,
       modifierKey: true,
       isDraftThread: routeKind === "draft",
     });
     submitComposer(undefined, intent ?? "foreground");
-  }, [isMobileViewport, routeKind, submitComposer]);
+  }, [isMobileViewport, routeKind, settings.composerSendKey, submitComposer]);
   const compactThreadContext = useCallback(() => {
     if (
       compactDisabled ||
@@ -3888,6 +3889,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       key === "Enter"
         ? composerSubmissionIntentForEnter({
             isMobileViewport,
+            sendKey: settings.composerSendKey,
             shiftKey: event.shiftKey,
             modifierKey: event.metaKey || event.ctrlKey,
             isDraftThread: routeKind === "draft",
