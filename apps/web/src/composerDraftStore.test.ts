@@ -2263,6 +2263,201 @@ describe("composerDraftStore sticky composer settings", () => {
   });
 });
 
+describe("composerDraftStore releaseModelSelection", () => {
+  const threadId = ThreadId.make("thread-release-model");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-release-model"));
+  const draftId = DraftId.make("draft-release-model");
+  const pickA = modelSelection(CODEX_DRIVER, "gpt-5.4");
+  const pickB = modelSelection(CODEX_DRIVER, "gpt-5.3-codex");
+  const pickIdFor = (key: string) => draftByKey(key)?.modelSelectionId;
+  const serverDraft = () => draftFor(threadId, TEST_ENVIRONMENT_ID);
+
+  beforeEach(async () => {
+    resetComposerDraftStore();
+    await useComposerDraftStore.persist.clearStorage();
+  });
+
+  afterEach(async () => {
+    await useComposerDraftStore.persist.clearStorage();
+  });
+
+  it("gives every explicit pick its own id, including a same-value re-pick", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, pickA);
+    expect(serverDraft()?.modelSelectionId).toBeUndefined();
+
+    store.setModelSelection(threadRef, pickA, { explicit: true });
+    const firstPickId = serverDraft()?.modelSelectionId;
+    expect(firstPickId).toEqual(expect.any(String));
+
+    store.setModelSelection(threadRef, pickA, { explicit: true });
+    const rePickId = serverDraft()?.modelSelectionId;
+    expect(rePickId).toEqual(expect.any(String));
+    expect(rePickId).not.toBe(firstPickId);
+
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "high" }),
+      { model: pickA.model },
+    );
+    const traitPickId = serverDraft()?.modelSelectionId;
+    expect(traitPickId).toEqual(expect.any(String));
+    expect(traitPickId).not.toBe(rePickId);
+
+    // A seed is not a pick.
+    store.setModelSelection(threadRef, pickA, { replaceOptions: true });
+    expect(serverDraft()?.modelSelectionId).toBeUndefined();
+  });
+
+  it("releases the pick a confirmed send carried and keeps the rest of the draft", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, pickA, { explicit: true });
+    store.setRuntimeMode(threadRef, "approval-required");
+    store.setPrompt(threadRef, "typed while sending");
+    const sentPickId = serverDraft()?.modelSelectionId;
+
+    store.releaseModelSelection(threadRef, sentPickId);
+
+    expect(serverDraft()).toMatchObject({
+      prompt: "typed while sending",
+      runtimeMode: "approval-required",
+      modelSelectionByProvider: {},
+      activeProvider: null,
+    });
+    expect(serverDraft()?.modelSelectionExplicit).toBeUndefined();
+    expect(serverDraft()?.modelSelectionId).toBeUndefined();
+  });
+
+  it("removes a draft that held nothing but the released seed", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, pickA);
+
+    store.releaseModelSelection(threadRef, undefined);
+
+    expect(serverDraft()).toBeUndefined();
+  });
+
+  it("keeps a pick made after the send captured its id", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, pickA, { explicit: true });
+    const sentPickId = serverDraft()?.modelSelectionId;
+    store.setModelSelection(threadRef, pickB, { explicit: true });
+
+    store.releaseModelSelection(threadRef, sentPickId);
+
+    expect(serverDraft()).toMatchObject({
+      modelSelectionByProvider: { [CODEX_INSTANCE]: pickB },
+      activeProvider: CODEX_INSTANCE,
+      modelSelectionExplicit: true,
+    });
+  });
+
+  it("keeps a same-value re-pick made after the send captured its id", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, pickA, { explicit: true });
+    const sentPickId = serverDraft()?.modelSelectionId;
+    store.setModelSelection(threadRef, pickA, { explicit: true });
+
+    store.releaseModelSelection(threadRef, sentPickId);
+
+    expect(serverDraft()).toMatchObject({
+      modelSelectionByProvider: { [CODEX_INSTANCE]: pickA },
+      modelSelectionExplicit: true,
+    });
+  });
+
+  it("holds a draft session's confirmed selection until promotion drops it", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setModelSelection(draftId, pickA, { explicit: true });
+    const sentPickId = pickIdFor(draftId);
+
+    // The send addresses the thread it created, which still resolves to the
+    // draft session while that session exists.
+    store.releaseModelSelection(threadRef, sentPickId);
+    store.setPrompt(draftId, "typed after sending");
+
+    expect(draftByKey(draftId)).toMatchObject({
+      modelSelectionByProvider: { [CODEX_INSTANCE]: pickA },
+      modelSelectionSent: true,
+    });
+
+    markPromotedDraftThreadByRef(threadRef);
+    finalizePromotedDraftThreadByRef(threadRef);
+
+    expect(draftByKey(draftId)).toBeUndefined();
+    expect(serverDraft()).toMatchObject({
+      prompt: "typed after sending",
+      modelSelectionByProvider: {},
+      activeProvider: null,
+    });
+    expect(serverDraft()?.modelSelectionSent).toBeUndefined();
+  });
+
+  it("does not move a draft session onto the server thread once only its seed remains", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setModelSelection(draftId, pickA);
+
+    store.releaseModelSelection(threadRef, undefined);
+    markPromotedDraftThreadByRef(threadRef);
+    finalizePromotedDraftThreadByRef(threadRef);
+
+    expect(draftByKey(draftId)).toBeUndefined();
+    expect(serverDraft()).toBeUndefined();
+  });
+
+  it("carries a pick made after the send across promotion", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setModelSelection(draftId, pickA, { explicit: true });
+    store.releaseModelSelection(threadRef, pickIdFor(draftId));
+    store.setModelSelection(draftId, pickB, { explicit: true });
+
+    markPromotedDraftThreadByRef(threadRef);
+    finalizePromotedDraftThreadByRef(threadRef);
+
+    expect(serverDraft()).toMatchObject({
+      modelSelectionByProvider: { [CODEX_INSTANCE]: pickB },
+      activeProvider: CODEX_INSTANCE,
+      modelSelectionExplicit: true,
+    });
+    expect(serverDraft()?.modelSelectionSent).toBeUndefined();
+  });
+
+  it("keeps the sent marker across a reload so promotion still drops the selection", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.setModelSelection(draftId, pickA, { explicit: true });
+      store.releaseModelSelection(threadRef, pickIdFor(draftId));
+      // Land the debounced persist write.
+      await vi.advanceTimersByTimeAsync(300);
+
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(draftByKey(draftId)).toMatchObject({
+        modelSelectionByProvider: { [CODEX_INSTANCE]: pickA },
+        modelSelectionExplicit: true,
+        modelSelectionSent: true,
+      });
+      expect(pickIdFor(draftId)).toBeUndefined();
+
+      markPromotedDraftThreadByRef(threadRef);
+      finalizePromotedDraftThreadByRef(threadRef);
+
+      expect(draftByKey(draftId)).toBeUndefined();
+      expect(serverDraft()).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("composerDraftStore model seed migration", () => {
   const staleDraftId = DraftId.make("draft-legacy-stale-model");
   const explicitDraftId = DraftId.make("draft-legacy-explicit-model");
@@ -2272,6 +2467,12 @@ describe("composerDraftStore model seed migration", () => {
   const typedThreadId = ThreadId.make("thread-legacy-typed-model");
   const serverThreadId = ThreadId.make("thread-server-model");
   const serverThreadKey = scopedThreadKey(scopeThreadRef(TEST_ENVIRONMENT_ID, serverThreadId));
+  const typedServerThreadKey = scopedThreadKey(
+    scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-server-typed-model")),
+  );
+  const explicitServerThreadKey = scopedThreadKey(
+    scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-server-explicit-model")),
+  );
   const projectId = ProjectId.make("project-model-migration");
   const logicalProjectKey = `${TEST_ENVIRONMENT_ID}:/tmp/project-model-migration`;
 
@@ -2335,7 +2536,7 @@ describe("composerDraftStore model seed migration", () => {
     },
   );
 
-  it("strips seeded models only from empty draft sessions when upgrading storage", async () => {
+  it("strips seeded models from empty draft sessions and server threads when upgrading storage", async () => {
     vi.useFakeTimers();
     try {
       const staleSelection = modelSelection(CODEX_DRIVER, "gpt-5.4");
@@ -2374,6 +2575,19 @@ describe("composerDraftStore model seed migration", () => {
               modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
               activeProvider: CODEX_INSTANCE,
             },
+            [typedServerThreadKey]: {
+              prompt: "keep this server thread prompt",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+            },
+            [explicitServerThreadKey]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+              modelSelectionExplicit: true,
+            },
           },
           draftThreadsByThreadKey: {
             [staleDraftId]: draftThread(staleThreadId),
@@ -2406,9 +2620,18 @@ describe("composerDraftStore model seed migration", () => {
         activeProvider: CODEX_INSTANCE,
         modelSelectionExplicit: true,
       });
-      expect(draftByKey(serverThreadKey)).toMatchObject({
+      // A server thread has a model of its own, so a seed left on it is stale
+      // by definition; an explicit pick is unsent intent and stays.
+      expect(draftByKey(serverThreadKey)).toBeUndefined();
+      expect(draftByKey(typedServerThreadKey)).toMatchObject({
+        prompt: "keep this server thread prompt",
+        modelSelectionByProvider: {},
+        activeProvider: null,
+      });
+      expect(draftByKey(explicitServerThreadKey)).toMatchObject({
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
         activeProvider: CODEX_INSTANCE,
+        modelSelectionExplicit: true,
       });
       expect(useComposerDraftStore.getState().draftThreadsByThreadKey[staleDraftId]).toMatchObject({
         environmentId: TEST_ENVIRONMENT_ID,
