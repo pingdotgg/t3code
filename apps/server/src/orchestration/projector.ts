@@ -72,20 +72,28 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
   return "completed" as const;
 }
 
-function activityClearsPendingTurnStart(
-  thread: OrchestrationThread,
+function turnStartRequestIdClearedByActivity(
   activity: OrchestrationThread["activities"][number],
-): boolean {
+): string | null {
   if (
-    thread.pendingTurnStartMessageId == null ||
     (activity.kind !== "context-compaction" &&
       activity.kind !== "provider.turn.start.failed" &&
       activity.kind !== "provider.auth.signed-out") ||
     !Predicate.isObject(activity.payload)
   ) {
-    return false;
+    return null;
   }
-  return activity.payload.requestId === thread.pendingTurnStartMessageId;
+  return typeof activity.payload.requestId === "string" ? activity.payload.requestId : null;
+}
+
+function activityClearsPendingTurnStart(
+  thread: OrchestrationThread,
+  activity: OrchestrationThread["activities"][number],
+): boolean {
+  return (
+    thread.pendingTurnStartMessageId != null &&
+    turnStartRequestIdClearedByActivity(activity) === thread.pendingTurnStartMessageId
+  );
 }
 
 /**
@@ -521,10 +529,22 @@ export function projectEvent(
           const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
           if (!thread) return nextBase;
           const acknowledgement = payload.turnStartAcknowledged;
+          const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
           const acknowledgedTurnAlreadyRunning =
             acknowledgement !== undefined &&
             thread.session?.status === "running" &&
             thread.session.activeTurnId === acknowledgement.turnId;
+          const acknowledgedTurnAlreadyObserved =
+            acknowledgement !== undefined &&
+            (rendezvous?.observedTurnIds ?? []).includes(acknowledgement.turnId);
+          const acknowledgementAlreadyAdopted =
+            acknowledgedTurnAlreadyRunning || acknowledgedTurnAlreadyObserved;
+          const remainingAwaitingMessageIds =
+            acknowledgement === undefined
+              ? (rendezvous?.awaitingMessageIds ?? [])
+              : (rendezvous?.awaitingMessageIds ?? []).filter(
+                  (messageId) => messageId !== acknowledgement.messageId,
+                );
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -550,10 +570,10 @@ export function projectEvent(
                 ? {
                     pendingTurnStartMessageId:
                       acknowledgement.messageId === thread.pendingTurnStartMessageId &&
-                      acknowledgedTurnAlreadyRunning
+                      acknowledgementAlreadyAdopted
                         ? null
                         : (thread.pendingTurnStartMessageId ?? null),
-                    submittedTurnStarts: acknowledgedTurnAlreadyRunning
+                    submittedTurnStarts: acknowledgementAlreadyAdopted
                       ? (thread.submittedTurnStarts ?? []).filter(
                           (entry) => entry.turnId !== acknowledgement.turnId,
                         )
@@ -563,6 +583,15 @@ export function projectEvent(
                           ),
                           acknowledgement,
                         ],
+                    turnStartSubmissionRendezvous:
+                      remainingAwaitingMessageIds.length === 0
+                        ? null
+                        : {
+                            awaitingMessageIds: remainingAwaitingMessageIds,
+                            observedTurnIds: (rendezvous?.observedTurnIds ?? []).filter(
+                              (turnId) => turnId !== acknowledgement.turnId,
+                            ),
+                          },
                   }
                 : {}),
               updatedAt: payload.updatedAt,
@@ -619,6 +648,19 @@ export function projectEvent(
               runtimeMode: payload.runtimeMode,
               interactionMode: payload.interactionMode,
               pendingTurnStartMessageId: payload.messageId,
+              ...(payload.expectsTurnStartAcknowledgement === true
+                ? {
+                    turnStartSubmissionRendezvous: {
+                      awaitingMessageIds: [
+                        ...(thread.turnStartSubmissionRendezvous?.awaitingMessageIds ?? []).filter(
+                          (messageId) => messageId !== payload.messageId,
+                        ),
+                        payload.messageId,
+                      ],
+                      observedTurnIds: thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [],
+                    },
+                  }
+                : {}),
               pendingCheckpointRevertMessageIds:
                 thread.pendingCheckpointRevertMessageIds == null
                   ? null
@@ -734,6 +776,11 @@ export function projectEvent(
         // Leaving the "running" session status is the turn-end signal: settle
         // a still-running latest turn so its duration reflects the whole turn.
         const settledTurnState = settledTurnStateForSessionStatus(session.status);
+        const activeTurnId = session.status === "running" ? session.activeTurnId : null;
+        const activeTurnWasAcknowledged =
+          activeTurnId !== null &&
+          (thread.submittedTurnStarts ?? []).some((entry) => entry.turnId === activeTurnId);
+        const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -743,11 +790,24 @@ export function projectEvent(
                 ? null
                 : (thread.pendingTurnStartMessageId ?? null),
             submittedTurnStarts:
-              session.status === "running" && session.activeTurnId !== null
+              activeTurnId !== null
                 ? (thread.submittedTurnStarts ?? []).filter(
-                    (entry) => entry.turnId !== session.activeTurnId,
+                    (entry) => entry.turnId !== activeTurnId,
                   )
                 : (thread.submittedTurnStarts ?? []),
+            turnStartSubmissionRendezvous:
+              activeTurnId === null ||
+              activeTurnWasAcknowledged ||
+              rendezvous === null ||
+              rendezvous.awaitingMessageIds.length === 0
+                ? rendezvous
+                : {
+                    awaitingMessageIds: rendezvous.awaitingMessageIds,
+                    observedTurnIds: [
+                      ...rendezvous.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
+                      activeTurnId,
+                    ],
+                  },
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
                 ? {
@@ -979,6 +1039,20 @@ export function projectEvent(
           const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, payload.activity)
             ? null
             : (thread.pendingTurnStartMessageId ?? null);
+          const clearedRequestId = turnStartRequestIdClearedByActivity(payload.activity);
+          const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+          const awaitingMessageIds =
+            clearedRequestId === null
+              ? (rendezvous?.awaitingMessageIds ?? [])
+              : (rendezvous?.awaitingMessageIds ?? []).filter(
+                  (messageId) => messageId !== clearedRequestId,
+                );
+          const turnStartSubmissionRendezvous =
+            rendezvous === null
+              ? null
+              : awaitingMessageIds.length === 0
+                ? null
+                : { ...rendezvous, awaitingMessageIds };
           const revertFailed = payload.activity.kind === "checkpoint.revert.failed";
           const pendingCheckpointRevertCount = revertFailed
             ? Math.max(0, (thread.pendingCheckpointRevertCount ?? 1) - 1)
@@ -993,6 +1067,7 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               pendingTurnStartMessageId,
+              turnStartSubmissionRendezvous,
               pendingCheckpointRevertMessageIds,
               pendingCheckpointRevertCount:
                 pendingCheckpointRevertCount === 0 ? null : pendingCheckpointRevertCount,

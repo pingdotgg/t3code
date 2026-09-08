@@ -47,20 +47,26 @@ const activityIdIndex = new WeakMap<
   Set<OrchestrationThreadActivity["id"]>
 >();
 
-function activityClearsPendingTurnStart(
-  thread: OrchestrationThread,
-  activity: OrchestrationThreadActivity,
-): boolean {
+function turnStartRequestIdClearedByActivity(activity: OrchestrationThreadActivity): string | null {
   if (
-    thread.pendingTurnStartMessageId == null ||
     (activity.kind !== "context-compaction" &&
       activity.kind !== "provider.turn.start.failed" &&
       activity.kind !== "provider.auth.signed-out") ||
     !Predicate.isObject(activity.payload)
   ) {
-    return false;
+    return null;
   }
-  return activity.payload.requestId === thread.pendingTurnStartMessageId;
+  return typeof activity.payload.requestId === "string" ? activity.payload.requestId : null;
+}
+
+function activityClearsPendingTurnStart(
+  thread: OrchestrationThread,
+  activity: OrchestrationThreadActivity,
+): boolean {
+  return (
+    thread.pendingTurnStartMessageId != null &&
+    turnStartRequestIdClearedByActivity(activity) === thread.pendingTurnStartMessageId
+  );
 }
 
 /**
@@ -243,10 +249,22 @@ export function applyThreadDetailEvent(
     // ── Thread metadata ─────────────────────────────────────────────
     case "thread.meta-updated": {
       const acknowledgement = event.payload.turnStartAcknowledged;
+      const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
       const acknowledgedTurnAlreadyRunning =
         acknowledgement !== undefined &&
         thread.session?.status === "running" &&
         thread.session.activeTurnId === acknowledgement.turnId;
+      const acknowledgedTurnAlreadyObserved =
+        acknowledgement !== undefined &&
+        (rendezvous?.observedTurnIds ?? []).includes(acknowledgement.turnId);
+      const acknowledgementAlreadyAdopted =
+        acknowledgedTurnAlreadyRunning || acknowledgedTurnAlreadyObserved;
+      const remainingAwaitingMessageIds =
+        acknowledgement === undefined
+          ? (rendezvous?.awaitingMessageIds ?? [])
+          : (rendezvous?.awaitingMessageIds ?? []).filter(
+              (messageId) => messageId !== acknowledgement.messageId,
+            );
       return {
         kind: "updated",
         thread: {
@@ -275,10 +293,10 @@ export function applyThreadDetailEvent(
             ? {
                 pendingTurnStartMessageId:
                   acknowledgement.messageId === thread.pendingTurnStartMessageId &&
-                  acknowledgedTurnAlreadyRunning
+                  acknowledgementAlreadyAdopted
                     ? null
                     : (thread.pendingTurnStartMessageId ?? null),
-                submittedTurnStarts: acknowledgedTurnAlreadyRunning
+                submittedTurnStarts: acknowledgementAlreadyAdopted
                   ? (thread.submittedTurnStarts ?? []).filter(
                       (entry) => entry.turnId !== acknowledgement.turnId,
                     )
@@ -288,6 +306,15 @@ export function applyThreadDetailEvent(
                       ),
                       acknowledgement,
                     ],
+                turnStartSubmissionRendezvous:
+                  remainingAwaitingMessageIds.length === 0
+                    ? null
+                    : {
+                        awaitingMessageIds: remainingAwaitingMessageIds,
+                        observedTurnIds: (rendezvous?.observedTurnIds ?? []).filter(
+                          (turnId) => turnId !== acknowledgement.turnId,
+                        ),
+                      },
               }
             : {}),
           updatedAt: event.payload.updatedAt,
@@ -327,6 +354,19 @@ export function applyThreadDetailEvent(
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
           pendingTurnStartMessageId: event.payload.messageId,
+          ...(event.payload.expectsTurnStartAcknowledgement === true
+            ? {
+                turnStartSubmissionRendezvous: {
+                  awaitingMessageIds: [
+                    ...(thread.turnStartSubmissionRendezvous?.awaitingMessageIds ?? []).filter(
+                      (messageId) => messageId !== event.payload.messageId,
+                    ),
+                    event.payload.messageId,
+                  ],
+                  observedTurnIds: thread.turnStartSubmissionRendezvous?.observedTurnIds ?? [],
+                },
+              }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };
@@ -461,6 +501,12 @@ export function applyThreadDetailEvent(
       // Leaving the "running" session status is the turn-end signal: settle a
       // still-running latest turn so its duration reflects the whole turn.
       const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
+      const activeTurnId =
+        event.payload.session.status === "running" ? event.payload.session.activeTurnId : null;
+      const activeTurnWasAcknowledged =
+        activeTurnId !== null &&
+        (thread.submittedTurnStarts ?? []).some((entry) => entry.turnId === activeTurnId);
+      const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
@@ -506,12 +552,22 @@ export function applyThreadDetailEvent(
               ? null
               : (thread.pendingTurnStartMessageId ?? null),
           submittedTurnStarts:
-            event.payload.session.status === "running" &&
-            event.payload.session.activeTurnId !== null
-              ? (thread.submittedTurnStarts ?? []).filter(
-                  (entry) => entry.turnId !== event.payload.session.activeTurnId,
-                )
+            activeTurnId !== null
+              ? (thread.submittedTurnStarts ?? []).filter((entry) => entry.turnId !== activeTurnId)
               : (thread.submittedTurnStarts ?? []),
+          turnStartSubmissionRendezvous:
+            activeTurnId === null ||
+            activeTurnWasAcknowledged ||
+            rendezvous === null ||
+            rendezvous.awaitingMessageIds.length === 0
+              ? rendezvous
+              : {
+                  awaitingMessageIds: rendezvous.awaitingMessageIds,
+                  observedTurnIds: [
+                    ...rendezvous.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
+                    activeTurnId,
+                  ],
+                },
           latestTurn,
           updatedAt: event.occurredAt,
         },
@@ -674,6 +730,20 @@ export function applyThreadDetailEvent(
       const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, activity)
         ? null
         : (thread.pendingTurnStartMessageId ?? null);
+      const clearedRequestId = turnStartRequestIdClearedByActivity(activity);
+      const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+      const awaitingMessageIds =
+        clearedRequestId === null
+          ? (rendezvous?.awaitingMessageIds ?? [])
+          : (rendezvous?.awaitingMessageIds ?? []).filter(
+              (messageId) => messageId !== clearedRequestId,
+            );
+      const turnStartSubmissionRendezvous =
+        rendezvous === null
+          ? null
+          : awaitingMessageIds.length === 0
+            ? null
+            : { ...rendezvous, awaitingMessageIds };
       // Live streams append in order: an unseen id sorting at/after the tail
       // of a known-sorted array appends without re-filtering and re-sorting
       // the whole history on every event. The id set moves forward to the new
@@ -696,6 +766,7 @@ export function applyThreadDetailEvent(
             ...thread,
             activities,
             pendingTurnStartMessageId,
+            turnStartSubmissionRendezvous,
             updatedAt: event.occurredAt,
           },
         };
@@ -722,6 +793,7 @@ export function applyThreadDetailEvent(
           ...thread,
           activities,
           pendingTurnStartMessageId,
+          turnStartSubmissionRendezvous,
           updatedAt: event.occurredAt,
         },
       };

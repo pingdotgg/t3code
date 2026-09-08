@@ -668,6 +668,17 @@ export const OrchestrationThread = Schema.Struct({
       }),
     ),
   ),
+  // Request-scoped rendezvous for provider lifecycles that can race their
+  // durable submission acknowledgement. Legacy event history never enrolls,
+  // so replay cannot accumulate old turn ids in this pending-only state.
+  turnStartSubmissionRendezvous: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        awaitingMessageIds: Schema.Array(MessageId),
+        observedTurnIds: Schema.Array(TurnId),
+      }),
+    ),
+  ),
   // User messages accepted after a checkpoint revert begins. The server uses
   // this pending-only list to preserve every queued start when the revert lands.
   pendingCheckpointRevertMessageIds: Schema.optional(Schema.NullOr(Schema.Array(MessageId))),
@@ -1613,6 +1624,9 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  // Optional for event compatibility. New starts opt into the correlated
+  // acknowledgement rendezvous; historical starts replay without it.
+  expectsTurnStartAcknowledgement: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),

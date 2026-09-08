@@ -718,6 +718,193 @@ describe("orchestration projector", () => {
     }),
   );
 
+  effectIt.effect("does not re-guard a turn acknowledged after its lifecycle was observed", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T01:50:00.000Z";
+      const threadId = "thread-late-start-acknowledgement";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `late-start-acknowledgement-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Late start acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      for (const [sequence, status, activeTurnId] of [
+        [3, "running", "turn-a"],
+        [4, "ready", null],
+      ] as const) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.session-set", {
+            threadId,
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: now,
+            },
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-b",
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-b",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: { messageId: "request-a", turnId: "turn-a" },
+          updatedAt: now,
+        }),
+      );
+
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
+        awaitingMessageIds: ["request-b"],
+        observedTurnIds: ["turn-b"],
+      });
+      model = yield* projectEvent(
+        model,
+        event(8, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "request-b-failed",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { requestId: "request-b" },
+            turnId: null,
+            createdAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+    }),
+  );
+
+  effectIt.effect("does not enroll legacy turn history in submission rendezvous state", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T01:55:00.000Z";
+      const threadId = "thread-legacy-start-history";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `legacy-start-history-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Legacy start history",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (let turn = 1; turn <= 3; turn += 1) {
+        const baseSequence = turn * 3 - 1;
+        model = yield* projectEvent(
+          model,
+          event(baseSequence, "thread.turn-start-requested", {
+            threadId,
+            messageId: `legacy-request-${turn}`,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        for (const [offset, status, activeTurnId] of [
+          [1, "running", `legacy-turn-${turn}`],
+          [2, "ready", null],
+        ] as const) {
+          model = yield* projectEvent(
+            model,
+            event(baseSequence + offset, "thread.session-set", {
+              threadId,
+              session: {
+                threadId,
+                status,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId,
+                lastError: null,
+                updatedAt: now,
+              },
+            }),
+          );
+        }
+      }
+
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+    }),
+  );
+
   effectIt.effect("keeps queued messages reserved when one of consecutive reverts fails", () =>
     Effect.gen(function* () {
       const now = "2026-09-08T00:00:00.000Z";

@@ -10,7 +10,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationThread } from "@t3tools/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 
@@ -545,6 +545,120 @@ describe("applyThreadDetailEvent", () => {
       if (running.kind === "updated") {
         expect(running.thread.pendingTurnStartMessageId).toBeNull();
         expect(running.thread.submittedTurnStarts).toEqual([]);
+      }
+    });
+
+    it("does not re-guard a turn acknowledged after its lifecycle was observed", () => {
+      const requestA = MessageId.make("message-late-ack-a");
+      const turnA = TurnId.make("turn-late-ack-a");
+      const turnB = TurnId.make("turn-late-ack-b");
+      const withEvent = (thread: typeof baseThread, event: OrchestrationEvent) => {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        return result.kind === "updated" ? result.thread : thread;
+      };
+      let thread = withEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId: requestA,
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T05:00:01.000Z",
+        },
+      });
+      for (const [sequence, status, activeTurnId] of [
+        [7, "running", turnA],
+        [8, "ready", null],
+        [9, "running", turnB],
+      ] as const) {
+        thread = withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:00:0${sequence - 5}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: `2026-04-01T05:00:0${sequence - 5}.000Z`,
+            },
+          },
+        });
+      }
+      thread = withEvent(thread, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: "2026-04-01T05:00:05.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: baseThread.id,
+          turnStartAcknowledged: { messageId: requestA, turnId: turnA },
+          updatedAt: thread.updatedAt,
+        },
+      });
+
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+      expect(thread.turnStartSubmissionRendezvous).toBeNull();
+    });
+
+    it("does not enroll legacy turn history in submission rendezvous state", () => {
+      const requested = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId: MessageId.make("legacy-message"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T05:00:01.000Z",
+        },
+      });
+      expect(requested.kind).toBe("updated");
+      if (requested.kind !== "updated") return;
+      const running = applyThreadDetailEvent(requested.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T05:00:02.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: baseThread.id,
+          session: {
+            threadId: baseThread.id,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("legacy-turn"),
+            lastError: null,
+            updatedAt: "2026-04-01T05:00:02.000Z",
+          },
+        },
+      });
+      expect(running.kind).toBe("updated");
+      if (running.kind === "updated") {
+        expect(running.thread.turnStartSubmissionRendezvous).toBeNull();
       }
     });
   });
