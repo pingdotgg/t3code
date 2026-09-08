@@ -18,10 +18,9 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { SharedSettingsMismatchAlert } from "./SharedSettingsMismatchAlert";
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { cn } from "../../lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
@@ -343,8 +342,8 @@ function DiscoveryItemRow({
 }
 
 function GitFetchIntervalSettings() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
@@ -498,15 +497,11 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
-  const { environments } = useEnvironments();
-  const primaryEnvironment = usePrimaryEnvironment();
-  const fallbackEnvironment =
-    environments.find((environment) => environment.connection.phase === "connected") ??
-    environments[0] ??
-    null;
+  const { scope, environment } = useSettingsScope();
   const environmentId =
-    primaryEnvironment?.environmentId ?? fallbackEnvironment?.environmentId ?? null;
-  const isPrimaryEnvironment = environmentId === primaryEnvironment?.environmentId;
+    scope.kind === "environment" && environment?.connection.phase === "connected"
+      ? scope.environmentId
+      : null;
   const discovery = useEnvironmentQuery(
     environmentId === null
       ? null
@@ -543,8 +538,15 @@ export function SourceControlSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SharedSettingsMismatchAlert />
-      {isInitialScanPending ? (
+      {environmentId === null ? (
+        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+          <p className="px-4 py-3 text-sm text-muted-foreground">
+            {scope.kind === "environment"
+              ? "Connect this environment to inspect its version control tools and hosting integrations."
+              : "Select an environment to inspect its version control tools and hosting integrations."}
+          </p>
+        </SettingsSection>
+      ) : isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />
           <SourceControlSectionSkeleton title="Source Control Providers" />
@@ -559,9 +561,7 @@ export function SourceControlSettingsPanel() {
             >
               {result.versionControlSystems.map((item) => (
                 <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" && isPrimaryEnvironment ? (
-                    <GitFetchIntervalSettings />
-                  ) : undefined}
+                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
@@ -587,8 +587,6 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
-      {/* Its rows are serverScoped: without a primary they render inert with
-          an explanation, which beats disappearing. */}
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );
