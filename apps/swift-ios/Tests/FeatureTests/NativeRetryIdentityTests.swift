@@ -265,7 +265,7 @@ final class NativeRetryIdentityTests: XCTestCase {
         defer { settingsStore.removePersistentDomain(forName: settingsSuite) }
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settingsStore)
         let seed = try await client.initialSnapshot()
-        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        let recorder = AcceptedCommandSnapshotRecorder(seed: seed, events: client.events())
         defer { recorder.stop() }
         let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
@@ -314,7 +314,7 @@ final class NativeRetryIdentityTests: XCTestCase {
             )!
         )
         let seed = try await client.initialSnapshot()
-        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        let recorder = AcceptedCommandSnapshotRecorder(seed: seed, events: client.events())
         defer { recorder.stop() }
         _ = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
@@ -379,7 +379,7 @@ final class NativeRetryIdentityTests: XCTestCase {
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
         let seed = try await client.initialSnapshot()
-        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        let recorder = AcceptedCommandSnapshotRecorder(seed: seed, events: client.events())
         defer { recorder.stop() }
         let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         XCTAssertEqual(initial.threads.first?.runtimeMode, .approvalRequired)
@@ -491,7 +491,7 @@ final class NativeRetryIdentityTests: XCTestCase {
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
         let seed = try await client.initialSnapshot()
-        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        let recorder = AcceptedCommandSnapshotRecorder(seed: seed, events: client.events())
         defer { recorder.stop() }
         _ = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
@@ -1379,4 +1379,73 @@ private actor AcceptedSendSocket: WebSocketConnection {
         if let receiver { self.receiver = nil; receiver.resume(returning: data) }
         else { queued.append(data) }
     }
+}
+
+@MainActor
+private final class AcceptedCommandSnapshotRecorder {
+    private(set) var history: [FeatureSnapshot]
+    private var task: Task<Void, Never>?
+    private var waiters: [UUID: (@MainActor (FeatureSnapshot) -> Bool, CheckedContinuation<FeatureSnapshot, Error>)] = [:]
+    private var finished = false
+
+    init(seed: FeatureSnapshot, events: AsyncStream<FeatureEvent>) {
+        history = [seed]
+        task = Task { [weak self] in
+            for await event in events {
+                guard !Task.isCancelled else { break }
+                guard let self else { break }
+                switch event {
+                case let .snapshot(snapshot): self.record(snapshot)
+                case let .thread(thread):
+                    guard var snapshot = self.history.last else { continue }
+                    if let index = snapshot.threads.firstIndex(where: { $0.id == thread.id }) {
+                        snapshot.threads[index] = thread
+                    } else { snapshot.threads.append(thread) }
+                    self.record(snapshot)
+                case let .threadRemoved(id):
+                    guard var snapshot = self.history.last else { continue }
+                    snapshot.threads.removeAll { $0.id == id }
+                    self.record(snapshot)
+                default: break
+                }
+            }
+            self?.stop()
+        }
+    }
+
+    func record(_ snapshot: FeatureSnapshot) {
+        history.append(snapshot)
+        let ready = waiters.filter { $0.value.0(snapshot) }
+        for (id, waiter) in ready {
+            waiters[id] = nil
+            waiter.1.resume(returning: snapshot)
+        }
+    }
+
+    func wait(_ predicate: @escaping @MainActor (FeatureSnapshot) -> Bool) async throws -> FeatureSnapshot {
+        try Task.checkCancellation()
+        if let snapshot = history.last, predicate(snapshot) { return snapshot }
+        guard !finished else { throw CancellationError() }
+        let id = UUID()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiters[id] = (predicate, continuation)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.waiters.removeValue(forKey: id)?.1.resume(throwing: CancellationError())
+            }
+        }
+    }
+
+    func stop() {
+        finished = true
+        task?.cancel()
+        task = nil
+        let pending = waiters.values
+        waiters.removeAll()
+        pending.forEach { $0.1.resume(throwing: CancellationError()) }
+    }
+
+    deinit { task?.cancel() }
 }
