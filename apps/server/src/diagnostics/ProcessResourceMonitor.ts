@@ -28,6 +28,7 @@ function isLegacyBackendCategory(category: ResourceTelemetryProcessCategory): bo
   );
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
   const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
   const readHistory: ProcessResourceMonitor["Service"]["readHistory"] = (input) =>

@@ -60,6 +60,7 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const settingsService = yield* ServerSettingsService;

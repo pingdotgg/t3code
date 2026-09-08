@@ -90,7 +90,7 @@ export const ResourceMonitorHostLinuxLibc = Context.Reference<ResourceMonitorLin
   },
 );
 
-export function resourceMonitorPlatformKey(
+function resourceMonitorPlatformKey(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
 ): string | undefined {
@@ -103,7 +103,7 @@ export function resourceMonitorPlatformKey(
   return `${platform}-${architecture}`;
 }
 
-export function resourceMonitorRustTarget(
+function resourceMonitorRustTarget(
   platform: NodeJS.Platform,
   architecture: NodeJS.Architecture,
   linuxLibc?: ResourceMonitorLinuxLibc,
