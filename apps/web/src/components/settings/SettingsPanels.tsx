@@ -2853,18 +2853,7 @@ export function ArchivedThreadsPanel() {
     const projectsByEnvironmentAndId = new Map(
       archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
         snapshot.projects.map(
-          (project) =>
-            [
-              `${environmentId}:${project.id}`,
-              {
-                id: project.id,
-                environmentId,
-                name: project.title,
-                cwd: project.workspaceRoot,
-                faviconPath: project.faviconPath,
-                projectIcon: project.projectIcon,
-              },
-            ] as const,
+          (project) => [`${environmentId}:${project.id}`, { ...project, environmentId }] as const,
         ),
       ),
     );
@@ -2983,16 +2972,8 @@ export function ArchivedThreadsPanel() {
           <SettingsSection
             key={project.id}
             id={index === 0 ? searchableSetting("archive").id : undefined}
-            title={project.name}
-            icon={
-              <ProjectFavicon
-                environmentId={project.environmentId}
-                cwd={project.cwd}
-                projectName={project.name}
-                faviconPath={project.faviconPath}
-                projectIcon={project.projectIcon}
-              />
-            }
+            title={project.title}
+            icon={<ProjectFavicon project={project} />}
           >
             {projectThreads.map((thread) => (
               <SettingsRow

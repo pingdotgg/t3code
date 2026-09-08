@@ -24,6 +24,10 @@ function makeEntry(
   };
 }
 
+function fileNames(files: File[]): string[] {
+  return files.map((file) => file.name);
+}
+
 function refOf(environmentId: string, threadId: string) {
   return makeEntry(environmentId, threadId, []).threadRef;
 }
@@ -54,8 +58,12 @@ describe("sidebarPendingFileDropStore", () => {
     store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
 
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-1")),
-    ).toEqual(makeFiles("a.png", "b.png"));
+      fileNames(
+        useSidebarPendingFileDropStore
+          .getState()
+          .consumePendingFileDrop(refOf("env-1", "thread-1")) ?? [],
+      ),
+    ).toEqual(["a.png", "b.png"]);
     expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
@@ -65,8 +73,12 @@ describe("sidebarPendingFileDropStore", () => {
     store.queuePendingFileDrop(makeEntry("env-1", "thread-2", makeFiles("b.png")));
 
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-2")),
-    ).toEqual(makeFiles("b.png"));
+      fileNames(
+        useSidebarPendingFileDropStore
+          .getState()
+          .consumePendingFileDrop(refOf("env-1", "thread-2")) ?? [],
+      ),
+    ).toEqual(["b.png"]);
     expect(useSidebarPendingFileDropStore.getState().pending).toHaveLength(1);
   });
 
@@ -77,8 +89,39 @@ describe("sidebarPendingFileDropStore", () => {
 
     useSidebarPendingFileDropStore.getState().clearPendingFileDrop(firstId);
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-1")),
-    ).toEqual(makeFiles("b.png"));
+      fileNames(
+        useSidebarPendingFileDropStore
+          .getState()
+          .consumePendingFileDrop(refOf("env-1", "thread-1")) ?? [],
+      ),
+    ).toEqual(["b.png"]);
+  });
+
+  it("keeps a newer drop deliverable after the first navigation fails", () => {
+    // Mirrors handleThreadFileDrop: two drops queued for the same unopened
+    // thread, then the first navigation fails (or lands elsewhere) and cleans
+    // up by its own drop id. The newer drop must survive with its files
+    // intact so the thread opening still attaches them.
+    const store = useSidebarPendingFileDropStore.getState();
+    const firstId = store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
+    const secondId = store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
+
+    // First navigation fails: handler clears only its own drop.
+    useSidebarPendingFileDropStore.getState().clearPendingFileDrop(firstId);
+    const remaining = useSidebarPendingFileDropStore.getState().pending;
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.id).toBe(secondId);
+    expect(fileNames(remaining[0]?.files ?? [])).toEqual(["b.png"]);
+
+    // Thread opens: the surviving drop is still attached.
+    expect(
+      fileNames(
+        useSidebarPendingFileDropStore
+          .getState()
+          .consumePendingFileDrop(refOf("env-1", "thread-1")) ?? [],
+      ),
+    ).toEqual(["b.png"]);
+    expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
   it("clears every drop for a missing thread", () => {
@@ -91,8 +134,12 @@ describe("sidebarPendingFileDropStore", () => {
       .getState()
       .clearPendingFileDropsForThread(refOf("env-1", "thread-1"));
     expect(
-      useSidebarPendingFileDropStore.getState().consumePendingFileDrop(refOf("env-1", "thread-2")),
-    ).toEqual(makeFiles("c.png"));
+      fileNames(
+        useSidebarPendingFileDropStore
+          .getState()
+          .consumePendingFileDrop(refOf("env-1", "thread-2")) ?? [],
+      ),
+    ).toEqual(["c.png"]);
     expect(useSidebarPendingFileDropStore.getState().pending).toEqual([]);
   });
 
