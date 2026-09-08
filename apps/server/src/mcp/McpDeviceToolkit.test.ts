@@ -85,6 +85,7 @@ const DeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   sessionsForThread: () => Effect.succeed([]),
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
+  agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
 });
 
 const TestLayer = McpHttpServer.DeviceToolkitRegistrationLive.pipe(

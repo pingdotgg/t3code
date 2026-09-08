@@ -33,6 +33,14 @@ import {
   LOCAL_DEVICE_HOST_ID,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { ServerConfig } from "../config.ts";
+import {
+  agentDeviceConfigPath,
+  agentDeviceSession,
+  writeAgentDeviceConfig,
+} from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -94,6 +102,11 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
 export class DeviceService extends Context.Service<
   DeviceService,
   {
+    readonly agentTarget: (input: {
+      threadId: ThreadId;
+      hostId: DeviceHostId;
+      deviceId: DeviceId;
+    }) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -136,9 +149,7 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
-export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
-  hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
-) {
+export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>, configureAgent: (hostId: DeviceHostId, ready: DeviceHost.DeviceAgentReady) => Effect.Effect<string, DeviceError> = () => Effect.succeed("")) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
@@ -733,6 +744,18 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   return DeviceService.of({
+    agentTarget: (input) =>
+      Effect.gen(function* () {
+        const ready = yield* agentReadinessIfSupported(input.hostId);
+        if (!ready) return yield* new DeviceHostUnavailableError({hostId: input.hostId, reason: "Agent device access is disabled."});
+        const configPath = yield* configureAgent(input.hostId, ready);
+        return [
+          "--config",
+          configPath,
+          "--session",
+          agentDeviceSession(input.threadId, input.hostId, input.deviceId),
+        ];
+      }),
     state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
     subscribe: PubSub.subscribe(statePubSub),
     configure,
@@ -752,8 +775,22 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 });
 
 export const make = Effect.gen(function* () {
-  const host = yield* DeviceHost.DeviceHost;
-  return yield* makeWithHosts(new Map([[host.id, host]]));
+  const localHost = yield* DeviceHost.DeviceHost;
+  const config = yield* ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* makeWithHosts(new Map([[localHost.id, localHost]]), (hostId, ready) => {
+    const file = agentDeviceConfigPath(config.stateDir, hostId, path);
+    return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(
+        (cause) =>
+          new DeviceOperationError({ operation: "configure agent", reason: "settings_failed", cause }),
+      ),
+      Effect.as(file),
+    );
+  });
 });
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));

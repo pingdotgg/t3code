@@ -221,3 +221,12 @@ export const isDeviceHubInstalled = (baseDir: string) =>
 
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+/** The CLI runs on the environment server even when all devices are remote. */
+export const ensureAgentDeviceCli = Effect.fn("DeviceToolchain.ensureAgentDeviceCli")(function* (
+  baseDir: string,
+) {
+  const path = yield* Path.Path;
+  return yield* installLock.withPermit(
+    installTool(AGENT_DEVICE_SPEC, deviceToolchainPaths(path, baseDir).agentDevice),
+  );
+});

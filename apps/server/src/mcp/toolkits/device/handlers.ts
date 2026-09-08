@@ -26,8 +26,15 @@ export function agentDeviceTargetArgs(device: DeviceSummary): ReadonlyArray<stri
  * rather than in the always-on prompt block; threads that never open a device
  * never pay for it.
  */
-export function agentDeviceQuickStart(device: DeviceSummary): string {
-  const target = agentDeviceTargetArgs(device).join(" ");
+export function agentDeviceQuickStart(
+  device: DeviceSummary,
+  targetArgs = agentDeviceTargetArgs(device),
+): string {
+  const target = targetArgs
+    .map((arg) =>
+      /^[a-zA-Z0-9_./:-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\"'\"'") + "'",
+    )
+    .join(" ");
   const platformNotes =
     device.platform === "ios"
       ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
@@ -44,6 +51,8 @@ export function agentDeviceQuickStart(device: DeviceSummary): string {
     `  agent-device install <app> <path-to-.app-or-.apk> ${target}`,
     "Prefer snapshot refs over coordinates. Run `agent-device help` for workflow guides and `agent-device <command> --help` for flags.",
     "Do not call simctl, adb, xcrun, or serve-sim directly while these tools are attached; use agent-device.",
+    "For remote hosts, arrange builds, app installation, and any Metro reverse forwarding yourself. T3 provides discovery, streaming, and control only.",
+    "Keep the returned --config and --session flags on every command. Other hosts can be used concurrently; opening one does not switch these commands.",
     platformNotes,
   ].join("\n");
 }
@@ -147,10 +156,18 @@ const handlers = {
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
+      const targetArgs = [
+        ...agentDeviceTargetArgs(device),
+        ...(yield* devices.agentTarget({
+          threadId: scope.threadId,
+          hostId: device.hostId,
+          deviceId: device.id,
+        })),
+      ];
       return {
         device,
-        agentDevice: { command: "agent-device", targetArgs: agentDeviceTargetArgs(device) },
-        quickStart: agentDeviceQuickStart(device),
+        agentDevice: { command: "agent-device", targetArgs },
+        quickStart: agentDeviceQuickStart(device, targetArgs),
       };
     }).pipe(Effect.mapError(toolError)),
   device_screenshot: (input) =>
