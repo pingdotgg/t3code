@@ -28,4 +28,8 @@ actions still require approval.
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 
+OpenCode's picker offers **Supervised**, **Auto-accept edits**, and **Full access** on web,
+desktop, and mobile. Existing OpenCode **Auto** threads display **Supervised**, matching
+their approval behavior.
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.
