@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
@@ -20,6 +21,7 @@ const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
 const tabId = PreviewTabId.make("tab-mcp-test");
 const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
+const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const invocation = {
   environmentId,
   threadId,
@@ -234,7 +236,7 @@ it.effect.each([
         expect(snapshot.isError).toBe(false);
         expect(snapshot.structuredContent).toEqual(metadata);
         const [text, ...rest] = snapshot.content;
-        expect(text?.type === "text" ? JSON.parse(text.text) : null).toEqual(boundedMetadata);
+        expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual(boundedMetadata);
         expect(rest).toEqual([
           {
             type: "text",
@@ -309,7 +311,7 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       expect(typeof screenshotPath).toBe("string");
       expect(path.dirname(screenshotPath!)).toBe(config.browserArtifactsDir);
       expect(path.basename(screenshotPath!)).toMatch(
-        /^browser-screenshot-example-test-[0-9a-z]+\.png$/,
+        /^browser-screenshot-example-test-[0-9a-z]+-[0-9a-f]{8}\.png$/,
       );
       expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
       const text = snapshot.content.find((content) => content.type === "text");
@@ -386,7 +388,7 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
         McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
       );
-      const parsed = JSON.parse(body) as {
+      const parsed = decodeJsonText(body) as {
         readonly accessibilityTree?: unknown;
         readonly visibleText: string;
         readonly interactiveElements: ReadonlyArray<{ readonly name: string }>;
@@ -405,6 +407,34 @@ it.effect("keeps the snapshot text under the agent's output ceiling", () =>
       expect(snapshot.structuredContent).toMatchObject({
         accessibilityTree: oversized.accessibilityTree,
       });
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("bounds the snapshot text even when nothing but logs and the title are large", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const oversized = {
+        ...snapshotResult,
+        title: "t".repeat(70_000),
+        interactiveElements: [],
+        consoleEntries: [{ level: "log", text: "x".repeat(70_000), timestamp: "t" }],
+      };
+      yield* serveSnapshots("mcp-bounded-logs-client", oversized);
+
+      const snapshot = yield* callSnapshot({ includeImage: false });
+
+      const [text] = snapshot.content;
+      const body = text?.type === "text" ? text.text : "";
+      expect(Buffer.byteLength(body, "utf8")).toBeLessThanOrEqual(
+        McpHttpServer.MAX_SNAPSHOT_TEXT_BYTES,
+      );
+      const parsed = decodeJsonText(body) as {
+        readonly title: string;
+        readonly consoleEntries: ReadonlyArray<{ readonly text: string }>;
+      };
+      expect(parsed.title.length).toBe(2_049);
+      expect(parsed.consoleEntries[0]?.text.length).toBe(501);
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
@@ -576,7 +606,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(evaluated.isError).toBe(false);
       expect(evaluated.structuredContent).toEqual({ value: ["Connect", "Continue"] });
       expect(evaluated.content).toEqual([
-        { type: "text", text: JSON.stringify({ value: ["Connect", "Continue"] }) },
+        { type: "text", text: '{"value":["Connect","Continue"]}' },
       ]);
 
       const actionRequests = [

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -110,13 +111,28 @@ export const MAX_SNAPSHOT_TEXT_BYTES = 60_000;
 const MAX_SNAPSHOT_VISIBLE_TEXT_CHARS = 8_000;
 const MAX_SNAPSHOT_ELEMENT_NAME_CHARS = 200;
 const MAX_SNAPSHOT_LOG_ENTRIES = 40;
+const MAX_SNAPSHOT_LOG_TEXT_CHARS = 500;
+const MAX_SNAPSHOT_IDENTIFIER_CHARS = 2_048;
 
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const utf8Length = (text: string) => Buffer.byteLength(text, "utf8");
-
 const cutText = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}…` : text;
 
+/** Shortens every string field of a log entry; other fields pass through. */
+const cutEntryStrings = <A>(entry: A): A =>
+  typeof entry === "object" && entry !== null
+    ? (Object.fromEntries(
+        Object.entries(entry).map(([key, value]) => [
+          key,
+          typeof value === "string" ? cutText(value, MAX_SNAPSHOT_LOG_TEXT_CHARS) : value,
+        ]),
+      ) as A)
+    : entry;
+
 type SnapshotMetadata = {
+  readonly url: string;
+  readonly title: string;
   readonly visibleText: string;
   readonly interactiveElements: ReadonlyArray<{
     readonly name: string;
@@ -129,32 +145,42 @@ type SnapshotMetadata = {
 };
 
 /**
- * Drops the accessibility tree, shortens page text and element names, and
- * keeps only the newest log entries. Returns the JSON text plus the notes the
- * agent needs to know what is missing.
+ * Drops the accessibility tree, shortens page text, element names, identifiers,
+ * and log strings, keeps only the newest log entries, and finally sheds
+ * interactive elements until the JSON fits. Returns the text plus notes on
+ * what is missing so the agent can reach for preview_evaluate.
  */
 export const boundSnapshotMetadata = (
   metadata: SnapshotMetadata,
 ): { readonly text: string; readonly omitted: ReadonlyArray<string> } => {
   const omitted: Array<string> = [];
-  const { accessibilityTree: _accessibilityTree, ...withoutTree } = metadata;
-  if (_accessibilityTree !== undefined) {
+  const { accessibilityTree, ...withoutTree } = metadata;
+  if (accessibilityTree !== undefined) {
     omitted.push("accessibilityTree (use interactiveElements locators or preview_evaluate)");
   }
-
   const tail = <A>(entries: ReadonlyArray<A>, label: string) => {
-    if (entries.length <= MAX_SNAPSHOT_LOG_ENTRIES) return entries;
-    omitted.push(`${entries.length - MAX_SNAPSHOT_LOG_ENTRIES} older ${label}`);
-    return entries.slice(-MAX_SNAPSHOT_LOG_ENTRIES);
+    if (entries.length > MAX_SNAPSHOT_LOG_ENTRIES) {
+      omitted.push(`${entries.length - MAX_SNAPSHOT_LOG_ENTRIES} older ${label}`);
+    }
+    return entries.slice(-MAX_SNAPSHOT_LOG_ENTRIES).map(cutEntryStrings);
   };
-  const namesCut = metadata.interactiveElements.some(
-    (element) => element.name.length > MAX_SNAPSHOT_ELEMENT_NAME_CHARS,
-  );
-  if (namesCut) {
+  if (
+    metadata.interactiveElements.some(
+      (element) => element.name.length > MAX_SNAPSHOT_ELEMENT_NAME_CHARS,
+    )
+  ) {
     omitted.push(`element names longer than ${MAX_SNAPSHOT_ELEMENT_NAME_CHARS} characters`);
   }
-  let bounded = {
+  if (metadata.visibleText.length > MAX_SNAPSHOT_VISIBLE_TEXT_CHARS) {
+    omitted.push(
+      `visibleText after ${MAX_SNAPSHOT_VISIBLE_TEXT_CHARS} characters (use preview_evaluate for more)`,
+    );
+  }
+  const bounded = {
     ...withoutTree,
+    url: cutText(metadata.url, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+    title: cutText(metadata.title, MAX_SNAPSHOT_IDENTIFIER_CHARS),
+    visibleText: cutText(metadata.visibleText, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS),
     interactiveElements: metadata.interactiveElements.map((element) => ({
       ...element,
       name: cutText(element.name, MAX_SNAPSHOT_ELEMENT_NAME_CHARS),
@@ -163,24 +189,16 @@ export const boundSnapshotMetadata = (
     networkEntries: tail(metadata.networkEntries, "network entries"),
     actionTimeline: tail(metadata.actionTimeline, "action timeline entries"),
   };
-  if (bounded.visibleText.length > MAX_SNAPSHOT_VISIBLE_TEXT_CHARS) {
-    omitted.push(
-      `visibleText after ${MAX_SNAPSHOT_VISIBLE_TEXT_CHARS} characters (use preview_evaluate for more)`,
-    );
-    bounded = {
-      ...bounded,
-      visibleText: cutText(bounded.visibleText, MAX_SNAPSHOT_VISIBLE_TEXT_CHARS),
-    };
-  }
 
-  let text = JSON.stringify(bounded);
-  if (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES) {
-    // Interactive elements are the last thing worth keeping; halve until it fits.
-    let elements = bounded.interactiveElements;
-    while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES && elements.length > 0) {
-      elements = elements.slice(0, Math.floor(elements.length / 2));
-      text = JSON.stringify({ ...bounded, interactiveElements: elements });
-    }
+  // Every field above has a fixed cap, so only the element list can still push
+  // the text over the ceiling. Halve it until the JSON fits.
+  let elements = bounded.interactiveElements;
+  let text = encodeJsonText(bounded);
+  while (utf8Length(text) > MAX_SNAPSHOT_TEXT_BYTES && elements.length > 0) {
+    elements = elements.slice(0, Math.floor(elements.length / 2));
+    text = encodeJsonText({ ...bounded, interactiveElements: elements });
+  }
+  if (elements.length < bounded.interactiveElements.length) {
     omitted.push(
       `${bounded.interactiveElements.length - elements.length} of ${bounded.interactiveElements.length} interactive elements`,
     );
@@ -188,7 +206,7 @@ export const boundSnapshotMetadata = (
   return { text, omitted };
 };
 
-export class PreviewScreenshotSaveError extends Schema.TaggedErrorClass<PreviewScreenshotSaveError>()(
+export class PreviewScreenshotSaveError extends Schema.TaggedError<PreviewScreenshotSaveError>()(
   "PreviewScreenshotSaveError",
   { screenshotPath: Schema.String, cause: Schema.Defect() },
 ) {
@@ -223,7 +241,8 @@ const saveScreenshot = Effect.fn("McpHttpServer.saveScreenshot")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const millis = yield* Clock.currentTimeMillis;
-  const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}.png`;
+  // Two saves in the same millisecond must not overwrite each other.
+  const fileName = `browser-screenshot-${screenshotSiteSlug(pageUrl)}-${millis.toString(36)}-${NodeCrypto.randomUUID().slice(0, 8)}.png`;
   const screenshotPath = path.join(config.browserArtifactsDir, fileName);
   yield* fileSystem.makeDirectory(config.browserArtifactsDir, { recursive: true }).pipe(
     Effect.andThen(fileSystem.writeFile(screenshotPath, data)),
