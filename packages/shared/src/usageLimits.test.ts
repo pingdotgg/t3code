@@ -238,6 +238,18 @@ describe("collectLimitSources", () => {
     ).toEqual(accounts);
   });
 
+  it("does not hide a hub account whose plan differs from the native subscription", () => {
+    const plusNative = {
+      ...native,
+      auth: { ...native.auth, label: "ChatGPT Plus Subscription" },
+    };
+    const businessAccount = { ...account, plan: "ChatGPT Business Subscription" };
+
+    expect(collectLimitSources(presentations([plusNative], [businessAccount]))).toMatchObject([
+      { accounts: [businessAccount], hiddenAccountCount: 0 },
+    ]);
+  });
+
   it.each([
     { enabled: false },
     { installed: false },
@@ -387,6 +399,73 @@ describe("pools", () => {
     });
     // The fresher native snapshot wins; the hub row is pre-filtered by email.
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
+  });
+
+  it("still merges same-email accounts when both sides report the same plan", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com", label: "Claude Subscription" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "claude-same@example.com.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    plan: "Claude Subscription",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T11:30:00.000Z",
+                      windows: [{ ...window, usedPercent: 55 }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)).toHaveLength(1);
+  });
+
+  it("keeps same-email Codex instances apart when their plans differ", () => {
+    const plus = provider({
+      instanceId: ProviderInstanceId.make("codex-plus"),
+      auth: {
+        status: "authenticated",
+        email: "same@example.com",
+        label: "ChatGPT Plus Subscription",
+      },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 20 }] },
+    });
+    const business = provider({
+      instanceId: ProviderInstanceId.make("codex-business"),
+      auth: {
+        status: "authenticated",
+        email: "same@example.com",
+        label: "ChatGPT Business Subscription",
+      },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 70 }] },
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [plus, business] } }],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(2);
+    const byPlan = new Map(accounts.map((entry) => [entry.plan, entry]));
+    expect(byPlan.get("ChatGPT Plus Subscription")?.limits.windows[0]?.usedPercent).toBe(20);
+    expect(byPlan.get("ChatGPT Business Subscription")?.limits.windows[0]?.usedPercent).toBe(70);
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {

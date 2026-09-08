@@ -100,16 +100,17 @@ export function collectLimitSources(
   }
 > {
   const nativeAccounts = new Set<string>();
+  const knownPlans = new Map<string, string>();
   for (const presentation of presentations.values()) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      const key = accountKey(provider.driver, provider.auth.email);
-      if (
-        key !== null &&
-        provider.usageLimits?.windows.length &&
-        !provider.usageLimits.unavailable
-      ) {
-        nativeAccounts.add(key);
-      }
+      if (!provider.usageLimits?.windows.length || provider.usageLimits.unavailable) continue;
+      const key = accountGroupKey(
+        provider.driver,
+        provider.auth.email,
+        provider.auth.label,
+        knownPlans,
+      );
+      if (key !== null) nativeAccounts.add(key);
     }
   }
   const perEnvironment: Array<{
@@ -130,7 +131,7 @@ export function collectLimitSources(
   return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
     sources.map((source) => {
       const accounts = source.accounts.filter((account) => {
-        const key = accountKey(account.driver, account.email);
+        const key = accountGroupKey(account.driver, account.email, account.plan, knownPlans);
         return key === null || !nativeAccounts.has(key);
       });
       return {
@@ -151,10 +152,38 @@ function accountKey(driver: ServerProvider["driver"], email: string | undefined)
 }
 
 /**
+ * accountKey, split further when two same-email accounts carry different plan
+ * strings -- a personal ChatGPT Plus subscription and a Business workspace
+ * behind the same address are two independent quotas, not one. An unset plan
+ * on either side does not split the group: callers do not always know a
+ * subscription's plan, and treating unknown as a wildcard keeps the existing
+ * native/hub and multi-environment dedupe intact. `knownPlans` records the
+ * first plan seen per base key; pass one shared map per collection pass so
+ * every account examined agrees on which group is "the" unlabeled one.
+ */
+function accountGroupKey(
+  driver: ServerProvider["driver"],
+  email: string | undefined,
+  plan: string | undefined,
+  knownPlans: Map<string, string>,
+): string | null {
+  const base = accountKey(driver, email);
+  if (base === null || plan === undefined) return base;
+  const knownPlan = knownPlans.get(base);
+  if (knownPlan === undefined) {
+    knownPlans.set(base, plan);
+    return base;
+  }
+  return knownPlan === plan ? base : `${base}::${plan}`;
+}
+
+/**
  * One subscription account as the pooled views see it, whichever way it was
  * reported. The same email signed in natively on two environments, or reported
  * by a hub as well as natively, is one account: its quota is one bucket, so
- * counting it twice would misstate what is left.
+ * counting it twice would misstate what is left. The same email can also hold
+ * two independent subscriptions -- a personal plan and a Business workspace,
+ * say -- which stay two accounts because their plan strings disagree.
  */
 export interface LimitAccount {
   readonly key: string;
@@ -190,6 +219,7 @@ export function collectLimitAccounts(
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
+  const knownPlans = new Map<string, string>();
   const merge = (key: string, next: LimitAccount) => {
     // Redeeming through a hub also clears the routing cooldown that hub holds
     // for the account. Redeeming natively against the same subscription resets
@@ -254,7 +284,7 @@ export function collectLimitAccounts(
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
       merge(
-        accountKey(provider.driver, provider.auth.email) ??
+        accountGroupKey(provider.driver, provider.auth.email, provider.auth.label, knownPlans) ??
           `${environmentId}:${provider.instanceId}`,
         {
           key: `${environmentId}:${provider.instanceId}`,
@@ -282,27 +312,31 @@ export function collectLimitAccounts(
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
-          key: `${source.id}:${account.id}`,
-          driver: account.driver,
-          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
-          email: account.email,
-          plan: account.plan,
-          accentColor: undefined,
-          environments: [],
-          sourceLabel,
-          redeem: account.usageLimits.resetCredits?.nextCreditId
-            ? {
-                environmentId,
-                input: {
-                  sourceId: source.id,
-                  accountId: account.id,
-                  creditId: account.usageLimits.resetCredits.nextCreditId,
-                },
-              }
-            : null,
-          limits: account.usageLimits,
-        });
+        merge(
+          accountGroupKey(account.driver, account.email, account.plan, knownPlans) ??
+            `${source.id}:${account.id}`,
+          {
+            key: `${source.id}:${account.id}`,
+            driver: account.driver,
+            displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+            email: account.email,
+            plan: account.plan,
+            accentColor: undefined,
+            environments: [],
+            sourceLabel,
+            redeem: account.usageLimits.resetCredits?.nextCreditId
+              ? {
+                  environmentId,
+                  input: {
+                    sourceId: source.id,
+                    accountId: account.id,
+                    creditId: account.usageLimits.resetCredits.nextCreditId,
+                  },
+                }
+              : null,
+            limits: account.usageLimits,
+          },
+        );
       }
     }
   }
