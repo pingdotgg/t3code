@@ -500,6 +500,8 @@ export interface TerminalSelectionClickSequence {
   readonly y: number;
 }
 
+const TERMINAL_LINK_DRAG_THRESHOLD_PX = 4;
+
 export function advanceTerminalSelectionClickSequence(
   previous: TerminalSelectionClickSequence | null,
   event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">,
@@ -507,7 +509,8 @@ export function advanceTerminalSelectionClickSequence(
   const repeats =
     previous !== null &&
     event.timeStamp - previous.time <= SELECTION_MULTI_CLICK_INTERVAL_MS &&
-    Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 4;
+    Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <=
+      TERMINAL_LINK_DRAG_THRESHOLD_PX;
   return {
     count: repeats ? (previous.count >= 3 ? 1 : previous.count + 1) : 1,
     time: event.timeStamp,
@@ -593,7 +596,11 @@ export class GhosttyTerminalSurface {
   private mouseReportingButton: number | null = null;
   private linkActivationPointerId: number | null = null;
   private linkActivationLink: TerminalLinkWithRange | null = null;
-  private linkActivationOrigin: { x: number; y: number; time: number } | null = null;
+  private linkActivationOrigin: {
+    x: number;
+    y: number;
+    clickCount: number;
+  } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
   private hoverPointer: { x: number; y: number } | null = null;
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
@@ -1262,8 +1269,9 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (event.button !== 0) return;
+    const clickCount = this.recordSelectionClick(event);
     const link = this.linkAt(event.clientX, event.clientY);
-    if (link) {
+    if (link && !event.shiftKey && clickCount === 1) {
       event.preventDefault();
       event.stopPropagation();
       this.linkActivationPointerId = event.pointerId;
@@ -1271,24 +1279,29 @@ export class GhosttyTerminalSurface {
       this.linkActivationOrigin = {
         x: event.clientX,
         y: event.clientY,
-        time: event.timeStamp,
+        clickCount,
       };
       this.canvas.setPointerCapture(event.pointerId);
       return;
     }
     this.clearHoveredLink();
-    this.beginSelection(event);
+    this.beginSelection(event, clickCount);
     this.canvas.setPointerCapture(event.pointerId);
   };
 
-  private beginSelection(event: { clientX: number; clientY: number; timeStamp: number }): void {
-    const cell = this.cellAt(event.clientX, event.clientY);
-    this.selectionMoved = false;
+  private recordSelectionClick(
+    event: Pick<PointerEvent, "clientX" | "clientY" | "timeStamp">,
+  ): number {
     this.selectionClickSequence = advanceTerminalSelectionClickSequence(
       this.selectionClickSequence,
       event,
     );
-    const clickCount = this.selectionClickSequence.count;
+    return this.selectionClickSequence.count;
+  }
+
+  private beginSelection(event: { clientX: number; clientY: number }, clickCount: number): void {
+    const cell = this.cellAt(event.clientX, event.clientY);
+    this.selectionMoved = false;
     this.selectionMode = clickCount >= 3 ? "line" : clickCount === 2 ? "word" : "cell";
     const range =
       this.selectionMode === "line"
@@ -1322,16 +1335,24 @@ export class GhosttyTerminalSurface {
   private readonly onPointerMove = (event: PointerEvent) => {
     if (this.linkActivationPointerId === event.pointerId) {
       const origin = this.linkActivationOrigin;
-      if (origin === null || (event.clientX === origin.x && event.clientY === origin.y)) return;
+      if (
+        origin === null ||
+        Math.hypot(event.clientX - origin.x, event.clientY - origin.y) <=
+          TERMINAL_LINK_DRAG_THRESHOLD_PX
+      ) {
+        return;
+      }
       this.linkActivationPointerId = null;
       this.linkActivationLink = null;
       this.linkActivationOrigin = null;
       this.clearHoveredLink();
-      this.beginSelection({
-        clientX: origin.x,
-        clientY: origin.y,
-        timeStamp: origin.time,
-      });
+      this.beginSelection(
+        {
+          clientX: origin.x,
+          clientY: origin.y,
+        },
+        origin.clickCount,
+      );
     }
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.

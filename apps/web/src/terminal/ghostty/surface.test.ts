@@ -167,7 +167,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
-      pointer(type: string, clientX: number, buttons: number) {
+      pointer(type: string, clientX: number, buttons: number, shiftKey = false) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
@@ -175,6 +175,7 @@ describe("GhosttyTerminalSurface visibility", () => {
             pointerId: 1,
             button: 0,
             buttons,
+            shiftKey,
           }),
         );
       },
@@ -290,6 +291,54 @@ describe("GhosttyTerminalSurface visibility", () => {
     harness.pointer("pointermove", 37, 1);
     harness.pointer("pointerup", 37, 0);
 
+    expect(onLinkActivate).not.toHaveBeenCalled();
+    expect(surface.getSelection()).toBe("https");
+  });
+
+  it("keeps a link click active through slight pointer movement", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 6, 1);
+    harness.pointer("pointerup", 6, 0);
+
+    expect(onLinkActivate).toHaveBeenCalledOnce();
+  });
+
+  it("uses repeated link clicks for word and line selection", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com tail");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    expect(onLinkActivate).toHaveBeenCalledOnce();
+    expect(surface.getSelection()).not.toBe("");
+
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointerup", 5, 0);
+    expect(onLinkActivate).toHaveBeenCalledOnce();
+    expect(surface.getSelection()).toBe("https://example.com tail");
+  });
+
+  it("uses Shift drags over links for selection", async () => {
+    const harness = createHarness();
+    const onLinkActivate = vi.fn();
+    const surface = await harness.create({ onLinkActivate });
+    surface.write("https://example.com");
+    harness.flushFrame();
+
+    harness.pointer("pointerdown", 5, 1, true);
+    harness.pointer("pointermove", 37, 1, true);
+    harness.pointer("pointerup", 37, 0, true);
     expect(onLinkActivate).not.toHaveBeenCalled();
     expect(surface.getSelection()).toBe("https");
   });
