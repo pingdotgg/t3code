@@ -465,14 +465,18 @@ def check(name, root, report_path):
         if any(o["operation"] == "pr.create" for o in ops):
             errors.append("a duplicate PR was created")
         captures = [o for o in ops if o["operation"] == "ui.capture" and o["result"] == "success"]
-        if len(captures) != 2 or {o["args"]["revision"] for o in captures} != {state["baseHead"], state["initialHead"]}:
-            errors.append("comparable base and candidate client captures were not completed exactly once")
+        # Smoke checks and export retries may capture a revision more than once;
+        # the comparable pair requires one successful capture of each revision.
+        capture_revisions = [o["args"]["revision"] for o in captures]
+        if not {state["baseHead"], state["initialHead"]} <= set(capture_revisions):
+            errors.append("comparable base and candidate client captures were not completed")
         captured_paths = {
             path for operation in captures
             for path in (operation["args"]["screenshot"], operation["args"]["recording"])
         }
         captured_names = {Path(path).name for path in captured_paths}
-        if len(captured_names) != 4 or sorted(Path(path).suffix for path in captured_paths) != [".mp4", ".mp4", ".png", ".png"]:
+        suffixes = [Path(path).suffix for path in captured_paths]
+        if suffixes.count(".png") < 2 or suffixes.count(".mp4") < 2:
             errors.append("animation proof must contain two screenshots and two real-time recordings")
         uploaded_names = [a["name"] for a in state["attachments"].values()]
         if any(uploaded_names.count(name) != 1 for name in captured_names):

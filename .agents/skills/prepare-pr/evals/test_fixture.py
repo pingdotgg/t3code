@@ -162,6 +162,50 @@ class FixtureTests(unittest.TestCase):
         code, result = self.result("animation_pr")
         self.assertEqual(code, 0, result)
 
+    def test_animation_pr_allows_smoke_capture_before_the_comparable_pair(self):
+        fixture.setup("animation_pr", self.root)
+        evidence = self.root / "repo" / "evidence"
+        # The skill requires a smoke capture to prove the recorder before the flows.
+        smoke = (
+            "HEAD", evidence / "smoke.png", evidence / "smoke.mp4",
+        )
+        captures = (
+            smoke,
+            ("origin/main", evidence / "before.png", evidence / "before.mp4"),
+            ("HEAD", evidence / "after.png", evidence / "after.mp4"),
+        )
+        paths = []
+        for revision, screenshot, recording in captures:
+            self.command(
+                "ui-proof", "capture", "--revision", revision,
+                "--screenshot", str(screenshot), "--recording", str(recording),
+            )
+            paths.extend((screenshot, recording))
+        derivative = evidence / "comparison.gif"
+        derivative.write_bytes(b"GIF89a" + b"fixture derivative")
+        paths.append(derivative)
+        urls = []
+        for path in paths:
+            url = self.command("gh", "fixture", "attachment", "upload", str(path)).stdout.strip()
+            urls.append(url)
+            self.command(
+                "gh", "fixture", "attachment", "fetch", url,
+                "--output", str(self.root / f"fetched-{path.name}"),
+            )
+        body = self.root / "body.md"
+        body.write_text(
+            "The terminal animation is smoother in the disposable client.\n" + "\n".join(urls),
+            encoding="utf-8",
+        )
+        self.command("gh", "pr", "edit", "17", "--body-file", str(body))
+        self.command("gh", "pr", "ready", "17")
+        url = self.command("gh", "pr", "view", "17", "--json", "url,isDraft").stdout
+        (self.root / "report.md").write_text(
+            f"Completed {json.loads(url)['url']} with simulated client proof.", encoding="utf-8"
+        )
+        code, result = self.result("animation_pr")
+        self.assertEqual(code, 0, result)
+
     def test_ready_help_preserves_draft_and_operation_log(self):
         fixture.setup("animation_pr", self.root)
         before = fixture.read_state(self.root)
