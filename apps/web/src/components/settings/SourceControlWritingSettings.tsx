@@ -65,7 +65,9 @@ export function SourceControlWritingSettingsSection() {
   const style = settings.sourceControlWritingStyle;
   const defaults = DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
   const isSourceControlWritingStyleDirty =
-    style.mode !== defaults.mode || style.customInstructions !== defaults.customInstructions;
+    writingStyleMixed ||
+    style.mode !== defaults.mode ||
+    style.customInstructions !== defaults.customInstructions;
 
   const textGenerationProviders = serverProviders.filter(
     (provider) => provider.supportsTextGeneration !== false,

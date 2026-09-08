@@ -28,11 +28,22 @@ vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null 
 vi.mock("./settingsSearch", () => ({ searchableSetting: (id: string) => ({ id, title: id }) }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
-  SettingResetButton: () => null,
+  SettingResetButton: ({ label, onClick }: { label: string; onClick: () => void }) => (
+    <button onClick={onClick}>{`Reset ${label}`}</button>
+  ),
   SettingsSection: ({ children }: { children: ReactNode }) => children,
-  SettingsRow: ({ children, control }: { children: ReactNode; control: ReactNode }) => (
+  SettingsRow: ({
+    children,
+    control,
+    resetAction,
+  }: {
+    children: ReactNode;
+    control: ReactNode;
+    resetAction: ReactNode;
+  }) => (
     <div>
       {control}
+      {resetAction}
       {children}
     </div>
   ),
@@ -103,6 +114,30 @@ afterEach(async () => {
 });
 
 describe("mixed source control instructions", () => {
+  it("resets every environment even when the representative already has default instructions", () => {
+    state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
+    act(() => {
+      renderer!.update(
+        <StrictMode>
+          <SourceControlWritingSettingsSection />
+        </StrictMode>,
+      );
+    });
+
+    act(() => button("Reset source control writing style").props.onClick());
+
+    expect(state.updateSettings).toHaveBeenCalledTimes(1);
+    expect(
+      state.styles.map(({ mode, customInstructions }) => ({ mode, customInstructions })),
+    ).toEqual(
+      [0, 1].map(() => ({
+        mode: DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle.mode,
+        customInstructions: DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle.customInstructions,
+      })),
+    );
+    expect(state.styles[1]!.followChangeRequestTemplates).toBe(false);
+  });
+
   it("does not write an untouched bulk draft", () => {
     const initialStyles = state.styles;
     openEditor();
