@@ -16,6 +16,7 @@ import {
   nextTerminalAttachSeedState,
 } from "./terminalSession.ts";
 
+/** Create environment-scoped terminal subscriptions and lifecycle commands. */
 export function createTerminalEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -88,6 +89,8 @@ export function createTerminalEnvironmentAtoms<R, E>(
     inspectSubprocesses: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:inspect-subprocesses",
       tag: WS_METHODS.terminalInspectSubprocesses,
+      scheduler: lifecycleScheduler,
+      concurrency: lifecycleConcurrency,
     }),
     close: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:close",
