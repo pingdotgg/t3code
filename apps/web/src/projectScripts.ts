@@ -1,5 +1,6 @@
 import {
   MAX_SCRIPT_ID_LENGTH,
+  PROJECT_SCRIPT_MAX_COMMANDS,
   SCRIPT_RUN_COMMAND_PATTERN,
   type KeybindingCommand,
   type ProjectScript,
@@ -10,6 +11,7 @@ const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 export interface ProjectScriptInput {
   readonly name: ProjectScript["name"];
   readonly command: ProjectScript["command"];
+  readonly commands?: ReadonlyArray<string>;
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
@@ -17,10 +19,18 @@ export interface ProjectScriptInput {
 }
 
 export function buildProjectScript(id: string, input: ProjectScriptInput): ProjectScript {
+  const extraCommands: string[] = [];
+  for (const extra of input.commands ?? []) {
+    const trimmed = extra.trim();
+    if (trimmed.length === 0) continue;
+    extraCommands.push(trimmed);
+    if (extraCommands.length >= PROJECT_SCRIPT_MAX_COMMANDS - 1) break;
+  }
   return {
     id,
     name: input.name,
     command: input.command,
+    ...(extraCommands.length > 0 ? { commands: extraCommands } : {}),
     icon: input.icon,
     runOnWorktreeCreate: input.runOnWorktreeCreate,
     ...(input.previewUrl === null

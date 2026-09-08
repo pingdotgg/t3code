@@ -257,8 +257,57 @@ describe("terminalUiStateStore actions", () => {
     expect(terminalUiState.terminalIds).toEqual(["term-a", "term-b"]);
     expect(terminalUiState.activeTerminalId).toBe("term-a");
     expect(terminalUiState.terminalGroups).toEqual([
-      { id: "group-term-a", terminalIds: ["term-a"] },
-      { id: "group-term-b", terminalIds: ["term-b"] },
+      { id: "group-term-a", terminalIds: ["term-a", "term-b"] },
+    ]);
+  });
+
+  it("splits newly reconciled terminals into the active group", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "backend", "frontend"]);
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "backend", "frontend"],
+      },
+    ]);
+  });
+
+  it("opens a new group when the active split group is already full", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminal(THREAD_REF, "pane-2");
+    store.splitTerminal(THREAD_REF, "pane-3");
+    store.splitTerminal(THREAD_REF, "pane-4");
+    store.newTerminal(THREAD_REF, "other-tab");
+    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+    store.reconcileTerminalIds(THREAD_REF, [
+      DEFAULT_THREAD_TERMINAL_ID,
+      "pane-2",
+      "pane-3",
+      "pane-4",
+      "other-tab",
+      "overflow-a",
+      "overflow-b",
+    ]);
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.terminalGroups).toEqual([
+      {
+        id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+        terminalIds: [DEFAULT_THREAD_TERMINAL_ID, "pane-2", "pane-3", "pane-4"],
+      },
+      { id: "group-other-tab", terminalIds: ["other-tab"] },
+      { id: "group-overflow-a", terminalIds: ["overflow-a"] },
+      { id: "group-overflow-b", terminalIds: ["overflow-b"] },
     ]);
   });
 

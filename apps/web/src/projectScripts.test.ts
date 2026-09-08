@@ -3,6 +3,7 @@ import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
 import {
   projectScriptCwd,
+  projectScriptCommands,
   projectScriptRuntimeEnv,
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
@@ -52,6 +53,27 @@ describe("projectScripts helpers", () => {
       name: "Test",
       command: "pnpm test",
       icon: "test",
+      runOnWorktreeCreate: false,
+    });
+  });
+
+  it("stores extra commands and drops blanks", () => {
+    expect(
+      buildProjectScript("dev", {
+        name: "Dev",
+        command: "uvicorn app.main:app --reload",
+        commands: [" npm run dev ", "", "python -m arq app.worker.WorkerSettings"],
+        icon: "play",
+        runOnWorktreeCreate: false,
+        previewUrl: null,
+        autoOpenPreview: false,
+      }),
+    ).toEqual({
+      id: "dev",
+      name: "Dev",
+      command: "uvicorn app.main:app --reload",
+      commands: ["npm run dev", "python -m arq app.worker.WorkerSettings"],
+      icon: "play",
       runOnWorktreeCreate: false,
     });
   });
@@ -107,6 +129,19 @@ describe("projectScripts helpers", () => {
 
     expect(primaryProjectScript(scripts)?.id).toBe("test");
     expect(setupProjectScript(scripts)?.id).toBe("setup");
+  });
+
+  it("lists the primary command then extras", () => {
+    expect(
+      projectScriptCommands({
+        command: "uvicorn app.main:app --reload",
+        commands: ["npm run dev", "  ", "python -m arq app.worker.WorkerSettings"],
+      }),
+    ).toEqual([
+      "uvicorn app.main:app --reload",
+      "npm run dev",
+      "python -m arq app.worker.WorkerSettings",
+    ]);
   });
 
   it("builds default runtime env for scripts", () => {

@@ -219,6 +219,83 @@ describe("ProjectSetupScriptRunner", () => {
     },
   );
 
+  it.effect("opens a separate terminal for each setup command", () => {
+    const open = vi.fn((input: { terminalId: string }) =>
+      Effect.succeed({
+        threadId: "thread-1",
+        terminalId: input.terminalId,
+        cwd: "/repo/worktrees/a",
+        worktreePath: "/repo/worktrees/a",
+        status: "running" as const,
+        pid: 123,
+        history: "",
+        exitCode: null,
+        exitSignal: null,
+        label: input.terminalId,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    const write = vi.fn(() => Effect.void);
+    const project = makeProject([
+      {
+        id: "setup",
+        name: "Dev",
+        command: "npm run api",
+        commands: ["npm run web"],
+        icon: "configure",
+        runOnWorktreeCreate: true,
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const result = yield* runner.runForThread({
+        threadId: "thread-1",
+        projectId: "project-1",
+        worktreePath: "/repo/worktrees/a",
+      });
+
+      expect(result).toEqual({
+        status: "started",
+        scriptId: "setup",
+        scriptName: "Dev",
+        terminalId: "setup-setup",
+        cwd: "/repo/worktrees/a",
+      });
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(open).toHaveBeenNthCalledWith(1, {
+        threadId: "thread-1",
+        terminalId: "setup-setup",
+        cwd: "/repo/worktrees/a",
+        worktreePath: "/repo/worktrees/a",
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo/project",
+          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+        },
+      });
+      expect(open).toHaveBeenNthCalledWith(2, {
+        threadId: "thread-1",
+        terminalId: "setup-setup-2",
+        cwd: "/repo/worktrees/a",
+        worktreePath: "/repo/worktrees/a",
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo/project",
+          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+        },
+      });
+      expect(write).toHaveBeenNthCalledWith(1, {
+        threadId: "thread-1",
+        terminalId: "setup-setup",
+        data: "npm run api\r",
+      });
+      expect(write).toHaveBeenNthCalledWith(2, {
+        threadId: "thread-1",
+        terminalId: "setup-setup-2",
+        data: "npm run web\r",
+      });
+    }).pipe(Effect.provide(testLayer(project, { open, write })));
+  });
+
   it.effect("keeps terminal failures as the exact cause of a structured operation error", () => {
     const rootCause = new Error("stat failed");
     const terminalError = new TerminalManager.TerminalCwdStatError({

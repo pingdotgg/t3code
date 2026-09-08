@@ -19,6 +19,15 @@ Reset that list to use shared actions again. Existing project actions are preser
 Project names, icons, removal, and importing actions from a checkout remain project-specific.
 When there are several checkouts, the checkout picker selects which actions and grouping to edit.
 
+## Actions
+
+Add commands under **Actions**. One action can include extra commands; on web and desktop each extra
+command starts in its own split terminal until the active split group reaches its terminal limit;
+remaining commands open in separate tabs. Use this for a backend, frontend, and worker that should
+run together. Mobile starts the extra shells but shows one terminal at a time.
+
+In a checkout `t3.json`, extra commands go in `commands` next to `command`.
+
 ## Project icons
 
 Choose an icon, emoji, or image from the project to make it easier to recognize. The choice applies

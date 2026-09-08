@@ -1,7 +1,8 @@
-import type {
-  ProjectScript,
-  ProjectScriptIcon,
-  ResolvedKeybindingsConfig,
+import {
+  PROJECT_SCRIPT_MAX_COMMANDS,
+  type ProjectScript,
+  type ProjectScriptIcon,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -14,7 +15,9 @@ import {
   HammerIcon,
   ListChecksIcon,
   PlayIcon,
+  PlusIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
@@ -76,6 +79,8 @@ export function ScriptIcon({
 export interface NewProjectScriptInput {
   name: string;
   command: string;
+  /** Extra commands besides `command`. Each runs in its own split terminal. */
+  commands: ReadonlyArray<string>;
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
   keybinding: string | null;
@@ -90,6 +95,7 @@ export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   name: "",
   command: "",
+  commands: [],
   icon: "play",
   runOnWorktreeCreate: false,
   keybinding: null,
@@ -114,6 +120,7 @@ export function editorRequestForScript(
     initial: {
       name: script.name,
       command: script.command,
+      commands: script.commands ?? [],
       icon: script.icon,
       runOnWorktreeCreate: script.runOnWorktreeCreate,
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
@@ -148,6 +155,7 @@ export function ProjectScriptEditorDialog({
   const formId = React.useId();
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
+  const [extraCommands, setExtraCommands] = useState<string[]>([]);
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
@@ -165,6 +173,7 @@ export function ProjectScriptEditorDialog({
     if (!request) return;
     setName(request.initial.name);
     setCommand(request.initial.command);
+    setExtraCommands([...request.initial.commands]);
     setIcon(request.initial.icon);
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
@@ -217,6 +226,10 @@ export function ProjectScriptEditorDialog({
       payload = {
         name: trimmedName,
         command: trimmedCommand,
+        commands: extraCommands
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0)
+          .slice(0, PROJECT_SCRIPT_MAX_COMMANDS - 1),
         icon,
         runOnWorktreeCreate,
         keybinding: keybindingRule?.key ?? null,
@@ -332,6 +345,48 @@ export function ProjectScriptEditorDialog({
                   value={command}
                   onChange={(event) => setCommand(event.target.value)}
                 />
+                {extraCommands.map((entry, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      aria-label={`Command ${index + 2}`}
+                      placeholder="npm run dev"
+                      value={entry}
+                      onChange={(event) => {
+                        const next = [...extraCommands];
+                        next[index] = event.target.value;
+                        setExtraCommands(next);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={`Remove command ${index + 2}`}
+                      onClick={() =>
+                        setExtraCommands(
+                          extraCommands.filter((_, entryIndex) => entryIndex !== index),
+                        )
+                      }
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
+                ))}
+                {1 + extraCommands.length < PROJECT_SCRIPT_MAX_COMMANDS ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    className="-ms-2"
+                    onClick={() => setExtraCommands([...extraCommands, ""])}
+                  >
+                    <PlusIcon />
+                    Add command
+                  </Button>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  Extra commands each run in a split terminal.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="script-preview-url">Preview URL (optional)</Label>

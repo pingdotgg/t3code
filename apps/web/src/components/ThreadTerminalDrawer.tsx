@@ -1189,12 +1189,26 @@ export default function ThreadTerminalDrawer({
       });
     }
 
+    const activeGroup = nextGroups.find((group) => group.id === activeTerminalGroupId) ?? null;
+    let fillGroup =
+      activeGroup && activeGroup.terminalIds.length < MAX_TERMINALS_PER_GROUP ? activeGroup : null;
+    const stackIntoNewGroups = activeGroup === null;
     for (const terminalId of normalizedTerminalIds) {
       if (assignedTerminalIds.has(terminalId)) continue;
-      nextGroups.push({
+      if (fillGroup && fillGroup.terminalIds.length < MAX_TERMINALS_PER_GROUP) {
+        fillGroup.terminalIds.push(terminalId);
+        assignedTerminalIds.add(terminalId);
+        continue;
+      }
+      fillGroup = {
         id: assignUniqueGroupId(`group-${terminalId}`),
         terminalIds: [terminalId],
-      });
+      };
+      nextGroups.push(fillGroup);
+      assignedTerminalIds.add(terminalId);
+      if (!stackIntoNewGroups) {
+        fillGroup = null;
+      }
     }
 
     const terminalOrderIndex = new Map(
@@ -1207,7 +1221,7 @@ export default function ThreadTerminalDrawer({
     });
 
     return nextGroups;
-  }, [normalizedTerminalIds, terminalGroups]);
+  }, [activeTerminalGroupId, normalizedTerminalIds, terminalGroups]);
 
   const resolvedActiveGroupIndex = useMemo(() => {
     const indexById = resolvedTerminalGroups.findIndex(

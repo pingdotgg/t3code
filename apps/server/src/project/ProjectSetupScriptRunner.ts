@@ -1,5 +1,6 @@
 import { ProjectId } from "@t3tools/contracts";
 import {
+  projectScriptCommands,
   projectScriptRuntimeEnv,
   resolveProjectScripts,
   setupProjectScript,
@@ -148,53 +149,58 @@ export const make = Effect.gen(function* () {
       } as const;
     }
 
-    const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
+    const commands = projectScriptCommands(script);
+    const baseTerminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;
     const env = projectScriptRuntimeEnv({
       project: { cwd: project.workspaceRoot },
       worktreePath: input.worktreePath,
     });
 
-    yield* terminalManager
-      .open({
-        threadId: input.threadId,
-        terminalId,
-        cwd,
-        worktreePath: input.worktreePath,
-        env,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectSetupScriptOperationError({
-              ...errorContext,
-              operation: "openTerminal",
-              cause,
-            }),
-        ),
-      );
-    yield* terminalManager
-      .write({
-        threadId: input.threadId,
-        terminalId,
-        data: `${script.command}\r`,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectSetupScriptOperationError({
-              ...errorContext,
-              operation: "writeCommand",
-              cause,
-            }),
-        ),
-      );
+    for (const [commandIndex, command] of commands.entries()) {
+      const terminalId =
+        commandIndex === 0 ? baseTerminalId : `${baseTerminalId}-${commandIndex + 1}`;
+      yield* terminalManager
+        .open({
+          threadId: input.threadId,
+          terminalId,
+          cwd,
+          worktreePath: input.worktreePath,
+          env,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...errorContext,
+                operation: "openTerminal",
+                cause,
+              }),
+          ),
+        );
+      yield* terminalManager
+        .write({
+          threadId: input.threadId,
+          terminalId,
+          data: `${command}\r`,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectSetupScriptOperationError({
+                ...errorContext,
+                operation: "writeCommand",
+                cause,
+              }),
+          ),
+        );
+    }
 
     return {
       status: "started",
       scriptId: script.id,
       scriptName: script.name,
-      terminalId,
+      terminalId: baseTerminalId,
       cwd,
     } as const;
   });

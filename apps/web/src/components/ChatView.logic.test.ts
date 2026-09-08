@@ -53,6 +53,7 @@ import {
   resolveDraftPromotionNavigationTarget,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
+  resolveProjectScriptTerminalPlacement,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveDraftHeroState,
@@ -1956,5 +1957,48 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
   it("leaves focus inside a dialog or popup alone", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "dialog" }))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "-popup" }))).toBe(false);
+  });
+});
+
+describe("resolveProjectScriptTerminalPlacement", () => {
+  it("reuses the current shell when it is idle", () => {
+    expect(
+      resolveProjectScriptTerminalPlacement({
+        needsNewTerminal: false,
+        activeGroupSize: 1,
+        maxGroupSize: 4,
+      }),
+    ).toBe("reuse");
+  });
+
+  it("splits beside a busy shell", () => {
+    expect(
+      resolveProjectScriptTerminalPlacement({
+        needsNewTerminal: true,
+        activeGroupSize: 1,
+        maxGroupSize: 4,
+      }),
+    ).toBe("split");
+  });
+
+  it("keeps stacking in an existing vertical group", () => {
+    expect(
+      resolveProjectScriptTerminalPlacement({
+        needsNewTerminal: true,
+        activeGroupSize: 2,
+        maxGroupSize: 4,
+        splitDirection: "vertical",
+      }),
+    ).toBe("split-vertical");
+  });
+
+  it("opens a new tab once the split group is full", () => {
+    expect(
+      resolveProjectScriptTerminalPlacement({
+        needsNewTerminal: true,
+        activeGroupSize: 4,
+        maxGroupSize: 4,
+      }),
+    ).toBe("new");
   });
 });

@@ -154,6 +154,28 @@ export function resolveProjectScriptTerminalId(input: {
   return nextTerminalId(input.existingTerminalIds);
 }
 
+export function resolveProjectScriptTerminalIds(input: {
+  readonly commandCount: number;
+  readonly existingTerminalIds: ReadonlyArray<string>;
+  readonly hasRunningTerminal: boolean;
+}): string[] {
+  const terminalIds: string[] = [];
+  const existingTerminalIds = [...input.existingTerminalIds];
+  let hasRunningTerminal = input.hasRunningTerminal;
+  for (let index = 0; index < input.commandCount; index += 1) {
+    const terminalId = resolveProjectScriptTerminalId({
+      existingTerminalIds,
+      hasRunningTerminal,
+    });
+    terminalIds.push(terminalId);
+    if (!existingTerminalIds.includes(terminalId)) {
+      existingTerminalIds.push(terminalId);
+    }
+    hasRunningTerminal = true;
+  }
+  return terminalIds;
+}
+
 export function projectScriptMenuLabel(script: ProjectScript): string {
   return script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name;
 }

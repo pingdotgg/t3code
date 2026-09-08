@@ -43,8 +43,36 @@ describe("T3ProjectFile", () => {
     expect(decoded.scripts?.[0]).toEqual({ name: "Dev", command: "pnpm dev" });
   });
 
-  it("rejects scripts without a command", () => {
-    expect(() => decode({ scripts: [{ name: "Dev" }] })).toThrow();
+  it("decodes extra script commands", () => {
+    const decoded = decode({
+      scripts: [
+        {
+          name: "Dev",
+          command: "uvicorn app.main:app --reload",
+          commands: [" npm run dev ", "python -m arq app.worker.WorkerSettings"],
+        },
+      ],
+    });
+
+    expect(decoded.scripts?.[0]).toEqual({
+      name: "Dev",
+      command: "uvicorn app.main:app --reload",
+      commands: ["npm run dev", "python -m arq app.worker.WorkerSettings"],
+    });
+  });
+
+  it("rejects more extra commands than a split group can show", () => {
+    expect(() =>
+      decode({
+        scripts: [
+          {
+            name: "Dev",
+            command: "one",
+            commands: ["two", "three", "four", "five"],
+          },
+        ],
+      }),
+    ).toThrow();
   });
 
   it("rejects unknown script icons", () => {

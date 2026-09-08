@@ -111,6 +111,7 @@ export default function ProjectScriptsControl({
     const payload: NewProjectScriptInput = {
       name: fileScript.name,
       command: fileScript.command,
+      commands: fileScript.commands ?? [],
       icon: fileScript.icon ?? "play",
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       keybinding: null,

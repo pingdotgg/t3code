@@ -383,10 +383,23 @@ export const ProjectScriptIcon = Schema.Literals([
 ]);
 export type ProjectScriptIcon = typeof ProjectScriptIcon.Type;
 
+/** One action can run this many shell commands, each in its own terminal. */
+export const PROJECT_SCRIPT_MAX_COMMANDS = 4;
+const PROJECT_SCRIPT_MAX_EXTRA_COMMANDS = PROJECT_SCRIPT_MAX_COMMANDS - 1;
+
 export const ProjectScript = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   command: TrimmedNonEmptyString,
+  /**
+   * Extra shell commands besides `command`. Each runs in its own split
+   * terminal when the user starts the action.
+   */
+  commands: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMaxLength(PROJECT_SCRIPT_MAX_EXTRA_COMMANDS),
+    ),
+  ),
   icon: ProjectScriptIcon,
   runOnWorktreeCreate: Schema.Boolean,
   /**

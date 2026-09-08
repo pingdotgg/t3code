@@ -13,6 +13,7 @@ import {
   nextOpenTerminalId,
   previousLiveTerminalId,
   resolveProjectScriptTerminalId,
+  resolveProjectScriptTerminalIds,
   type TerminalMenuSession,
 } from "./terminalMenu";
 
@@ -224,5 +225,27 @@ describe("resolveProjectScriptTerminalId", () => {
         hasRunningTerminal: true,
       }),
     ).toBe("term-3");
+  });
+});
+
+describe("resolveProjectScriptTerminalIds", () => {
+  it("reuses the idle default shell for the first command", () => {
+    expect(
+      resolveProjectScriptTerminalIds({
+        commandCount: 3,
+        existingTerminalIds: [DEFAULT_TERMINAL_ID],
+        hasRunningTerminal: false,
+      }),
+    ).toEqual([DEFAULT_TERMINAL_ID, "term-2", "term-3"]);
+  });
+
+  it("allocates a new shell for every command when one is already running", () => {
+    expect(
+      resolveProjectScriptTerminalIds({
+        commandCount: 2,
+        existingTerminalIds: [DEFAULT_TERMINAL_ID],
+        hasRunningTerminal: true,
+      }),
+    ).toEqual(["term-2", "term-3"]);
   });
 });

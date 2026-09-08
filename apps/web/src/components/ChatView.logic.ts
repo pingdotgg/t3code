@@ -1063,3 +1063,17 @@ export function shouldRefocusComposerOnWindowFocus(
     ) === null
   );
 }
+
+export type ProjectScriptTerminalPlacement = "reuse" | "split" | "split-vertical" | "new";
+
+/** Where a project action should land when the current shell is already busy. */
+export function resolveProjectScriptTerminalPlacement(input: {
+  readonly needsNewTerminal: boolean;
+  readonly activeGroupSize: number;
+  readonly maxGroupSize: number;
+  readonly splitDirection?: "horizontal" | "vertical";
+}): ProjectScriptTerminalPlacement {
+  if (!input.needsNewTerminal) return "reuse";
+  if (input.activeGroupSize >= input.maxGroupSize) return "new";
+  return input.splitDirection === "vertical" ? "split-vertical" : "split";
+}

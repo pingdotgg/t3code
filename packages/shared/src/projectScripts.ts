@@ -1,4 +1,9 @@
-import type { ProjectId, ProjectScript, ServerSettings } from "@t3tools/contracts";
+import {
+  PROJECT_SCRIPT_MAX_COMMANDS,
+  type ProjectId,
+  type ProjectScript,
+  type ServerSettings,
+} from "@t3tools/contracts";
 
 /** Missing entries preserve existing actions; null explicitly resets a checkout to machine defaults. */
 export function resolveProjectScripts(
@@ -54,4 +59,18 @@ export function projectScriptRuntimeEnv(
 
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
+}
+
+/** Commands an action should start, in order. `command` is always first. */
+export function projectScriptCommands(script: {
+  readonly command: string;
+  readonly commands?: readonly string[];
+}): readonly string[] {
+  const extras: string[] = [];
+  for (const extra of script.commands ?? []) {
+    const trimmed = extra.trim();
+    if (trimmed.length === 0) continue;
+    extras.push(trimmed);
+  }
+  return [script.command, ...extras].slice(0, PROJECT_SCRIPT_MAX_COMMANDS);
 }

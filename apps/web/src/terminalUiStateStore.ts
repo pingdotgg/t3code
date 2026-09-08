@@ -99,6 +99,7 @@ function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
 function normalizeTerminalGroups(
   terminalGroups: ThreadTerminalGroup[],
   terminalIds: string[],
+  activeGroupId = "",
 ): ThreadTerminalGroup[] {
   if (terminalIds.length === 0) {
     return [];
@@ -130,12 +131,26 @@ function normalizeTerminalGroups(
     });
   }
 
+  const activeGroup = nextGroups.find((group) => group.id === activeGroupId) ?? null;
+  let fillGroup =
+    activeGroup && activeGroup.terminalIds.length < MAX_TERMINALS_PER_GROUP ? activeGroup : null;
+  const stackIntoNewGroups = activeGroup === null;
   for (const terminalId of terminalIds) {
     if (assignedTerminalIds.has(terminalId)) continue;
-    nextGroups.push({
+    if (fillGroup && fillGroup.terminalIds.length < MAX_TERMINALS_PER_GROUP) {
+      fillGroup.terminalIds.push(terminalId);
+      assignedTerminalIds.add(terminalId);
+      continue;
+    }
+    fillGroup = {
       id: assignUniqueGroupId(fallbackGroupId(terminalId), usedGroupIds),
       terminalIds: [terminalId],
-    });
+    };
+    nextGroups.push(fillGroup);
+    assignedTerminalIds.add(terminalId);
+    if (!stackIntoNewGroups) {
+      fillGroup = null;
+    }
   }
 
   return nextGroups;
@@ -206,7 +221,11 @@ function normalizeThreadTerminalUiState(state: ThreadTerminalUiState): ThreadTer
   const activeTerminalId = nextTerminalIds.includes(state.activeTerminalId)
     ? state.activeTerminalId
     : (nextTerminalIds[0] ?? "");
-  const terminalGroups = normalizeTerminalGroups(state.terminalGroups, nextTerminalIds);
+  const terminalGroups = normalizeTerminalGroups(
+    state.terminalGroups,
+    nextTerminalIds,
+    state.activeTerminalGroupId,
+  );
   const activeGroupIdFromState = terminalGroups.some(
     (group) => group.id === state.activeTerminalGroupId,
   )
@@ -464,7 +483,11 @@ function reconcileThreadTerminalSessionIds(
     ? normalized.activeTerminalId
     : (nextIds[0] ?? "");
 
-  const terminalGroups = normalizeTerminalGroups(normalized.terminalGroups, nextIds);
+  const terminalGroups = normalizeTerminalGroups(
+    normalized.terminalGroups,
+    nextIds,
+    normalized.activeTerminalGroupId,
+  );
   const activeGroupIdFromTerminal =
     terminalGroups.find((group) => group.terminalIds.includes(nextActiveTerminalId))?.id ?? null;
 

@@ -65,6 +65,7 @@ import {
 } from "@t3tools/shared/model";
 import {
   projectScriptCwd,
+  projectScriptCommands,
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
@@ -410,6 +411,7 @@ import {
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
+  resolveProjectScriptTerminalPlacement,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
@@ -3786,9 +3788,8 @@ export default function ChatView(props: ChatViewProps) {
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
-      const shouldCreateNewTerminal = wantsNewTerminal;
       const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
+      const scriptCommands = projectScriptCommands(script);
 
       setTerminalUiLaunchContext({
         threadId: activeThreadId,
@@ -3800,6 +3801,15 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       setTerminalFocusRequestId((value) => value + 1);
+      const allocatedTerminalIds = [
+        ...new Set([
+          ...allocatableActiveTerminalIds,
+          ...selectThreadTerminalUiState(
+            useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+            activeThreadRef,
+          ).terminalIds,
+        ]),
+      ];
 
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
@@ -3808,59 +3818,96 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const targetTerminalId = shouldCreateNewTerminal
-        ? nextTerminalId(allocatableActiveTerminalIds)
-        : baseTerminalId;
-      const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
-        ? {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-            cols: SCRIPT_TERMINAL_COLS,
-            rows: SCRIPT_TERMINAL_ROWS,
-          }
-        : {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-          };
 
-      if (shouldCreateNewTerminal) {
-        storeNewTerminal(activeThreadRef, targetTerminalId);
-      } else {
-        storeSetActiveTerminal(activeThreadRef, targetTerminalId);
-      }
-
-      const openResult = await openTerminal({ environmentId, input: openTerminalInput });
-      if (openResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(openResult)) {
-          const error = squashAtomCommandFailure(openResult);
-          setThreadError(
-            activeThreadId,
-            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-          );
-        }
-        return;
-      }
-
-      const writeResult = await writeTerminal({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId: targetTerminalId,
-          data: `${script.command}\r`,
-        },
-      });
-      if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+      for (const [commandIndex, command] of scriptCommands.entries()) {
+        const currentUiState = selectThreadTerminalUiState(
+          useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+          activeThreadRef,
         );
+        const currentGroup =
+          currentUiState.terminalGroups.find(
+            (group) => group.id === currentUiState.activeTerminalGroupId,
+          ) ??
+          currentUiState.terminalGroups.find((group) =>
+            group.terminalIds.includes(currentUiState.activeTerminalId),
+          ) ??
+          null;
+        const needsNewTerminal =
+          commandIndex > 0 || Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
+        const scriptTerminalPlacement = resolveProjectScriptTerminalPlacement({
+          needsNewTerminal,
+          activeGroupSize: currentGroup?.terminalIds.length ?? 0,
+          maxGroupSize: MAX_TERMINALS_PER_GROUP,
+          ...(currentGroup?.splitDirection === "vertical"
+            ? { splitDirection: "vertical" as const }
+            : {}),
+        });
+        const targetTerminalId =
+          scriptTerminalPlacement === "reuse"
+            ? currentUiState.activeTerminalId || baseTerminalId
+            : nextTerminalId(allocatedTerminalIds);
+        if (scriptTerminalPlacement !== "reuse") {
+          allocatedTerminalIds.push(targetTerminalId);
+        }
+        const openTerminalInput: TerminalOpenInput =
+          scriptTerminalPlacement === "reuse"
+            ? {
+                threadId: activeThreadId,
+                terminalId: targetTerminalId,
+                cwd: targetCwd,
+                ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+                env: runtimeEnv,
+              }
+            : {
+                threadId: activeThreadId,
+                terminalId: targetTerminalId,
+                cwd: targetCwd,
+                ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+                env: runtimeEnv,
+                cols: SCRIPT_TERMINAL_COLS,
+                rows: SCRIPT_TERMINAL_ROWS,
+              };
+
+        if (scriptTerminalPlacement === "split-vertical") {
+          storeSplitTerminalVertical(activeThreadRef, targetTerminalId);
+        } else if (scriptTerminalPlacement === "split") {
+          storeSplitTerminal(activeThreadRef, targetTerminalId);
+        } else if (scriptTerminalPlacement === "new") {
+          storeNewTerminal(activeThreadRef, targetTerminalId);
+        } else {
+          storeSetActiveTerminal(activeThreadRef, targetTerminalId);
+        }
+
+        const openResult = await openTerminal({ environmentId, input: openTerminalInput });
+        if (openResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(openResult)) {
+            const error = squashAtomCommandFailure(openResult);
+            setThreadError(
+              activeThreadId,
+              error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+            );
+          }
+          return;
+        }
+
+        const writeResult = await writeTerminal({
+          environmentId,
+          input: {
+            threadId: activeThreadId,
+            terminalId: targetTerminalId,
+            data: `${command}\r`,
+          },
+        });
+        if (writeResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(writeResult)) {
+            const error = squashAtomCommandFailure(writeResult);
+            setThreadError(
+              activeThreadId,
+              error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+            );
+          }
+          return;
+        }
       }
     },
     [
@@ -3873,6 +3920,8 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError,
       storeNewTerminal,
       storeSetActiveTerminal,
+      storeSplitTerminal,
+      storeSplitTerminalVertical,
       setLastInvokedScriptByProjectId,
       environmentId,
       openTerminal,

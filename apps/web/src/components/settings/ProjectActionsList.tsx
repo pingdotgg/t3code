@@ -1,4 +1,5 @@
 import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { projectScriptCommands } from "@t3tools/shared/projectScripts";
 import { SettingsIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { commandForProjectScript } from "../../projectScripts";
@@ -45,7 +46,11 @@ export function ProjectActionsList({
             ) : null}
           </span>
         }
-        description={<code className="block max-w-full truncate font-mono">{script.command}</code>}
+        description={
+          <code className="block max-w-full truncate font-mono">
+            {projectScriptCommands(script).join(" · ")}
+          </code>
+        }
         control={
           <>
             {shortcutLabel ? (

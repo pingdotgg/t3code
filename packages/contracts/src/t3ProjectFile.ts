@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { ThreadEnvMode } from "./environment.ts";
-import { ProjectScriptIcon } from "./orchestration.ts";
+import { PROJECT_SCRIPT_MAX_COMMANDS, ProjectScriptIcon } from "./orchestration.ts";
 
 /** File name of the checked-in T3 project file, resolved at the workspace root. */
 export const T3_PROJECT_FILE_NAME = "t3.json";
@@ -31,6 +31,18 @@ export const T3ProjectFileScript = Schema.Struct({
   command: trimmedNonEmpty({
     description: "Shell command executed in a T3 Code terminal at the project root.",
   }),
+  commands: Schema.optionalKey(
+    Schema.Array(
+      trimmedNonEmpty({
+        description: "An extra shell command. Each extra command runs in its own split terminal.",
+      }),
+    )
+      .annotate({
+        description:
+          "Additional commands started with this action. Each runs in its own split terminal.",
+      })
+      .check(Schema.isMaxLength(PROJECT_SCRIPT_MAX_COMMANDS - 1)),
+  ),
   icon: Schema.optionalKey(
     ProjectScriptIcon.annotate({
       description: 'Icon shown next to the script in the scripts menu. Defaults to "play".',

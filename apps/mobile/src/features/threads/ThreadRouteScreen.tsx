@@ -19,6 +19,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import {
   projectScriptCwd,
+  projectScriptCommands,
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
@@ -54,7 +55,7 @@ import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
   nextOpenTerminalId,
-  resolveProjectScriptTerminalId,
+  resolveProjectScriptTerminalIds,
 } from "../terminal/terminalMenu";
 import {
   resolvePreferredThreadWorktreePath,
@@ -74,6 +75,7 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import { terminalEnvironment } from "../../state/terminal";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -234,6 +236,8 @@ function ThreadRouteContent(
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
+  const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
+  const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const navigation = useNavigation();
   const params = props.route.params;
   const environmentIdRaw = firstRouteParam(params.environmentId);
@@ -576,7 +580,9 @@ function ThreadRouteContent(
         return;
       }
 
-      const targetTerminalId = resolveProjectScriptTerminalId({
+      const scriptCommands = projectScriptCommands(script);
+      const targetTerminalIds = resolveProjectScriptTerminalIds({
+        commandCount: scriptCommands.length,
         existingTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
         hasRunningTerminal: terminalMenuSessions.some(
           (session) => session.status === "running" || session.status === "starting",
@@ -594,38 +600,86 @@ function ThreadRouteContent(
         project: { cwd: selectedThreadProject.workspaceRoot },
         worktreePath: preferredWorktreePath,
       });
-      stagePendingTerminalLaunch({
-        target: {
-          environmentId: selectedThread.environmentId,
-          threadId: selectedThread.id,
-          terminalId: targetTerminalId,
-        },
-        launch: {
-          cwd,
-          worktreePath: preferredWorktreePath,
-          env,
-          initialInput: `${script.command}\r`,
-        },
-      });
-      terminalDebugLog("project-script:staged", {
-        scriptId: script.id,
-        terminalId: targetTerminalId,
-        cwd,
-        worktreePath: preferredWorktreePath,
-      });
 
+      for (const [commandIndex, command] of scriptCommands.entries()) {
+        const targetTerminalId = targetTerminalIds[commandIndex];
+        if (!targetTerminalId) continue;
+        const isLastCommand = commandIndex === scriptCommands.length - 1;
+        if (isLastCommand) {
+          stagePendingTerminalLaunch({
+            target: {
+              environmentId: selectedThread.environmentId,
+              threadId: selectedThread.id,
+              terminalId: targetTerminalId,
+            },
+            launch: {
+              cwd,
+              worktreePath: preferredWorktreePath,
+              env,
+              initialInput: `${command}\r`,
+            },
+          });
+          terminalDebugLog("project-script:staged", {
+            scriptId: script.id,
+            terminalId: targetTerminalId,
+            cwd,
+            worktreePath: preferredWorktreePath,
+          });
+          continue;
+        }
+
+        const openResult = await openTerminal({
+          environmentId: selectedThread.environmentId,
+          input: {
+            threadId: selectedThread.id,
+            terminalId: targetTerminalId,
+            cwd,
+            worktreePath: preferredWorktreePath,
+            env,
+            cols: 80,
+            rows: 24,
+          },
+        });
+        if (openResult._tag === "Failure") {
+          terminalDebugLog("project-script:open-failed", {
+            scriptId: script.id,
+            terminalId: targetTerminalId,
+          });
+          return;
+        }
+        const writeResult = await writeTerminal({
+          environmentId: selectedThread.environmentId,
+          input: {
+            threadId: selectedThread.id,
+            terminalId: targetTerminalId,
+            data: `${command}\r`,
+          },
+        });
+        if (writeResult._tag === "Failure") {
+          terminalDebugLog("project-script:write-failed", {
+            scriptId: script.id,
+            terminalId: targetTerminalId,
+          });
+          return;
+        }
+      }
+
+      const focusTerminalId = targetTerminalIds[targetTerminalIds.length - 1];
+      if (!focusTerminalId) return;
       void navigation.navigate("ThreadTerminal", {
         environmentId: String(selectedThread.environmentId),
         threadId: String(selectedThread.id),
-        terminalId: targetTerminalId,
+        terminalId: focusTerminalId,
       });
     },
     [
       navigation,
+      openTerminal,
       selectedThread,
       selectedThreadDetailWorktreePath,
       selectedThreadProject,
       terminalMenuSessions,
+      writeTerminal,
     ],
   );
   const threadGitControlProps = {
