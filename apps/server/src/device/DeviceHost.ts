@@ -15,17 +15,26 @@ import type {
   DevicePlatform,
   DevicePlatformAvailability,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 export class DeviceHostError extends Schema.TaggedError<DeviceHostError>()("DeviceHostError", {
   hostId: Schema.String,
   step: Schema.String,
-  detail: Schema.String,
-  cause: Schema.optional(Schema.Defect()),
+  cause: Schema.Defect(),
 }) {
   override get message(): string {
-    return `Device host ${this.hostId} failed while ${this.step}: ${this.detail}`;
+    return `Device host ${this.hostId} failed while ${this.step}.`;
+  }
+}
+
+export class DeviceHostTimeoutError extends Schema.TaggedError<DeviceHostTimeoutError>()(
+  "DeviceHostTimeoutError",
+  { hostId: Schema.String, timeoutMs: Schema.Number },
+) {
+  override get message(): string {
+    return `Device host ${this.hostId} did not start agent tools within ${this.timeoutMs} ms.`;
   }
 }
 
@@ -64,27 +73,30 @@ export interface DeviceHostAgentReady extends DeviceHostReady {
   readonly agentDevice: AgentDeviceEndpoint;
 }
 
-export interface DeviceHost {
-  readonly id: DeviceHostId;
-  readonly summary: Effect.Effect<DeviceHostSummary>;
-  readonly platformAvailability: (
-    platform: DevicePlatform,
-  ) => Effect.Effect<DevicePlatformAvailability>;
-  /**
-   * Installs tools on first use and starts the helper processes. Idempotent:
-   * concurrent callers share one start, and a ready host returns immediately.
-   */
-  readonly ensureReady: (
-    onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
-  ) => Effect.Effect<DeviceHostReady, DeviceHostError>;
-  /** Installs and starts agent-device after the user grants agent access. */
-  readonly ensureAgentReady: (
-    onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
-  ) => Effect.Effect<DeviceHostAgentReady, DeviceHostError>;
-  /** Current endpoints when already running, without starting anything. */
-  readonly current: Effect.Effect<DeviceHostReady | null>;
-  /** Stops only agent-device. Manual viewing through the hub stays available. */
-  readonly stopAgent: Effect.Effect<void>;
-  /** Stops helpers. Devices themselves keep running; the user owns those. */
-  readonly stop: Effect.Effect<void>;
-}
+export class DeviceHost extends Context.Service<
+  DeviceHost,
+  {
+    readonly id: DeviceHostId;
+    readonly summary: Effect.Effect<DeviceHostSummary>;
+    readonly platformAvailability: (
+      platform: DevicePlatform,
+    ) => Effect.Effect<DevicePlatformAvailability>;
+    /**
+     * Installs tools on first use and starts the helper processes. Idempotent:
+     * concurrent callers share one start, and a ready host returns immediately.
+     */
+    readonly ensureReady: (
+      onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
+    ) => Effect.Effect<DeviceHostReady, DeviceHostError>;
+    /** Installs and starts agent-device after the user grants agent access. */
+    readonly ensureAgentReady: (
+      onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
+    ) => Effect.Effect<DeviceHostAgentReady, DeviceHostError | DeviceHostTimeoutError>;
+    /** Current endpoints when already running, without starting anything. */
+    readonly current: Effect.Effect<DeviceHostReady | null>;
+    /** Stops only agent-device. Manual viewing through the hub stays available. */
+    readonly stopAgent: Effect.Effect<void>;
+    /** Stops helpers. Devices themselves keep running; the user owns those. */
+    readonly stop: Effect.Effect<void>;
+  }
+>()("t3/device/DeviceHost") {}

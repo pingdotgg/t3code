@@ -50,7 +50,6 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
     tool: Schema.String,
     step: Schema.String,
     exitCode: Schema.optional(Schema.Number),
-    stderrTail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -161,7 +160,7 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
         tool: spec.name,
         step: "running npm install",
         exitCode: Number(result.code),
-        stderrTail: result.stderr.slice(-2_000),
+        cause: result,
       });
     }
     const stagedEntry = path.join(stagingDir, "node_modules", spec.name, ...spec.entry);

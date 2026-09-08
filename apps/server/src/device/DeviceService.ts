@@ -49,7 +49,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import { ServerSettingsService } from "../serverSettings.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
-import type { AgentDeviceEndpoint, DeviceHost, DeviceHostReady } from "./DeviceHost.ts";
+import * as DeviceHost from "./DeviceHost.ts";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
 /** Origin-relative prefix the hub is proxied under. See DeviceHubProxy. */
@@ -83,12 +83,12 @@ export interface DeviceScreenshot {
   readonly png: Uint8Array;
 }
 
-export interface DeviceReadiness extends DeviceHostReady {
+export interface DeviceReadiness extends DeviceHost.DeviceHostReady {
   readonly hostId: DeviceHostId;
 }
 
 export interface DeviceAgentReadiness extends DeviceReadiness {
-  readonly agentDevice: AgentDeviceEndpoint;
+  readonly agentDevice: DeviceHost.AgentDeviceEndpoint;
 }
 
 export class DeviceService extends Context.Service<
@@ -136,9 +136,8 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
-export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
-  localHost: DeviceHost,
-) {
+export const make = Effect.gen(function* () {
+  const localHost = yield* DeviceHost.DeviceHost;
   const settings = yield* ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
@@ -152,7 +151,9 @@ export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
     ),
   );
   const initialSettings = yield* readDeviceSettings;
-  const hosts: ReadonlyMap<DeviceHostId, DeviceHost> = new Map([[localHost.id, localHost]]);
+  const hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]> = new Map([
+    [localHost.id, localHost],
+  ]);
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
   const initialHosts = yield* Effect.forEach(hosts.values(), (host) => host.summary);
@@ -431,7 +432,7 @@ export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
     state.devices.find((device) => device.hostId === hostId && device.id === deviceId);
 
   const ensurePlatform = Effect.fn("DeviceService.ensurePlatform")(function* (
-    host: DeviceHost,
+    host: DeviceHost.DeviceHost["Service"],
     platform: DevicePlatform,
   ) {
     const availability = yield* host.platformAvailability(platform);
@@ -712,11 +713,7 @@ export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
   });
 });
 
-const make = Effect.gen(function* () {
-  return yield* makeWithHost(yield* LocalDeviceHost.make());
-}).pipe(Effect.withSpan("DeviceService.make"));
-
-export const layer = Layer.effect(DeviceService, make);
+export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
 
 /** State stream for WS subscribers: current snapshot first, then every change. */
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>

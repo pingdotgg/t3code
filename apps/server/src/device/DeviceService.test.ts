@@ -14,9 +14,9 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
-import type { DeviceHost, DeviceHostReady } from "./DeviceHost.ts";
+import * as DeviceHost from "./DeviceHost.ts";
 
-import { type DeviceService, makeWithHost, stateStream } from "./DeviceService.ts";
+import { type DeviceService, make, stateStream } from "./DeviceService.ts";
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -63,12 +63,12 @@ const fixture = Effect.fn("fixture")(function* (onBoot: Effect.Effect<void> = Ef
   const agentStops: string[] = [];
   const requests: string[] = [];
   let booted = false;
-  const ready: DeviceHostReady = {
+  const ready: DeviceHost.DeviceHostReady = {
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
     run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
   };
-  const host: DeviceHost = {
+  const host: DeviceHost.DeviceHost["Service"] = {
     id: LOCAL_DEVICE_HOST_ID,
     summary: Effect.succeed({
       id: LOCAL_DEVICE_HOST_ID,
@@ -102,7 +102,8 @@ const fixture = Effect.fn("fixture")(function* (onBoot: Effect.Effect<void> = Ef
       starts.push("stop");
     }),
   };
-  const service = yield* makeWithHost(host).pipe(
+  const service = yield* make.pipe(
+    Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
       ServerSettingsService,
       ServerSettingsService.of({
