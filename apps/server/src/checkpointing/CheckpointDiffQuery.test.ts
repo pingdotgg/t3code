@@ -8,6 +8,7 @@ import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts
 import type { ProjectionCheckpointContext } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as CheckpointDiffQuery from "./CheckpointDiffQuery.ts";
+import { checkpointStartRef } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import {
   CheckpointRefUnavailableError,
@@ -46,6 +47,7 @@ function makeProjection(): ProjectionCheckpointContext {
 
 function makeLayer(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
+  readonly hasStartSnapshot?: boolean;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
 }) {
   return CheckpointDiffQuery.layer.pipe(
@@ -55,6 +57,7 @@ function makeLayer(input: {
           getCheckpointContext: () => input.projection,
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
+          hasCheckpointRef: () => Effect.succeed(input.hasStartSnapshot ?? false),
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
         }),
       ),
@@ -66,7 +69,11 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
   const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
     Effect.succeed("diff --git a/file b/file"),
   );
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
+  const layer = makeLayer({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints,
+    hasStartSnapshot: true,
+  });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -193,3 +200,94 @@ it.effect("preserves the typed missing-baseline-ref error contract", () => {
     );
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("diffs a single turn from its start ref when the prior turn left no checkpoint", () => {
+  const projection = makeProjection();
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("patch"),
+  );
+  const layer = makeLayer({
+    hasStartSnapshot: true,
+    diffCheckpoints,
+    projection: Effect.succeed({
+      ...projection,
+      runs: projection.runs.map((run) =>
+        run.id === firstRunId ? { ...run, status: "interrupted" as const } : run,
+      ),
+    }),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
+    assert.equal(result.diff, "patch");
+    assert.equal(
+      diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+      checkpointStartRef(secondRef),
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("still requires the prior checkpoint when no start ref exists", () => {
+  const projection = makeProjection();
+  const layer = makeLayer({
+    hasStartSnapshot: false,
+    projection: Effect.succeed({
+      ...projection,
+      runs: projection.runs.map((run) =>
+        run.id === firstRunId ? { ...run, status: "interrupted" as const } : run,
+      ),
+    }),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const error = yield* query
+      .getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, CheckpointRefUnavailableError);
+    assert.deepEqual(
+      { checkpoint: error.checkpoint, turnCount: error.turnCount },
+      { checkpoint: "from", turnCount: 1 },
+    );
+  }).pipe(Effect.provide(layer));
+});
+
+for (const hasStartSnapshot of [false, true]) {
+  it.effect(
+    `uses ${hasStartSnapshot ? "fresh" : "legacy"} baseline for an individual V2 turn`,
+    () => {
+      const projection = makeProjection();
+      const firstRef = checkpointRefForScopeOrdinal({
+        scopeId: firstScopeId,
+        ordinalWithinScope: 1,
+      });
+      const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+        Effect.succeed("patch"),
+      );
+      const layer = makeLayer({
+        hasStartSnapshot,
+        diffCheckpoints,
+        projection: Effect.succeed({
+          ...projection,
+          checkpoints: [
+            ...projection.checkpoints,
+            {
+              scopeId: firstScopeId,
+              runId: firstRunId,
+              appRunOrdinal: 1,
+              status: "ready",
+              ref: firstRef,
+            },
+          ],
+        }),
+      });
+      return Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+        yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 });
+        assert.equal(
+          diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+          hasStartSnapshot ? checkpointStartRef(secondRef) : firstRef,
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+}
