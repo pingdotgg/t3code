@@ -5,6 +5,117 @@ import XCTest
 @MainActor
 @available(iOS 18.0, *)
 final class NativeThreadCatchUpTests: XCTestCase {
+    func testStaleDetailReplaySkipsReductionOnlyAfterEnvelopeValidation() throws {
+        let thread = multiEnvironmentDetail(
+            projectID: "project", threadID: "first", snapshotSequence: 2, messages: []
+        ).thread
+        let event = replayMessage(sequence: 2, text: "Duplicate")
+        let ordinary = NativeThreadDetailReducer.apply(event, to: thread)
+        guard case .updated = ordinary.result else {
+            return XCTFail("The control must exercise a real message reduction.")
+        }
+        let skipped = NativeThreadDetailReducer.apply(event, to: thread, afterSequence: 2)
+        XCTAssertEqual(skipped.sequence, 2)
+        guard case .unchanged = skipped.result, case .none = skipped.renderMutation else {
+            return XCTFail("A validated stale event must bypass message reduction.")
+        }
+        let newer = NativeThreadDetailReducer.apply(event, to: thread, afterSequence: 1)
+        guard case .updated = newer.result else { return XCTFail("New events must still reduce.") }
+    }
+
+    func testStaleDetailReplayPreservesNewerMessageAndExplicitMarker() async throws {
+        let fixture = try await CatchUpFixture.make(completionMarker: false)
+        defer { fixture.cleanUp() }
+        do {
+            var requests = fixture.requests.makeAsyncIterator()
+            var events = fixture.client.events().makeAsyncIterator()
+            _ = try await fixture.client.loadThread(id: fixture.firstID)
+            let stream = try await nextThreadRequest(&requests)
+            _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            try await stream.synchronize()
+            _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            var values = (0..<100).map { index in
+                JSONValue.object(["kind": .string("event"), "event": replayMessage(
+                    sequence: Double(index % 3), text: "Must not appear"
+                )])
+            }
+            // These valid envelopes were ignored by the existing post-reduction cursor guard.
+            for type in ["future.event", "thread.message-sent"] {
+                values.append(.object(["kind": .string("event"), "event": .object([
+                    "type": .string(type), "sequence": .number(2),
+                    "occurredAt": .string("2026-09-02T12:00:00Z"),
+                    "payload": .object(["threadId": .string("first")]),
+                ])]))
+            }
+            values.append(.object(["kind": .string("event"), "event": replayMessage(
+                sequence: 3, text: "New content"
+            )]))
+            values.append(.object(["kind": .string("synchronized")]))
+            try await stream.socket.chunk(id: stream.id, values: values)
+            let messages = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            XCTAssertEqual(messages, ["New content"])
+            let reads = await fixture.http.threadRequests.count
+            XCTAssertEqual(reads, 1)
+            await fixture.client.disconnect()
+        } catch {
+            await fixture.client.disconnect()
+            throw error
+        }
+    }
+
+    func testMalformedStaleLookingDetailEnvelopesStillRepair() async throws {
+        var malformed: [JSONValue] = [.null]
+        for field in ["type", "occurredAt"] {
+            var object = try replayMessage(sequence: 2, text: "Invalid").decode([String: JSONValue].self)
+            object.removeValue(forKey: field)
+            malformed.append(.object(object))
+        }
+        var wrongThread = try replayMessage(sequence: 2, text: "Invalid").decode([String: JSONValue].self)
+        wrongThread["payload"] = .object(["threadId": .string("another-thread")])
+        malformed.append(.object(wrongThread))
+        malformed.append(replayMessage(sequence: 1.5, text: "Invalid"))
+        malformed.append(replayMessage(sequence: -1, text: "Invalid"))
+        var items = malformed.map { JSONValue.object(["kind": .string("event"), "event": $0]) }
+        items.append(.object(["kind": .string("unknown")]))
+        for (index, item) in items.enumerated() {
+            let fixture = try await CatchUpFixture.make(completionMarker: false)
+            defer { fixture.cleanUp() }
+            do {
+                var requests = fixture.requests.makeAsyncIterator()
+                var events = fixture.client.events().makeAsyncIterator()
+                _ = try await fixture.client.loadThread(id: fixture.firstID)
+                let stream = try await nextThreadRequest(&requests)
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                try await stream.synchronize()
+                _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                await fixture.http.setResponse(text: "Recovered \(index)", sequence: 10)
+                try await stream.socket.chunk(id: stream.id, values: [
+                    item, .object(["kind": .string("synchronized")]),
+                ])
+                let messages = await messagesBeforeLive(&events, threadID: fixture.firstID)
+                XCTAssertEqual(messages, ["Recovered \(index)"], "Malformed case \(index) must repair.")
+                let reads = await fixture.http.threadRequests.count
+                XCTAssertEqual(reads, 2)
+                await fixture.client.disconnect()
+            } catch {
+                await fixture.client.disconnect()
+                throw error
+            }
+        }
+    }
+
+    private func replayMessage(sequence: Double, text: String) -> JSONValue {
+        .object([
+            "type": .string("thread.message-sent"), "sequence": .number(sequence),
+            "occurredAt": .string("2026-09-02T12:00:00Z"), "payload": .object([
+                "threadId": .string("first"), "messageId": .string("replay-message"),
+                "role": .string("assistant"), "text": .string(text), "streaming": .bool(false),
+                "createdAt": .string("2026-09-02T12:00:00Z"),
+                "updatedAt": .string("2026-09-02T12:00:00Z"),
+            ]),
+        ])
+    }
+
     func testOnlyMessageQuestionsCanBeDismissed() async throws {
         let fixture = try await CatchUpFixture.make(activities: [
             requestActivity("user-input.requested", id: "callback"),
