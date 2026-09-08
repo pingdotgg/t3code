@@ -149,7 +149,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         break;
       }
       active = `turn-${++serial}`;
-      if (params.input?.[0]?.text === "early-completion") earlyTurnReply = { id, turnId: active };
+      if (
+        params.input?.[0]?.text === "early-completion" ||
+        (params.toolOutput && scenario === "early-wake-completion")
+      )
+        earlyTurnReply = { id, turnId: active };
       else reply(id, { turn: turn(active, "inProgress") });
       notify("turn/started", { threadId, turn: turn(active, "inProgress") });
       if (params.toolOutput) {

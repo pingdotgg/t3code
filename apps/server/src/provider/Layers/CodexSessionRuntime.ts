@@ -2424,10 +2424,12 @@ export const makeCodexSessionRuntime = (
               ),
             ),
           );
-          yield* updateSession(sessionRef, (current) => ({
-            status: "running",
-            activeTurnId: current.activeTurnId ?? TurnId.make(response.turn.id),
-          }));
+          if (lastCompletedTurnId !== response.turn.id) {
+            yield* updateSession(sessionRef, (current) => ({
+              status: "running",
+              activeTurnId: current.activeTurnId ?? TurnId.make(response.turn.id),
+            }));
+          }
           // The pinned item union predates functionCallOutput. Publish the
           // delivered event in the same timeline as the automated response.
           yield* emitEvent({
