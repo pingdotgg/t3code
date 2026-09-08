@@ -1786,22 +1786,7 @@ function PullRequestsRouteView() {
           }
         />
       ),
-    titlebarControls:
-      // While the panel is closed the strip lives inside the header: a no-drag
-      // descendant beats the header's desktop drag-region, where a floating
-      // sibling loses (app-region hit-testing ignores z-index). While the
-      // floating strip crosses the header during motion, the narrow extension
-      // keeps that overlap non-draggable without moving the toggle.
-      pullRequestsSupported ? (
-        rightPanelPresent ? (
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-full w-7 [-webkit-app-region:no-drag]"
-          />
-        ) : (
-          openPanelControls
-        )
-      ) : null,
+    titlebarControls: pullRequestsSupported && !rightPanelPresent ? openPanelControls : null,
     rightPanelOpen: rightPanelState.isOpen,
     listBody,
     scrollRef,
@@ -1884,7 +1869,6 @@ function PullRequestsRouteView() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="relative flex min-h-0 flex-1">
-        {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} />
 
         {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
@@ -1955,6 +1939,10 @@ function PullRequestsRouteView() {
             />
           </RightPanelTabs>
         ) : null}
+        {/* Native drag regions follow layout-tree order, not z-index. Keep the
+            actual control's no-drag rectangle after both titlebars, including
+            while the panel closes, without putting it in the clipped panel. */}
+        {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
       </div>
     </SidebarInset>
   );
@@ -2213,19 +2201,14 @@ function PullRequestsColumn({
     // Painted flat like the chat column: the inset underneath carries the chrome grain, and a
     // content surface that lets it show reads as a different background than every thread.
     <div className="@container/pr-list flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-      {/* A closed right panel leaves this column full-width, so the shared header
-          reserves native window controls and hosts the controls strip itself: on
-          desktop the header is a drag-region, and only a no-drag descendant wins
-          clicks from it - a floating sibling loses to app-region hit-testing no
-          matter its z-index. While the panel is open, the strip mounts back at
-          the route level, whose box spans the panel too, so the toggle keeps one
-          fixed top-right anchor. */}
+      {/* Keep the closed-panel controls inside this titlebar. The open-panel
+          controls mount after both columns at the route level, preserving the
+          same top-right anchor while excluding both native drag regions. */}
       <WorkspacePageHeader
         electron={isElectron}
         reserveNativeControls={!rightPanelOpen}
         className="relative bg-background"
       >
-        {titlebarControls}
         {condensed ? (
           <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
             {/* An expanded search owns the scarce horizontal space. The page title stays
@@ -2282,6 +2265,7 @@ function PullRequestsColumn({
           </div>
         ) : null}
         {rightPanelControl}
+        {titlebarControls}
       </WorkspacePageHeader>
 
       <div
