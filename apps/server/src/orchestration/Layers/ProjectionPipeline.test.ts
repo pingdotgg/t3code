@@ -31,6 +31,7 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {
@@ -3702,6 +3703,66 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",
   (it) => {
+    it.effect("preserves queued start order across revert despite skewed timestamps", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const projectionTurnRepository = yield* ProjectionTurnRepository;
+        const threadId = ThreadId.make("thread-revert-queued-order");
+
+        for (const [label, createdAt] of [
+          ["a", "2026-02-26T13:00:02.000Z"],
+          ["b", "2026-02-26T13:00:01.000Z"],
+        ] as const) {
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-revert-queued-order-${label}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: `2026-02-26T13:00:0${label === "a" ? "1" : "2"}.000Z`,
+            commandId: CommandId.make(`cmd-revert-queued-order-${label}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-revert-queued-order-${label}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-revert-queued-order-${label}`),
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        }
+        yield* eventStore.append({
+          type: "thread.reverted",
+          eventId: EventId.make("evt-revert-queued-order-complete"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:00:03.000Z",
+          commandId: CommandId.make("cmd-revert-queued-order-complete"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-revert-queued-order-complete"),
+          metadata: {},
+          payload: { threadId, turnCount: 0 },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const first = yield* projectionTurnRepository.getPendingTurnStartByThreadId({ threadId });
+        assert.isTrue(Option.isSome(first));
+        if (Option.isNone(first)) return;
+        assert.strictEqual(first.value.messageId, "message-revert-queued-order-a");
+
+        yield* projectionTurnRepository.deletePendingTurnStart({
+          threadId,
+          messageId: first.value.messageId,
+        });
+        const second = yield* projectionTurnRepository.getPendingTurnStartByThreadId({ threadId });
+        assert.isTrue(Option.isSome(second));
+        if (Option.isNone(second)) return;
+        assert.strictEqual(second.value.messageId, "message-revert-queued-order-b");
+      }),
+    );
+
     it.effect("adopts queued pending starts in request order", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;

@@ -138,6 +138,13 @@ export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
 });
 export type DeleteProjectionTurnsByThreadInput = typeof DeleteProjectionTurnsByThreadInput.Type;
 
+export const DeleteProjectionTurnsAfterCheckpointInput = Schema.Struct({
+  threadId: ThreadId,
+  turnCount: NonNegativeInt,
+});
+export type DeleteProjectionTurnsAfterCheckpointInput =
+  typeof DeleteProjectionTurnsAfterCheckpointInput.Type;
+
 export const ClearCheckpointTurnConflictInput = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
@@ -200,6 +207,11 @@ export interface ProjectionTurnRepositoryShape {
    */
   readonly deletePendingTurnStart: (
     input: DeleteProjectionPendingTurnStartInput,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /** Deletes concrete turns beyond a revert boundary without disturbing queued start order. */
+  readonly deleteTurnsAfterCheckpoint: (
+    input: DeleteProjectionTurnsAfterCheckpointInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**

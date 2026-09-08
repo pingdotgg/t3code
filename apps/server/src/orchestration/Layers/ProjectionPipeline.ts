@@ -1645,47 +1645,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.reverted": {
-          const existingTurns = yield* projectionTurnRepository.listByThreadId({
+          yield* projectionTurnRepository.deleteTurnsAfterCheckpoint({
             threadId: event.payload.threadId,
+            turnCount: event.payload.turnCount,
           });
-          const keptTurns = existingTurns.filter(
-            (turn) =>
-              (turn.turnId !== null &&
-                turn.checkpointTurnCount !== null &&
-                turn.checkpointTurnCount <= event.payload.turnCount) ||
-              (turn.turnId === null && turn.pendingMessageId !== null),
-          );
-          yield* projectionTurnRepository.deleteByThreadId({
-            threadId: event.payload.threadId,
-          });
-          yield* Effect.forEach(
-            keptTurns,
-            (turn) =>
-              turn.turnId === null
-                ? turn.pendingMessageId === null
-                  ? Effect.void
-                  : turn.state === "submitted" && turn.submittedTurnId !== null
-                    ? projectionTurnRepository.insertSubmittedTurnStart({
-                        threadId: turn.threadId,
-                        messageId: turn.pendingMessageId,
-                        turnId: turn.submittedTurnId,
-                        sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
-                        sourceProposedPlanId: turn.sourceProposedPlanId,
-                        requestedAt: turn.requestedAt,
-                      })
-                    : projectionTurnRepository.insertPendingTurnStart({
-                        threadId: turn.threadId,
-                        messageId: turn.pendingMessageId,
-                        sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
-                        sourceProposedPlanId: turn.sourceProposedPlanId,
-                        requestedAt: turn.requestedAt,
-                      })
-                : projectionTurnRepository.upsertByTurnId({
-                    ...turn,
-                    turnId: turn.turnId,
-                  }),
-            { concurrency: 1 },
-          ).pipe(Effect.asVoid);
           return;
         }
 
