@@ -109,6 +109,52 @@ describe("settings scope navigation", () => {
     expect(router.state.location.search).toEqual(checkoutSearch);
   });
 
+  it.each(["/settings/projects", "/settings/integrations", "/settings/source-control"] as const)(
+    "keeps %s when regrouping or selecting a target from the shared settings layout",
+    async (to) => {
+      const router = createSettingsRouter();
+      await router.navigate({ to, search: checkoutSearch });
+
+      const regroupedCheckout = { ...checkoutSearch, project: "separate:t3code" };
+      await router.navigate({
+        from: "/settings",
+        to: router.state.location.pathname,
+        search: () => regroupedCheckout,
+        replace: true,
+        hashScrollIntoView: false,
+      });
+      expect(router.state.location.pathname).toBe(to);
+      expect(router.state.location.search).toEqual(regroupedCheckout);
+      expect(router.state.redirect).toBeUndefined();
+
+      await router.navigate({
+        from: "/settings",
+        to: router.state.location.pathname,
+        search: () => ({ machine: "another-server" }),
+        hash: "",
+        resetScroll: false,
+      });
+      expect(router.state.location.pathname).toBe(to);
+      expect(router.state.location.search).toEqual({ machine: "another-server" });
+      expect(router.state.location.hash).toBe("");
+
+      const selectedCheckout = {
+        project: "another-project",
+        machine: "another-server",
+        checkout: "another-server:/home/user/Another checkout",
+      };
+      await router.navigate({
+        from: "/settings",
+        to: router.state.location.pathname,
+        search: () => selectedCheckout,
+        hash: "requested-setting",
+      });
+      expect(router.state.location.pathname).toBe(to);
+      expect(router.state.location.search).toEqual(selectedCheckout);
+      expect(router.state.location.hash).toBe("requested-setting");
+    },
+  );
+
   it("honors an explicit provider environment and drops its instance on category navigation", async () => {
     const router = createSettingsRouter();
     await router.navigate({ to: "/settings/general", search: checkoutSearch });
