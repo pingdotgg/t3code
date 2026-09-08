@@ -310,7 +310,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         guard bootstrapID == foregroundBootstrapID else { throw CancellationError() }
         let environment = activeClient.environment
-        await adoptEnvironment(environment, client: activeClient)
+        guard await adoptEnvironment(environment, client: activeClient) else { throw CancellationError() }
         guard bootstrapID == foregroundBootstrapID,
               isCurrentSession(client: activeClient, generation: environmentGeneration) else {
             throw CancellationError()
@@ -539,7 +539,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else {
             pairedClient = try await runtime.pair(url: endpoint, clientLabel: "T3 Code Swift")
         }
-        await adoptEnvironment(pairedClient.environment, client: pairedClient)
+        guard await adoptEnvironment(pairedClient.environment, client: pairedClient) else { throw CancellationError() }
         startAggregateRefresh(pairedClient)
         startPolling(pairedClient)
     }
@@ -604,7 +604,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             environment,
             credential: savedCredential
         )
-        await adoptEnvironment(environment, client: managedClient)
+        guard await adoptEnvironment(environment, client: managedClient) else { throw CancellationError() }
         do {
             try await refresh(client: managedClient)
         } catch {
@@ -669,12 +669,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {
+        try await runtime.setEnabled(id: id, enabled: enabled)
         if !enabled {
             shellConnectionIDsByEnvironmentID[id] = nil
             aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
-        }
-        try await runtime.setEnabled(id: id, enabled: enabled)
-        if !enabled {
             cancelAcceptedCommandRefreshes(environmentID: id)
             environmentConnectionStates[id] = .disconnected
             environmentConnectionDetails[id] = nil
@@ -689,15 +687,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func removeEnvironment(id: String) async throws {
-        shellConnectionIDsByEnvironmentID[id] = nil
-        aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
         let removesActiveEnvironment = activeEnvironment?.id == id
         let environment = try await runtime.environments().first { $0.id == id }
         if environment?.kind == .managedDPoP {
             try await runtime.revokeCredential(id: id)
         }
-        cancelAcceptedCommandRefreshes(environmentID: id)
         try await runtime.remove(id: id)
+        shellConnectionIDsByEnvironmentID[id] = nil
+        aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
+        cancelAcceptedCommandRefreshes(environmentID: id)
         if removesActiveEnvironment {
             await clearActiveEnvironment(disconnectClient: false)
         }
@@ -1068,20 +1066,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func adoptEnvironment(
         _ environment: Environment,
         client newClient: T3Client
-    ) async {
+    ) async -> Bool {
+        let bootstrapID = foregroundBootstrapID
+        let generation = environmentGeneration
+        let adoptedConnectionID = await newClient.currentConnectionID()
+        let selectedClient = try? await runtime.activeClient()
+        guard bootstrapID == foregroundBootstrapID, generation == environmentGeneration,
+              selectedClient === newClient, selectedClient?.environment == environment else { return false }
         cancelAggregateRefresh()
         if activeEnvironment?.id == environment.id, client === newClient {
             activeEnvironment = environment
             environmentClients[environment.id] = newClient
             latestShell = shellsByEnvironmentID[environment.id]
-            return
+            return true
         }
-        let bootstrapID = foregroundBootstrapID
-        let generation = environmentGeneration
-        let adoptedConnectionID = await newClient.currentConnectionID()
-        let selectedEnvironment = try? await runtime.activeEnvironment()
-        guard bootstrapID == foregroundBootstrapID, generation == environmentGeneration,
-              selectedEnvironment == environment else { return }
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         shellReconciliationTask?.cancel()
@@ -1106,6 +1104,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         latestShell = shellsByEnvironmentID[environment.id]
         // Runtime owns shared transports. The former inbox client may now
         // serve a passive shell or a selected detail, so adoption does not close it.
+        return true
     }
 
     private func clearActiveEnvironment(disconnectClient: Bool = true) async {
