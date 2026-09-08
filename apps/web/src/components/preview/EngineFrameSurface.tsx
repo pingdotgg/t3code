@@ -20,19 +20,37 @@ interface Props {
 /** Yields each length-prefixed image in the stream as soon as its last byte arrives. */
 async function* readFrames(body: ReadableStream<Uint8Array>) {
   const reader = body.getReader();
-  let buffered = new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let buffered = 0;
+  let expected = -1;
+  const take = (count: number) => {
+    const out = new Uint8Array(count);
+    let filled = 0;
+    while (filled < count) {
+      const chunk = chunks[0];
+      if (chunk === undefined) break;
+      const part = chunk.subarray(0, count - filled);
+      out.set(part, filled);
+      filled += part.byteLength;
+      if (part.byteLength === chunk.byteLength) chunks.shift();
+      else chunks[0] = chunk.subarray(part.byteLength);
+    }
+    buffered -= count;
+    return out;
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) return;
-    const joined = new Uint8Array(buffered.byteLength + value.byteLength);
-    joined.set(buffered, 0);
-    joined.set(value, buffered.byteLength);
-    buffered = joined;
-    while (buffered.byteLength >= 4) {
-      const length = new DataView(buffered.buffer, buffered.byteOffset).getUint32(0);
-      if (buffered.byteLength < 4 + length) break;
-      yield buffered.slice(4, 4 + length);
-      buffered = buffered.subarray(4 + length);
+    chunks.push(value);
+    buffered += value.byteLength;
+    while (true) {
+      if (expected < 0) {
+        if (buffered < 4) break;
+        expected = new DataView(take(4).buffer).getUint32(0);
+      }
+      if (buffered < expected) break;
+      yield take(expected);
+      expected = -1;
     }
   }
 }
@@ -112,15 +130,15 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
     };
   }, [resize, tabId, threadRef.environmentId, threadRef.threadId]);
 
-  // Frames decode off the main thread and the newest one is drawn once per
-  // animation frame, so a slow decode never shows a half-drawn image.
+  // Frames decode off the main thread, one at a time, and the newest one is
+  // drawn once per animation frame. A burst after a stall costs one decode.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || !canvas) return;
     const controller = new AbortController();
     let newest: ImageBitmap | null = null;
-    let decodeSeq = 0;
-    let drawnSeq = 0;
+    let waiting: Uint8Array<ArrayBuffer> | null = null;
+    let decoding = false;
     let animationFrame = 0;
 
     const draw = () => {
@@ -149,15 +167,27 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
       bitmap.close();
     };
 
-    const onFrame = (bitmap: ImageBitmap, seq: number) => {
-      if (controller.signal.aborted || seq < drawnSeq) {
+    const onFrame = (bitmap: ImageBitmap) => {
+      if (controller.signal.aborted) {
         bitmap.close();
         return;
       }
-      drawnSeq = seq;
       newest?.close();
       newest = bitmap;
       if (!animationFrame) animationFrame = requestAnimationFrame(draw);
+    };
+
+    const decode = (bytes: Uint8Array<ArrayBuffer>) => {
+      decoding = true;
+      void createImageBitmap(new Blob([bytes]))
+        .then(onFrame, () => undefined)
+        .finally(() => {
+          decoding = false;
+          if (waiting === null) return;
+          const next = waiting;
+          waiting = null;
+          decode(next);
+        });
     };
 
     const stream = async () => {
@@ -168,11 +198,8 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
           });
           if (!response.ok || !response.body) throw new Error(response.statusText);
           for await (const bytes of readFrames(response.body)) {
-            const seq = ++decodeSeq;
-            void createImageBitmap(new Blob([bytes])).then(
-              (bitmap) => onFrame(bitmap, seq),
-              () => undefined,
-            );
+            if (decoding) waiting = bytes;
+            else decode(bytes);
           }
         } catch {
           if (controller.signal.aborted) return;

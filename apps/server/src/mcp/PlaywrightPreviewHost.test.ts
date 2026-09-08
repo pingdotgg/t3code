@@ -102,10 +102,11 @@ describe("PlaywrightPreviewHost", () => {
             view.tabId,
             "data:text/html,<title>Frames</title><body style='background:%23f00'>",
           );
-          const isPng = (frame: Uint8Array) => frame[0] === 0x89 && frame[1] === 0x50;
-          const received = yield* Stream.runCollect(Stream.takeUntil(frames, isPng));
-          expect(Array.from(received[0]?.slice(0, 2) ?? [])).toEqual([0xff, 0xd8]);
-          expect(received.some(isPng)).toBe(true);
+          // A static page yields one screencast frame, then the settled 2x shot.
+          const [first, settled] = yield* Stream.runCollect(Stream.take(frames, 2));
+          expect(Array.from(first?.slice(0, 2) ?? [])).toEqual([0xff, 0xd8]);
+          expect(settled).toBeDefined();
+          expect(settled?.byteLength).not.toBe(first?.byteLength);
 
           yield* host.sendInput(view.tabId, { type: "mouseMove", x: 10, y: 10 });
           yield* host.sendInput(view.tabId, { type: "keyDown", key: "a" });

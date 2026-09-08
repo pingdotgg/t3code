@@ -118,7 +118,13 @@ const IDLE_CLOSE_MS = 10 * 60_000;
 const FRAME_JPEG_QUALITY = 80;
 /** View pages render at 2x so the settled frame is sharp on a retina display. */
 const FRAME_SCALE = 2;
-const SETTLE_MS = 200;
+const SETTLE_MS = 300;
+// A 1x screencast frame above this size means photo-like content. There a 2x
+// screenshot costs 300 ms of engine main thread and megabytes, for little gain.
+const SETTLE_MAX_FRAME_BYTES = 120_000;
+// A settled frame replaced this soon means the page animates on its own, and
+// switching between 1x and 2x every second looks like blinking.
+const SETTLE_HOLD_MS = 1000;
 const MAX_LOG_ENTRIES = 200;
 const MAX_ELEMENTS = 200;
 const MAX_EVALUATE_RESULT_CHARS = 64_000;
@@ -239,6 +245,8 @@ interface EngineViewState {
   readonly frameSignals: Queue.Queue<number, Cause.Done<void>>;
   lastFrame: Uint8Array | undefined;
   frameSeq: number;
+  /** No settled frames until the next input or navigation. */
+  settleHold: boolean;
   /** Set by a back or forward move so the next navigation keeps the forward count. */
   historyMove: boolean;
   forwardSteps: number;
@@ -683,8 +691,9 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   };
 
   const gotoView = (tab: EngineTab, url: string) =>
-    Effect.promise(() =>
-      tab.page.goto(url).then(
+    Effect.promise(() => {
+      if (tab.view !== undefined) tab.view.settleHold = false;
+      return tab.page.goto(url).then(
         () => undefined,
         (cause: unknown) =>
           reportView(tab, {
@@ -694,8 +703,8 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
             code: -1,
             description: errorDetail(cause),
           }),
-      ),
-    );
+      );
+    });
 
   const openView: PlaywrightPreviewHost["Service"]["openView"] = Effect.fn(
     "PlaywrightPreviewHost.openView",
@@ -707,6 +716,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       frameSignals: yield* Queue.unbounded<number, Cause.Done<void>>(),
       lastFrame: undefined,
       frameSeq: 0,
+      settleHold: false,
       historyMove: false,
       forwardSteps: 0,
     };
@@ -742,7 +752,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       for (const sink of view.frameSinks) Queue.endUnsafe(sink);
       view.frameSinks.clear();
     });
-    yield* Effect.forkIn(sendSettledFrames(page, view), scope);
+    yield* Effect.forkIn(sendSettledFrames(tab, view), scope);
     if (input.url !== undefined) yield* Effect.forkIn(gotoView(tab, input.url), scope);
     return {
       tabId: tab.tabId,
@@ -805,6 +815,7 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     const tab = viewTab(tabId);
     if (tab === undefined || tab.view === undefined) return Effect.void;
     const { page, view } = tab;
+    view.settleHold = false;
     switch (event.type) {
       case "mouseMove":
         return ignoreFailure(() => page.mouse.move(event.x, event.y));
@@ -839,28 +850,38 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   };
 
   // Both engines cap screencast frames at the CSS viewport size, so motion
-  // streams at 1x. When frames stop, one 2x PNG screenshot makes text sharp.
+  // streams at 1x. When frames stop, one 2x screenshot makes text sharp.
   // It is dropped when a new frame lands while the screenshot is in flight.
-  const sendSettledFrames = (page: Page, view: EngineViewState) =>
-    Effect.forever(
-      Effect.gen(function* () {
-        let seq = yield* Queue.take(view.frameSignals);
+  // Firefox encodes PNG on the thread that takes input, 300 ms on a busy page,
+  // while its JPEG takes 30 ms. WebKit is the reverse.
+  const settledShot = (tab: EngineTab) =>
+    tab.engine === "gecko"
+      ? tab.page.screenshot({ type: "jpeg", quality: 85 })
+      : tab.page.screenshot({ type: "png" });
+
+  const sendSettledFrames = (tab: EngineTab, view: EngineViewState) =>
+    Effect.gen(function* () {
+      const nextFrameWithin = (ms: number) =>
+        Effect.raceFirst(Queue.take(view.frameSignals), Effect.as(Effect.sleep(ms), undefined));
+      let next: number | undefined = yield* Queue.take(view.frameSignals);
+      while (true) {
+        let seq = next;
         while (true) {
-          const next = yield* Effect.raceFirst(
-            Queue.take(view.frameSignals),
-            Effect.as(Effect.sleep(SETTLE_MS), undefined),
-          );
-          if (next === undefined) break;
-          seq = next;
+          const later = yield* nextFrameWithin(SETTLE_MS);
+          if (later === undefined) break;
+          seq = later;
         }
-        const png = yield* Effect.promise(() =>
-          page.screenshot({ type: "png" }).catch(() => undefined),
-        );
-        if (png !== undefined && view.frameSeq === seq && view.frameSinks.size > 0) {
-          pushFrame(view, png);
+        let sent = false;
+        if (!view.settleHold && (view.lastFrame?.byteLength ?? 0) <= SETTLE_MAX_FRAME_BYTES) {
+          const shot = yield* Effect.promise(() => settledShot(tab).catch(() => undefined));
+          sent = shot !== undefined && view.frameSeq === seq && view.frameSinks.size > 0;
+          if (sent && shot !== undefined) pushFrame(view, shot);
         }
-      }),
-    );
+        next = yield* nextFrameWithin(SETTLE_HOLD_MS);
+        if (sent && next !== undefined) view.settleHold = true;
+        if (next === undefined) next = yield* Queue.take(view.frameSignals);
+      }
+    });
 
   // Playwright fixes the frame size when the screencast starts and downsizes to
   // 800px when no size is given. Firefox repeats identical frames at 25 fps, so
