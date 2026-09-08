@@ -5336,16 +5336,28 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } ?? []
         let retainedUsers = pendingUsers + loadedUsers
         let retainedIDs = Set(retainedUsers.map(\.id))
-        let retainedAnchor = retainedUsers.first?.id
-        let expandedHistory = retainedUsers.count > Self.initialThreadUserTurnLimit
+        let retainedPage = activeThreadPage
+        let retainedThreads = reconcile ? [activeRawThread, pendingHistory?.snapshot.thread].compactMap { $0 } : []
+        let retainedMessageIDs = Set(retainedThreads.flatMap { $0.messages.map(\.id) })
+        let retainedActivityIDs = Set(retainedThreads.flatMap { $0.activities.map(\.id) })
+        let retainedCheckpointTurns = Set(retainedThreads.flatMap { $0.checkpoints.map(\.turnId) })
         let turnLimit = max(Self.initialThreadUserTurnLimit, retainedUsers.count)
 
         func ownsReconciliationExtent() -> Bool {
             !reconcile || (
                 pendingOlderThreadPage == pendingHistory
+                    && threadHistoryEpoch == historyEpoch
+                    && activeThreadPage == retainedPage
                     && (activeThreadPage?.isLoading != true || pendingHistory != nil)
                     && loadedAnchor == activeRawThread?.messages.first(where: { $0.role == "user" })?.id
             )
+        }
+        func coversRetainedHistory(_ thread: OrchestrationThread) -> Bool {
+            // A server page can hit its raw-turn cap before reaching even one
+            // user row. Preserve every loaded collection, not just user anchors.
+            retainedMessageIDs.isSubset(of: Set(thread.messages.map(\.id)))
+                && retainedActivityIDs.isSubset(of: Set(thread.activities.map(\.id)))
+                && retainedCheckpointTurns.isSubset(of: Set(thread.checkpoints.map(\.turnId)))
         }
         func additionalTailUsers(in thread: OrchestrationThread) -> Int? {
             let users = thread.messages.filter { $0.role == "user" }
@@ -5369,8 +5381,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 || snapshot.snapshotSequence == activeThreadSequence || snapshot.thread == current {
             return
         }
-        if reconcile, expandedHistory, snapshot.page?.hasMore == true,
-           !snapshot.thread.messages.contains(where: { $0.id == retainedAnchor }) {
+        if reconcile, snapshot.page?.hasMore == true,
+           !coversRetainedHistory(snapshot.thread) {
             if let added = additionalTailUsers(in: snapshot.thread), added > 0 {
                 // One extra user turn needs one extra slot, not an automatic
                 // page of older history. Do not keep expanding a moving head.
@@ -5383,8 +5395,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 guard additionalTailUsers(in: snapshot.thread) == added else { return }
             }
             if snapshot.page?.hasMore == true,
-               !snapshot.thread.messages.contains(where: { $0.id == retainedAnchor }) {
-                // A deleted boundary or disjoint gap gets one full read. Never
+               !coversRetainedHistory(snapshot.thread) {
+                // Missing retained rows or a raw-turn cap get one full read. Never
                 // resurrect old rows by unioning them into a rewound thread.
                 snapshot = try await client.threadSnapshot(
                     id: route.wireID, timeoutInterval: threadSnapshotTimeoutInterval

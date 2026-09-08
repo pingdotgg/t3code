@@ -5,6 +5,128 @@ import XCTest
 @MainActor
 @available(iOS 18.0, *)
 final class NativeThreadCatchUpTests: XCTestCase {
+    func testSelectedReconciliationPreservesExplicitOlderRawFanoutBelowTenUsers() async throws {
+        let clock = SelectedReconciliationClock()
+        let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
+        let fixture = try await CatchUpFixture.make(reconciliationClock: clock, reconciliationReceipt: { receipts.continuation.yield($0) })
+        retainForSelectedReconciliationTest(fixture, clock: clock)
+        var ticks = clock.requests.stream.makeAsyncIterator()
+        var completed = receipts.stream.makeAsyncIterator()
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        await fixture.http.setRawFanoutMessages(sequence: 300)
+        let initial = try await fixture.client.loadThread(id: fixture.firstID)
+        XCTAssertEqual(initial.messages.count, 150)
+        XCTAssertEqual(initial.messages.filter { $0.role == .user }.count, 1)
+        let detail = try await nextThreadRequest(&requests)
+        try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        let loaded = try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID)
+        XCTAssertEqual(loaded?.messages.count, 300)
+        XCTAssertEqual(loaded?.messages.filter { $0.role == .user }.count, 2)
+        XCTAssertEqual(loaded?.messages.first?.text, "Raw 0")
+        XCTAssertEqual(loaded?.page?.hasMore, false)
+        try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.editLatestUserText("Changed raw tail", sequence: 301)
+        let pending = await ticks.next(); let tick = try XCTUnwrap(pending)
+        clock.advance(by: .seconds(30)); tick.release()
+        _ = await completed.next()
+        try await detail.synchronize()
+        let value = await selectedDetailBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(value?.messages.last?.text, "Changed raw tail")
+        XCTAssertEqual(value?.messages.count, 300, "Quiet repair must preserve explicitly loaded raw-turn history even below ten user rows.")
+        XCTAssertEqual(value?.messages.first?.text, "Raw 0")
+        XCTAssertNotEqual(value?.page?.hasMore, true)
+        print("RAW_CAP_PROOF initial=\(initial.messages.count) loaded=\(loaded?.messages.count ?? -1) loadedUsers=\(loaded?.messages.filter { $0.role == .user }.count ?? -1) repaired=\(value?.messages.count ?? -1)")
+        print("RAW_CAP_REQUESTS \(await fixture.http.threadRequests.map { $0.url!.absoluteString })")
+    }
+
+    func testSelectedReconciliationPreservesExplicitOlderRawFanoutWithZeroUsers() async throws {
+        let clock = SelectedReconciliationClock()
+        let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
+        let fixture = try await CatchUpFixture.make(reconciliationClock: clock, reconciliationReceipt: { receipts.continuation.yield($0) })
+        retainForSelectedReconciliationTest(fixture, clock: clock)
+        var ticks = clock.requests.stream.makeAsyncIterator()
+        var completed = receipts.stream.makeAsyncIterator()
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        await fixture.http.setRawFanoutMessages(sequence: 300, userSlots: [])
+        let initial = try await fixture.client.loadThread(id: fixture.firstID)
+        XCTAssertEqual(initial.messages.count, 150)
+        XCTAssertEqual(initial.messages.filter { $0.role == .user }.count, 0)
+        let detail = try await nextThreadRequest(&requests)
+        try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        let loaded = try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID)
+        XCTAssertEqual(loaded?.messages.count, 300)
+        XCTAssertEqual(loaded?.messages.filter { $0.role == .user }.count, 0)
+        XCTAssertEqual(loaded?.messages.first?.text, "Raw 0")
+        XCTAssertEqual(loaded?.page?.hasMore, false)
+        try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.editLatestUserText("Changed raw tail", sequence: 301)
+        let pending = await ticks.next(); let tick = try XCTUnwrap(pending)
+        clock.advance(by: .seconds(30)); tick.release()
+        _ = await completed.next()
+        try await detail.synchronize()
+        let value = await selectedDetailBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(value?.messages.last?.text, "Changed raw tail")
+        XCTAssertEqual(value?.messages.count, 300, "Quiet repair must preserve explicitly loaded raw-turn history even below ten user rows.")
+        XCTAssertEqual(value?.messages.first?.text, "Raw 0")
+        XCTAssertNotEqual(value?.page?.hasMore, true)
+        print("RAW_CAP_PROOF initial=\(initial.messages.count) loaded=\(loaded?.messages.count ?? -1) loadedUsers=\(loaded?.messages.filter { $0.role == .user }.count ?? -1) repaired=\(value?.messages.count ?? -1)")
+        print("RAW_CAP_REQUESTS \(await fixture.http.threadRequests.map { $0.url!.absoluteString })")
+    }
+
+    func testSelectedReconciliationRetainsRawCollectionsAndAcceptsAuthoritativeDeletion() async throws {
+        for collection in ["activities", "checkpoints"] {
+            let clock = SelectedReconciliationClock()
+            let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
+            let fixture = try await CatchUpFixture.make(reconciliationClock: clock, reconciliationReceipt: { receipts.continuation.yield($0) })
+            retainForSelectedReconciliationTest(fixture, clock: clock)
+            var ticks = clock.requests.stream.makeAsyncIterator()
+            var completed = receipts.stream.makeAsyncIterator()
+            var requests = fixture.requests.makeAsyncIterator()
+            var events = fixture.client.events().makeAsyncIterator()
+            await fixture.http.setRawFanoutMessages(sequence: 300, userSlots: [], collection: collection)
+            _ = try await fixture.client.loadThread(id: fixture.firstID)
+            let detail = try await nextThreadRequest(&requests)
+            try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            _ = try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID)
+            var raw = try rawThreadForHistoryTest(fixture.client)
+            XCTAssertEqual(raw.messages.count, 0)
+            XCTAssertEqual(collection == "activities" ? raw.activities.count : raw.checkpoints.count, 300)
+            await fixture.http.editLatestUserText("Changed raw tail", sequence: 301)
+            let pending = await ticks.next(); let tick = try XCTUnwrap(pending)
+            clock.advance(by: .seconds(30)); tick.release(); _ = await completed.next()
+            raw = try rawThreadForHistoryTest(fixture.client)
+            XCTAssertEqual(collection == "activities" ? raw.activities.count : raw.checkpoints.count, 300)
+            var urls = await fixture.http.threadRequests.map { $0.url!.absoluteString }
+            XCTAssertEqual(urls.count, collection == "activities" ? 4 : 3)
+            XCTAssertEqual(urls.last!.contains("turnLimit="), collection == "checkpoints",
+                "Only windowed activities need full fallback for an ordinary changed tail.")
+            await fixture.http.removePaginatedUser(id: "raw-0", sequence: 302)
+            let pendingDelete = await ticks.next(); let deleteTick = try XCTUnwrap(pendingDelete)
+            clock.advance(by: .seconds(30)); deleteTick.release(); _ = await completed.next()
+            raw = try rawThreadForHistoryTest(fixture.client)
+            XCTAssertEqual(collection == "activities" ? raw.activities.count : raw.checkpoints.count, 299)
+            XCTAssertFalse(raw.activities.contains { $0.id == "activity-raw-0" })
+            XCTAssertFalse(raw.checkpoints.contains { $0.turnId == "turn-raw-0" })
+            urls = await fixture.http.threadRequests.map { $0.url!.absoluteString }
+            XCTAssertEqual(urls.count, collection == "activities" ? 6 : 5)
+            XCTAssertFalse(urls.last!.contains("turnLimit="))
+            let pendingUnchanged = await ticks.next(); let unchangedTick = try XCTUnwrap(pendingUnchanged)
+            clock.advance(by: .seconds(30)); unchangedTick.release(); _ = await completed.next()
+            let unchangedURLs = await fixture.http.threadRequests
+            XCTAssertEqual(unchangedURLs.count, collection == "activities" ? 7 : 6, "Unchanged capped recent reads must not repeat full fallback.")
+            raw = try rawThreadForHistoryTest(fixture.client)
+            XCTAssertEqual(collection == "activities" ? raw.activities.count : raw.checkpoints.count, 299)
+        }
+    }
+
+    private func rawThreadForHistoryTest(_ client: NativeFeatureClient) throws -> OrchestrationThread {
+        // Read-only test inspection: checkpoints are retained raw state and have
+        // no standalone published collection in FeatureThreadDetail.
+        try XCTUnwrap(Mirror(reflecting: client).children.first { $0.label == "activeRawThread" }?.value as? OrchestrationThread)
+    }
+
     func testSelectedReconciliationRepairsSilentDetailWithoutSyncFlicker() async throws {
         let clock = SelectedReconciliationClock()
         let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
@@ -463,6 +585,34 @@ final class NativeThreadCatchUpTests: XCTestCase {
         if urls.count > 3 { XCTAssertTrue(urls[3].contains("turnLimit=31")) }
     }
 
+    func testSelectedReconciliationUserlessPendingAheadPageRecoversWithoutStreamProgress() async throws {
+        let clock = SelectedReconciliationClock()
+        let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
+        let fixture = try await CatchUpFixture.make(reconciliationClock: clock, reconciliationReceipt: { receipts.continuation.yield($0) })
+        retainForSelectedReconciliationTest(fixture, clock: clock)
+        var ticks = clock.requests.stream.makeAsyncIterator()
+        var completed = receipts.stream.makeAsyncIterator()
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        await fixture.http.setRawFanoutMessages(sequence: 300, userSlots: [])
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let detail = try await nextThreadRequest(&requests)
+        try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.editLatestUserText("New head", sequence: 301)
+        let pendingPage = try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID)
+        XCTAssertEqual(pendingPage?.page?.isLoading, true)
+        let pending = await ticks.next(); let tick = try XCTUnwrap(pending)
+        clock.advance(by: .seconds(30)); tick.release()
+        let receipt = await completed.next()
+        XCTAssertEqual(receipt, .finished(threadID: fixture.firstID))
+        try await detail.synchronize()
+        let value = await selectedDetailBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(value?.messages.count, 300)
+        XCTAssertEqual(value?.messages.first?.text, "Raw 0")
+        XCTAssertEqual(value?.messages.last?.text, "New head")
+        XCTAssertNotEqual(value?.page?.isLoading, true)
+    }
+
     func testSelectedReconciliationPendingAheadPageRecoversWithoutStreamProgress() async throws {
         let clock = SelectedReconciliationClock()
         let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
@@ -489,6 +639,43 @@ final class NativeThreadCatchUpTests: XCTestCase {
         XCTAssertEqual(value?.messages.first?.text, "User 20")
         XCTAssertEqual(value?.messages.last?.text, "New head")
         XCTAssertEqual(value?.page?.isLoading, false)
+    }
+
+    func testSelectedReconciliationUserlessChangedQuietReadYieldsToOlderPageRequest() async throws {
+        let clock = SelectedReconciliationClock()
+        let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
+        let fixture = try await CatchUpFixture.make(reconciliationClock: clock, reconciliationReceipt: { receipts.continuation.yield($0) })
+        retainForSelectedReconciliationTest(fixture, clock: clock)
+        var ticks = clock.requests.stream.makeAsyncIterator()
+        var completed = receipts.stream.makeAsyncIterator()
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        var reads = fixture.http.heldRequests.makeAsyncIterator()
+        await fixture.http.setRawFanoutMessages(sequence: 300, userSlots: [])
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let detail = try await nextThreadRequest(&requests)
+        try await detail.synchronize(); _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.editLatestUserText("Changed head", sequence: 301)
+        await fixture.http.holdThreadReads(true)
+        let pending = await ticks.next(); let tick = try XCTUnwrap(pending)
+        clock.advance(by: .seconds(30)); tick.release()
+        let quiet = try await nextHeldRead(&reads)
+        let olderTask = Task { try await fixture.client.loadEarlierThreadTurns(id: fixture.firstID) }
+        let olderRead = try await nextHeldRead(&reads)
+        quiet.succeed(); _ = await completed.next()
+        olderRead.succeed()
+        let waitingOlder = try await olderTask.value
+        XCTAssertEqual(waitingOlder?.page?.isLoading, true, "Optional quiet read must not invalidate the user's older-page epoch.")
+        await fixture.http.holdThreadReads(false)
+        let nextPending = await ticks.next(); let nextTick = try XCTUnwrap(nextPending)
+        clock.advance(by: .seconds(30)); nextTick.release()
+        _ = await completed.next()
+        try await detail.synchronize()
+        let value = await selectedDetailBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(value?.messages.count, 300)
+        XCTAssertEqual(value?.messages.first?.text, "Raw 0")
+        XCTAssertEqual(value?.messages.last?.text, "Changed head")
+        XCTAssertNotEqual(value?.page?.isLoading, true)
     }
 
     func testSelectedReconciliationChangedQuietReadYieldsToOlderPageRequest() async throws {
@@ -2016,6 +2203,8 @@ private actor CatchUpHTTPTransport: HTTPTransport {
     private(set) var threadResponseBytes: [Int] = []
     private var messages: [OrchestrationMessage] = []
     private var paginatedMessages: [OrchestrationMessage]?
+    private var rawTurnCap: Int?
+    private var rawCollection: String?
     private var pendingHeldReads: [CatchUpHTTPRead] = []
     private var activities: [OrchestrationActivity] = []
     private var completionResponse = false
@@ -2029,6 +2218,18 @@ private actor CatchUpHTTPTransport: HTTPTransport {
         let reads = AsyncStream<CatchUpHTTPRead>.makeStream()
         heldRequests = reads.stream
         heldReadContinuation = reads.continuation
+    }
+
+    func setRawFanoutMessages(sequence: Int, userSlots: Set<Int> = [0, 200], collection: String? = nil) {
+        rawTurnCap = 150
+        rawCollection = collection
+        paginatedMessages = (0..<300).map { index in
+            let stamp = String(format: "2026-09-02T12:%02d:%02dZ", index / 60, index % 60)
+            return OrchestrationMessage(id: "raw-\(index)", role: userSlots.contains(index) ? "user" : "assistant",
+                text: "Raw \(index)", attachments: [], turnId: userSlots.contains(index) ? nil : "turn-\(index)",
+                streaming: false, createdAt: stamp, updatedAt: stamp)
+        }
+        self.sequence = sequence
     }
 
     func setPaginatedUserMessages(_ range: Range<Int>, sequence: Int) {
@@ -2114,7 +2315,17 @@ private actor CatchUpHTTPTransport: HTTPTransport {
                 let limit = query.first { $0.name == "turnLimit" }?.value.flatMap(Int.init)
                 let cursor = query.first { $0.name == "beforeCursor" }?.value
                 let end = cursor.flatMap { value in paginatedMessages.firstIndex { $0.id == value } } ?? paginatedMessages.count
-                let start = max(0, end - (limit ?? end))
+                var start = max(0, end - (limit ?? end))
+                if let cap = rawTurnCap, let limit {
+                    // One fixture message per raw turn. Match server candidates LIMIT150,
+                    // then walk descending until the user-anchored turn limit is reached.
+                    start = max(0, end - cap)
+                    var usersSeen = 0
+                    for index in stride(from: end - 1, through: start, by: -1) {
+                        if paginatedMessages[index].role == "user" { usersSeen += 1 }
+                        if usersSeen == limit { start = index; break }
+                    }
+                }
                 responseMessages = Array(paginatedMessages[start..<end])
                 if limit != nil {
                     page = OrchestrationThreadDetailPage(
@@ -2129,6 +2340,22 @@ private actor CatchUpHTTPTransport: HTTPTransport {
             )
             var thread = snapshot.thread
             thread.activities = activities
+            if let rawCollection {
+                thread.messages = []
+                if rawCollection == "activities" {
+                    thread.activities = responseMessages.map { row in
+                        OrchestrationActivity(id: "activity-\(row.id)", tone: "info", kind: "fixture.raw-turn",
+                            summary: row.text, payload: .null, turnId: "turn-\(row.id)", sequence: nil, createdAt: row.createdAt)
+                    }
+                } else {
+                    // Server checkpoints are unwindowed even when messages/activities
+                    // hit the raw-turn cap. Keep this fixture faithful to that contract.
+                    thread.checkpoints = (paginatedMessages ?? responseMessages).enumerated().map { offset, row in
+                        CheckpointSummary(turnId: "turn-\(row.id)", checkpointTurnCount: offset,
+                            checkpointRef: row.text, status: "completed", files: [], assistantMessageId: nil, completedAt: row.createdAt)
+                    }
+                }
+            }
             if runningResponse {
                 var object = try JSONValue.encode(thread).decode([String: JSONValue].self)
                 object["latestTurn"] = .object([
