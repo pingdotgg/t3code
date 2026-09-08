@@ -1,9 +1,4 @@
-import {
-  Outlet,
-  createFileRoute,
-  redirect,
-  useLocation,
-} from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
