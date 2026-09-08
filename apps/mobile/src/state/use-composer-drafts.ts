@@ -925,7 +925,7 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
 export function appendComposerDraftAttachments(
   draftKey: string,
   attachments: ReadonlyArray<DraftComposerAttachment>,
-  options?: { readonly allowOverflow?: boolean },
+  options?: { readonly allowOverflow?: boolean; readonly maxAttachments?: number },
 ): number {
   if (attachments.length === 0) {
     return 0;
@@ -935,7 +935,13 @@ export function appendComposerDraftAttachments(
     const existing = normalizeDraft(current[draftKey]);
     const remaining = options?.allowOverflow
       ? attachments.length
-      : Math.max(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS - existing.attachments.length);
+      : Math.max(
+          0,
+          Math.min(
+            PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+            options?.maxAttachments ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          ) - existing.attachments.length,
+        );
     const accepted = attachments.slice(0, remaining);
     rejected = attachments.slice(remaining);
     if (accepted.length === 0) {
