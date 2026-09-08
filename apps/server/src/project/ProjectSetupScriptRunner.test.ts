@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
 
@@ -55,6 +56,7 @@ it.effect("resolves setup scripts through the standalone project service", () =>
           getById: () => Effect.succeed(Option.some(project)),
         }),
         Layer.mock(TerminalManager.TerminalManager)({ open, write }),
+        ServerSettings.layerTest(),
       ),
     ),
   );
@@ -74,6 +76,11 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       cwd: "/repo-worktree",
     });
     assert.equal(open.mock.calls[0]?.[0].cwd, "/repo-worktree");
+    assert.deepEqual(open.mock.calls[0]?.[0].env, {
+      T3CODE_PROJECT_ROOT: "/repo",
+      T3CODE_WORKTREE_PATH: "/repo-worktree",
+      COLORTERM: "",
+    });
     assert.equal(write.mock.calls[0]?.[0].data, "vp install\r");
   }).pipe(Effect.provide(layer));
 });

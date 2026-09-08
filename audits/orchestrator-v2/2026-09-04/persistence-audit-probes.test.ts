@@ -105,12 +105,12 @@ const applyHistoricalCohort = (
     }
   });
 
-it.effect("upgrades committed-058 state through the live-059 overlay", () =>
+it.effect("upgrades committed-060 state through the live-061 overlay", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 58 });
+    yield* runMigrations({ toMigrationInclusive: 60 });
     const executed = yield* runMigrations();
-    assert.deepStrictEqual(executed, [[59, "OrchestrationV2ShellIndexes"]]);
+    assert.deepStrictEqual(executed, [[61, "OrchestrationV2ShellIndexes"]]);
     const indexes = yield* sql<{ readonly name: string }>`
       SELECT name FROM sqlite_master
       WHERE type = 'index' AND name LIKE 'orchestration_v2_%_idx'
@@ -126,7 +126,7 @@ it.effect("reproduces the old-052 cohort collision against the current migrator"
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations({ toMigrationInclusive: 43 });
     yield* applyHistoricalCohort(
-      Array.from({ length: 9 }, (_, offset) => [48 + offset, 44 + offset] as const),
+      Array.from({ length: 9 }, (_, offset) => [50 + offset, 44 + offset] as const),
     );
 
     const before = yield* sql<{ readonly migration_id: number; readonly name: string }>`
@@ -141,7 +141,7 @@ it.effect("reproduces the old-052 cohort collision against the current migrator"
     assert.strictEqual(exit._tag, "Failure");
     if (exit._tag === "Failure") {
       const failure = Cause.pretty(exit.cause);
-      assert.match(failure, /Migration "53_ApplicationEventSource" failed/);
+      assert.match(failure, /Migration "55_ApplicationEventSource" failed/);
       assert.match(failure, /duplicate column name|already exists/i);
     }
 
@@ -160,9 +160,9 @@ it.effect("reproduces the old-055 cohort collision and skipped main columns", ()
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations({ toMigrationInclusive: 44 });
     yield* applyHistoricalCohort([
-      ...Array.from({ length: 9 }, (_, offset) => [48 + offset, 45 + offset] as const),
-      [57, 54],
-      [58, 55],
+      ...Array.from({ length: 9 }, (_, offset) => [50 + offset, 45 + offset] as const),
+      [59, 54],
+      [60, 55],
     ]);
 
     const projectColumns = yield* sql<{ readonly name: string }>`
@@ -176,7 +176,7 @@ it.effect("reproduces the old-055 cohort collision and skipped main columns", ()
     assert.strictEqual(exit._tag, "Failure");
     if (exit._tag === "Failure") {
       const failure = Cause.pretty(exit.cause);
-      assert.match(failure, /Migration "56_LegacyV1ImportState" failed/);
+      assert.match(failure, /Migration "58_LegacyV1ImportState" failed/);
       assert.match(failure, /already exists/i);
     }
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
@@ -187,7 +187,7 @@ it.effect("reproduces the prior-audit old-053 cohort collision", () =>
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations({ toMigrationInclusive: 44 });
     yield* applyHistoricalCohort(
-      Array.from({ length: 9 }, (_, offset) => [48 + offset, 45 + offset] as const),
+      Array.from({ length: 9 }, (_, offset) => [50 + offset, 45 + offset] as const),
     );
 
     const before = yield* sql<{ readonly migration_id: number; readonly name: string }>`
@@ -202,7 +202,7 @@ it.effect("reproduces the prior-audit old-053 cohort collision", () =>
     assert.strictEqual(exit._tag, "Failure");
     if (exit._tag === "Failure") {
       const failure = Cause.pretty(exit.cause);
-      assert.match(failure, /Migration "56_LegacyV1ImportState" failed/);
+      assert.match(failure, /Migration "58_LegacyV1ImportState" failed/);
       assert.match(failure, /already exists/i);
     }
 

@@ -1,6 +1,7 @@
 import type {
   Query as ClaudeQuery,
   SDKMessage,
+  SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
@@ -1222,7 +1223,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           expectedImageBlock,
           {
             type: "text",
-            text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
+            text: `Ultrathink:\nWhat's in this image?\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
 
@@ -1249,7 +1250,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           expectedImageBlock,
           {
             type: "text",
-            text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
+            text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
       }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
@@ -1651,6 +1652,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
+  const makeAssistantErrorFrame = (input: {
+    readonly uuid: string;
+    readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
+    readonly parentToolUseId?: string | null;
+  }) =>
+    claudeSdkFrame({
+      type: "assistant",
+      message: {
+        model: "claude-sonnet-4-6",
+        id: `msg_${input.uuid}`,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Claude could not complete this request." }],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+        },
+      },
+      parent_tool_use_id: input.parentToolUseId ?? null,
+      ...(input.error === undefined ? {} : { error: input.error }),
+      uuid: input.uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
   const makeResultFrame = (input: {
     readonly uuid: string;
     readonly result: string;
@@ -1660,6 +1688,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly isError?: boolean;
     readonly errors?: ReadonlyArray<string>;
     readonly apiErrorStatus?: number;
+    readonly terminalReason?: SDKResultMessage["terminal_reason"];
   }) =>
     claudeSdkFrame({
       type: "result",
@@ -1684,6 +1713,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ...(input.origin === undefined ? {} : { origin: input.origin }),
       ...(input.errors === undefined ? {} : { errors: input.errors }),
       ...(input.apiErrorStatus === undefined ? {} : { api_error_status: input.apiErrorStatus }),
+      ...(input.terminalReason === undefined ? {} : { terminal_reason: input.terminalReason }),
     });
   const turnOneResult = makeResultFrame({
     uuid: "00000000-0000-4000-8000-000000000102",
@@ -1737,6 +1767,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
+    readonly environment?: NodeJS.ProcessEnv;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1755,7 +1786,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const adapter = makeClaudeAdapterV2({
         instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CLAUDE_SETTINGS,
-        environment: {},
+        environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -1947,6 +1978,163 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         harness.events.some(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
         ),
+      );
+    }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
+
+  it.effect("names an expired Claude login instead of the terminal API error", () =>
+    Effect.gen(function* () {
+      const configDir = "/synthetic/Claude config";
+      const cwd = "/synthetic/project";
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir },
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-auth-failure"),
+          text: "Continue.",
+          attachments: [],
+          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd,
+          }),
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        makeAssistantErrorFrame({
+          uuid: "00000000-0000-4000-8000-000000000606",
+          error: "authentication_failed",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000607",
+          result: "API Error",
+          terminalReason: "api_error",
+        }),
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.include(terminal.failure.message, "run `claude auth login`");
+      assert.include(terminal.failure.message, configDir);
+      assert.include(terminal.failure.message, cwd);
+      assert.notInclude(terminal.failure.message, "repeated API errors");
+    }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
+
+  it.effect.each([
+    { recovered: false, expected: "Claude usage limit reached" },
+    { recovered: true, expected: "Claude gave up after repeated API errors" },
+  ])("tracks whether a rejected usage window recovered ($recovered)", ({ recovered, expected }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-window-${recovered}`),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "rate_limit_event",
+          rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
+          uuid: "00000000-0000-4000-8000-000000000608",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      if (recovered) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "allowed", rateLimitType: "five_hour" },
+            uuid: "00000000-0000-4000-8000-000000000609",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000610",
+          result: "API Error",
+          terminalReason: "api_error",
+        }),
+      );
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.include(terminal.failure.message, expected);
+    }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
+
+  it.effect.each([
+    { name: "parent limit", parentErrors: ["rate_limit"], expectedLimit: true },
+    {
+      name: "parent limit then nested response",
+      parentErrors: ["rate_limit", "nested-ok"],
+      expectedLimit: true,
+    },
+    { name: "nested limit", parentErrors: ["nested-limit"], expectedLimit: false },
+    {
+      name: "parent limit then parent response",
+      parentErrors: ["rate_limit", "ok"],
+      expectedLimit: false,
+    },
+  ])("classifies retried terminal API failures after $name", ({ parentErrors, expectedLimit }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-retry-${parentErrors.join("-")}`),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      for (const [index, evidence] of parentErrors.entries()) {
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeAssistantErrorFrame({
+            uuid: `00000000-0000-4000-8000-00000000062${index}`,
+            error: evidence.includes("limit") ? "rate_limit" : undefined,
+            parentToolUseId: evidence.startsWith("nested") ? "nested-tool" : null,
+          }),
+        );
+      }
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000629",
+          result: "API Error",
+          isError: true,
+          terminalReason: "api_error",
+        }),
+      );
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(
+        terminal.failure.message,
+        expectedLimit
+          ? "Claude usage limit reached. Send the message again once the limit resets."
+          : "Claude gave up after repeated API errors.",
       );
     }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
   );
