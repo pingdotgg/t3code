@@ -487,14 +487,14 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
-    it("only clears the pending turn start acknowledged by the provider", () => {
+    it("keeps acknowledged starts guarded until their provider turn is running", () => {
       const newerMessageId = MessageId.make("message-newer-pending-turn-start");
       const pendingThread = {
         ...baseThread,
         pendingTurnStartMessageId: newerMessageId,
       };
-      const acknowledge = (messageId: MessageId) =>
-        applyThreadDetailEvent(pendingThread, {
+      const acknowledge = (messageId: MessageId, thread = pendingThread) =>
+        applyThreadDetailEvent(thread, {
           ...baseEventFields,
           sequence: 6,
           occurredAt: "2026-04-01T05:00:01.000Z",
@@ -507,7 +507,7 @@ describe("applyThreadDetailEvent", () => {
               messageId,
               turnId: TurnId.make("turn-provider-acknowledged"),
             },
-            updatedAt: pendingThread.updatedAt,
+            updatedAt: thread.updatedAt,
           },
         });
 
@@ -520,7 +520,31 @@ describe("applyThreadDetailEvent", () => {
       const current = acknowledge(newerMessageId);
       expect(current.kind).toBe("updated");
       if (current.kind === "updated") {
-        expect(current.thread.pendingTurnStartMessageId).toBeNull();
+        expect(current.thread.pendingTurnStartMessageId).toBe(newerMessageId);
+        expect(current.thread.submittedTurnStarts).toEqual([
+          {
+            messageId: newerMessageId,
+            turnId: TurnId.make("turn-provider-acknowledged"),
+          },
+        ]);
+      }
+
+      const running = acknowledge(newerMessageId, {
+        ...pendingThread,
+        session: {
+          threadId: pendingThread.id,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-provider-acknowledged"),
+          lastError: null,
+          updatedAt: pendingThread.updatedAt,
+        },
+      });
+      expect(running.kind).toBe("updated");
+      if (running.kind === "updated") {
+        expect(running.thread.pendingTurnStartMessageId).toBeNull();
+        expect(running.thread.submittedTurnStarts).toEqual([]);
       }
     });
   });

@@ -520,6 +520,11 @@ export function projectEvent(
         Effect.map((payload) => {
           const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
           if (!thread) return nextBase;
+          const acknowledgement = payload.turnStartAcknowledged;
+          const acknowledgedTurnAlreadyRunning =
+            acknowledgement !== undefined &&
+            thread.session?.status === "running" &&
+            thread.session.activeTurnId === acknowledgement.turnId;
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -541,12 +546,23 @@ export function projectEvent(
               ...(payload.branchPullRequest !== undefined
                 ? { branchPullRequest: payload.branchPullRequest }
                 : {}),
-              ...(payload.turnStartAcknowledged !== undefined
+              ...(acknowledgement !== undefined
                 ? {
                     pendingTurnStartMessageId:
-                      payload.turnStartAcknowledged.messageId === thread.pendingTurnStartMessageId
+                      acknowledgement.messageId === thread.pendingTurnStartMessageId &&
+                      acknowledgedTurnAlreadyRunning
                         ? null
                         : (thread.pendingTurnStartMessageId ?? null),
+                    submittedTurnStarts: acknowledgedTurnAlreadyRunning
+                      ? (thread.submittedTurnStarts ?? []).filter(
+                          (entry) => entry.turnId !== acknowledgement.turnId,
+                        )
+                      : [
+                          ...(thread.submittedTurnStarts ?? []).filter(
+                            (entry) => entry.messageId !== acknowledgement.messageId,
+                          ),
+                          acknowledgement,
+                        ],
                   }
                 : {}),
               updatedAt: payload.updatedAt,
@@ -726,6 +742,12 @@ export function projectEvent(
               session.status === "running" && session.activeTurnId !== null
                 ? null
                 : (thread.pendingTurnStartMessageId ?? null),
+            submittedTurnStarts:
+              session.status === "running" && session.activeTurnId !== null
+                ? (thread.submittedTurnStarts ?? []).filter(
+                    (entry) => entry.turnId !== session.activeTurnId,
+                  )
+                : (thread.submittedTurnStarts ?? []),
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
                 ? {

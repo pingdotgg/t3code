@@ -943,6 +943,63 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         readModel: queuedReadModel,
       }).pipe(Effect.flip);
       expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const acknowledgement = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start.acknowledge",
+          commandId: CommandId.make("cmd-acknowledge-queued-turn"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: pendingMessageId,
+          turnId: TurnId.make("turn-acknowledged-before-running"),
+        },
+        readModel: queuedReadModel,
+      });
+      let acknowledgedReadModel = yield* projectEvent(queuedReadModel, {
+        ...(Array.isArray(acknowledgement) ? acknowledgement[0]! : acknowledgement),
+        sequence: queuedReadModel.snapshotSequence + 1,
+      });
+      for (const [status, activeTurnId] of [
+        ["running", TurnId.make("turn-unrelated-running")],
+        ["ready", null],
+      ] as const) {
+        const sessionSet = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.make(`cmd-session-${status}-after-acknowledgement`),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              ...makeSession(status),
+              activeTurnId,
+            },
+            createdAt: NOW,
+          },
+          readModel: acknowledgedReadModel,
+        });
+        for (const event of Array.isArray(sessionSet) ? sessionSet : [sessionSet]) {
+          acknowledgedReadModel = yield* projectEvent(acknowledgedReadModel, {
+            ...event,
+            sequence: acknowledgedReadModel.snapshotSequence + 1,
+          });
+        }
+      }
+      expect(acknowledgedReadModel.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(acknowledgedReadModel.threads[0]?.submittedTurnStarts).toEqual([
+        {
+          messageId: pendingMessageId,
+          turnId: TurnId.make("turn-acknowledged-before-running"),
+        },
+      ]);
+      const acknowledgedError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-acknowledged-before-running"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: NOW,
+        },
+        readModel: acknowledgedReadModel,
+      }).pipe(Effect.flip);
+      expect(acknowledgedError._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
 

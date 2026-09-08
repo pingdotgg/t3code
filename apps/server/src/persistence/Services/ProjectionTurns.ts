@@ -101,6 +101,9 @@ export const GetProjectionAdoptableTurnStartInput = Schema.Struct({
 });
 export type GetProjectionAdoptableTurnStartInput = typeof GetProjectionAdoptableTurnStartInput.Type;
 
+export const GetProjectionSubmittedTurnStartInput = GetProjectionAdoptableTurnStartInput;
+export type GetProjectionSubmittedTurnStartInput = typeof GetProjectionSubmittedTurnStartInput.Type;
+
 export const DeleteProjectionPendingTurnStartInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
@@ -172,6 +175,11 @@ export interface ProjectionTurnRepositoryShape {
   /** Returns the oldest pending start or acknowledgement belonging to this provider turn. */
   readonly getAdoptableTurnStartByThreadId: (
     input: GetProjectionAdoptableTurnStartInput,
+  ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
+
+  /** Returns only the accepted start correlated to this provider turn. */
+  readonly getSubmittedTurnStartByTurnId: (
+    input: GetProjectionSubmittedTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
   /**

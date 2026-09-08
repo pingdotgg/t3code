@@ -593,7 +593,7 @@ describe("orchestration projector", () => {
     }),
   );
 
-  effectIt.effect("clears only the provider-acknowledged pending turn start", () =>
+  effectIt.effect("keeps acknowledged starts guarded until their provider turn is running", () =>
     Effect.gen(function* () {
       const now = "2026-09-07T23:30:00.000Z";
       const threadId = "thread-correlated-start-acknowledgement";
@@ -644,6 +644,12 @@ describe("orchestration projector", () => {
         }),
       );
       expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        {
+          messageId: "older-request",
+          turnId: "turn-provider-acknowledged",
+        },
+      ]);
 
       model = yield* projectEvent(
         model,
@@ -656,7 +662,59 @@ describe("orchestration projector", () => {
           updatedAt: now,
         }),
       );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        {
+          messageId: "older-request",
+          turnId: "turn-provider-acknowledged",
+        },
+        {
+          messageId: "newer-request",
+          turnId: "turn-provider-acknowledged",
+        },
+      ]);
+
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-provider-acknowledged",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
       expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.turn-start-requested", {
+          threadId,
+          messageId: "steering-request",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "steering-request",
+            turnId: "turn-provider-acknowledged",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
     }),
   );
 

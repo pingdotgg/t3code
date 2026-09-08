@@ -241,7 +241,12 @@ export function applyThreadDetailEvent(
       };
 
     // ── Thread metadata ─────────────────────────────────────────────
-    case "thread.meta-updated":
+    case "thread.meta-updated": {
+      const acknowledgement = event.payload.turnStartAcknowledged;
+      const acknowledgedTurnAlreadyRunning =
+        acknowledgement !== undefined &&
+        thread.session?.status === "running" &&
+        thread.session.activeTurnId === acknowledgement.turnId;
       return {
         kind: "updated",
         thread: {
@@ -266,17 +271,29 @@ export function applyThreadDetailEvent(
           ...(event.payload.activeOrderKey !== undefined
             ? { activeOrderKey: event.payload.activeOrderKey }
             : {}),
-          ...(event.payload.turnStartAcknowledged !== undefined
+          ...(acknowledgement !== undefined
             ? {
                 pendingTurnStartMessageId:
-                  event.payload.turnStartAcknowledged.messageId === thread.pendingTurnStartMessageId
+                  acknowledgement.messageId === thread.pendingTurnStartMessageId &&
+                  acknowledgedTurnAlreadyRunning
                     ? null
                     : (thread.pendingTurnStartMessageId ?? null),
+                submittedTurnStarts: acknowledgedTurnAlreadyRunning
+                  ? (thread.submittedTurnStarts ?? []).filter(
+                      (entry) => entry.turnId !== acknowledgement.turnId,
+                    )
+                  : [
+                      ...(thread.submittedTurnStarts ?? []).filter(
+                        (entry) => entry.messageId !== acknowledgement.messageId,
+                      ),
+                      acknowledgement,
+                    ],
               }
             : {}),
           updatedAt: event.payload.updatedAt,
         },
       };
+    }
 
     case "thread.runtime-mode-set":
       return {
@@ -488,6 +505,13 @@ export function applyThreadDetailEvent(
             event.payload.session.activeTurnId !== null
               ? null
               : (thread.pendingTurnStartMessageId ?? null),
+          submittedTurnStarts:
+            event.payload.session.status === "running" &&
+            event.payload.session.activeTurnId !== null
+              ? (thread.submittedTurnStarts ?? []).filter(
+                  (entry) => entry.turnId !== event.payload.session.activeTurnId,
+                )
+              : (thread.submittedTurnStarts ?? []),
           latestTurn,
           updatedAt: event.occurredAt,
         },

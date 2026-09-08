@@ -3730,6 +3730,25 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           });
         }
         yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.make("evt-queued-adoption-acknowledged"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:00:02.500Z",
+          commandId: CommandId.make("cmd-queued-adoption-acknowledged"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-queued-adoption-acknowledged"),
+          metadata: {},
+          payload: {
+            threadId,
+            turnStartAcknowledged: {
+              messageId: MessageId.make("message-queued-adoption-1"),
+              turnId: TurnId.make("turn-queued-adoption-1"),
+            },
+            updatedAt: "2026-02-26T13:00:02.000Z",
+          },
+        });
+        yield* eventStore.append({
           type: "thread.session-set",
           eventId: EventId.make("evt-queued-adoption-running"),
           aggregateKind: "thread",
@@ -3768,6 +3787,119 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           { turnId: null, messageId: "message-queued-adoption-2" },
           { turnId: "turn-queued-adoption-1", messageId: "message-queued-adoption-1" },
         ]);
+      }),
+    );
+
+    it.effect("keeps concurrent starts correlated when acknowledgements race runtime events", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+
+        for (const acknowledgeFirst of [true, false]) {
+          const suffix = acknowledgeFirst ? "ack-first" : "runtime-first";
+          const threadId = ThreadId.make(`thread-concurrent-${suffix}`);
+          const targetTurnId = TurnId.make(`turn-concurrent-b-${suffix}`);
+          let sequence = 0;
+          const appendStart = (label: "a" | "b") =>
+            eventStore.append({
+              type: "thread.turn-start-requested",
+              eventId: EventId.make(`evt-concurrent-${suffix}-${++sequence}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              commandId: CommandId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              metadata: {},
+              payload: {
+                threadId,
+                messageId: MessageId.make(`message-concurrent-${label}-${suffix}`),
+                runtimeMode: "approval-required" as const,
+                createdAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              },
+            });
+          const appendAcknowledgement = () =>
+            eventStore.append({
+              type: "thread.meta-updated",
+              eventId: EventId.make(`evt-concurrent-${suffix}-${++sequence}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              commandId: CommandId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              metadata: {},
+              payload: {
+                threadId,
+                turnStartAcknowledged: {
+                  messageId: MessageId.make(`message-concurrent-b-${suffix}`),
+                  turnId: targetTurnId,
+                },
+                updatedAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              },
+            });
+          const appendRunning = () =>
+            eventStore.append({
+              type: "thread.session-set",
+              eventId: EventId.make(`evt-concurrent-${suffix}-${++sequence}`),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              occurredAt: `2026-02-26T13:45:0${sequence}.000Z`,
+              commandId: CommandId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              causationEventId: null,
+              correlationId: CorrelationId.make(`cmd-concurrent-${suffix}-${sequence}`),
+              metadata: {},
+              payload: {
+                threadId,
+                session: {
+                  threadId,
+                  status: "running" as const,
+                  providerName: "codex",
+                  runtimeMode: "approval-required" as const,
+                  activeTurnId: targetTurnId,
+                  lastError: null,
+                  updatedAt: `2026-02-26T13:45:0${sequence}.000Z`,
+                },
+              },
+            });
+
+          yield* appendStart("a");
+          yield* appendStart("b");
+          if (acknowledgeFirst) yield* appendAcknowledgement();
+          yield* appendRunning();
+          if (!acknowledgeFirst) yield* appendAcknowledgement();
+        }
+
+        yield* projectionPipeline.bootstrap;
+
+        for (const suffix of ["ack-first", "runtime-first"]) {
+          const rows = yield* sql<{
+            readonly turnId: string | null;
+            readonly messageId: string | null;
+            readonly state: string;
+          }>`
+            SELECT
+              turn_id AS "turnId",
+              pending_message_id AS "messageId",
+              state
+            FROM projection_turns
+            WHERE thread_id = ${`thread-concurrent-${suffix}`}
+            ORDER BY row_id ASC
+          `;
+          assert.deepEqual(rows, [
+            {
+              turnId: null,
+              messageId: `message-concurrent-a-${suffix}`,
+              state: "pending",
+            },
+            {
+              turnId: `turn-concurrent-b-${suffix}`,
+              messageId: `message-concurrent-b-${suffix}`,
+              state: "running",
+            },
+          ]);
+        }
       }),
     );
 

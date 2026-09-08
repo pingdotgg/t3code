@@ -16,6 +16,7 @@ import {
   DeleteProjectionTurnsByThreadInput,
   GetProjectionAdoptableTurnStartInput,
   GetProjectionPendingTurnStartInput,
+  GetProjectionSubmittedTurnStartInput,
   GetProjectionTurnByTurnIdInput,
   ListProjectionTurnsByThreadInput,
   ProjectionPendingTurnStart,
@@ -212,13 +213,52 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
           requested_at AS "requestedAt"
+        FROM projection_turns AS candidate
+        WHERE candidate.thread_id = ${threadId}
+          AND candidate.turn_id IS NULL
+          AND (
+            (candidate.state = 'submitted' AND candidate.submitted_turn_id = ${turnId})
+            OR (
+              candidate.state = 'pending'
+              AND (
+                SELECT COUNT(*)
+                FROM projection_turns AS pending
+                WHERE pending.thread_id = ${threadId}
+                  AND pending.turn_id IS NULL
+                  AND pending.state = 'pending'
+                  AND pending.pending_message_id IS NOT NULL
+                  AND pending.checkpoint_turn_count IS NULL
+              ) = 1
+            )
+          )
+          AND candidate.pending_message_id IS NOT NULL
+          AND candidate.checkpoint_turn_count IS NULL
+        ORDER BY
+          CASE
+            WHEN candidate.state = 'submitted' AND candidate.submitted_turn_id = ${turnId} THEN 0
+            ELSE 1
+          END,
+          candidate.row_id ASC
+        LIMIT 1
+      `,
+  });
+
+  const getSubmittedProjectionTurn = SqlSchema.findOneOption({
+    Request: GetProjectionSubmittedTurnStartInput,
+    Result: ProjectionPendingTurnStart,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          pending_message_id AS "messageId",
+          source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
+          source_proposed_plan_id AS "sourceProposedPlanId",
+          requested_at AS "requestedAt"
         FROM projection_turns
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
-          AND (
-            state = 'pending'
-            OR (state = 'submitted' AND submitted_turn_id = ${turnId})
-          )
+          AND state = 'submitted'
+          AND submitted_turn_id = ${turnId}
           AND pending_message_id IS NOT NULL
           AND checkpoint_turn_count IS NULL
         ORDER BY row_id ASC
@@ -363,6 +403,14 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
         ),
       );
 
+  const getSubmittedTurnStartByTurnId: ProjectionTurnRepositoryShape["getSubmittedTurnStartByTurnId"] =
+    (input) =>
+      getSubmittedProjectionTurn(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlError("ProjectionTurnRepository.getSubmittedTurnStartByTurnId:query"),
+        ),
+      );
+
   const deletePendingTurnStart: ProjectionTurnRepositoryShape["deletePendingTurnStart"] = (input) =>
     deletePendingProjectionTurn(input).pipe(
       Effect.mapError(
@@ -418,6 +466,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     deleteSubmittedTurnStartsByTurnId,
     getPendingTurnStartByThreadId,
     getAdoptableTurnStartByThreadId,
+    getSubmittedTurnStartByTurnId,
     deletePendingTurnStart,
     listByThreadId,
     getByTurnId,

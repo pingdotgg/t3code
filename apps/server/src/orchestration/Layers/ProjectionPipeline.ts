@@ -1285,22 +1285,37 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.meta-updated": {
           const acknowledgement = event.payload.turnStartAcknowledged;
           if (acknowledgement === undefined) return;
+          yield* projectionTurnRepository.markPendingTurnStartSubmitted({
+            threadId: event.payload.threadId,
+            messageId: acknowledgement.messageId,
+            turnId: acknowledgement.turnId,
+          });
           const existingTurn = yield* projectionTurnRepository.getByTurnId({
             threadId: event.payload.threadId,
             turnId: acknowledgement.turnId,
           });
           if (Option.isSome(existingTurn)) {
+            const submittedTurnStart =
+              yield* projectionTurnRepository.getSubmittedTurnStartByTurnId({
+                threadId: event.payload.threadId,
+                turnId: acknowledgement.turnId,
+              });
+            if (existingTurn.value.pendingMessageId === null && Option.isSome(submittedTurnStart)) {
+              yield* projectionTurnRepository.upsertByTurnId({
+                ...existingTurn.value,
+                pendingMessageId: submittedTurnStart.value.messageId,
+                sourceProposedPlanThreadId: submittedTurnStart.value.sourceProposedPlanThreadId,
+                sourceProposedPlanId: submittedTurnStart.value.sourceProposedPlanId,
+                requestedAt: submittedTurnStart.value.requestedAt,
+                startedAt: existingTurn.value.startedAt ?? submittedTurnStart.value.requestedAt,
+              });
+            }
             yield* projectionTurnRepository.deletePendingTurnStart({
               threadId: event.payload.threadId,
               messageId: acknowledgement.messageId,
             });
             return;
           }
-          yield* projectionTurnRepository.markPendingTurnStartSubmitted({
-            threadId: event.payload.threadId,
-            messageId: acknowledgement.messageId,
-            turnId: acknowledgement.turnId,
-          });
           return;
         }
 
