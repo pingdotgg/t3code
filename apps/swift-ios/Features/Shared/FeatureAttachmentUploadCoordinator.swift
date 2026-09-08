@@ -269,6 +269,7 @@ public final class FeatureAttachmentUploadCoordinator {
         case let .failure(error):
             fail(key: key, token: token, error: error)
         case let .success(reference):
+            startQueuedJobs()
             await persistThenPublish(
                 key: key,
                 token: token,
