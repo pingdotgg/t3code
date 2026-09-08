@@ -21,6 +21,14 @@ struct ConnectionDetailsTests {
     }
 
     @Test
+    func skipsEmptyFragmentTokenBeforeCodeAlias() throws {
+        let details = try ConnectionDetailsParser.parse(
+            "https://studio.example/pair?token=QUERY#token=&code=FRAGMENT"
+        )
+        #expect(details.pairingCode == "FRAGMENT")
+    }
+
+    @Test
     func parsesRawPairingURL() throws {
         let details = try ConnectionDetailsParser.parse(
             "http://192.168.1.42:3773/pair#token=PAIRCODE"

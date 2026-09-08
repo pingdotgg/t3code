@@ -5,6 +5,10 @@ import Testing
 struct PairingTokenPrecedenceTests {
     @Test(arguments: [
         ("?token=OLD#token=NEW", "NEW"),
+        ("?token=QUERY#token=&token=FRAGMENT", "FRAGMENT"),
+        ("?token=QUERY#token=%20&token=FRAGMENT", "FRAGMENT"),
+        ("#token=&token=FRAGMENT", "FRAGMENT"),
+        ("?token=&token=QUERY#token=", "QUERY"),
         ("?token=QUERY#token=", "QUERY"),
         ("?token=#token=FRAGMENT", "FRAGMENT"),
         ("?token=QUERY", "QUERY"),

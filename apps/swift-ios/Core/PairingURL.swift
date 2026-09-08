@@ -84,8 +84,9 @@ public enum PairingURL {
         let query = components.queryItems ?? []
         let fragment = queryItems(fromFragment: components.percentEncodedFragment)
         let token = [fragment, query].compactMap { items in
-            items.first(where: { $0.name.caseInsensitiveCompare("token") == .orderedSame })?
-                .value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            items.lazy.filter { $0.name.caseInsensitiveCompare("token") == .orderedSame }
+                .compactMap { $0.value?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty })
         }.first(where: { !$0.isEmpty }) ?? ""
         let label = query
             .first(where: { $0.name.caseInsensitiveCompare("label") == .orderedSame })?
