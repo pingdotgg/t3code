@@ -285,6 +285,8 @@ struct FeatureComposerView: View {
                     environmentID: environmentID,
                     attachmentPreferences: attachmentPreferences
                 )
+                .disabled(stopPhase != nil)
+                .opacity(stopPhase != nil ? 0.56 : 1)
             } else if isExpanded {
                 expandedComposer
             } else {

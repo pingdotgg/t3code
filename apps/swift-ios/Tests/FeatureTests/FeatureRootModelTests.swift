@@ -4028,6 +4028,77 @@ private final class FeatureSettingsSaveGate {
 }
 
 extension FeatureRootModelTests {
+    @Test("A failed Stop resumes queued work for other threads", .timeLimit(.minutes(1)))
+    func failedStopRestartsOtherQueuedSubmissions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureSubmissionIdentity(threadID: "creating", createdAt: Date(timeIntervalSince1970: 100))
+        let creatingID = FeatureScopedID.thread(environmentID: "one", wireID: "creating")
+        let other = FeatureThread(id: "other", projectID: "project", environmentID: "one", title: "Other thread")
+        try await outbox.enqueue(.init(environmentID: "one", identity: identity, threadID: creatingID,
+            text: "Create", selection: nil, runtimeMode: .fullAccess, interactionMode: .standard, attachments: [],
+            creation: .init(projectID: "project", projectName: "Project", workspaceMode: .local,
+                            branch: nil, worktreePath: nil, startFromOrigin: false)))
+        try await outbox.enqueue(.init(environmentID: "one",
+            identity: .init(threadID: "other", createdAt: Date(timeIntervalSince1970: 101)), threadID: other.id,
+            text: "Send the other queued message", selection: nil, runtimeMode: .fullAccess,
+            interactionMode: .standard, attachments: []))
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(connection: .init(state: .connected),
+            environments: [.init(id: "one", name: "One", endpoint: "https://one.example", isActive: true, connectionState: .connected)],
+            projects: [.init(id: "project", environmentID: "one", name: "Project", path: "/project")], threads: [other])
+        let model = FeatureRootModel(client: client, outboxStore: outbox)
+        let entered = AsyncStream<Void>.makeStream()
+        let sent = AsyncStream<Void>.makeStream()
+        let gate = StopDrainCancellationGate()
+        client.beforeStartTask = {
+            var acknowledged = try #require(model.snapshot.threads.first { $0.id == creatingID })
+            acknowledged.state = .working
+            await withCheckedContinuation { continuation in
+                withObservationTracking { _ = model.snapshot.threads.first { $0.id == creatingID }?.state }
+                    onChange: { continuation.resume() }
+                client.emit(.thread(acknowledged))
+            }
+            entered.continuation.yield(())
+            await gate.waitForCancellation()
+        }
+        client.cancelTurnHandler = { throw URLError(.networkConnectionLost) }
+        client.beforeSendMessage = { sent.continuation.yield(()) }
+        let run = Task { await model.start() }
+        var starts = entered.stream.makeAsyncIterator()
+        await starts.next()
+        await model.cancelTurn(threadID: creatingID)
+        var sends = sent.stream.makeAsyncIterator()
+        await sends.next()
+        #expect(client.cancelTurnCallCount == 1)
+        #expect(client.sentText == "Send the other queued message")
+        #expect(model.stopPhase(threadID: creatingID) == .unconfirmed)
+        client.finishEvents()
+        await run.value
+        await model.disconnect()
+    }
+}
+
+@MainActor
+private final class StopDrainCancellationGate {
+    private var pending: CheckedContinuation<Void, Never>?
+    func waitForCancellation() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled { continuation.resume() }
+                else { pending = continuation }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.pending?.resume()
+                self.pending = nil
+            }
+        }
+    }
+}
+
+extension FeatureRootModelTests {
     @Test func duplicateStopWhileRequestHeld() async {
         let client = FeatureClientStub()
         let model = FeatureRootModel(client: client)
