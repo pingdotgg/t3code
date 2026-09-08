@@ -445,6 +445,91 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("does not restore messages beyond OpenCode's persisted revert boundary", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-reverted-snapshot";
+      const messages = [
+        {
+          info: {
+            id: "user-kept",
+            sessionID: nativeSessionId,
+            role: "user",
+            time: { created: 1 },
+          },
+          parts: [{ type: "text", text: "keep this prompt" }],
+        },
+        {
+          info: {
+            id: "assistant-kept",
+            sessionID: nativeSessionId,
+            role: "assistant",
+            time: { created: 2, completed: 3 },
+          },
+          parts: [{ type: "text", text: "keep this answer" }],
+        },
+        {
+          info: {
+            id: "user-reverted",
+            sessionID: nativeSessionId,
+            role: "user",
+            time: { created: 4 },
+          },
+          parts: [{ type: "text", text: "remove this prompt" }],
+        },
+        {
+          info: {
+            id: "assistant-reverted",
+            sessionID: nativeSessionId,
+            role: "assistant",
+            time: { created: 5, completed: 6 },
+          },
+          parts: [{ type: "text", text: "remove this answer" }],
+        },
+      ];
+      const harness = yield* makeOpenCodeRuntimeHarness("reverted-snapshot", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+              once: true,
+            });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          get: async () => ({
+            data: {
+              id: nativeSessionId,
+              time: { created: 1, updated: 6 },
+              revert: { messageID: "user-reverted" },
+            },
+          }),
+          messages: async () => ({ data: messages }),
+        },
+      });
+
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+
+      assert.deepEqual(
+        snapshot.messages.map((message) => message.text),
+        ["keep this prompt", "keep this answer"],
+      );
+      const providerPayload = snapshot.providerPayload as ReadonlyArray<{
+        readonly info: { readonly id: string };
+      }>;
+      assert.deepEqual(
+        providerPayload.map((entry) => entry.info.id),
+        ["user-kept", "assistant-kept"],
+      );
+      assert.equal(snapshot.providerThread.nativeConversationHeadRef?.nativeId, "user-kept");
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("keeps a newly admitted prompt alive across stale idle and delayed busy evidence", () =>
     Effect.gen(function* () {
       const idAllocator = yield* IdAllocatorV2;
@@ -470,6 +555,9 @@ describe("OpenCodeAdapterV2", () => {
         },
         session: {
           create: async () => ({
+            data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
+          }),
+          get: async () => ({
             data: { id: "native-opencode-race", time: { created: 1, updated: 1 } },
           }),
           promptAsync: async (
@@ -777,6 +865,9 @@ describe("OpenCodeAdapterV2", () => {
           create: async () => ({
             data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
           }),
+          get: async () => ({
+            data: { id: "native-opencode-initial-stop", time: { created: 1, updated: 1 } },
+          }),
           promptAsync: async (_input: unknown, options?: { readonly signal?: AbortSignal }) => {
             promptStarted.resolve();
             await new Promise<void>((_resolve, reject) => {
@@ -1019,6 +1110,9 @@ describe("OpenCodeAdapterV2", () => {
           create: async () => ({
             data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
           }),
+          get: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
           promptAsync: async (input: { readonly messageID?: string }) => {
             Queue.offerUnsafe(promptCalls, input.messageID!);
             await promptRelease.promise;
@@ -1099,6 +1193,9 @@ describe("OpenCodeAdapterV2", () => {
         },
         session: {
           create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          get: async () => ({
             data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
           }),
           promptAsync: async (input: { readonly messageID?: string }) => {

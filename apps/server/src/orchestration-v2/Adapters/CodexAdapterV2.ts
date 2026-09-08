@@ -69,8 +69,7 @@ import {
 } from "../../provider/Layers/CodexSessionRuntime.ts";
 import { ServerConfig } from "../../config.ts";
 import {
-  codexDefaultModeDeveloperInstructions,
-  codexPlanModeDeveloperInstructions,
+  buildCodexDeveloperInstructions,
 } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   materializeCodexShadowHome,
@@ -667,9 +666,14 @@ export function buildCodexTurnStartParams(input: {
     const developerInstructions =
       input.hasT3Mcp !== true
         ? undefined
-        : input.runtimePolicy.interactionMode === "plan"
-          ? codexPlanModeDeveloperInstructions(input.browserToolsAvailable ?? true)
-          : codexDefaultModeDeveloperInstructions(input.browserToolsAvailable ?? true);
+        : buildCodexDeveloperInstructions(
+            input.runtimePolicy.interactionMode,
+            {
+              model: input.modelSelection.model,
+              reasoningEffort: effort ?? "medium",
+            },
+            input.browserToolsAvailable ?? true,
+          );
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined

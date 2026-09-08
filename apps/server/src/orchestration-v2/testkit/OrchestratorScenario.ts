@@ -125,9 +125,11 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
+    case "thread.active.reorder":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
@@ -143,6 +145,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "provider.switch":
       return [command.threadId];

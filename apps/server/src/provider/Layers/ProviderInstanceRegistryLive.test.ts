@@ -50,7 +50,7 @@ import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
+import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
 import { CursorDriver } from "../Drivers/CursorDriver.ts";
 import { GrokDriver } from "../Drivers/GrokDriver.ts";
@@ -373,7 +373,9 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry({
+      const { registry } = yield* makeProviderInstanceRegistry<
+        CodexDriverEnv | ClaudeDriverEnv
+      >({
         drivers: [CodexDriver, ClaudeDriver],
         configMap,
       });

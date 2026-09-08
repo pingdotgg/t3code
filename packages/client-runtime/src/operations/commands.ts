@@ -96,6 +96,11 @@ export interface ReorderPinnedThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
 }
 
+export interface ReorderActiveThreadInput extends ThreadCommandInput {
+  /** Fractional-index key that sorts between the drop position's neighbors. */
+  readonly orderKey: string;
+}
+
 export interface SnoozeThreadInput extends ThreadCommandInput {
   readonly snoozedUntil: string;
 }
@@ -180,6 +185,10 @@ export interface RespondToThreadApprovalInput extends ThreadCommandInput {
 export interface RespondToThreadUserInputInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
   readonly answers: ProviderUserInputAnswers;
+}
+
+export interface DismissThreadUserInputInput extends ThreadCommandInput {
+  readonly requestId: RuntimeRequestId;
 }
 
 export interface RevertThreadCheckpointInput extends ThreadCommandInput {
@@ -434,6 +443,17 @@ export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedT
   return yield* dispatch({
     type: "thread.pin.reorder",
     commandId,
+    threadId: input.threadId,
+    orderKey: input.orderKey,
+  });
+});
+
+export const reorderActiveThread = Effect.fn("EnvironmentCommands.reorderActiveThread")(function* (
+  input: ReorderActiveThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.active.reorder",
+    commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     orderKey: input.orderKey,
   });
@@ -735,6 +755,17 @@ export const respondToThreadUserInput = Effect.fn("EnvironmentCommands.respondTo
       threadId: input.threadId,
       requestId: input.requestId,
       answers: input.answers,
+    });
+  },
+);
+
+export const dismissThreadUserInput = Effect.fn("EnvironmentCommands.dismissThreadUserInput")(
+  function* (input: DismissThreadUserInputInput) {
+    return yield* dispatch({
+      type: "thread.user-input.dismiss",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      requestId: input.requestId,
     });
   },
 );

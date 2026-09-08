@@ -1,11 +1,8 @@
 import {
-  canonicalRepositoryKey,
-  sourceControlRepositorySelector,
-} from "@t3tools/shared/sourceControl";
-import {
   CommandId,
-  type OrchestrationEvent,
   type OrchestrationProjectShell,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -16,26 +13,27 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
-import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "./Orchestrator.ts";
 
-export class ThreadPullRequestReactor extends Context.Service<
-  ThreadPullRequestReactor,
+export class ThreadPullRequestServiceV2 extends Context.Service<
+  ThreadPullRequestServiceV2,
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
   }
->()("t3/orchestration/ThreadPullRequestReactor") {}
+>()("t3/orchestration-v2/ThreadPullRequestService/ThreadPullRequestServiceV2") {}
 
-function samePullRequest(
+export function samePullRequest(
   left: ThreadLinkedPullRequest | null | undefined,
   right: ThreadLinkedPullRequest | null,
 ): boolean {
@@ -48,13 +46,16 @@ function samePullRequest(
   );
 }
 
-/** Startup lookups per settled thread before discovery gives up on it. */
-export const BACKFILL_ATTEMPTS = 5;
-
-interface RefreshRequest {
-  readonly threadId: ThreadId | null;
-  readonly refresh: boolean;
-  readonly backfill?: boolean;
+function canonicalRepositoryKey(key: string): string {
+  return key
+    .replace(
+      /^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    )
+    .replace(
+      /^([^.]+)\.visualstudio\.com\/(?:defaultcollection\/)?([^/]+)\/_git\/([^/]+)$/u,
+      "dev.azure.com/$1/$2/_git/$3",
+    );
 }
 
 export function pullRequestMatchesProject(
@@ -69,23 +70,37 @@ export function pullRequestMatchesProject(
   );
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+export function projectWorkspaceMatchesSnapshot(
+  currentProject: Option.Option<Pick<OrchestrationProjectShell, "workspaceRoot">>,
+  expectedWorkspaceRoot: string,
+): boolean {
+  return (
+    Option.isSome(currentProject) && currentProject.value.workspaceRoot === expectedWorkspaceRoot
+  );
+}
+
+export const BACKFILL_ATTEMPTS = 5;
+
+interface RefreshRequest {
+  readonly threadId: ThreadId | null;
+  readonly refresh: boolean;
+  readonly backfill?: boolean;
+}
+
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const orchestrator = yield* OrchestratorV2;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  // Settled threads get one link discovery at startup. Failed lookups retry on
-  // the periodic pass a few times, then stop until the thread changes or the
-  // server restarts, so a missing or logged-out CLI cannot loop forever.
   const pendingBackfill = new Map<ThreadId, number>();
-  const finishBackfill = (threads: ReadonlyArray<{ readonly id: ThreadId }>) => {
+
+  const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
   };
-  const failBackfill = (threads: ReadonlyArray<{ readonly id: ThreadId }>) => {
+  const failBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) {
       const remaining = pendingBackfill.get(thread.id);
       if (remaining === undefined) continue;
@@ -94,30 +109,30 @@ export const make = Effect.gen(function* () {
     }
   };
 
-  const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
+  const synchronize = Effect.fn("ThreadPullRequestServiceV2.synchronize")(function* (
     request: RefreshRequest,
   ) {
-    const snapshot = yield* snapshots.getShellSnapshot();
-    const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
+    const [threadSnapshot, projectShells] = yield* Effect.all([
+      orchestrator.getShellSnapshot(),
+      snapshots.getProjectShellsWithoutEnrichment(),
+    ]);
+    const projects = new Map(projectShells.map((project) => [project.id, project]));
     if (request.backfill) {
-      for (const thread of snapshot.threads) {
-        if (
-          (thread.settledOverride === "settled" || thread.settledAt !== null) &&
-          thread.branchPullRequest == null
-        ) {
+      for (const thread of threadSnapshot.threads) {
+        if (thread.settledOverride === "settled" && thread.branchPullRequest == null) {
           pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
         }
       }
     }
-    const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
+    const visibleThreadIds = new Set(threadSnapshot.threads.map((thread) => thread.id));
     for (const threadId of pendingBackfill.keys()) {
-      if (!threadIds.has(threadId)) pendingBackfill.delete(threadId);
+      if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
-    const threads = snapshot.threads.filter(
+    const threads = threadSnapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
         (request.threadId === null || thread.id === request.threadId) &&
-        ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
+        (thread.settledOverride !== "settled" ||
           request.threadId !== null ||
           pendingBackfill.has(thread.id)) &&
         (thread.branch !== null || thread.branchPullRequest != null),
@@ -133,7 +148,7 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
-          const repository = sourceControlRepositorySelector(project.repositoryIdentity);
+          const repository = PullRequestService.repositoryIdentityOf(project);
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
             first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
@@ -148,8 +163,6 @@ export const make = Effect.gen(function* () {
                   { cwd, branch: first.branch },
                   { refresh: request.refresh },
                 );
-          // A worktree can have different remotes, and the project identity
-          // can lag a remote edit. Do not attach its PR to the wrong repository.
           if (detected !== null && !pullRequestMatchesProject(detected, project)) {
             return finishBackfill(group);
           }
@@ -166,8 +179,6 @@ export const make = Effect.gen(function* () {
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
               let branchPullRequest = detectedReference;
-              // Shared checkouts often return to the default branch after
-              // a merge. Keep that thread's terminal PR across the change.
               if (
                 branchPullRequest === null &&
                 thread.branch !== null &&
@@ -184,7 +195,6 @@ export const make = Effect.gen(function* () {
 
               let replacement: ThreadLinkedPullRequest | undefined;
               if (
-                thread.pullRequests.length === 0 &&
                 thread.linkedPullRequest != null &&
                 detected?.state === "open" &&
                 detectedReference !== null &&
@@ -197,7 +207,6 @@ export const make = Effect.gen(function* () {
                   replacement = detectedReference;
                 }
               }
-
               if (
                 samePullRequest(thread.branchPullRequest, branchPullRequest) &&
                 replacement === undefined
@@ -224,8 +233,6 @@ export const make = Effect.gen(function* () {
           if (updates.length === 0) return;
 
           if (detected !== null && first.branch !== null) {
-            // Summary reads can outlast a remote edit. Recheck the branch and
-            // the project's primary remote before saving the group's links.
             const current = yield* git.branchPullRequest({ cwd, branch: first.branch });
             const currentIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
               refresh: true,
@@ -249,13 +256,20 @@ export const make = Effect.gen(function* () {
             updates,
             ({ thread, branchPullRequest, replacement }) =>
               Effect.gen(function* () {
+                // Discovery can perform network I/O. Re-read the project at
+                // the transaction boundary so a deleted project or changed
+                // workspace root cannot apply a result from the old checkout.
+                const currentProject = yield* snapshots.getProjectShellById(project.id);
+                if (!projectWorkspaceMatchesSnapshot(currentProject, project.workspaceRoot)) {
+                  return failBackfill([thread]);
+                }
                 const uuid = yield* crypto.randomUUIDv4;
-                yield* engine.dispatch({
+                yield* orchestrator.dispatch({
                   type: "thread.pull-request.sync",
                   commandId: CommandId.make(`server:thread-pull-request:${thread.id}:${uuid}`),
                   threadId: thread.id,
                   projectId: project.id,
-                  snapshotSequence: snapshot.snapshotSequence,
+                  snapshotSequence: threadSnapshot.snapshotSequence,
                   expected: {
                     workspaceRoot: project.workspaceRoot,
                     branch: thread.branch,
@@ -264,15 +278,10 @@ export const make = Effect.gen(function* () {
                     branchPullRequest: thread.branchPullRequest ?? null,
                   },
                   branchPullRequest,
-                  ...(replacement !== undefined ? { linkedPullRequest: replacement } : {}),
+                  ...(replacement === undefined ? {} : { linkedPullRequest: replacement }),
                 });
                 pendingBackfill.delete(thread.id);
               }).pipe(
-                // The thread changed since the lookup. Its own events requeue it.
-                Effect.catchTags({
-                  OrchestrationCommandInvariantError: () =>
-                    Effect.sync(() => finishBackfill([thread])),
-                }),
                 Effect.catchCause((cause) =>
                   Cause.hasInterruptsOnly(cause)
                     ? Effect.failCause(cause)
@@ -310,48 +319,33 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const processEvent = (event: OrchestrationEvent) => {
+  const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.created":
       case "thread.unarchived":
-        return worker.enqueue({ threadId: event.payload.threadId, refresh: false });
-      case "thread.meta-updated":
-        if (
-          event.payload.branchPullRequest === undefined &&
-          (event.payload.branch !== undefined ||
-            event.payload.worktreePath !== undefined ||
-            event.payload.linkedPullRequest !== undefined)
-        ) {
-          return worker.enqueue({ threadId: event.payload.threadId, refresh: false });
-        }
-        break;
-      case "thread.session-set":
-        if (
-          event.payload.session.status !== "running" &&
-          event.payload.session.status !== "starting"
-        ) {
-          // Checkpoint completion forces the post-turn read. Session lifecycle
-          // events reuse it regardless of which event reaches this worker first.
-          return worker.enqueue({ threadId: event.payload.threadId, refresh: false });
-        }
-        break;
-      case "thread.turn-diff-completed":
+      case "thread.metadata-updated":
+        return worker.enqueue({ threadId: event.threadId, refresh: false });
       case "thread.unsettled":
-        return worker.enqueue({ threadId: event.payload.threadId, refresh: true });
-      case "project.meta-updated":
-        if (event.payload.workspaceRoot !== undefined) {
-          return worker.enqueue({ threadId: null, refresh: false });
+      case "checkpoint.captured":
+        return worker.enqueue({ threadId: event.threadId, refresh: true });
+      case "run.updated":
+        if (
+          event.payload.status === "completed" ||
+          event.payload.status === "failed" ||
+          event.payload.status === "cancelled" ||
+          event.payload.status === "interrupted"
+        ) {
+          return worker.enqueue({ threadId: event.threadId, refresh: true });
         }
         break;
     }
     return Effect.void;
   };
 
-  const start = Effect.fn("ThreadPullRequestReactor.start")(function* () {
-    const events = yield* engine.subscribeDomainEvents;
-    yield* forkParked(Stream.runForEach(events, processEvent));
-    // Run without client demand. Saved branch lookups share GitManager's
-    // provider cache and retry backoff with status and automatic settlement.
+  const start: ThreadPullRequestServiceV2["Service"]["start"] = Effect.fn(
+    "ThreadPullRequestServiceV2.start",
+  )(function* () {
+    yield* forkParked(Stream.runForEach(orchestrator.streamDomainEvents, processEvent));
     yield* forkParked(
       Effect.gen(function* () {
         yield* worker.enqueue({ threadId: null, refresh: false, backfill: true });
@@ -364,7 +358,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return { start, drain: worker.drain } satisfies ThreadPullRequestReactor["Service"];
+  return { start, drain: worker.drain } satisfies ThreadPullRequestServiceV2["Service"];
 });
 
-export const layer = Layer.effect(ThreadPullRequestReactor, make);
+export const layer = Layer.effect(ThreadPullRequestServiceV2, make);

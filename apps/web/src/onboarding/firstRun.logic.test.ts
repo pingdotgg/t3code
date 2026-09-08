@@ -367,9 +367,9 @@ const bootstrapThread = {
   id: "bootstrap-thread",
   projectId: bootstrapProject.id,
   environmentId: primaryEnvironmentId,
-  latestTurn: null,
+  latestRun: null,
   latestUserMessageAt: null,
-  session: null,
+  runtime: null,
 };
 
 describe("isFreshFirstRunWorkspace", () => {
@@ -508,7 +508,7 @@ describe("isFreshFirstRunWorkspace", () => {
         primaryEnvironmentId,
         serverCwd: "/projects/current",
         projects: [bootstrapProject],
-        threads: [{ ...bootstrapThread, latestTurn: { id: "first-turn" } }],
+        threads: [{ ...bootstrapThread, latestRun: { id: "first-run" } }],
       }),
     ).toBe(false);
   });
@@ -519,7 +519,7 @@ describe("isFreshFirstRunWorkspace", () => {
         primaryEnvironmentId,
         serverCwd: "/projects/current",
         projects: [bootstrapProject],
-        threads: [{ ...bootstrapThread, session: { status: "ready" } }],
+        threads: [{ ...bootstrapThread, runtime: { status: "ready" } }],
       }),
     ).toBe(false);
   });
