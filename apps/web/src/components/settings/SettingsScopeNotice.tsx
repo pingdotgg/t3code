@@ -69,6 +69,7 @@ export function SettingsScopeNotice({
                 key={JSON.stringify(choice.search)}
                 size="sm"
                 variant="outline"
+                className="h-auto max-w-full whitespace-normal break-all text-left"
                 onClick={() => {
                   if (targetId) void navigate({ search: choice.search, hash: targetId });
                   else selectScope(choice.search);

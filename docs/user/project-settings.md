@@ -12,8 +12,8 @@ shared by clients connected to it. Providers and keybindings require a single en
 current settings. This is a bulk edit, not a synchronized global default: connecting another
 environment later does not apply previous edits to it.
 
-To override defaults, select a project, then all its checkouts, one environment, or a specific
-checkout. **All checkouts** updates the project's currently known checkouts, not a permanent default
+To override defaults, select a project's **All checkouts** target or a specific checkout.
+**All checkouts** updates the project's currently known checkouts, not a permanent default
 for future copies of that repository. Offline checkouts cannot be updated. Mixed values mean the
 selected environments or checkouts disagree.
 
