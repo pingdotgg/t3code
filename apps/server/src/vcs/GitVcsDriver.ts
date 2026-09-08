@@ -735,12 +735,38 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
-          yield* execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
+          const reusedIndex = yield* Effect.gen(function* () {
+            const indexPath = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            });
+            yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
+            // Retain stat data only where the copied index already matches HEAD.
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["-c", "core.fsmonitor=false", "read-tree", "--reset", "HEAD"],
+              env: commitEnv,
+            });
+            const entries = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["ls-files", "-v"],
+              env: commitEnv,
+              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            });
+            // A fresh index must still capture assume-unchanged/skip-worktree files.
+            return !entries.stdoutTruncated && !/^[a-zS] /m.test(entries.stdout);
+          }).pipe(Effect.orElseSucceed(() => false));
+          if (!reusedIndex) {
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["read-tree", "HEAD"],
+              env: commitEnv,
+            });
+          }
         }
 
         yield* execute({
