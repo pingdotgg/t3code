@@ -4981,6 +4981,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
   );
+  /** Confirm a close using fresh subprocess activity for the active thread. */
   const confirmActiveTerminalClose = useCallback(
     async (terminalIds: readonly [string, ...string[]]) => {
       if (!activeThreadRef) return false;

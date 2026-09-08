@@ -2887,6 +2887,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
+  /**
+   * Inspect requested terminals from one fresh process snapshot.
+   * Failed inspection remains unknown so clients keep the close confirmation.
+   */
   const inspectSubprocesses: TerminalManager["Service"]["inspectSubprocesses"] = (input) => {
     const terminalIds = [...new Set(input.terminalIds)];
     return withThreadLock(

@@ -1281,6 +1281,7 @@ export default function ThreadTerminalDrawer({
   const onNewTerminalAction = useCallback(() => {
     onNewTerminal();
   }, [onNewTerminal]);
+  /** Confirm a drawer close using fresh subprocess activity for the terminal. */
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
       void confirmInspectedTerminalClose({
