@@ -43,6 +43,10 @@ const testState = vi.hoisted(() => {
       storedDraft = nextStoredDraft;
       router.state.location.href = "/";
       router.navigate.mockClear();
+      draftStore.getComposerDraft.mockReset();
+      draftStore.getComposerDraft.mockImplementation(() => ({}));
+      draftStore.getLastUsedRuntimeMode.mockReset();
+      draftStore.getLastUsedRuntimeMode.mockImplementation(() => null);
       draftStore.setLogicalProjectDraftThreadId.mockClear();
       draftStore.setRuntimeMode.mockClear();
       draftStore.setInteractionMode.mockClear();
@@ -88,7 +92,17 @@ vi.mock("@t3tools/shared/threadEnvMode", () => ({
   }) => input.projectFile ?? input.globalDefault,
 }));
 vi.mock("@t3tools/shared/runtimeMode", () => ({
-  resolveNewThreadRuntimeMode: () => "full-access",
+  resolveNewThreadRuntimeMode: (sources: {
+    readonly draftRuntimeMode?: string | null;
+    readonly carryRuntimeMode?: string | null;
+    readonly lastUsedRuntimeMode?: string | null;
+    readonly configuredRuntimeMode?: string | null;
+  }) =>
+    sources.draftRuntimeMode ??
+    sources.carryRuntimeMode ??
+    sources.lastUsedRuntimeMode ??
+    sources.configuredRuntimeMode ??
+    "full-access",
 }));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
@@ -182,7 +196,7 @@ describe("useNewThreadHandler", () => {
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
-  it("syncs composer runtime mode when resurrecting an empty draft", async () => {
+  it("writes resolved runtime mode onto the draft session when resurrecting an empty draft", async () => {
     testState.reset({
       draftId: "draft-existing",
       environmentId: "environment-ssh",
@@ -198,11 +212,43 @@ describe("useNewThreadHandler", () => {
     testState.completeProjectFileRead(null);
     await pendingOpen;
 
+    expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
+      "draft-existing",
+      expect.objectContaining({ runtimeMode: "full-access" }),
+    );
+    // No composer pick yet — do not seed last-used into the composer draft.
+    expect(testState.draftStore.setRuntimeMode).not.toHaveBeenCalled();
+    expect(testState.router.navigate).toHaveBeenCalled();
+  });
+
+  it("keeps an empty draft's explicit composer runtime mode on resurrect", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    testState.draftStore.getComposerDraft.mockImplementation(() => ({
+      runtimeMode: "approval-required",
+    }));
+    testState.draftStore.getLastUsedRuntimeMode.mockImplementation(() => "auto-accept-edits");
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(
+      "draft-existing",
+      expect.objectContaining({ runtimeMode: "approval-required" }),
+    );
     expect(testState.draftStore.setRuntimeMode).toHaveBeenCalledWith(
       "draft-existing",
-      "full-access",
+      "approval-required",
     );
-    expect(testState.router.navigate).toHaveBeenCalled();
   });
 
   it("does not seed last-used from the machine default alone", async () => {

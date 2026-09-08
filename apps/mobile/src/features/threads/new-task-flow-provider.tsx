@@ -35,6 +35,7 @@ import {
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
+import { deriveLogicalProjectKeyFromSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
@@ -473,7 +474,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
-  const lastUsedRuntimeMode = useLastUsedComposerRuntimeMode(selectedProjectKey);
+  // Last-used access mode is keyed by logical project identity (same as web),
+  // so equivalent repo instances share the preference across grouping modes.
+  const selectedLogicalProjectKey = selectedProject
+    ? deriveLogicalProjectKeyFromSettings(selectedProject, groupingSettings)
+    : null;
+  const lastUsedRuntimeMode = useLastUsedComposerRuntimeMode(selectedLogicalProjectKey);
   const runtimeMode = resolveNewThreadRuntimeMode({
     draftRuntimeMode: selectedProjectDraft.runtimeMode,
     lastUsedRuntimeMode,
@@ -882,11 +888,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (selectedProjectDraftKey) {
         updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
       }
-      if (selectedProjectKey) {
-        setLastUsedComposerRuntimeMode(selectedProjectKey, value);
+      if (selectedLogicalProjectKey) {
+        setLastUsedComposerRuntimeMode(selectedLogicalProjectKey, value);
       }
     },
-    [selectedProjectDraftKey, selectedProjectKey],
+    [selectedLogicalProjectKey, selectedProjectDraftKey],
   );
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
@@ -967,9 +973,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
-      if (selectedProjectKey) {
-        setLastUsedComposerRuntimeMode(selectedProjectKey, runtimeMode);
-      }
       return {
         environmentId: selectedProject.environmentId,
         threadId: ThreadId.make(metadata.threadId),

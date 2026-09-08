@@ -190,17 +190,6 @@ export function useNewThreadHandler() {
           : (carrySourceDraft?.logicalProjectKey ?? null);
       const sameProjectCarryRuntimeMode =
         carrySourceLogicalProjectKey === logicalProjectKey ? carryRuntimeMode : null;
-      const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
-        carryRuntimeMode: sameProjectCarryRuntimeMode,
-        lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
-        configuredRuntimeMode: targetServerSettings.defaultRuntimeMode,
-      });
-      // Only promote carry into last-used. Seeding from the machine default would
-      // permanently shadow later Default access changes (including Auto).
-      // Explicit composer picks update last-used in ChatView.
-      if (sameProjectCarryRuntimeMode != null) {
-        setLastUsedRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
-      }
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
@@ -230,6 +219,26 @@ export function useNewThreadHandler() {
         !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
           ? reusableStoredDraftThread
           : null;
+      // Composer runtimeMode is the explicit-pick signal (nullable). The draft
+      // session always carries a seeded mode from mint, so using that here
+      // would permanently shadow later last-used / Default access changes on
+      // empty-draft resurrection. Prefer the composer's own mode when present.
+      const emptyDraftComposerRuntimeMode =
+        emptyStoredDraftThread != null
+          ? (getComposerDraft(emptyStoredDraftThread.draftId)?.runtimeMode ?? null)
+          : null;
+      const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
+        draftRuntimeMode: emptyDraftComposerRuntimeMode,
+        carryRuntimeMode: sameProjectCarryRuntimeMode,
+        lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
+        configuredRuntimeMode: targetServerSettings.defaultRuntimeMode,
+      });
+      // Only promote carry into last-used. Seeding from the machine default would
+      // permanently shadow later Default access changes (including Auto).
+      // Explicit composer picks update last-used in ChatView.
+      if (sameProjectCarryRuntimeMode != null) {
+        setLastUsedRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
+      }
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"
           ? getDraftThread(currentRouteTarget.threadRef)
@@ -303,11 +312,13 @@ export function useNewThreadHandler() {
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
           }
-          // Composer draft mode is what the picker reads (it outranks the
-          // draft-thread session). Keep it in lockstep with the resolved
-          // mode whenever we resurrect an empty draft, or a stale composer
-          // override can hide last-used / machine-default updates.
-          setRuntimeMode(emptyStoredDraftThread.draftId, resolvedRuntimeMode);
+          // Composer mode is what the picker reads. Only write when the
+          // composer already has an explicit pick — seeding it on every
+          // resurrect would turn ambient last-used / machine defaults into
+          // sticky draft picks that shadow later Default access changes.
+          if (emptyDraftComposerRuntimeMode != null) {
+            setRuntimeMode(emptyStoredDraftThread.draftId, resolvedRuntimeMode);
+          }
           if (carryInteractionMode) {
             setInteractionMode(emptyStoredDraftThread.draftId, carryInteractionMode);
           }

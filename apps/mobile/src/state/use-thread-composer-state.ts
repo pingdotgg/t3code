@@ -31,7 +31,8 @@ import {
   pickComposerMedia,
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
-import { scopedProjectKey, scopedThreadKey } from "../lib/scopedEntities";
+import { deriveLogicalProjectKeyFromSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
@@ -63,6 +64,7 @@ import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
 } from "./composer-attachment-uploads";
+import { useMobileProjectGroupingSettings } from "./project-grouping";
 
 export function appendReviewCommentToDraft(input: {
   readonly environmentId: EnvironmentId;
@@ -106,8 +108,10 @@ export function useThreadComposerState() {
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
+    selectedThreadProject,
     selectedEnvironmentRuntime,
   } = useThreadSelection();
+  const projectGroupingSettings = useMobileProjectGroupingSettings();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
@@ -587,16 +591,16 @@ export function useThreadComposerState() {
 
   const onUpdateRuntimeMode = useCallback(
     (value: RuntimeMode) => {
-      if (!selectedThreadKey || !selectedThreadShell) {
+      if (!selectedThreadKey || !selectedThreadProject) {
         return;
       }
       updateComposerDraftSettings(selectedThreadKey, { runtimeMode: value });
       setLastUsedComposerRuntimeMode(
-        scopedProjectKey(selectedThreadShell.environmentId, selectedThreadShell.projectId),
+        deriveLogicalProjectKeyFromSettings(selectedThreadProject, projectGroupingSettings),
         value,
       );
     },
-    [selectedThreadKey, selectedThreadShell],
+    [projectGroupingSettings, selectedThreadKey, selectedThreadProject],
   );
 
   const onUpdateInteractionMode = useCallback(
