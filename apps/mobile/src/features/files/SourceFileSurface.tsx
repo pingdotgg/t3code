@@ -36,6 +36,9 @@ interface SourceFileSurfaceProps {
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
 
+const SOURCE_SCROLL_RETRY_DELAY_MS = 100;
+const SOURCE_SCROLL_MAX_RETRIES = 3;
+
 function useSourcePullToRefresh(onRefresh: SourceFileSurfaceProps["onRefresh"]) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
@@ -222,16 +225,50 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const { handleRefresh, isRefreshing } = useSourcePullToRefresh(props.onRefresh);
   const listRef = useRef<FlatList<string>>(null);
+  const scrollRetryCountRef = useRef(0);
+  const scrollRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scrollToTargetIndex = useCallback((index: number) => {
+    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.3 });
+  }, []);
 
   useEffect(() => {
     if (targetIndex === null) {
       return;
     }
+    scrollRetryCountRef.current = 0;
     const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
+      scrollToTargetIndex(targetIndex);
     });
-    return () => cancelAnimationFrame(frame);
-  }, [props.path, targetIndex]);
+    return () => {
+      cancelAnimationFrame(frame);
+      if (scrollRetryTimeoutRef.current !== null) {
+        clearTimeout(scrollRetryTimeoutRef.current);
+        scrollRetryTimeoutRef.current = null;
+      }
+    };
+  }, [props.path, scrollToTargetIndex, targetIndex]);
+
+  const handleScrollToIndexFailed = useCallback(
+    (failure: { readonly averageItemLength: number; readonly index: number }) => {
+      listRef.current?.scrollToOffset({
+        animated: false,
+        offset: failure.averageItemLength * failure.index,
+      });
+      if (scrollRetryCountRef.current >= SOURCE_SCROLL_MAX_RETRIES) {
+        return;
+      }
+      scrollRetryCountRef.current += 1;
+      if (scrollRetryTimeoutRef.current !== null) {
+        clearTimeout(scrollRetryTimeoutRef.current);
+      }
+      scrollRetryTimeoutRef.current = setTimeout(() => {
+        scrollRetryTimeoutRef.current = null;
+        scrollToTargetIndex(failure.index);
+      }, SOURCE_SCROLL_RETRY_DELAY_MS);
+    },
+    [scrollToTargetIndex],
+  );
 
   const renderLine = useCallback(
     ({ item, index }: { item: string; index: number }) => (
@@ -255,6 +292,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       initialNumToRender={80}
       maxToRenderPerBatch={80}
       windowSize={12}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       {...(props.onRefresh
         ? {
             refreshing: isRefreshing,
