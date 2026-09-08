@@ -1237,6 +1237,9 @@ function OpenCommandPaletteDialog(props: {
             <ThreadCommandSubtitle
               project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
               projectTitle={projectTitle ?? null}
+              environmentLabel={
+                projectEnvironmentLocationById.get(thread.environmentId)?.label ?? "Remote"
+              }
               branch={thread.branch}
               worktreePath={thread.worktreePath}
               isCurrent={thread.id === activeThreadId}
@@ -1274,6 +1277,7 @@ function OpenCommandPaletteDialog(props: {
       clientSettings.sidebarThreadSortOrder,
       navigate,
       projectByKey,
+      projectEnvironmentLocationById,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
