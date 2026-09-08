@@ -68,7 +68,7 @@ export interface MergeProcessesResult {
   readonly deltas: ReadonlyArray<ProcessDelta>;
 }
 
-export const emptyGroupCounters = (): GroupCounters => ({
+const emptyGroupCounters = (): GroupCounters => ({
   cpuTimeMs: 0,
   ioReadBytes: 0,
   ioWriteBytes: 0,
