@@ -35,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { ensureAgentDeviceCli } from "./DeviceToolchain.ts";
 import { ServerConfig } from "../config.ts";
 import {
   agentDeviceConfigPath,
@@ -102,6 +103,7 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
 export class DeviceService extends Context.Service<
   DeviceService,
   {
+    readonly agentCli: Effect.Effect<string, DeviceError>;
     readonly agentTarget: (input: {
       threadId: ThreadId;
       hostId: DeviceHostId;
@@ -744,6 +746,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   return DeviceService.of({
+    agentCli: Effect.fail(
+      new DeviceOperationError({
+        operation: "install agent CLI",
+        detail: "CLI installation unavailable.",
+      }),
+    ),
     agentTarget: (input) =>
       Effect.gen(function* () {
         const ready = yield* agentReadinessIfSupported(input.hostId);
@@ -779,7 +787,9 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* makeWithHosts(new Map([[localHost.id, localHost]]), (hostId, ready) => {
+  const cliContext =
+    yield* Effect.context<Effect.Services<ReturnType<typeof ensureAgentDeviceCli>>>();
+  const service = yield* makeWithHosts(new Map([[localHost.id, localHost]]), (hostId, ready) => {
     const file = agentDeviceConfigPath(config.stateDir, hostId, path);
     return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -791,6 +801,17 @@ export const make = Effect.gen(function* () {
       Effect.as(file),
     );
   });
+  return {
+    ...service,
+    agentCli: ensureAgentDeviceCli(config.baseDir).pipe(
+      Effect.provide(cliContext),
+      Effect.map((tool) => tool.entryPath),
+      Effect.mapError(
+        (error) =>
+          new DeviceOperationError({ operation: "install agent CLI", detail: error.message }),
+      ),
+    ),
+  };
 });
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));

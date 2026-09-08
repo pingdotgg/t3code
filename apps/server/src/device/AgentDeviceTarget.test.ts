@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses and filesystem writes.
 import { describe, expect, it } from "vite-plus/test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

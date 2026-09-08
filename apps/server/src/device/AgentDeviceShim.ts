@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off - JSON string literals embed paths safely into generated JavaScript.
 /**
  * A directory holding an `agent-device` launcher that runs the pinned install
  * with the server's Node. Prepended to provider subprocess PATHs so the agent

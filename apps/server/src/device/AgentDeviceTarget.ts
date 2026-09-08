@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -21,7 +22,11 @@ export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-  const content = `${JSON.stringify({ daemonBaseUrl: endpoint.baseUrl, daemonAuthToken: endpoint.token })}\n`;
+  const content = yield* Schema.encodeEffect(
+    Schema.fromJsonString(
+      Schema.Struct({ daemonBaseUrl: Schema.String, daemonAuthToken: Schema.String }),
+    ),
+  )({ daemonBaseUrl: endpoint.baseUrl, daemonAuthToken: endpoint.token });
   if ((yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""))) === content) return;
   const temporary = yield* fs.makeTempFile({ directory: path.dirname(file), prefix: ".endpoint-" });
   yield* Effect.gen(function* () {

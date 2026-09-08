@@ -85,6 +85,7 @@ const DeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   sessionsForThread: () => Effect.succeed([]),
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
+  agentCli: Effect.succeed("/cli"),
   agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
 });
 

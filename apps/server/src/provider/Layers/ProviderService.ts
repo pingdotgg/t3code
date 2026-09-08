@@ -55,7 +55,6 @@ import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
-import { ensureAgentDeviceCli } from "../../device/DeviceToolchain.ts";
 import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
 import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import {
@@ -908,15 +907,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   /** Install only the local CLI here. device_open supplies a separate config for each host. */
   const hostPlatform = yield* HostProcessPlatform;
   const agentDeviceEnvironment = Effect.gen(function* () {
-    if (Option.isNone(yield* Effect.serviceOption(DeviceService.DeviceService))) return undefined;
-    const tools = yield* ensureAgentDeviceCli(serverConfig.baseDir).pipe(
+    const devices = yield* Effect.serviceOption(DeviceService.DeviceService);
+    if (Option.isNone(devices)) return undefined;
+    const entryPath = yield* devices.value.agentCli.pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Agent device CLI unavailable", { cause }).pipe(Effect.as(null)),
       ),
     );
-    if (!tools) return undefined;
+    if (!entryPath) return undefined;
     const shimDir = yield* ensureAgentDeviceShim({
-      entryPath: tools.entryPath,
+      entryPath,
       stateDir: serverConfig.stateDir,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
