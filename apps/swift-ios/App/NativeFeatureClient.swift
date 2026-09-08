@@ -21,6 +21,11 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
     }
 }
 
+enum NativeSelectedThreadReconciliationReceipt: Equatable {
+    case finished(threadID: String)
+    case deferred(threadID: String)
+}
+
 /// Composes the transport-focused Core layer with the UI-focused Features layer.
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
@@ -58,6 +63,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let threadSnapshotTimeoutInterval: TimeInterval
     private let detailPublicationSleep: @Sendable () async throws -> Void
     private let catchUpDelay: @Sendable () async throws -> Void
+    private let selectedThreadReconciliationSleep: @Sendable (Duration) async throws -> Void
+    private let selectedThreadReconciliationNow: @MainActor @Sendable () -> ContinuousClock.Instant
+    private let selectedThreadReconciliationReceipt: @MainActor @Sendable (NativeSelectedThreadReconciliationReceipt) -> Void
     private let threadRetryDelay: @Sendable (Int) async throws -> Void
     private let aggregateEnvironmentLoader: @Sendable (EnvironmentRuntime) async throws -> [Environment]
     private let stream: AsyncStream<FeatureEvent>
@@ -143,6 +151,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ] = [:]
     private var shellPublishTask: Task<Void, Never>?
     private var archivedRefreshTask: Task<Void, Never>?
+    private var selectedThreadReconciliationTask: Task<Void, Never>?
+    private var selectedThreadReconciliationRefreshGeneration: Int?
+    private var selectedThreadLastProgressAt: ContinuousClock.Instant?
     private var detailRefreshTask: Task<Void, Never>?
     private var detailStreamTask: Task<Void, Never>?
     private var detailCatchUpTask: Task<Void, Never>?
@@ -200,6 +211,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         catchUpDelay: @escaping @Sendable () async throws -> Void = {
             try await Task.sleep(for: .seconds(2))
         },
+        selectedThreadReconciliationSleep: @escaping @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        },
+        selectedThreadReconciliationNow: @escaping @MainActor @Sendable () -> ContinuousClock.Instant = { .now },
+        selectedThreadReconciliationReceipt: @escaping @MainActor @Sendable (NativeSelectedThreadReconciliationReceipt) -> Void = { _ in },
         threadRetryDelay: @escaping @Sendable (Int) async throws -> Void = { attempt in
             try await Task.sleep(for: .seconds(min(5, 0.25 * pow(2, Double(min(5, attempt - 1))))))
         },
@@ -243,6 +259,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.threadSnapshotTimeoutInterval = threadSnapshotTimeoutInterval
         self.detailPublicationSleep = detailPublicationSleep
         self.catchUpDelay = catchUpDelay
+        self.selectedThreadReconciliationSleep = selectedThreadReconciliationSleep
+        self.selectedThreadReconciliationNow = selectedThreadReconciliationNow
+        self.selectedThreadReconciliationReceipt = selectedThreadReconciliationReceipt
         self.threadRetryDelay = threadRetryDelay
         self.aggregateEnvironmentLoader = aggregateEnvironmentLoader
         let pair = AsyncStream<FeatureEvent>.makeStream()
@@ -251,6 +270,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     deinit {
+        selectedThreadReconciliationTask?.cancel()
         activeHydrationTask?.cancel()
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
@@ -417,6 +437,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func suspendForBackground() {
+        stopSelectedThreadReconciliation()
         isForeground = false
         beginForegroundBootstrap()
     }
@@ -4474,11 +4495,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func scheduleDetailRefresh(
         threadID: String,
         client: T3Client,
-        force: Bool = false
+        force: Bool = false,
+        reconcile: Bool = false
     ) {
         guard activeThreadID == threadID,
               activeThreadEnvironmentID == client.environment.id else { return }
-        guard force || detailStreamTask == nil else { return }
+        guard force || reconcile || detailStreamTask == nil else { return }
         if force {
             detailWasSynchronized = false
             // This required read owns recovery now. An older fallback must not
@@ -4496,11 +4518,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailRefreshGeneration &+= 1
         let generation = detailRefreshGeneration
         let sessionGeneration = environmentGeneration
+        let streamGeneration = detailStreamGeneration
         detailRefreshTask = Task { [weak self] in
             do {
                 // Shell updates can be coalesced. A required replacement cannot
                 // apply more thread events until its snapshot arrives.
-                if !force {
+                if !force && !reconcile {
                     try await Task.sleep(for: .milliseconds(250))
                 }
             } catch {
@@ -4516,11 +4539,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                    generation: sessionGeneration
                ) {
                 do {
-                    try await self.refreshThread(id: threadID, client: client)
+                    try await self.refreshThread(
+                        id: threadID, client: client,
+                        expectedStreamGeneration: reconcile ? streamGeneration : nil,
+                        reconcile: reconcile
+                    )
                 } catch is CancellationError {
                     // Closing a thread cancels its read without changing its status.
                 } catch {
-                    if !Task.isCancelled,
+                    if !reconcile, !Task.isCancelled,
                        self.detailRefreshGeneration == generation,
                        self.activeThreadID == threadID,
                        self.activeRawThread == nil || self.detailStreamTask == nil {
@@ -4545,6 +4572,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             id: route.uiID, state: warmConnectionID != nil ? .live : .catchingUp
         ))
         ensureDetailCatchUpFallback(route, generation: streamGeneration)
+        startSelectedThreadReconciliation(route, generation: streamGeneration)
         let retryDelay = threadRetryDelay
         detailStreamTask = Task { [weak self] in
             var failedAttempts = 0
@@ -4669,6 +4697,60 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         continuation.yield(.threadSync(id: route.uiID, state: .failed(message)))
     }
 
+    /// The selected transcript gets a bounded HTTP check even when its socket
+    /// remains healthy but subscription delivery stops. Other threads are untouched.
+    private func startSelectedThreadReconciliation(_ route: NativeThreadRoute, generation: Int) {
+        stopSelectedThreadReconciliation()
+        guard isForeground else { return }
+        selectedThreadLastProgressAt = selectedThreadReconciliationNow()
+        let sessionGeneration = environmentGeneration
+        let sleep = selectedThreadReconciliationSleep
+        selectedThreadReconciliationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let remaining = self.map { owner in
+                    max(.zero, .seconds(30) - (owner.selectedThreadLastProgressAt ?? owner.selectedThreadReconciliationNow())
+                        .duration(to: owner.selectedThreadReconciliationNow()))
+                } ?? .seconds(30)
+                do { try await sleep(remaining) } catch { return }
+                guard !Task.isCancelled, let self, self.isForeground,
+                      self.environmentGeneration == sessionGeneration,
+                      self.isCurrentDetail(route, generation: generation) else { return }
+                if let progress = self.selectedThreadLastProgressAt,
+                   progress.duration(to: self.selectedThreadReconciliationNow()) < .seconds(30) {
+                    self.selectedThreadReconciliationReceipt(.deferred(threadID: route.uiID))
+                    continue
+                }
+                guard self.detailRefreshTask == nil, self.detailCatchUpTask == nil,
+                      self.acceptedCommandRefreshes[route.uiID] == nil,
+                      self.activeRawThread != nil,
+                      self.activeThreadPage?.isLoading != true || self.pendingOlderThreadPage != nil else {
+                    self.selectedThreadLastProgressAt = self.selectedThreadReconciliationNow()
+                    self.selectedThreadReconciliationReceipt(.deferred(threadID: route.uiID))
+                    continue
+                }
+                self.scheduleDetailRefresh(threadID: route.uiID, client: route.client, reconcile: true)
+                self.selectedThreadReconciliationRefreshGeneration = self.detailRefreshGeneration
+                let refresh = self.detailRefreshTask
+                await refresh?.value
+                guard !Task.isCancelled, self.isForeground,
+                      self.environmentGeneration == sessionGeneration,
+                      self.isCurrentDetail(route, generation: generation) else { return }
+                self.selectedThreadReconciliationRefreshGeneration = nil
+                self.selectedThreadLastProgressAt = self.selectedThreadReconciliationNow()
+                self.selectedThreadReconciliationReceipt(.finished(threadID: route.uiID))
+            }
+        }
+    }
+
+    private func stopSelectedThreadReconciliation() {
+        selectedThreadReconciliationTask?.cancel()
+        selectedThreadReconciliationTask = nil
+        if selectedThreadReconciliationRefreshGeneration == detailRefreshGeneration {
+            resetDetailRefresh()
+        }
+        selectedThreadReconciliationRefreshGeneration = nil
+    }
+
     private func isCurrentDetail(_ route: NativeThreadRoute, generation: Int) -> Bool {
         detailStreamGeneration == generation
             && activeThreadID == route.uiID
@@ -4754,6 +4836,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                subscriptionEpoch < requiredEpoch { return }
             guard snapshot.snapshotSequence >= (activeThreadSequence ?? 0),
                   activeRawThread == nil || snapshot.snapshotSequence > (activeThreadSequence ?? 0) else { return }
+            selectedThreadLastProgressAt = selectedThreadReconciliationNow()
             beginWarmReplayIfNeeded(route)
             resetDetailRefresh()
             detailSnapshotRequiredAfterEpoch = nil
@@ -4791,6 +4874,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 return
             }
             guard reduction.sequence > (activeThreadSequence ?? 0) else { return }
+            selectedThreadLastProgressAt = selectedThreadReconciliationNow()
             beginWarmReplayIfNeeded(route)
             switch reduction.result {
             case let .updated(thread):
@@ -4891,6 +4975,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func resetDetailStream() {
+        stopSelectedThreadReconciliation()
         detailStreamGeneration &+= 1
         detailCompletionReceived = false
         detailWasSynchronized = false
@@ -5223,7 +5308,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func refreshThread(
-        id: String, client: T3Client, expectedStreamGeneration: Int? = nil
+        id: String, client: T3Client, expectedStreamGeneration: Int? = nil, reconcile: Bool = false
     ) async throws {
         let route = try threadRoute(for: id)
         guard route.client === client else {
@@ -5235,16 +5320,85 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let supportsPagination = serverConfigsByEnvironmentID[
             environment.id
         ]?.threadSnapshotPagination == true
-        let snapshot = try await client.threadSnapshot(
+        let loadedUsers = reconcile ? activeRawThread?.messages.filter { $0.role == "user" } ?? [] : []
+        let loadedAnchor = loadedUsers.first?.id
+        let pendingHistory = reconcile ? pendingOlderThreadPage : nil
+        if let pendingHistory {
+            guard pendingHistory.epoch == historyEpoch, pendingHistory.threadID == route.uiID,
+                  pendingHistory.environmentID == route.environmentID,
+                  (pendingHistory.snapshot.page?.threadSequence ?? 0) >= (activeThreadSequence ?? 0) else { return }
+        }
+        let loadedIDs = Set(loadedUsers.map(\.id))
+        // Pending rows determine the requested extent only. The published data
+        // always comes from a new authoritative snapshot, never a cached union.
+        let pendingUsers = pendingHistory?.snapshot.thread.messages.filter {
+            $0.role == "user" && !loadedIDs.contains($0.id)
+        } ?? []
+        let retainedUsers = pendingUsers + loadedUsers
+        let retainedIDs = Set(retainedUsers.map(\.id))
+        let retainedAnchor = retainedUsers.first?.id
+        let expandedHistory = retainedUsers.count > Self.initialThreadUserTurnLimit
+        let turnLimit = max(Self.initialThreadUserTurnLimit, retainedUsers.count)
+
+        func ownsReconciliationExtent() -> Bool {
+            !reconcile || (
+                pendingOlderThreadPage == pendingHistory
+                    && (activeThreadPage?.isLoading != true || pendingHistory != nil)
+                    && loadedAnchor == activeRawThread?.messages.first(where: { $0.role == "user" })?.id
+            )
+        }
+        func additionalTailUsers(in thread: OrchestrationThread) -> Int? {
+            let users = thread.messages.filter { $0.role == "user" }
+            guard let lastKnown = users.lastIndex(where: { retainedIDs.contains($0.id) }) else { return nil }
+            return users.distance(from: users.index(after: lastKnown), to: users.endIndex)
+        }
+        var snapshot = try await client.threadSnapshot(
             id: route.wireID,
-            turnLimit: supportsPagination ? Self.initialThreadUserTurnLimit : nil,
+            turnLimit: supportsPagination ? turnLimit : nil,
             timeoutInterval: threadSnapshotTimeoutInterval
         )
+        guard !Task.isCancelled,
+              expectedStreamGeneration.map({ isCurrentDetail(route, generation: $0) }) ?? true,
+              isKnownClient(client, environmentID: environment.id, generation: generation) else {
+            throw CancellationError()
+        }
+        guard ownsReconciliationExtent() else { return }
+        if reconcile, pendingHistory == nil, let current = activeRawThread,
+           snapshot.snapshotSequence >= (activeThreadSequence ?? 0),
+           snapshot.page?.threadSequence.map({ $0 <= (activeThreadSequence ?? 0) }) == true
+                || snapshot.snapshotSequence == activeThreadSequence || snapshot.thread == current {
+            return
+        }
+        if reconcile, expandedHistory, snapshot.page?.hasMore == true,
+           !snapshot.thread.messages.contains(where: { $0.id == retainedAnchor }) {
+            if let added = additionalTailUsers(in: snapshot.thread), added > 0 {
+                // One extra user turn needs one extra slot, not an automatic
+                // page of older history. Do not keep expanding a moving head.
+                snapshot = try await client.threadSnapshot(
+                    id: route.wireID, turnLimit: turnLimit + added,
+                    timeoutInterval: threadSnapshotTimeoutInterval
+                )
+                guard !Task.isCancelled, ownsReconciliationExtent(),
+                      expectedStreamGeneration.map({ isCurrentDetail(route, generation: $0) }) ?? true else { return }
+                guard additionalTailUsers(in: snapshot.thread) == added else { return }
+            }
+            if snapshot.page?.hasMore == true,
+               !snapshot.thread.messages.contains(where: { $0.id == retainedAnchor }) {
+                // A deleted boundary or disjoint gap gets one full read. Never
+                // resurrect old rows by unioning them into a rewound thread.
+                snapshot = try await client.threadSnapshot(
+                    id: route.wireID, timeoutInterval: threadSnapshotTimeoutInterval
+                )
+            }
+        }
         guard !Task.isCancelled,
               isKnownClient(client, environmentID: environment.id, generation: generation),
               expectedStreamGeneration.map({ isCurrentDetail(route, generation: $0) }) ?? true else {
             throw CancellationError()
         }
+        guard ownsReconciliationExtent() else { return }
+        if let pendingWatermark = pendingHistory?.snapshot.page?.threadSequence,
+           snapshot.snapshotSequence < pendingWatermark { return }
         if activeThreadID == route.uiID {
             if activeRawThread == nil, historyEpoch != threadHistoryEpoch {
                 return
@@ -5287,7 +5441,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             wasSynchronized: false,
             connectionID: nil
         )
-        if activeThreadID == route.uiID,
+        if !reconcile, activeThreadID == route.uiID,
            detailCompletionReceived
             || serverConfigsByEnvironmentID[environment.id]?.threadResumeCompletionMarker != true {
             markDetailSynchronized(route)
@@ -8330,7 +8484,7 @@ private struct NativeProjectRoute {
     let client: T3Client
 }
 
-private struct PendingOlderThreadPage {
+private struct PendingOlderThreadPage: Equatable {
     let snapshot: OrchestrationThreadDetailSnapshot
     let epoch: Int
     let threadID: String
