@@ -162,6 +162,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
         let response = try await client.request("server.afterHungPing", as: JSONValue.self)
         XCTAssertEqual(response, .object([:]))
         await hung.releaseSend()
+        try await hung.waitUntilSendReturned()
         let afterRelease = try await client.request("server.afterOldPingReturns", as: JSONValue.self)
         XCTAssertEqual(afterRelease, .object([:]))
     }
@@ -1676,11 +1677,13 @@ private actor HungSendConnection: WebSocketConnection {
 
 private actor SuspendedSendConnection: WebSocketConnection {
     private var sendContinuation: CheckedContinuation<Void, Error>?
+    private let sendReturns = AsyncStream.makeStream(of: Void.self)
     private var receiveContinuation: CheckedContinuation<Data, Error>?
     private var sendWaiters: [CheckedContinuation<Void, Never>] = []
     private var receiveWaiters: [CheckedContinuation<Void, Never>] = []
 
     func send(_: Data) async throws {
+        defer { sendReturns.continuation.yield(()) }
         let waiters = sendWaiters
         sendWaiters.removeAll()
         waiters.forEach { $0.resume() }
@@ -1722,6 +1725,11 @@ private actor SuspendedSendConnection: WebSocketConnection {
         receiveContinuation = nil
     }
 
+    func waitUntilSendReturned() async throws {
+        var returns = sendReturns.stream.makeAsyncIterator()
+        guard await returns.next() != nil else { throw CancellationError() }
+    }
+
     func releaseSend() {
         sendContinuation?.resume()
         sendContinuation = nil
@@ -1729,13 +1737,22 @@ private actor SuspendedSendConnection: WebSocketConnection {
 }
 
 private actor AutoReplyConnection: WebSocketConnection {
+    private let respondsToPings: Bool
     private var sentRequests = 0
     private var queuedResponses: [Data] = []
     private var receiveContinuation: CheckedContinuation<Data, Error>?
 
+    init(respondsToPings: Bool = false) {
+        self.respondsToPings = respondsToPings
+    }
+
     func send(_ data: Data) throws {
         sentRequests += 1
         let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        if respondsToPings, request["_tag"]?.stringValue == "Ping" {
+            enqueue(try JSONEncoder.t3.encode(JSONValue.object(["_tag": .string("Pong")])))
+            return
+        }
         guard case let .number(requestID) = request["id"] else { return }
         let response = JSONValue.object([
             "_tag": .string("Exit"),
