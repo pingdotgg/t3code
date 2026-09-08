@@ -239,6 +239,17 @@ describe("OrchestrationEngine", () => {
           threadId,
           requestId,
           answers: { "0": "pnpm", "1": "Example" },
+          attachmentsByQuestionId: {
+            "1": [
+              {
+                type: "file" as const,
+                id: "thread-1-00000000-0000-4000-8000-0000000000aa-txt",
+                name: "spec.txt",
+                mimeType: "text/plain",
+                sizeBytes: 4,
+              },
+            ],
+          },
           createdAt: "2026-01-01T00:00:02.000Z",
         };
         await expect(
@@ -256,8 +267,9 @@ describe("OrchestrationEngine", () => {
           (message) => message.role === "user",
         );
         expect(userMessages).toHaveLength(1);
+        expect(userMessages?.[0]?.attachments).toEqual(response.attachmentsByQuestionId["1"]);
         expect(userMessages?.[0]?.text).toBe(
-          "Which package manager?\npnpm\n\nWhat should it be named?\nExample",
+          "Which package manager?\npnpm\n\nWhat should it be named?\nExample\nAttached file: spec.txt (thread-1-00000000-0000-4000-8000-0000000000aa-txt)",
         );
         expect(
           after.threads[0]?.activities.find((activity) => activity.kind === "user-input.resolved")

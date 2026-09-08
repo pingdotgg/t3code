@@ -22,7 +22,7 @@ test.provider("list enumerates the deployed launch template", (stack) =>
 
     // Launch templates do not validate the AMI at creation time; fall back to a
     // syntactically valid id if the lookup returns nothing.
-    const imageId = (yield* amazonLinux2023()) ?? "ami-00000000000000000";
+    const imageId = amazonLinux2023();
 
     const template = yield* stack.deploy(
       Effect.gen(function* () {

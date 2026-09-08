@@ -41,7 +41,7 @@ const OUTPUT_DIRECTORY = "apps/mobile/assets";
 // Production has no background artwork, so its splash composes onto the adaptive color.
 const PRODUCTION_BACKGROUND_COLOR = "#000000";
 
-export class AndroidIconRenderError extends Schema.TaggedErrorClass<AndroidIconRenderError>()(
+export class AndroidIconRenderError extends Schema.TaggedError<AndroidIconRenderError>()(
   "AndroidIconRenderError",
   { layer: Schema.String, cause: Schema.Defect() },
 ) {}

@@ -50,10 +50,7 @@ export interface CacheClient {
  * For async (non-Effect) Workers, set the `cache` prop on the Worker
  * instead.
  *
- * @binding
- * @product Workers
- * @category Workers & Compute
- * @example
+ * **Example:** Example
  * ```typescript
  * Effect.gen(function* () {
  *   // init: enable Workers Cache on this Worker
@@ -76,6 +73,10 @@ export interface CacheClient {
  *   };
  * })
  * ```
+ *
+ * @binding
+ * @product Workers
+ * @category Workers & Compute
  */
 export const cache = (
   options?: CacheOptions,

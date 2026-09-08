@@ -15,6 +15,6 @@
   },
   "dependencies": {
     "alchemy": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:effect"
   }
 }

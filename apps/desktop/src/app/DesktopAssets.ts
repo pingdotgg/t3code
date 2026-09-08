@@ -13,7 +13,7 @@ export interface DesktopIconPaths {
   readonly png: Option.Option<string>;
 }
 
-export class DesktopAssetProbeError extends Schema.TaggedErrorClass<DesktopAssetProbeError>()(
+export class DesktopAssetProbeError extends Schema.TaggedError<DesktopAssetProbeError>()(
   "DesktopAssetProbeError",
   {
     fileName: Schema.String,

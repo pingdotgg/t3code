@@ -789,7 +789,7 @@ export const ServerProviderUpdateInput = Schema.Struct({
 });
 export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
 
-export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
+export class ServerProviderUpdateError extends Schema.TaggedError<ServerProviderUpdateError>()(
   "ServerProviderUpdateError",
   {
     provider: ProviderDriverKind,
@@ -845,7 +845,7 @@ export const ServerSelfUpdateProgressEvent = Schema.Union([
 ]);
 export type ServerSelfUpdateProgressEvent = typeof ServerSelfUpdateProgressEvent.Type;
 
-export class ServerSelfUpdateError extends Schema.TaggedErrorClass<ServerSelfUpdateError>()(
+export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateError>()(
   "ServerSelfUpdateError",
   {
     reason: TrimmedNonEmptyString,

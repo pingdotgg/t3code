@@ -58,9 +58,8 @@ export interface AttributeGroup extends Resource<
  * user-defined JSON metadata that can be associated with applications to
  * enrich them (owner, cost center, compliance posture, etc.).
  *
- * @resource
- * @section Creating an Attribute Group
- * @example Basic Attribute Group
+ * ### Creating an Attribute Group
+ * **Example:** Basic Attribute Group
  * ```typescript
  * import * as AppRegistry from "alchemy/AWS/AppRegistry";
  *
@@ -72,7 +71,7 @@ export interface AttributeGroup extends Resource<
  * });
  * ```
  *
- * @example Attribute Group with Description and Tags
+ * **Example:** Attribute Group with Description and Tags
  * ```typescript
  * const group = yield* AppRegistry.AttributeGroup("Ownership", {
  *   attributeGroupName: "storefront-ownership",
@@ -81,6 +80,8 @@ export interface AttributeGroup extends Resource<
  *   tags: { team: "commerce" },
  * });
  * ```
+ *
+ * @resource
  */
 export const AttributeGroup = Resource<AttributeGroup>(
   "AWS.AppRegistry.AttributeGroup",

@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Provide the implementation with
  * `Effect.provide(AWS.Personalize.DescribeDatasetImportJobHttp)`.
  *
- * @binding
- * @section Retraining Loop
- * @example Poll an Import Job
+ * ### Retraining Loop
+ * **Example:** Poll an Import Job
  * ```typescript
  * // init
  * const describeDatasetImportJob = yield* Personalize.DescribeDatasetImportJob();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const done = datasetImportJob?.status === "ACTIVE";
  * ```
+ *
+ * @binding
  */
 export interface DescribeDatasetImportJob extends Binding.Service<
   DescribeDatasetImportJob,

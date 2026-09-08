@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * reboots, failovers, configuration changes — for monitoring and audit
  * workloads. Provide the implementation with
  * `Effect.provide(AWS.DMS.DescribeEventsHttp)`.
- * @binding
- * @section Reading DMS Events
- * @example Read the Last Hour of Instance Events
+ * ### Reading DMS Events
+ * **Example:** Read the Last Hour of Instance Events
  * ```typescript
  * // init — account-level, no target resource
  * const describeEvents = yield* AWS.DMS.DescribeEvents();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Duration: 60, // minutes
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeEvents extends Binding.Service<
   DescribeEvents,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * {@link ListPipelineBlueprints} to discover blueprint names). Account-level:
  * no resource argument. Provide the implementation with
  * `Effect.provide(AWS.OSIS.GetPipelineBlueprintHttp)`.
- * @binding
- * @section Authoring Pipeline Configurations
- * @example Fetch a Blueprint's Template
+ * ### Authoring Pipeline Configurations
+ * **Example:** Fetch a Blueprint's Template
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getPipelineBlueprint = yield* AWS.OSIS.GetPipelineBlueprint();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // Blueprint?.PipelineConfigurationBody — the YAML template
  * ```
+ *
+ * @binding
  */
 export interface GetPipelineBlueprint extends Binding.Service<
   GetPipelineBlueprint,

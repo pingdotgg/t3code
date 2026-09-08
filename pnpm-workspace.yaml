@@ -30,15 +30,15 @@ catalog:
   "@clerk/expo": 4.2.0
   "@clerk/react": 6.14.7
   "@clerk/shared": 4.30.1
-  "@effect/atom-react": 4.0.0-beta.103
-  "@effect/openapi-generator": 4.0.0-beta.103
-  "@effect/platform-bun": 4.0.0-beta.103
-  "@effect/platform-node": 4.0.0-beta.103
-  "@effect/platform-node-shared": 4.0.0-beta.103
-  "@effect/sql-pg": 4.0.0-beta.103
-  "@effect/sql-sqlite-bun": 4.0.0-beta.103
+  "@effect/atom-react": 4.0.0-rc.112
+  "@effect/openapi-generator": 4.0.0-rc.112
+  "@effect/platform-bun": 4.0.0-rc.112
+  "@effect/platform-node": 4.0.0-rc.112
+  "@effect/platform-node-shared": 4.0.0-rc.112
+  "@effect/sql-pg": 4.0.0-rc.112
+  "@effect/sql-sqlite-bun": 4.0.0-rc.112
   "@effect/tsgo": 0.41.0
-  "@effect/vitest": 4.0.0-beta.103
+  "@effect/vitest": 4.0.0-rc.112
   "@legendapp/list": 3.3.5
   "@noble/curves": 1.9.1
   "@noble/hashes": 1.8.0
@@ -47,7 +47,7 @@ catalog:
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
-  effect: 4.0.0-beta.103
+  effect: 4.0.0-rc.112
   jose: 6.2.2
   lightningcss: 1.33.0
   tailwindcss: 4.3.3
@@ -69,16 +69,16 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/core@0.30.2"
   - "@distilled.cloud/neon@0.30.2"
   - "@distilled.cloud/planetscale@0.30.2"
-  - "@effect/atom-react@4.0.0-beta.103"
-  - "@effect/openapi-generator@4.0.0-beta.103"
-  - "@effect/platform-bun@4.0.0-beta.103"
-  - "@effect/platform-node-shared@4.0.0-beta.103"
-  - "@effect/platform-node@4.0.0-beta.103"
-  - "@effect/sql-pg@4.0.0-beta.103"
-  - "@effect/sql-sqlite-bun@4.0.0-beta.103"
-  - "@effect/vitest@4.0.0-beta.103"
-  - alchemy@2.0.0-beta.65
-  - effect@4.0.0-beta.103
+  - "@effect/atom-react@4.0.0-rc.112"
+  - "@effect/openapi-generator@4.0.0-rc.112"
+  - "@effect/platform-bun@4.0.0-rc.112"
+  - "@effect/platform-node-shared@4.0.0-rc.112"
+  - "@effect/platform-node@4.0.0-rc.112"
+  - "@effect/sql-pg@4.0.0-rc.112"
+  - "@effect/sql-sqlite-bun@4.0.0-rc.112"
+  - "@effect/vitest@4.0.0-rc.112"
+  - alchemy@2.0.0-beta.76
+  - effect@4.0.0-rc.112
   - "@legendapp/list@3.3.5"
   - "@expo/cli@57.0.20"
   - "@expo/env@2.4.3"
@@ -164,7 +164,7 @@ packageExtensions:
 
 patchedDependencies:
   "@clerk/expo@4.2.0": patches/@clerk__expo@4.2.0.patch
-  "@effect/vitest@4.0.0-beta.103": patches/@effect__vitest@4.0.0-beta.103.patch
+  "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
   "@legendapp/list@3.3.5": patches/@legendapp__list@3.3.5.patch
@@ -173,7 +173,7 @@ patchedDependencies:
   "@react-native-menu/menu@2.0.0": patches/@react-native-menu__menu@2.0.0.patch
   "@react-navigation/native-stack@7.17.6": patches/@react-navigation%2Fnative-stack@7.17.6.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
-  effect@4.0.0-beta.103: patches/effect@4.0.0-beta.103.patch
+  effect@4.0.0-rc.112: patches/effect@4.0.0-rc.112.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch

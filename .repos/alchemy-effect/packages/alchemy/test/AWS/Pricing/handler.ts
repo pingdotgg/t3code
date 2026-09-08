@@ -16,7 +16,7 @@ export class PricingTestFunction extends Lambda.Function<Lambda.Function>()(
 export default PricingTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Price List queries return large JSON documents; the default 3s Lambda
     // timeout intermittently trips under cold start + big responses.
     timeout: Duration.seconds(30),

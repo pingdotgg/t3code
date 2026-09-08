@@ -22,7 +22,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // default" checkbox would record in mimeapps.list.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
-export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedErrorClass<DesktopLinuxUrlHandlerRegistrationError>()(
+export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
   "DesktopLinuxUrlHandlerRegistrationError",
   {
     step: Schema.Literals(["write-desktop-entry", "set-default-handler"]),

@@ -197,6 +197,34 @@ export function resolveTimelineMinimapIndexFromPointer(input: {
   return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
 }
 
+export function resolveTimelineMinimapCurrentIndex(input: {
+  readonly scrollTop: number;
+  readonly scrollBottom: number;
+  readonly itemBounds: ReadonlyArray<{
+    readonly top: number | null;
+    readonly height: number | null;
+  }>;
+}): number | null {
+  let precedingIndex: number | null = null;
+
+  for (const [index, item] of input.itemBounds.entries()) {
+    if (item.top === null) {
+      continue;
+    }
+    const inView =
+      item.top < input.scrollBottom && item.top + Math.max(1, item.height ?? 1) > input.scrollTop;
+    if (inView) {
+      // The first visible marker is the turn at the reader's current position.
+      return index;
+    }
+    if (item.top <= input.scrollTop) {
+      precedingIndex = index;
+    }
+  }
+
+  return precedingIndex;
+}
+
 export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number): boolean {
   if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
     return false;

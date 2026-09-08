@@ -88,7 +88,7 @@ export type ApnsDeliveryError =
   | LiveActivities.LiveActivityTargetListPersistenceError
   | LiveActivities.LiveActivityDeliveryMarkPersistenceError;
 
-export class ApnsDeliveryJobClaimInFlight extends Schema.TaggedErrorClass<ApnsDeliveryJobClaimInFlight>()(
+export class ApnsDeliveryJobClaimInFlight extends Schema.TaggedError<ApnsDeliveryJobClaimInFlight>()(
   "ApnsDeliveryJobClaimInFlight",
   {
     sourceJobId: Schema.String,
@@ -99,7 +99,7 @@ export class ApnsDeliveryJobClaimInFlight extends Schema.TaggedErrorClass<ApnsDe
   }
 }
 
-export class ApnsDeliveryTransportError extends Schema.TaggedErrorClass<ApnsDeliveryTransportError>()(
+export class ApnsDeliveryTransportError extends Schema.TaggedError<ApnsDeliveryTransportError>()(
   "ApnsDeliveryTransportError",
   {
     deviceId: Schema.String,
