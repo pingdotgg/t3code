@@ -669,6 +669,8 @@ function AutoSettleSettingsRows() {
                     patch: filterSharedServerPatch(
                       patch,
                       target?.serverConfig?.environment.capabilities,
+                      target?.serverConfig?.settings,
+                      referenceSettings,
                     ),
                   },
                 });

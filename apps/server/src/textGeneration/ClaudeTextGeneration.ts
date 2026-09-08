@@ -214,6 +214,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "",
           "--disable-slash-commands",
           "--strict-mcp-config",
+          "--permission-mode",
+          "dontAsk",
         ],
         { env: claudeEnvironment },
       );
