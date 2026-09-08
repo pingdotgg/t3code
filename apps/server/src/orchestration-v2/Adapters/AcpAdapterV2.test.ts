@@ -2738,6 +2738,71 @@ describe("AcpAdapterV2", () => {
     );
   }
 
+  it.live("Grok reapplies an explicit return to the session's setup-time model", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("grok-test-switch-back");
+      const adapter = makeGrokAdapterV2({
+        instanceId,
+        settings: DEFAULT_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: yield* HostProcessPlatform,
+        childProcessSpawner,
+        crypto: yield* Crypto.Crypto,
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+      });
+      const threadId = ThreadId.make("grok-model-switch-back");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-model-switch-back"),
+        modelSelection: { instanceId, model: "grok-mock-alt" },
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: { instanceId, model: "grok-mock-alt" },
+        runtimePolicy,
+      });
+      // The mock session starts on grok-4.6. Switching away and explicitly
+      // back must re-send session/set_model; stale setup metadata used to make
+      // the return trip a silent no-op that left the session on the alt model.
+      for (const model of ["grok-4.6", "grok-mock-alt"]) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            modelSelection: { instanceId, model },
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+      }
+      const methods = yield* pollProtocolMethods(protocolEvents);
+      assert.equal(methods.filter((method) => method === "session/set_model").length, 3);
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("skips requested options that the active ACP session does not expose", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
