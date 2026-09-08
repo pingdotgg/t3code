@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
+  type RuntimeMode,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -40,6 +41,13 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+
+const DEFAULT_RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
+  "approval-required": "Supervised",
+  "auto-accept-edits": "Auto-accept edits",
+  auto: "Auto",
+  "full-access": "Full access",
+};
 
 /** Defaults are written only to the machines selected on the projects settings page. */
 export function ProjectDefaultsSettings({
@@ -90,6 +98,10 @@ export function ProjectDefaultsSettings({
   const mixedWorkspace = targets.some(
     (target) =>
       target.serverConfig?.settings.defaultThreadEnvMode !== serverSettings.defaultThreadEnvMode,
+  );
+  const mixedRuntimeMode = targets.some(
+    (target) =>
+      target.serverConfig?.settings.defaultRuntimeMode !== serverSettings.defaultRuntimeMode,
   );
   const mixedBrowser = targets.some(
     (target) =>
@@ -309,6 +321,64 @@ export function ProjectDefaultsSettings({
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
                 <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          id={searchableSetting("default-access").id}
+          title="Default access"
+          description="Permission mode for new threads when nothing carries from the current view and the project has no sticky last-used mode."
+          status={
+            targets.length === 0 ? undefined : mixedRuntimeMode ? "Differs by machine" : undefined
+          }
+          resetAction={
+            mixedRuntimeMode ||
+            serverSettings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
+              <SettingResetButton
+                label="default access"
+                disabled={disabled("defaultRuntimeMode")}
+                onClick={() =>
+                  void save({ defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              disabled={disabled("defaultRuntimeMode")}
+              value={mixedRuntimeMode ? "mixed" : serverSettings.defaultRuntimeMode}
+              onValueChange={(value) => {
+                if (
+                  value === "approval-required" ||
+                  value === "auto-accept-edits" ||
+                  value === "auto" ||
+                  value === "full-access"
+                ) {
+                  void save({ defaultRuntimeMode: value satisfies RuntimeMode });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Default access">
+                <SelectValue>
+                  {targets.length === 0
+                    ? "Unavailable"
+                    : mixedRuntimeMode
+                      ? "Differs by machine"
+                      : DEFAULT_RUNTIME_MODE_LABELS[serverSettings.defaultRuntimeMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="approval-required">
+                  {DEFAULT_RUNTIME_MODE_LABELS["approval-required"]}
+                </SelectItem>
+                <SelectItem value="auto-accept-edits">
+                  {DEFAULT_RUNTIME_MODE_LABELS["auto-accept-edits"]}
+                </SelectItem>
+                <SelectItem value="auto">{DEFAULT_RUNTIME_MODE_LABELS.auto}</SelectItem>
+                <SelectItem value="full-access">
+                  {DEFAULT_RUNTIME_MODE_LABELS["full-access"]}
+                </SelectItem>
               </SelectPopup>
             </Select>
           }

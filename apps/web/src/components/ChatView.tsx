@@ -258,6 +258,7 @@ import {
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import {
   derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
@@ -1498,6 +1499,8 @@ export default function ChatView(props: ChatViewProps) {
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
+  const setStickyRuntimeMode = useComposerDraftStore((store) => store.setStickyRuntimeMode);
+  const getStickyRuntimeMode = useComposerDraftStore((store) => store.getStickyRuntimeMode);
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
   const citationLocation = useLocation({
@@ -2021,10 +2024,10 @@ export default function ChatView(props: ChatViewProps) {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const activeDraftLogicalProjectKey =
-    !isServerThread && activeProject
-      ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
-      : undefined;
+  const activeLogicalProjectKey = activeProject
+    ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
+    : undefined;
+  const activeDraftLogicalProjectKey = !isServerThread ? activeLogicalProjectKey : undefined;
   const handleOpenDraftProjectSettings = useCallback(() => {
     if (!activeDraftLogicalProjectKey) return;
     void navigate({
@@ -2263,10 +2266,15 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
+      const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
+        stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
+        configuredRuntimeMode: settings.defaultRuntimeMode,
+      });
+      setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
         createdAt: new Date().toISOString(),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        runtimeMode: resolvedRuntimeMode,
         interactionMode: DEFAULT_INTERACTION_MODE,
         ...input,
       });
@@ -2281,12 +2289,15 @@ export default function ChatView(props: ChatViewProps) {
       draftId,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
+      getStickyRuntimeMode,
       isServerThread,
       navigate,
       projectGroupingSettings,
       routeKind,
       setDraftThreadContext,
       setLogicalProjectDraftThreadId,
+      setStickyRuntimeMode,
+      settings.defaultRuntimeMode,
     ],
   );
 
@@ -4035,15 +4046,20 @@ export default function ChatView(props: ChatViewProps) {
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
+      if (activeLogicalProjectKey) {
+        setStickyRuntimeMode(activeLogicalProjectKey, mode);
+      }
       scheduleComposerFocus();
     },
     [
+      activeLogicalProjectKey,
       isLocalDraftThread,
       runtimeMode,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
+      setStickyRuntimeMode,
     ],
   );
 

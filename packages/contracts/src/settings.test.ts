@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { DEFAULT_RUNTIME_MODE } from "./orchestration.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -19,6 +20,18 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("ServerSettings default runtime mode", () => {
+  it("defaults new thread access mode to the existing runtime default", () => {
+    expect(DEFAULT_SERVER_SETTINGS.defaultRuntimeMode).toBe(DEFAULT_RUNTIME_MODE);
+    expect(decodeServerSettings({}).defaultRuntimeMode).toBe(DEFAULT_RUNTIME_MODE);
+  });
+
+  it("accepts runtime mode patches", () => {
+    const patch = decodeServerSettingsPatch({ defaultRuntimeMode: "approval-required" });
+    expect(patch.defaultRuntimeMode).toBe("approval-required");
+  });
+});
 
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };

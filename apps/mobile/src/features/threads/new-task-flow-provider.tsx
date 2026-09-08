@@ -12,7 +12,6 @@ import type {
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
   MessageId,
   T3_PROJECT_FILE_NAME,
   ThreadId,
@@ -54,10 +53,13 @@ import {
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   setStickyComposerModelSelection,
+  setStickyComposerRuntimeMode,
   updateComposerDraftSettings,
   useComposerDraft,
   useStickyComposerModelSelection,
+  useStickyComposerRuntimeMode,
 } from "../../state/use-composer-drafts";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import {
   capturePendingTaskEditorWriteBaseline,
   flushPendingTaskEditorWrite,
@@ -452,7 +454,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     draftStartFromOrigin ??
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
 
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
@@ -472,6 +473,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
+  const stickyRuntimeMode = useStickyComposerRuntimeMode(selectedProjectKey);
+  const runtimeMode = resolveNewThreadRuntimeMode({
+    draftRuntimeMode: selectedProjectDraft.runtimeMode,
+    stickyRuntimeMode,
+    configuredRuntimeMode: selectedEnvironmentServerConfig?.settings.defaultRuntimeMode,
+  });
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
@@ -875,8 +882,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (selectedProjectDraftKey) {
         updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
       }
+      if (selectedProjectKey) {
+        setStickyComposerRuntimeMode(selectedProjectKey, value);
+      }
     },
-    [selectedProjectDraftKey],
+    [selectedProjectDraftKey, selectedProjectKey],
   );
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
@@ -957,6 +967,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const projectCwd = usingPendingSnapshot
         ? editingPendingTask?.creation?.projectCwd
         : selectedProject.workspaceRoot;
+      if (selectedProjectKey) {
+        setStickyComposerRuntimeMode(selectedProjectKey, runtimeMode);
+      }
       return {
         environmentId: selectedProject.environmentId,
         threadId: ThreadId.make(metadata.threadId),
@@ -965,7 +978,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         text,
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        runtimeMode,
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
           planModeEnabled: legacyPlanModeEnabled,
@@ -1007,8 +1020,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
+      selectedProjectKey,
       legacyPlanModeEnabled,
       planModePreferenceLoaded,
+      runtimeMode,
       startFromOrigin,
       workspaceMode,
     ],

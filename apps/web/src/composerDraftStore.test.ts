@@ -150,6 +150,7 @@ function resetComposerDraftStore() {
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
+    stickyRuntimeModeByLogicalProjectKey: {},
   });
 }
 
@@ -731,6 +732,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+      stickyRuntimeModeByLogicalProjectKey: {},
     });
   });
 
@@ -786,6 +788,7 @@ describe("composerDraftStore terminal contexts", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
+      stickyRuntimeModeByLogicalProjectKey: {},
     });
   });
 
@@ -2543,6 +2546,36 @@ describe("composerDraftStore provider-scoped option updates", () => {
       ).options,
     );
     expect(draft?.activeProvider).toBe("codex");
+  });
+});
+
+describe("composerDraftStore sticky runtime mode", () => {
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("stores a sticky runtime mode per logical project", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyRuntimeMode("project-a", "approval-required");
+    store.setStickyRuntimeMode("project-b", "auto-accept-edits");
+
+    expect(store.getStickyRuntimeMode("project-a")).toBe("approval-required");
+    expect(store.getStickyRuntimeMode("project-b")).toBe("auto-accept-edits");
+    expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({
+      "project-a": "approval-required",
+      "project-b": "auto-accept-edits",
+    });
+  });
+
+  it("clears sticky runtime mode for a project", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyRuntimeMode("project-a", "approval-required");
+    store.setStickyRuntimeMode("project-a", null);
+
+    expect(store.getStickyRuntimeMode("project-a")).toBeNull();
+    expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({});
   });
 });
 

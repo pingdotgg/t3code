@@ -4,12 +4,7 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import {
-  DEFAULT_RUNTIME_MODE,
-  DEFAULT_SERVER_SETTINGS,
-  type ScopedProjectRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -28,6 +23,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
@@ -91,18 +87,25 @@ export function useNewThreadHandler() {
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
         getDraftThread,
+        getStickyRuntimeMode,
+        setStickyRuntimeMode,
         applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
+        setRuntimeMode,
+        setInteractionMode,
       } = useComposerDraftStore.getState();
       const requestingRouteHref = router.state.location.href;
       const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's working mode from the thread being
-      // viewed. The target project's configured model still wins; runtime and
-      // interaction modes carry independently. Branch, worktree, and env mode
-      // come from configured defaults unless the caller passes them explicitly.
+      // viewed only when that source belongs to the same logical project.
+      // Otherwise the project's sticky last-used mode wins over the hardcoded
+      // full-access default. The target project's configured model still wins;
+      // interaction/plan mode carries independently and is not sticky.
+      // Branch, worktree, and env mode come from configured defaults unless
+      // the caller passes them explicitly.
       const carrySourceShell =
         currentRouteTarget?.kind === "server"
           ? readThreadShell(currentRouteTarget.threadRef)
@@ -167,6 +170,34 @@ export function useNewThreadHandler() {
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
+      const carrySourceLogicalProjectKey =
+        currentRouteTarget?.kind === "server" && carrySourceShell
+          ? (() => {
+              const carryProject = projects.find(
+                (candidate) =>
+                  candidate.id === carrySourceShell.projectId &&
+                  candidate.environmentId === currentRouteTarget.threadRef.environmentId,
+              );
+              return carryProject
+                ? deriveLogicalProjectKeyFromSettings(carryProject, projectGroupingSettings)
+                : scopedProjectKey(
+                    scopeProjectRef(
+                      currentRouteTarget.threadRef.environmentId,
+                      carrySourceShell.projectId,
+                    ),
+                  );
+            })()
+          : (carrySourceDraft?.logicalProjectKey ?? null);
+      const sameProjectCarryRuntimeMode =
+        carrySourceLogicalProjectKey === logicalProjectKey ? carryRuntimeMode : null;
+      const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
+        carryRuntimeMode: sameProjectCarryRuntimeMode,
+        stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
+        configuredRuntimeMode: targetServerSettings.defaultRuntimeMode,
+      });
+      // Seed sticky from whatever we apply so fresh starts keep remembering
+      // even when the user never touched the picker in this session.
+      setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
@@ -265,9 +296,17 @@ export function useNewThreadHandler() {
           if (workspaceContext) {
             setDraftThreadContext(emptyStoredDraftThread.draftId, {
               ...workspaceContext,
-              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
+              runtimeMode: resolvedRuntimeMode,
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
+          }
+          // Composer draft mode is what the picker reads (it outranks the
+          // draft-thread session). Keep it in lockstep with the resolved
+          // mode whenever we resurrect an empty draft, or a stale composer
+          // override can hide sticky / machine-default updates.
+          setRuntimeMode(emptyStoredDraftThread.draftId, resolvedRuntimeMode);
+          if (carryInteractionMode) {
+            setInteractionMode(emptyStoredDraftThread.draftId, carryInteractionMode);
           }
           // Model intent: an explicit human pick always stands. Seeds and
           // legacy entries alike re-resolve here — sticky first, mirroring
@@ -302,7 +341,7 @@ export function useNewThreadHandler() {
             {
               threadId: emptyStoredDraftThread.threadId,
               ...workspaceContext,
-              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
+              runtimeMode: resolvedRuntimeMode,
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
@@ -415,7 +454,7 @@ export function useNewThreadHandler() {
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
             }),
-          runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+          runtimeMode: resolvedRuntimeMode,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);

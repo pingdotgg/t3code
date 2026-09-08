@@ -178,7 +178,9 @@ import {
   setComposerDraftAttachmentUpload,
   waitForComposerDraftsLoaded,
   setStickyComposerModelSelection,
+  setStickyComposerRuntimeMode,
   stickyComposerModelSelectionAtom,
+  stickyComposerRuntimeModeByProjectKeyAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
 } from "./use-composer-drafts";
@@ -202,12 +204,40 @@ afterEach(() => {
   appAtomRegistry.set(composerDraftsAtom, {});
   appAtomRegistry.set(composerCloudDraftsAtom, { accountId: null, signedOut: {} });
   appAtomRegistry.set(stickyComposerModelSelectionAtom, null);
+  appAtomRegistry.set(stickyComposerRuntimeModeByProjectKeyAtom, {});
   appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
   composerAttachmentCleanupMocks.remove.mockClear();
   composerAttachmentCleanupMocks.releaseUploads.mockReset();
   composerAttachmentCleanupMocks.releaseUploads.mockResolvedValue(undefined);
   incomingShareStorageMocks.load.mockReset();
   incomingShareStorageMocks.load.mockResolvedValue([]);
+});
+
+describe("mobile sticky runtime mode", () => {
+  it("round-trips sticky runtime modes per project", () => {
+    expect(
+      decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: {},
+        stickyRuntimeModeByProjectKey: {
+          "env:project-a": "approval-required",
+          "env:project-b": "auto-accept-edits",
+        },
+      }).stickyRuntimeModeByProjectKey,
+    ).toEqual({
+      "env:project-a": "approval-required",
+      "env:project-b": "auto-accept-edits",
+    });
+  });
+
+  it("stores sticky runtime mode updates in memory", () => {
+    setStickyComposerRuntimeMode("env:project-a", "approval-required");
+    expect(appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom)).toEqual({
+      "env:project-a": "approval-required",
+    });
+    setStickyComposerRuntimeMode("env:project-a", null);
+    expect(appAtomRegistry.get(stickyComposerRuntimeModeByProjectKeyAtom)).toEqual({});
+  });
 });
 
 describe("mobile composer drafts", () => {

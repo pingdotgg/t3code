@@ -31,7 +31,7 @@ import {
   pickComposerMedia,
 } from "../lib/composerImages";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
-import { scopedThreadKey } from "../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
@@ -48,6 +48,7 @@ import {
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
+  setStickyComposerRuntimeMode,
   updateComposerDraftSettings,
   useComposerDraft,
 } from "./use-composer-drafts";
@@ -586,12 +587,16 @@ export function useThreadComposerState() {
 
   const onUpdateRuntimeMode = useCallback(
     (value: RuntimeMode) => {
-      if (!selectedThreadKey) {
+      if (!selectedThreadKey || !selectedThreadShell) {
         return;
       }
       updateComposerDraftSettings(selectedThreadKey, { runtimeMode: value });
+      setStickyComposerRuntimeMode(
+        scopedProjectKey(selectedThreadShell.environmentId, selectedThreadShell.projectId),
+        value,
+      );
     },
-    [selectedThreadKey],
+    [selectedThreadKey, selectedThreadShell],
   );
 
   const onUpdateInteractionMode = useCallback(

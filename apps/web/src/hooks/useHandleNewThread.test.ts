@@ -23,10 +23,14 @@ const testState = vi.hoisted(() => {
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
     getDraftThread: vi.fn(() => null),
+    getStickyRuntimeMode: vi.fn(() => null),
+    setStickyRuntimeMode: vi.fn(),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
     setModelSelection: vi.fn(),
+    setRuntimeMode: vi.fn(),
+    setInteractionMode: vi.fn(),
   };
 
   return {
@@ -40,6 +44,10 @@ const testState = vi.hoisted(() => {
       router.state.location.href = "/";
       router.navigate.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
+      draftStore.setRuntimeMode.mockClear();
+      draftStore.setInteractionMode.mockClear();
+      draftStore.setDraftThreadContext.mockClear();
+      draftStore.setStickyRuntimeMode.mockClear();
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -71,7 +79,6 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
 vi.mock("@t3tools/contracts", () => ({
-  DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
 vi.mock("@t3tools/shared/threadEnvMode", () => ({
@@ -79,6 +86,9 @@ vi.mock("@t3tools/shared/threadEnvMode", () => ({
     readonly projectFile: "local" | "worktree" | null;
     readonly globalDefault: "local" | "worktree";
   }) => input.projectFile ?? input.globalDefault,
+}));
+vi.mock("@t3tools/shared/runtimeMode", () => ({
+  resolveNewThreadRuntimeMode: () => "full-access",
 }));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
@@ -170,5 +180,28 @@ describe("useNewThreadHandler", () => {
     expect(testState.router.state.location.href).toBe("/usage");
     expect(testState.router.navigate).not.toHaveBeenCalled();
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+
+  it("syncs composer runtime mode when resurrecting an empty draft", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.draftStore.setRuntimeMode).toHaveBeenCalledWith(
+      "draft-existing",
+      "full-access",
+    );
+    expect(testState.router.navigate).toHaveBeenCalled();
   });
 });

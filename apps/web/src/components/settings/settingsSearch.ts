@@ -72,7 +72,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project defaults and overrides",
     to: "/settings/projects",
     searchTerms: [
-      "model workspace browser machines projects inheritance automatic pull checkout grouping actions scripts",
+      "model workspace browser machines projects inheritance automatic pull checkout grouping actions scripts access permission runtime supervised",
     ],
   },
   {
@@ -247,6 +247,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "New threads",
     to: "/settings/projects",
     searchTerms: ["default workspace mode draft local worktree"],
+  },
+  {
+    id: "default-access",
+    title: "Default access",
+    to: "/settings/projects",
+    searchTerms: [
+      "permission runtime mode supervised auto-accept full access yolo new thread default",
+    ],
   },
   {
     id: "start-from-origin",
