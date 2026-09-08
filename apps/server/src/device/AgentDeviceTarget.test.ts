@@ -1,10 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses and filesystem writes.
-import { describe, expect, it } from "vite-plus/test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+// @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses.
+import { describe, expect, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,63 +13,56 @@ import {
   writeAgentDeviceConfig,
 } from "./AgentDeviceTarget.ts";
 
-const exec = promisify(execFile);
+const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
 describe("host-bound agent commands", () => {
-  it("runs two hosts concurrently and only updates the reconnected host", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "t3-device-target-"));
-    try {
-      const entryPath = join(dir, "cli.mjs");
-      await writeFile(
+  it.effect("runs two hosts concurrently and only updates the reconnected host", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-target-" });
+      const entryPath = path.join(dir, "cli.mjs");
+      yield* fs.writeFileString(
         entryPath,
         `import { readFileSync } from 'node:fs';
 const args = process.argv.slice(2);
 console.log(readFileSync(args[args.indexOf('--config') + 1], 'utf8'));
 if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       );
-      const setup = await Effect.runPromise(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir, fs, path });
-          const files = ["mini", "android"].map((host) => agentDeviceConfigPath(dir, host, path));
-          for (const [index, file] of files.entries())
-            yield* writeAgentDeviceConfig(file, {
-              baseUrl: `http://127.0.0.1:${1000 + index}`,
-              token: `token-${index}`,
-              entryPath,
-            });
-          return { shim, files };
-        }).pipe(Effect.provide(NodeServices.layer)),
-      );
+      const shim = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir, fs, path });
+      const files = ["mini", "android"].map((host) => agentDeviceConfigPath(dir, host, path));
+      for (const [index, file] of files.entries())
+        yield* writeAgentDeviceConfig(file, {
+          baseUrl: `http://127.0.0.1:${1000 + index}`,
+          token: `token-${index}`,
+          entryPath,
+        });
       const invoke = (file: string) =>
         exec(
           process.execPath,
-          [join(setup.shim, "agent-device-launcher.mjs"), "snapshot", "--config", file],
+          [path.join(shim, "agent-device-launcher.mjs"), "snapshot", "--config", file],
           { env: { ...process.env, AGENT_DEVICE_DAEMON_BASE_URL: "http://wrong-host" } },
         ).then((result) => JSON.parse(result.stdout));
-      expect(await Promise.all(setup.files.map(invoke))).toEqual([
+      expect(yield* Effect.promise(() => Promise.all(files.map(invoke)))).toEqual([
         { daemonBaseUrl: "http://127.0.0.1:1000", daemonAuthToken: "token-0" },
         { daemonBaseUrl: "http://127.0.0.1:1001", daemonAuthToken: "token-1" },
       ]);
-      const second = await readFile(setup.files[1]!, "utf8");
-      await Effect.runPromise(
-        writeAgentDeviceConfig(setup.files[0]!, {
-          baseUrl: "http://127.0.0.1:2000",
-          token: "new",
-          entryPath,
-        }).pipe(Effect.provide(NodeServices.layer)),
-      );
-      expect((await invoke(setup.files[0]!)).daemonAuthToken).toBe("new");
-      expect(await readFile(setup.files[1]!, "utf8")).toBe(second);
+      const second = yield* fs.readFileString(files[1]!);
+      yield* writeAgentDeviceConfig(files[0]!, {
+        baseUrl: "http://127.0.0.1:2000",
+        token: "new",
+        entryPath,
+      });
+      expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
+      expect(yield* fs.readFileString(files[1]!)).toBe(second);
       expect(agentDeviceSession("thread", "mini", "same-id")).not.toBe(
         agentDeviceSession("thread", "android", "same-id"),
       );
-      await expect(
-        exec(process.execPath, [join(setup.shim, "agent-device-launcher.mjs"), "snapshot"]),
-      ).rejects.toThrow("Call device_open first");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+      yield* Effect.promise(() =>
+        expect(
+          exec(process.execPath, [path.join(shim, "agent-device-launcher.mjs"), "snapshot"]),
+        ).rejects.toThrow("Call device_open first"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
