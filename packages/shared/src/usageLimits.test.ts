@@ -438,7 +438,10 @@ describe("pools", () => {
         },
       ],
     ]);
-    expect(collectLimitAccounts(input)).toHaveLength(1);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.plan).toBe("ChatGPT Plus Subscription");
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
   it("merges a native Claude tier with the hub's tierless read of the same account", () => {
