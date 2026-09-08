@@ -12,7 +12,10 @@ if [ -n "$ANDROID_HOME" ]; then export PATH="$ANDROID_HOME/platform-tools:$ANDRO
 `;
 
 /** Node runs this on the host. All paths it returns belong to that host. */
-export const remoteDeviceScript = (owner: string, mode: "probe" | "start" | "stop") =>
+export const remoteDeviceScript = (
+  owner: string,
+  mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
+) =>
   `
 const owner = ${JSON.stringify(owner)};
 const mode = ${JSON.stringify(mode)};
@@ -87,9 +90,9 @@ async function install(name, version, entry) {
   }
   const hubFile = path.join(state, 'hub.json');
   const daemonFile = path.join(state, 'daemon.json');
-  if (mode === 'stop') {
+  if (mode === 'stop' || mode === 'stop-agent') {
     const hub = read(hubFile);
-    if (hub && hub.owner === owner) {
+    if (mode === 'stop' && hub && hub.owner === owner) {
       stopHub(hub);
       fs.rmSync(hubFile, { force: true });
     }
@@ -100,7 +103,6 @@ async function install(name, version, entry) {
   if (!ios && !android) throw Error(platforms.map(p => p.reason).join(' '));
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
-  const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
   let hub = read(hubFile);
   if (!hub || hub.owner !== owner || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
@@ -119,6 +121,9 @@ async function install(name, version, entry) {
     if (Date.now() > deadline) throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log'));
     await sleep(200);
   }
+  let agentResult = {};
+  if (mode === 'agent-start') {
+  const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
   let daemon = read(daemonFile);
   if (!daemon || !await healthy(daemon.httpPort, '/health')) {
     fs.rmSync(daemonFile, { force: true });
@@ -128,9 +133,11 @@ async function install(name, version, entry) {
     daemon = read(daemonFile);
   }
   if (!daemon || !await healthy(daemon.httpPort, '/health')) throw Error('agent-device daemon did not become ready in ' + state);
+  agentResult = { daemonPort: daemon.httpPort, token: daemon.token, entryPath: agentEntry };
+  }
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
-  console.log(JSON.stringify({ nodePath: process.execPath, platforms, hubPort: hub.port, daemonPort: daemon.httpPort, token: daemon.token, entryPath: agentEntry,
+  console.log(JSON.stringify({ nodePath: process.execPath, platforms, hubPort: hub.port, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
 `;

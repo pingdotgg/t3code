@@ -21,6 +21,7 @@ import { type DeviceService, makeWithHosts, stateStream } from "./DeviceService.
 const baseState: DeviceServiceState = {
   hosts: [],
   hostStatus: "idle",
+  hostStatuses: {},
   devices: [],
   sessions: [],
   onboardingCompleted: false,
@@ -69,6 +70,7 @@ const fixture = Effect.fn("fixture")(function* (
   let booted = false;
   let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
+    nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
     run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),

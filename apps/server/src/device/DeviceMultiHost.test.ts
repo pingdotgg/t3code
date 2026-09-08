@@ -10,6 +10,7 @@ it.effect("keeps hosts independent when serials collide and another host fails",
   Effect.gen(function* () {
     const host = (id: string, failed = false): DeviceHost["Service"] => {
       const ready = {
+        nodePath: process.execPath,
         hub: { origin: `http://${id}` },
         agentDevice: { baseUrl: `http://${id}`, token: "test", entryPath: "/agent-device" },
         run: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
@@ -74,8 +75,18 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.sessions.map((session) => session.hostId)).toEqual(["b"]);
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
-    yield* service.agentReadinessIfSupported("b");
-    expect((yield* service.state).hostStatuses.b?.status).toBe("ready");
+    hosts.set("b", host("b"));
+    yield* service.refreshHosts;
+    const replaced = yield* service.state;
+    expect(replaced.sessions).toEqual([]);
+    expect(replaced.devices.map((device) => device.hostId)).toEqual(["a"]);
+    expect(replaced.hostStatuses.b).toBeUndefined();
+    yield* service.open({ threadId, hostId: "b", deviceId: "emulator-5554", platform: "android" });
+    hosts.delete("b");
+    yield* service.refreshHosts;
+    expect((yield* service.state).sessions).toEqual([]);
+    yield* service.agentReadinessIfSupported("a");
+    expect((yield* service.state).hostStatuses.a?.status).toBe("ready");
     yield* service.configure({ enabled: false });
     expect((yield* service.state).hostStatuses).toEqual({});
   }).pipe(

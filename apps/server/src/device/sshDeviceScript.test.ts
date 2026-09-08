@@ -61,7 +61,10 @@ else if(args[0]==='serve') { const server=http.createServer((req,res)=>res.end('
 else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
         );
-        const invoke = async (owner: string, mode: "start" | "stop") => {
+        const invoke = async (
+          owner: string,
+          mode: "start" | "agent-start" | "stop-agent" | "stop",
+        ) => {
           const file = NodePath.join(home, `${owner}-${mode}.cjs`);
           await NodeFSP.writeFile(
             file,
@@ -74,9 +77,14 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
         try {
-          const first = await invoke("one", "start");
-          const second = await invoke("two", "start");
-          const reused = await invoke("one", "start");
+          const manual = await invoke("one", "start");
+          expect(manual.daemonPort).toBeUndefined();
+          await expect(
+            NodeFSP.stat(NodePath.join(root, "hosts/one/daemon.json")),
+          ).rejects.toThrow();
+          const first = await invoke("one", "agent-start");
+          const second = await invoke("two", "agent-start");
+          const reused = await invoke("one", "agent-start");
           expect(reused.hubPort).toBe(first.hubPort);
           expect(reused.daemonPort).toBe(first.daemonPort);
           expect(second.hubPort).not.toBe(first.hubPort);
@@ -88,13 +96,15 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
             await NodeFSP.readFile(NodePath.join(root, "hosts/two/hub.json"), "utf8"),
           );
           await NodeFSP.writeFile(NodePath.join(root, `hosts/one/unhealthy-${firstHub.pid}`), "");
-          const repaired = await invoke("one", "start");
+          const repaired = await invoke("one", "agent-start");
           expect(repaired.hubPort).not.toBe(first.hubPort);
           const stopped = (await NodeFSP.readFile(NodePath.join(home, "stops"), "utf8"))
             .trim()
             .split("\n");
           expect(stopped).toContain(String(firstHub.pid));
           expect(stopped).not.toContain(String(secondHub.pid));
+          await invoke("one", "stop-agent");
+          expect((await fetch(`http://127.0.0.1:${repaired.hubPort}/readyz`)).ok).toBe(true);
           await invoke("one", "stop");
           expect((await fetch(`http://127.0.0.1:${second.hubPort}/readyz`)).ok).toBe(true);
           expect(
