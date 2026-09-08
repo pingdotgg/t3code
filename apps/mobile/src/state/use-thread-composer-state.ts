@@ -591,10 +591,13 @@ export function useThreadComposerState() {
 
   const onUpdateRuntimeMode = useCallback(
     (value: RuntimeMode) => {
-      if (!selectedThreadKey || !selectedThreadProject) {
+      if (!selectedThreadKey) {
         return;
       }
       updateComposerDraftSettings(selectedThreadKey, { runtimeMode: value });
+      if (!selectedThreadProject) {
+        return;
+      }
       setLastUsedComposerRuntimeMode(
         deriveLogicalProjectKeyFromSettings(selectedThreadProject, projectGroupingSettings),
         value,
