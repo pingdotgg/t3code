@@ -324,3 +324,19 @@ index ec78917..342f9d7 100644
  /**
   * Represents optional client protocol hooks that run when a transport connects
   * and disconnects.
+diff --git a/dist/unstable/http/HttpClientResponse.js b/dist/unstable/http/HttpClientResponse.js
+--- a/dist/unstable/http/HttpClientResponse.js
++++ b/dist/unstable/http/HttpClientResponse.js
+@@ -177,3 +177,3 @@
+     }
+-    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie());
++    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? []);
+   }
+diff --git a/src/unstable/http/HttpClientResponse.ts b/src/unstable/http/HttpClientResponse.ts
+--- a/src/unstable/http/HttpClientResponse.ts
++++ b/src/unstable/http/HttpClientResponse.ts
+@@ -309,3 +309,3 @@
+     }
+-    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie())
++    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? [])
+   }
