@@ -922,6 +922,97 @@ describe("orchestration projector", () => {
     }),
   );
 
+  effectIt.effect(
+    "matches every acknowledgement when concurrent starts share a provider turn",
+    () =>
+      Effect.gen(function* () {
+        const now = "2026-09-08T02:30:00.000Z";
+        const threadId = "thread-shared-provider-turn";
+        const providerTurnId = "turn-shared-provider";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `shared-provider-turn-${sequence}`,
+          });
+        let model = yield* projectEvent(
+          createEmptyReadModel(now),
+          event(1, "thread.created", {
+            threadId,
+            projectId: "project-1",
+            title: "Shared provider turn",
+            modelSelection: { instanceId: "claude", model: "test" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          }),
+        );
+        for (const [sequence, messageId] of [
+          [2, "request-a"],
+          [3, "request-b"],
+        ] as const) {
+          model = yield* projectEvent(
+            model,
+            event(sequence, "thread.turn-start-requested", {
+              threadId,
+              messageId,
+              expectsTurnStartAcknowledgement: true,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              createdAt: now,
+            }),
+          );
+        }
+        model = yield* projectEvent(
+          model,
+          event(4, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId: "request-a", turnId: providerTurnId },
+            updatedAt: now,
+          }),
+        );
+        for (const [sequence, status, activeTurnId] of [
+          [5, "running", providerTurnId],
+          [6, "ready", null],
+        ] as const) {
+          model = yield* projectEvent(
+            model,
+            event(sequence, "thread.session-set", {
+              threadId,
+              session: {
+                threadId,
+                status,
+                providerName: "claude",
+                runtimeMode: "full-access",
+                activeTurnId,
+                lastError: null,
+                updatedAt: now,
+              },
+            }),
+          );
+        }
+        model = yield* projectEvent(
+          model,
+          event(7, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId: "request-b", turnId: providerTurnId },
+            updatedAt: now,
+          }),
+        );
+
+        expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+        expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+        expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+      }),
+  );
+
   effectIt.effect("keeps queued messages reserved when one of consecutive reverts fails", () =>
     Effect.gen(function* () {
       const now = "2026-09-08T00:00:00.000Z";

@@ -787,9 +787,6 @@ export function projectEvent(
         // a still-running latest turn so its duration reflects the whole turn.
         const settledTurnState = settledTurnStateForSessionStatus(session.status);
         const activeTurnId = session.status === "running" ? session.activeTurnId : null;
-        const activeTurnWasAcknowledged =
-          activeTurnId !== null &&
-          (thread.submittedTurnStarts ?? []).some((entry) => entry.turnId === activeTurnId);
         const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
         return {
           ...nextBase,
@@ -807,7 +804,6 @@ export function projectEvent(
                 : (thread.submittedTurnStarts ?? []),
             turnStartSubmissionRendezvous:
               activeTurnId === null ||
-              activeTurnWasAcknowledged ||
               rendezvous === null ||
               rendezvous.awaitingMessageIds.length === 0
                 ? rendezvous

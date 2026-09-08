@@ -514,9 +514,6 @@ export function applyThreadDetailEvent(
       const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
       const activeTurnId =
         event.payload.session.status === "running" ? event.payload.session.activeTurnId : null;
-      const activeTurnWasAcknowledged =
-        activeTurnId !== null &&
-        (thread.submittedTurnStarts ?? []).some((entry) => entry.turnId === activeTurnId);
       const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
@@ -568,7 +565,6 @@ export function applyThreadDetailEvent(
               : (thread.submittedTurnStarts ?? []),
           turnStartSubmissionRendezvous:
             activeTurnId === null ||
-            activeTurnWasAcknowledged ||
             rendezvous === null ||
             rendezvous.awaitingMessageIds.length === 0
               ? rendezvous

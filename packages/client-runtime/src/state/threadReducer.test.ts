@@ -737,6 +737,89 @@ describe("applyThreadDetailEvent", () => {
         expect(running.thread.turnStartSubmissionRendezvous).toBeNull();
       }
     });
+
+    it("matches every acknowledgement when concurrent starts share a provider turn", () => {
+      const messageA = MessageId.make("message-shared-turn-a");
+      const messageB = MessageId.make("message-shared-turn-b");
+      const turnId = TurnId.make("turn-shared-provider");
+      let thread = baseThread;
+      const events: OrchestrationEvent[] = [
+        ...[messageA, messageB].map((messageId, index): OrchestrationEvent => ({
+          ...baseEventFields,
+          sequence: index + 6,
+          occurredAt: "2026-04-01T05:45:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.turn-start-requested",
+          payload: {
+            threadId: baseThread.id,
+            messageId,
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-04-01T05:45:00.000Z",
+          },
+        })),
+        {
+          ...baseEventFields,
+          sequence: 8,
+          occurredAt: "2026-04-01T05:45:01.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId: messageA, turnId },
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+        ...[
+          [9, "running", turnId],
+          [10, "ready", null],
+        ].map(([sequence, status, activeTurnId]): OrchestrationEvent => ({
+          ...baseEventFields,
+          sequence: sequence as number,
+          occurredAt: "2026-04-01T05:45:02.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: status as "running" | "ready",
+              providerName: "claude",
+              runtimeMode: "full-access",
+              activeTurnId: activeTurnId as TurnId | null,
+              lastError: null,
+              updatedAt: "2026-04-01T05:45:02.000Z",
+            },
+          },
+        })),
+        {
+          ...baseEventFields,
+          sequence: 11,
+          occurredAt: "2026-04-01T05:45:03.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId: messageB, turnId },
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+      ];
+      for (const event of events) {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") thread = result.thread;
+      }
+
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+      expect(thread.turnStartSubmissionRendezvous).toBeNull();
+    });
   });
 
   describe("thread.message-sent", () => {
