@@ -1,4 +1,5 @@
 import { InfoIcon, Undo2Icon } from "lucide-react";
+import type { ServerSettings } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   createContext,
@@ -19,6 +20,16 @@ import { cn } from "../../lib/utils";
 import { WorkspacePageContainer, type WorkspacePageWidth } from "../WorkspacePageContainer";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { scopedSettingsAreMixed } from "./scopedSettings";
+
+const SettingsRowScopeContext = createContext(false);
+const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
+
+/** Mixed client/server panels opt in; project and environment-specific editors already scope their rows. */
+export function SettingsRowScopeProvider({ children }: { children: ReactNode }) {
+  return <SettingsRowScopeContext value>{children}</SettingsRowScopeContext>;
+}
 
 declare module "@tanstack/react-router" {
   interface HistoryState {
@@ -255,6 +266,7 @@ export function SettingsRow({
   resetAction,
   control,
   serverScoped = false,
+  settingKeys = EMPTY_SETTING_KEYS,
   children,
   className,
   ...rowProps
@@ -265,14 +277,27 @@ export function SettingsRow({
   resetAction?: ReactNode;
   control?: ReactNode;
   serverScoped?: boolean;
+  settingKeys?: readonly (keyof ServerSettings)[];
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
-  const unavailable = serverScoped && !primarySettingsAvailable;
+  const context = useOptionalSettingsScope();
+  const filterByScope = useContext(SettingsRowScopeContext);
+  const [editingMixed, setEditingMixed] = useState(false);
+  const mixed =
+    context !== null && scopedSettingsAreMixed(context.connectedEnvironments, settingKeys);
+  const unavailable =
+    serverScoped &&
+    !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable);
+  if (filterByScope && context && (context.scope.kind === "device") === serverScoped) return null;
   const renderedReset = unavailable ? null : resetAction;
   const renderedControl =
-    unavailable && control ? (
+    mixed && !editingMixed && control ? (
+      <Button size="sm" variant="outline" onClick={() => setEditingMixed(true)}>
+        Set for all...
+      </Button>
+    ) : unavailable && control ? (
       <Tooltip>
         <TooltipTrigger
           render={
@@ -288,7 +313,9 @@ export function SettingsRow({
           </div>
         </TooltipTrigger>
         <TooltipPopup side="top" className="max-w-72">
-          {PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
+          {context
+            ? "Reconnect the selected environment to change this setting."
+            : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE}
         </TooltipPopup>
       </Tooltip>
     ) : (
@@ -320,7 +347,11 @@ export function SettingsRow({
               {description}
             </p>
           ) : null}
-          {status ? <div className="pt-0.5 text-xs text-muted-foreground">{status}</div> : null}
+          {mixed || status ? (
+            <div className="pt-0.5 text-xs text-muted-foreground">
+              {mixed ? "Mixed across selected environments" : status}
+            </div>
+          ) : null}
         </div>
         {renderedControl ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">

@@ -2,10 +2,19 @@ import { createFileRoute } from "@tanstack/react-router";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
+import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 
 function SettingsProvidersRoute() {
   const target = Route.useSearch();
-  return <ProviderSettingsPanel {...target} />;
+  const { environment } = useSettingsScope();
+  if (!environment) return null;
+  return (
+    <ProviderSettingsPanel
+      environmentId={environment.environmentId}
+      {...(target.instanceId ? { instanceId: target.instanceId } : {})}
+      scoped
+    />
+  );
 }
 
 export const Route = createFileRoute("/settings/providers")({

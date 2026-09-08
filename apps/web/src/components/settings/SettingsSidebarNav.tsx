@@ -181,18 +181,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         setOpenMobile(false);
       }
       const targetId = item.targetId ?? item.id;
-      if (
-        item.to !== "/settings/projects" &&
-        pathname === item.to &&
-        currentHash.replace(/^#/, "") === targetId
-      ) {
+      if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
         scrollToSettingsTarget(targetId);
         return;
       }
       void navigate({
         to: item.to,
-        search: (previous) =>
-          item.to === "/settings/projects" ? { ...previous, project: undefined } : previous,
         hash: targetId,
         replace: true,
         hashScrollIntoView: false,

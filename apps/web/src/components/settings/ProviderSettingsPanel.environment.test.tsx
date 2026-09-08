@@ -29,6 +29,7 @@ const settingsState = vi.hoisted(() => ({
   readEnvironmentIds: [] as EnvironmentId[],
   updateEnvironmentIds: [] as EnvironmentId[],
   updateSettings: vi.fn(),
+  updateClientSettings: vi.fn(),
 }));
 
 const settingsSearchState = vi.hoisted(() => ({
@@ -81,14 +82,15 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
+  useUpdateClientSettings: () => settingsState.updateClientSettings,
   useEnvironmentSettings: (environmentId: EnvironmentId) => {
     settingsState.readEnvironmentIds.push(environmentId);
     return settingsState.value;
   },
-  useUpdateEnvironmentSettings: (environmentId: EnvironmentId) => {
-    settingsState.updateEnvironmentIds.push(environmentId);
-    return settingsState.updateSettings;
-  },
+}));
+
+vi.mock("./useScopedSettings", () => ({
+  useUpdateScopedSettings: () => settingsState.updateSettings,
 }));
 
 vi.mock("../../environments/primary", () => ({
@@ -177,6 +179,7 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.readEnvironmentIds = [];
     settingsState.updateEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
+    settingsState.updateClientSettings.mockReset();
     settingsSearchState.targetId = null;
     settingsSearchState.effects = [];
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
@@ -186,7 +189,6 @@ describe("EnvironmentProviderSettings routing", () => {
   it("coalesces a nullable provider snapshot before rendering array-backed UI", () => {
     expect(() => renderPanel()).not.toThrow();
     expect(settingsState.readEnvironmentIds).toEqual([environmentId]);
-    expect(settingsState.updateEnvironmentIds).toEqual([environmentId]);
   });
 
   it("routes refresh and provider update commands to the selected environment", async () => {
@@ -228,6 +230,30 @@ describe("EnvironmentProviderSettings routing", () => {
     const panel = renderPanel({ targetInstanceId: customId });
     const editor = visitElements(panel, (element) => element.props.mode === "editor");
     expect(editor?.props.instanceId).toBe(customId);
+  });
+
+  it.each([
+    ["onFavoriteModelsChange", { favorites: [{ provider: codexId, model: "chosen" }] }],
+    [
+      "onHiddenModelsChange",
+      { providerModelPreferences: { [codexId]: { hiddenModels: ["chosen"], modelOrder: [] } } },
+    ],
+    [
+      "onModelOrderChange",
+      { providerModelPreferences: { [codexId]: { hiddenModels: [], modelOrder: ["chosen"] } } },
+    ],
+  ])("saves %s on this device without changing the selected server", (action, expected) => {
+    atoms.providers = [provider()];
+    const panel = renderPanel();
+    const editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(editor).not.toBeNull();
+    if (!editor) throw new Error("Provider editor was not rendered");
+    (editor.props[action] as (models: string[]) => void)(["chosen"]);
+    expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("does not substitute another account when the requested instance was removed", () => {
