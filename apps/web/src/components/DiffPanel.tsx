@@ -1101,7 +1101,7 @@ export default function DiffPanel({
                                 size="icon-micro"
                                 variant="ghost"
                                 className={cn(
-                                  "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
+                                  "-ms-0.5 [--control-icon-color:currentColor]",
                                   getDiffCollapseIconClassName(fileDiff),
                                 )}
                                 aria-label={
