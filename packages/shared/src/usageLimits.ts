@@ -357,6 +357,11 @@ export interface LimitPoolWindow {
   readonly kind: ServerProviderUsageWindow["kind"];
   readonly label: string;
   readonly members: readonly LimitPoolMember[];
+  /** Fixed account positions across rows; a null window leaves a gap. */
+  readonly columns: ReadonlyArray<{
+    readonly account: LimitAccount;
+    readonly window: ServerProviderUsageWindow | null;
+  }>;
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
@@ -389,10 +394,10 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
  * a month on Free/Go), and a monthly allowance must not average into a
  * five-hour pool. Pools order by kind, then first appearance.
  *
- * `accounts` is the table order: instances the user can act on (native,
- * named) before hub-only accounts, each group alphabetical. Each window's
- * `members` sort by reset instead, soonest first, so a bar reads left to
- * right as "who refills next" and matches the reset list under it.
+ * Accounts and columns share the session reset order, soonest first. When
+ * no account reports a session window, use the first window by kind instead.
+ * Missing reset times sort last, with account names and keys breaking ties.
+ * Each window's reset list still follows its own clock.
  */
 export function collectLimitPools(
   accounts: readonly LimitAccount[],
@@ -405,10 +410,20 @@ export function collectLimitPools(
     else byDriver.set(account.driver, [account]);
   }
   return [...byDriver].map(([driver, members]) => {
+    const orderWindow = members
+      .flatMap((account) => account.limits.windows)
+      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
+    const orderReset = (account: LimitAccount) => {
+      const window = account.limits.windows.find(
+        (window) => window.kind === orderWindow?.kind && window.id === orderWindow.id,
+      );
+      return (window ? resetMillis(window) : null) ?? Number.POSITIVE_INFINITY;
+    };
     const sorted = [...members].sort(
       (left, right) =>
-        Number(left.redeem === null) - Number(right.redeem === null) ||
-        accountSortName(left).localeCompare(accountSortName(right)),
+        orderReset(left) - orderReset(right) ||
+        accountSortName(left).localeCompare(accountSortName(right)) ||
+        left.key.localeCompare(right.key),
     );
     return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
   });
@@ -428,12 +443,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       else byKey.set(key, [{ account, window }]);
     }
   }
-  const pools = [...byKey.values()].map((unordered): LimitPoolWindow => {
-    const members = [...unordered].sort(
-      (left, right) =>
-        (resetMillis(left.window) ?? Number.POSITIVE_INFINITY) -
-        (resetMillis(right.window) ?? Number.POSITIVE_INFINITY),
-    );
+  const pools = [...byKey.values()].map((members): LimitPoolWindow => {
+    const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
     const first = members[0]!.window;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
     // Pace compares spend against the clock, so it is judged only over the
@@ -465,6 +476,9 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
+      columns: accounts.map(
+        (account) => memberByAccount.get(account.key) ?? { account, window: null },
+      ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),

@@ -116,30 +116,34 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.members.map(({ account, window }, index) => (
-          <Pressable
-            key={account.key}
-            accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
-            accessibilityHint="Show account details"
-            onPress={() => openAccount(account)}
-            className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
-          >
-            <AccountSegment
-              remaining={remainingPercent(window)}
-              color={color}
-              pending={Boolean(window.resetsAt)}
-            />
-            <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-              <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                {index + 1}
-              </Text>
-            </View>
-          </Pressable>
-        ))}
+        {pool.columns.map(({ account, window }, index) => {
+          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+          return (
+            <Pressable
+              key={account.key}
+              accessibilityRole="button"
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
+              accessibilityHint="Show account details"
+              onPress={() => openAccount(account)}
+              className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
+            >
+              <AccountSegment
+                remaining={remainingPercent(window)}
+                color={color}
+                pending={Boolean(window.resetsAt)}
+              />
+              <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+                  {index + 1}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
       </View>
       <View>
-        {pool.members.map(({ account, window }, index) => {
+        {pool.columns.map(({ account, window }, index) => {
+          if (!window) return null;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (
