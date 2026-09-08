@@ -1046,7 +1046,7 @@ export default function DiffPanel({
                       (node): node is HTMLElement =>
                         node instanceof HTMLElement && node.hasAttribute("data-title"),
                     );
-                    const filePath = title?.textContent?.trim();
+                    const filePath = title?.textContent;
                     // The filename remains the explicit "open in editor" affordance.
                     if (filePath) {
                       openDiffFile(filePath);
@@ -1056,9 +1056,7 @@ export default function DiffPanel({
                       (node): node is HTMLElement =>
                         node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
                     );
-                    const headerFilePath = header
-                      ?.querySelector("[data-title]")
-                      ?.textContent?.trim();
+                    const headerFilePath = header?.querySelector("[data-title]")?.textContent;
                     if (!headerFilePath) return;
                     const file = codeViewFiles.find(
                       (candidate) => candidate.filePath === headerFilePath,

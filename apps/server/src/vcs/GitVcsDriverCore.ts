@@ -2288,7 +2288,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       cwd,
       ["ls-files", "--others", "--exclude-standard", "-z"],
       {
-        maxOutputBytes: DEFAULT_MAX_OUTPUT_BYTES,
+        // The manifest must remain complete; only patch bodies have preview limits.
+        maxOutputBytes: Infinity,
       },
     );
     const untrackedPaths = splitNullSeparatedGitStdoutPaths(untrackedResult).filter(
@@ -2539,8 +2540,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const patchLimit = input.file
       ? REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES
       : REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES;
-    const details = yield* statusDetailsLocal(input.cwd);
-    if (!details.isRepo) {
+    const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+    if (!repository?.worktreeRoot) {
       return {
         cwd: input.cwd,
         generatedAt: yield* DateTime.now,
@@ -2548,7 +2554,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    const branch = details.branch;
+    const branch = repository.currentBranch;
     const baseRef =
       input.baseRef ??
       (branch
@@ -2572,7 +2578,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.getReviewDiffPreview.stat",
         input.cwd,
         [...args, ref, "--", ...pathArgs],
-        { allowNonZeroExit: true },
+        { allowNonZeroExit: true, maxOutputBytes: Infinity },
       );
       if (result.exitCode === 0) return { ref, files: parseReviewNumstat(result.stdout) };
       if (ref === "HEAD" && isUnbornHeadStderr(result.stderr)) {
@@ -2586,10 +2592,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             (yield* HostProcessPlatform) === "win32" ? "NUL" : "/dev/null",
           ],
         )).trim();
-        const stdout = yield* runGitStdout(
+        const stdout = yield* runGitStdoutWithOptions(
           "GitVcsDriver.getReviewDiffPreview.unbornStat",
           input.cwd,
           [...args, emptyTree, "--", ...pathArgs],
+          { maxOutputBytes: Infinity },
         );
         return { ref: emptyTree, files: parseReviewNumstat(stdout) };
       }
