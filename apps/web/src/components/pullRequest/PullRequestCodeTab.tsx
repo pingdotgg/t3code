@@ -28,7 +28,11 @@ import { useAtomRefresh } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { getLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  useLocalStorage,
+} from "~/hooks/useLocalStorage";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
@@ -36,6 +40,7 @@ import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDet
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
+  buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   fnv1a32,
   getDiffLineStat,
@@ -110,17 +115,18 @@ const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 const PULL_REQUEST_VIEWED_FILES_STORAGE_KEY = "t3code.pullRequestViewedFiles";
 
 /**
- * The file keys stored are the content-derived render keys collapse uses, so a push that
- * changes a file un-views it on its own. An entry that fails to decode falls back to nothing
- * viewed and is overwritten by the next tick, so the shape needs no version field.
+ * The file keys stored are per-file identities (previous path and path), not the render keys
+ * collapse uses: those bake in the theme, the page cursor and the whole slice's hash, so a
+ * mark stored under one would not survive a push, a theme switch or repaging. A rename or a
+ * removal strands its key, which the caps in `toggleViewedFile` absorb.
  */
 const ViewedFilesByPullRequestSchema = Schema.Record(Schema.String, Schema.Array(Schema.String));
 const NO_VIEWED_FILES: ViewedFilesByPullRequest = {};
 
 /**
- * The marks read straight from storage, as the seed for `toggledFiles`: a file already viewed
- * opens folded, the way GitHub keeps it. Read imperatively so the seed reflects the moment the
- * scope changes rather than subscribing the reset to every tick.
+ * The marks read straight from storage, as the fold default a scope opens with: a file already
+ * viewed opens folded, the way GitHub keeps it. Read imperatively so the snapshot reflects the
+ * moment the scope changes rather than subscribing the reset to every tick.
  */
 const readStoredViewedFileKeys = (referenceKey: string): Set<string> => {
   try {
@@ -130,6 +136,14 @@ const readStoredViewedFileKeys = (referenceKey: string): Set<string> => {
       ] ?? [],
     );
   } catch {
+    // A value that cannot be decoded would also fail every write, since the hook re-decodes
+    // the stored value before applying an update. Left in place it makes every checkbox a
+    // dead control, so it is dropped here; only viewed marks are lost.
+    try {
+      removeLocalStorageItem(PULL_REQUEST_VIEWED_FILES_STORAGE_KEY);
+    } catch {
+      // Storage that cannot be written cannot be repaired from here either.
+    }
     return new Set();
   }
 };
@@ -248,9 +262,11 @@ function PullRequestCodeTab({
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
-  // Seeded with the stored Viewed marks so a file already reviewed opens folded after a
-  // reload; from there the set carries the reader's own choices, viewed or not.
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() =>
+  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  // The marks as they stood when the scope opened, as the fold default: a viewed file opens
+  // folded. A snapshot rather than the live marks, because ticking a checkbox both records the
+  // mark and collapses the file explicitly; a live default would fight that second half.
+  const [viewedSeed, setViewedSeed] = useState<ReadonlySet<string>>(() =>
     readStoredViewedFileKeys(pullRequestReviewKey(reference)),
   );
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
@@ -305,7 +321,8 @@ function PullRequestCodeTab({
   useEffect(() => {
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(readStoredViewedFileKeys(referenceKey));
+    setToggledFiles(new Set());
+    setViewedSeed(readStoredViewedFileKeys(referenceKey));
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -528,8 +545,14 @@ function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
-        const viewed = viewedFiles.has(fileKey);
+        const viewedKey = buildFileDiffIdentityKey(fileDiff);
+        const collapsed = isFileDiffCollapsed(
+          fileKey,
+          foldOverride,
+          toggledFiles,
+          viewedSeed.has(viewedKey),
+        );
+        const viewed = viewedFiles.has(viewedKey);
 
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
@@ -584,6 +607,7 @@ function PullRequestCodeTab({
       placedThreadIds,
       toggledFiles,
       viewedFiles,
+      viewedSeed,
     ],
   );
   const lineStat = useMemo(() => getDiffLineStat(files), [files]);
@@ -813,14 +837,15 @@ function PullRequestCodeTab({
           />
           {/* GitHub's semantics: ticking Viewed folds the file, unticking unfolds it. The
               label is bailed on by the header's click-capture below, so the tick does not
-              also fire the header's own fold toggle. */}
+              also fire the header's own fold toggle. The mark is stored under the file's
+              identity while the fold toggle stays on the item's render key. */}
           <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
             <Checkbox
               className="size-3.5 sm:size-3.5"
-              checked={viewedFiles.has(item.id)}
+              checked={viewedFiles.has(buildFileDiffIdentityKey(item.fileDiff))}
               onCheckedChange={(checked) => {
                 if (checked !== (item.collapsed === true)) toggleFile(item.id);
-                toggleFileViewed(item.id);
+                toggleFileViewed(buildFileDiffIdentityKey(item.fileDiff));
               }}
             />
             Viewed

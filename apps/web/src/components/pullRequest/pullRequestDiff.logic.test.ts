@@ -84,6 +84,16 @@ describe("isFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
   });
+
+  it("folds a file marked viewed by default, until toggled", () => {
+    expect(isFileDiffCollapsed("a.ts", null, NO_TOGGLES, true)).toBe(true);
+    expect(isFileDiffCollapsed("a.ts", null, new Set(["a.ts"]), true)).toBe(false);
+  });
+
+  it("lets either toolbar press override the viewed default", () => {
+    expect(isFileDiffCollapsed("a.ts", "expanded", NO_TOGGLES, true)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", "folded", NO_TOGGLES, false)).toBe(true);
+  });
 });
 
 describe("toggleViewedFile", () => {

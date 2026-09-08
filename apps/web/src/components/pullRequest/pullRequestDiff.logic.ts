@@ -30,16 +30,18 @@ export type DiffFoldOverride = "expanded" | "folded" | null;
  * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
  * what the toolbar last said rather than as the set of folded files: a file that has not loaded
  * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything. Files start expanded so opening the Code tab immediately shows the change; the
- * reader can still fold individual files or the whole diff from the toolbar.
+ * everything. Files start expanded so opening the Code tab immediately shows the change, except
+ * one whose `foldedByDefault` says its reader already marked it viewed; either toolbar press
+ * overrides that, and a toggle still flips whatever the default settled on.
  */
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
   toggledFileKeys: ReadonlySet<string>,
+  foldedByDefault = false,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded";
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+  const folded = foldOverride === null ? foldedByDefault : foldOverride === "folded";
+  return toggledFileKeys.has(fileKey) ? !folded : folded;
 }
 
 /** Viewed marks per pull request, most recently touched pull request last. */
