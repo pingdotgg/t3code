@@ -299,24 +299,10 @@ export default function DiffPanel({
   );
   const [filePatchRevision, setFilePatchRevision] = useState(0);
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshBranchDiffPreview = useCallback(() => {
+  const refreshDiffFromUserAction = useCallback(() => {
     setFilePatchRevision((revision) => revision + 1);
     refreshPreviewQuery();
   }, [refreshPreviewQuery]);
-
-  useEffect(() => {
-    if (!canRefreshGitDiff) return;
-    const refreshOnFocus = () => refreshBranchDiffPreview();
-    window.addEventListener("focus", refreshOnFocus);
-    return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [canRefreshGitDiff, refreshBranchDiffPreview]);
-
-  useWorkspaceMutationRefresh({
-    enabled: canRefreshGitDiff,
-    mutationId: workspaceMutationId,
-    refresh: refreshBranchDiffPreview,
-    resourceKey: `diff:${activeThreadRefreshKey ?? ""}`,
-  });
 
   const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
@@ -416,8 +402,13 @@ export default function DiffPanel({
       ? selectedGitSource
       : null;
   const lazySourceHash = lazySource?.diffHash;
+  const fileStats = useMemo(
+    () => new Map(lazySource?.files?.map((file) => [file.path, file])),
+    [lazySource?.files],
+  );
   const {
     scope: filePatchScope,
+    refresh: refreshFilePatches,
     isPending: areFilePatchesPending,
     fileStates,
     retry,
@@ -435,6 +426,25 @@ export default function DiffPanel({
     revision: filePatchRevision,
     preview: renderablePatch,
   });
+  const refreshBranchDiffPreview = useCallback(() => {
+    refreshFilePatches();
+    refreshPreviewQuery();
+  }, [refreshFilePatches, refreshPreviewQuery]);
+
+  useEffect(() => {
+    if (!canRefreshGitDiff) return;
+    const refreshOnFocus = () => refreshBranchDiffPreview();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [canRefreshGitDiff, refreshBranchDiffPreview]);
+
+  useWorkspaceMutationRefresh({
+    enabled: canRefreshGitDiff,
+    mutationId: workspaceMutationId,
+    refresh: refreshBranchDiffPreview,
+    resourceKey: `diff:${activeThreadRefreshKey ?? ""}`,
+  });
+
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
   const renderableFileEntries = useMemo(
     () =>
@@ -850,7 +860,7 @@ export default function DiffPanel({
                   size="icon-sm"
                   variant="ghost"
                   aria-label={isRefreshingDiff ? "Refreshing diff" : "Refresh diff"}
-                  onClick={refreshBranchDiffPreview}
+                  onClick={refreshDiffFromUserAction}
                 />
               }
             >
@@ -1068,7 +1078,7 @@ export default function DiffPanel({
                     composerDraftTarget={composerDraftTarget}
                     renderHeaderFilenameSuffix={(fileDiff) => {
                       const path = resolveFileDiffPath(fileDiff);
-                      const stat = lazySource?.files?.find((file) => file.path === path);
+                      const stat = fileStats.get(path);
                       return (
                         <>
                           <DiffFilePathCopyButton filePath={path} />
@@ -1083,9 +1093,7 @@ export default function DiffPanel({
                           unsafeCSSExtra:
                             "[data-additions-count], [data-deletions-count] { display: none; }",
                           renderHeaderMetadata: (fileDiff: FileDiffMetadata) => {
-                            const stat = lazySource.files?.find(
-                              (file) => file.path === resolveFileDiffPath(fileDiff),
-                            );
+                            const stat = fileStats.get(resolveFileDiffPath(fileDiff));
                             return stat ? (
                               <DiffStatLabel
                                 additions={stat.additions}
