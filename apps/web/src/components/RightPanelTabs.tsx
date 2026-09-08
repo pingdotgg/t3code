@@ -154,7 +154,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "Linked pull requests are only available for server threads.",
   agents: "Agents are only available from a thread.",
-  device: "Devices are only available from a server thread.",
+  device: "Devices are only available from a thread.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -178,7 +178,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "Available for server threads.",
   agents: "Available from a thread.",
-  device: "Available from a server thread.",
+  device: "Available from a thread.",
 } as const;
 
 type TabContextMenuAction =

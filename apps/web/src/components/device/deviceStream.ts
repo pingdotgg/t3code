@@ -461,8 +461,31 @@ export function createDeviceStreamClient(
     if (!stopped) scheduleRetry(() => void readIosVideo());
   };
 
+  /**
+   * serve-sim's helper only accepts HID and pushes its screen config once
+   * screen capture is running, and the AVCC stream does not reliably start
+   * it. Touching the MJPEG endpoint does; one aborted request is enough.
+   */
+  const primeIosHelper = async () => {
+    const controller = new AbortController();
+    try {
+      const response = await fetch(httpUrl(`/helper/${device}/stream.mjpeg`), {
+        signal: controller.signal,
+        credentials: access.credentials ? "include" : "same-origin",
+      });
+      if (response.status === 401 || response.status === 403) return handleUnauthorized();
+      await response.body?.getReader().read();
+    } catch {
+      // A failed prime just means the socket may take a retry to come up.
+    } finally {
+      controller.abort();
+    }
+  };
+
   // iOS input socket; also carries the screen config the helper pushes.
-  const connectIosInput = () => {
+  const connectIosInput = async () => {
+    if (stopped) return;
+    await primeIosHelper();
     if (stopped) return;
     const ws = new WebSocket(wsUrl(`/helper/ws?device=${device}`));
     ws.binaryType = "arraybuffer";
@@ -494,7 +517,7 @@ export function createDeviceStreamClient(
         );
       }
       if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
-      scheduleRetry(connectIosInput);
+      scheduleRetry(() => void connectIosInput());
     };
     ws.onerror = () => ws.close();
   };
@@ -552,7 +575,7 @@ export function createDeviceStreamClient(
     firstFrame = false;
     events.onStatus("connecting");
     if (platform === "ios") {
-      connectIosInput();
+      void connectIosInput();
       if (useWebCodecs) void readIosVideo();
       else fallBackToMjpeg();
     } else if (useWebCodecs) {
