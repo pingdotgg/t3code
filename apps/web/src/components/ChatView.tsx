@@ -4513,12 +4513,12 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, [composerRef]);
-  const canInterruptRunningThread = deriveCanInterruptRunningThread(
+  const canInterruptRunningThread = canOperateThread && deriveCanInterruptRunningThread(
     activeThread !== undefined,
     activeRuntime,
   );
   const onInterrupt = useCallback(async () => {
-    if (!activeThread) return;
+    if (!activeThread || !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)) return;
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
