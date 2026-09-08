@@ -31,7 +31,13 @@ export interface GitActionMenuItem {
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
-  kind: "run_action" | "run_pull" | "open_publish" | "open_commit_dialog" | "show_hint";
+  kind:
+    | "run_action"
+    | "run_pull"
+    | "open_publish"
+    | "open_commit_dialog"
+    | "open_push_dialog"
+    | "show_hint";
   action?: GitStackedAction;
   hint?: string;
 }
@@ -132,9 +138,10 @@ export function buildMenuItems(
   const canPush =
     !isBusy &&
     hasBranch &&
-    !isBehind &&
     gitStatus.aheadCount > 0 &&
-    (gitStatus.hasUpstream || canPushWithoutUpstream);
+    (isBehind
+      ? !hasChanges && gitStatus.hasUpstream
+      : gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
     hasBranch &&
@@ -272,10 +279,9 @@ export function resolveQuickAction(
 
   if (isDiverged) {
     return {
-      label: "Sync ref",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
+      label: "Push",
+      disabled: false,
+      kind: "open_push_dialog",
     };
   }
 
@@ -328,6 +334,17 @@ export function resolveQuickAction(
     kind: "show_hint",
     hint: "Branch is up to date. No action needed.",
   };
+}
+
+export function requiresForcePushConfirmation(gitStatus: VcsStatusResult | null): boolean {
+  return (
+    gitStatus !== null &&
+    gitStatus.refName !== null &&
+    gitStatus.hasUpstream &&
+    !gitStatus.hasWorkingTreeChanges &&
+    gitStatus.aheadCount > 0 &&
+    gitStatus.behindCount > 0
+  );
 }
 
 export function resolveDefaultBranchActionDialogCopy(input: {

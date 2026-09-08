@@ -21,7 +21,7 @@ export interface GitActionMenuItem {
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
-  kind: "run_action" | "run_pull" | "open_pr" | "show_hint";
+  kind: "run_action" | "run_pull" | "open_pr" | "open_push_dialog" | "show_hint";
   action?: GitStackedAction;
   hint?: string;
 }
@@ -40,7 +40,7 @@ export type DefaultBranchConfirmableAction =
 
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "commitMessage" | "splitCommits" | "featureBranch" | "filePaths"
+  "action" | "forceWithLease" | "commitMessage" | "splitCommits" | "featureBranch" | "filePaths"
 >;
 
 export function changeRequestTerminologyFor(
@@ -67,9 +67,8 @@ export function buildMenuItems(
     !isBusy &&
     hasBranch &&
     !hasChanges &&
-    !isBehind &&
     gitStatus.aheadCount > 0 &&
-    (gitStatus.hasUpstream || canPushWithoutUpstream);
+    (isBehind ? gitStatus.hasUpstream : gitStatus.hasUpstream || canPushWithoutUpstream);
   const canCreatePr =
     !isBusy &&
     hasBranch &&
@@ -207,10 +206,9 @@ export function resolveQuickAction(
 
   if (isDiverged) {
     return {
-      label: "Sync branch",
-      disabled: true,
-      kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
+      label: "Push",
+      disabled: false,
+      kind: "open_push_dialog",
     };
   }
 
@@ -249,6 +247,17 @@ export function resolveQuickAction(
     kind: "show_hint",
     hint: "Branch is up to date. No action needed.",
   };
+}
+
+export function requiresForcePushConfirmation(gitStatus: VcsStatusResult | null): boolean {
+  return (
+    gitStatus !== null &&
+    gitStatus.refName !== null &&
+    gitStatus.hasUpstream &&
+    !gitStatus.hasWorkingTreeChanges &&
+    gitStatus.aheadCount > 0 &&
+    gitStatus.behindCount > 0
+  );
 }
 
 export function getGitActionDisabledReason(input: {

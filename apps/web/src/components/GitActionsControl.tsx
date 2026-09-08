@@ -36,6 +36,7 @@ import {
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup } from "~/components/ui/radio-group";
@@ -56,6 +57,7 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
+  requiresForcePushConfirmation,
   resolveDefaultBranchActionDialogCopy,
   resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
@@ -138,6 +140,7 @@ interface PendingDefaultBranchAction {
 
 interface RunGitActionWithToastInput {
   action: GitStackedAction;
+  forceWithLease?: boolean;
   commitMessage?: string;
   splitCommits?: boolean;
   onConfirmed?: () => void;
@@ -434,6 +437,7 @@ function GitQuickActionIcon({
 }) {
   if (quickAction.kind === "open_publish") return <CloudUploadIcon className={className} />;
   if (quickAction.kind === "run_pull") return <CloudDownloadIcon className={className} />;
+  if (quickAction.kind === "open_push_dialog") return <CloudUploadIcon className={className} />;
   if (quickAction.kind === "run_action") {
     if (quickAction.action === "commit") return <GitCommitIcon className={className} />;
     if (quickAction.action === "push" || quickAction.action === "commit_push") {
@@ -1110,6 +1114,7 @@ export default function GitActionsControl({
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [isRewriteCommitMessagesDialogOpen, setIsRewriteCommitMessagesDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
+  const [isForcePushDialogOpen, setIsForcePushDialogOpen] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
@@ -1292,6 +1297,7 @@ export default function GitActionsControl({
     quickAction.disabled &&
     !changesTotals.insertions &&
     !changesTotals.deletions;
+  const canForcePushWithLease = requiresForcePushConfirmation(gitStatusForActions);
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -1318,6 +1324,7 @@ export default function GitActionsControl({
 
   async function runGitActionWithToast({
     action,
+    forceWithLease = false,
     commitMessage,
     splitCommits = false,
     onConfirmed,
@@ -1374,6 +1381,7 @@ export default function GitActionsControl({
     const result = await runImmediateGitAction.run({
       actionId,
       action,
+      ...(forceWithLease ? { forceWithLease: true } : {}),
       ...(commitMessage ? { commitMessage } : {}),
       ...(splitCommits ? { splitCommits: true } : {}),
       ...(featureBranch ? { featureBranch } : {}),
@@ -1459,6 +1467,10 @@ export default function GitActionsControl({
       setIsPublishDialogOpen(true);
       return;
     }
+    if (quickAction.kind === "open_push_dialog") {
+      setIsForcePushDialogOpen(true);
+      return;
+    }
     if (quickAction.kind === "run_pull") {
       void (async () => {
         setInlineSuccess(null);
@@ -1513,6 +1525,10 @@ export default function GitActionsControl({
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (item.disabled) return;
     if (item.dialogAction === "push") {
+      if (requiresForcePushConfirmation(gitStatusForActions)) {
+        setIsForcePushDialogOpen(true);
+        return;
+      }
       void runGitActionWithToast({ action: "push" });
       return;
     }
@@ -2043,7 +2059,11 @@ export default function GitActionsControl({
             >
               Commit on new branch
             </Button>
-            <Button size="sm" disabled={!canWriteSourceControl || noneSelected} onClick={() => runSplitDialogAction()}>
+            <Button
+              size="sm"
+              disabled={!canWriteSourceControl || noneSelected}
+              onClick={() => runSplitDialogAction()}
+            >
               Split &amp; commit
             </Button>
           </DialogFooter>
@@ -2060,6 +2080,66 @@ export default function GitActionsControl({
           gitCwd={gitCwd}
         />
       ) : null}
+
+      <Dialog open={isForcePushDialogOpen} onOpenChange={setIsForcePushDialogOpen}>
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Force push with lease?</DialogTitle>
+            <DialogDescription>
+              The local and upstream histories have diverged, so a regular push cannot update this
+              branch.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <div className="rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
+              <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
+                <span className="text-muted-foreground">Branch</span>
+                <span className="truncate font-medium">
+                  {gitStatusForActions?.refName ?? "(detached HEAD)"}
+                </span>
+                {isDefaultRef ? (
+                  <>
+                    <span />
+                    <span className="text-warning">Warning: default refName</span>
+                  </>
+                ) : null}
+                <span className="text-muted-foreground">Commits</span>
+                <span>
+                  {gitStatusForActions?.aheadCount ?? 0} local,{" "}
+                  {gitStatusForActions?.behindCount ?? 0} upstream
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-2 rounded-lg border border-warning/25 bg-warning/8 p-3 text-sm">
+              <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+              <p>
+                This rewrites the upstream branch. The lease prevents the push if it changed since
+                this environment last fetched it.
+              </p>
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setIsForcePushDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={!canWriteSourceControl || !canForcePushWithLease}
+              onClick={() => {
+                setIsForcePushDialogOpen(false);
+                void runGitActionWithToast({
+                  action: "push",
+                  forceWithLease: true,
+                  skipDefaultBranchPrompt: true,
+                });
+              }}
+            >
+              Force push with lease
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <Dialog
         open={pendingDefaultBranchAction !== null}

@@ -7,6 +7,7 @@ import {
   canRewriteCommitMessages,
   isDuplicatePendingThreadBranchSync,
   requiresDefaultBranchConfirmation,
+  requiresForcePushConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
@@ -367,5 +368,41 @@ describe("resolveChangesTotals", () => {
       ),
       { insertions: 2, deletions: 0 },
     );
+  });
+});
+
+describe("when: ref has diverged from upstream", () => {
+  const divergedStatus = status({ aheadCount: 2, behindCount: 1 });
+
+  it("makes the force-push dialog the primary action", () => {
+    const quick = resolveQuickAction(divergedStatus, false);
+    assert.deepEqual(quick, {
+      label: "Push",
+      disabled: false,
+      kind: "open_push_dialog",
+    });
+  });
+
+  it("enables Push in the action menu", () => {
+    const push = buildMenuItems(divergedStatus, false).find((item) => item.id === "push");
+    assert.deepInclude(push, { disabled: false, dialogAction: "push" });
+  });
+
+  it("requires force-push confirmation only for a clean divergent upstream", () => {
+    assert.isTrue(requiresForcePushConfirmation(divergedStatus));
+    assert.isFalse(
+      requiresForcePushConfirmation(
+        status({ aheadCount: 2, behindCount: 1, hasWorkingTreeChanges: true }),
+      ),
+    );
+    assert.isFalse(requiresForcePushConfirmation(status({ aheadCount: 0, behindCount: 1 })));
+  });
+
+  it("keeps Push disabled while the divergent worktree is dirty", () => {
+    const push = buildMenuItems(
+      status({ aheadCount: 2, behindCount: 1, hasWorkingTreeChanges: true }),
+      false,
+    ).find((item) => item.id === "push");
+    assert.deepInclude(push, { disabled: true });
   });
 });

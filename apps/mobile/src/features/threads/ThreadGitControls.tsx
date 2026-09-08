@@ -12,6 +12,7 @@ import {
 import {
   type GitActionRequestInput,
   requiresDefaultBranchConfirmation,
+  requiresForcePushConfirmation,
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
 import { useNavigation } from "@react-navigation/native";
@@ -145,6 +146,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const quickActionIcon: QuickActionIcon = (() => {
     if (quickAction.kind === "run_pull") return "arrow.down.circle";
     if (quickAction.kind === "open_pr") return "arrow.up.right.circle";
+    if (quickAction.kind === "open_push_dialog") return "arrow.up.circle";
     if (quickAction.kind === "run_action") {
       if (quickAction.action === "commit") return "checkmark.circle";
       if (quickAction.action === "push" || quickAction.action === "commit_push")
@@ -211,6 +213,25 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     }
     if (quickAction.kind === "run_pull") {
       await onPull();
+      return;
+    }
+    if (quickAction.kind === "open_push_dialog") {
+      const status = gitStatus;
+      if (!status || !requiresForcePushConfirmation(status)) return;
+      Dialog.alert(
+        "Force push with lease?",
+        `${status.refName} is ${status.aheadCount} ahead and ${status.behindCount} behind its upstream. This rewrites the upstream branch, but stops if it changed since this environment last fetched it.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Force Push with Lease",
+            style: "destructive",
+            onPress: () => {
+              void onRunAction({ action: "push", forceWithLease: true });
+            },
+          },
+        ],
+      );
       return;
     }
     if (quickAction.kind === "run_action" && quickAction.action) {

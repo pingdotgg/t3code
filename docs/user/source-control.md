@@ -170,6 +170,9 @@ the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 Choose the writing style and model in **Settings → Source control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
 
+After rebasing a published branch, use **Push** and confirm **Force push with lease**. The push
+stops if the upstream changed since T3 Code last fetched it.
+
 ### Run a command after pushing
 
 Add a `hooks.afterPush` command to `.t3code/vcs.json` to run a project-specific command after a

@@ -6494,6 +6494,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect(
+      "rejects a force push with lease when the upstream changed after the last fetch",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-remote-");
+          const peer = yield* makeTmpDir("git-peer-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+          yield* git(remote, ["symbolic-ref", "HEAD", `refs/heads/${initialBranch}`]);
+          yield* git(peer, ["clone", remote, "."]);
+          yield* git(peer, ["config", "user.email", "peer@test.com"]);
+          yield* git(peer, ["config", "user.name", "Peer"]);
+
+          yield* writeTextFile(cwd, "local.txt", "local rewrite\n");
+          yield* git(cwd, ["add", "local.txt"]);
+          yield* git(cwd, ["commit", "-m", "Local rewrite"]);
+          yield* writeTextFile(peer, "peer.txt", "new upstream work\n");
+          yield* git(peer, ["add", "peer.txt"]);
+          yield* git(peer, ["commit", "-m", "Peer update"]);
+          yield* git(peer, ["push", "origin", initialBranch]);
+
+          const error = yield* driver
+            .pushCurrentBranch(cwd, null, { forceWithLease: true })
+            .pipe(Effect.flip);
+
+          assert.equal(error._tag, "GitCommandError");
+          assert.equal(
+            yield* git(remote, ["log", "-1", "--pretty=%s", initialBranch]),
+            "Peer update",
+          );
+        }),
+    );
+
     it.effect("pushes to the requested remote instead of the primary remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

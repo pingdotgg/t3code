@@ -607,6 +607,7 @@ function runStackedAction(
     commitMessage?: string;
     splitCommits?: boolean;
     featureBranch?: boolean;
+    forceWithLease?: boolean;
     filePaths?: readonly string[];
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
@@ -790,6 +791,40 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("force pushes rewritten history with a lease", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/rebased"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/rebased"]);
+
+      NodeFS.writeFileSync(NodePath.join(repoDir, "history.txt"), "published\n");
+      yield* runGit(repoDir, ["add", "history.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Published history"]);
+      yield* runGit(repoDir, ["push"]);
+      yield* runGit(repoDir, ["reset", "--hard", "HEAD~1"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "history.txt"), "rebased\n");
+      yield* runGit(repoDir, ["add", "history.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Rebased history"]);
+
+      const { manager } = yield* makeManager();
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "push",
+        forceWithLease: true,
+      });
+
+      expect(result.push.status).toBe("pushed");
+      expect(
+        yield* runGit(remoteDir, ["log", "-1", "--pretty=%s", "feature/rebased"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe("Rebased history");
+    }),
+  );
+
   it.effect("status skips PR inspection when the provider executable is unavailable", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
