@@ -3398,7 +3398,12 @@ function QuestionAnswerHistory({
   const urls = useAssetUrls(activeThreadEnvironmentId, resources);
   return (
     <div className="ms-7 mt-2 space-y-2" onClick={stopRowToggle}>
-      {Object.keys(answer.answers).map((questionId) => (
+      {[
+        ...new Set([
+          ...Object.keys(answer.answers),
+          ...Object.keys(answer.attachmentsByQuestionId),
+        ]),
+      ].map((questionId) => (
         <div key={questionId} className="space-y-1">
           {answer.questionTextById?.[questionId] ? (
             <p className="text-sm text-muted-foreground">{answer.questionTextById[questionId]}</p>

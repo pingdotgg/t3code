@@ -473,6 +473,9 @@ importers:
       '@types/react':
         specifier: ~19.2.0
         version: 19.2.16
+      '@types/react-dom':
+        specifier: ~19.2.3
+        version: 19.2.3(@types/react@19.2.16)
       babel-preset-expo:
         specifier: ~57.0.9
         version: 57.0.9(@babel/core@7.29.7)(@babel/runtime@7.29.7)(expo-widgets@57.0.15)(expo@57.0.18)(react-refresh@0.14.2)

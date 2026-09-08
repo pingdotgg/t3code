@@ -39,7 +39,12 @@ export function QuestionAnswerHistory(props: {
 }) {
   return (
     <View className="gap-2">
-      {Object.keys(props.answer.answers).map((questionId) => (
+      {[
+        ...new Set([
+          ...Object.keys(props.answer.answers),
+          ...Object.keys(props.answer.attachmentsByQuestionId),
+        ]),
+      ].map((questionId) => (
         <View key={questionId} className="gap-1">
           {props.answer.questionTextById?.[questionId] ? (
             <Text className="text-sm text-foreground-muted">
