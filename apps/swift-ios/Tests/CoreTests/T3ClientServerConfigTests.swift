@@ -393,6 +393,33 @@ final class T3ClientServerConfigTests: XCTestCase {
         await authClient.disconnect()
     }
 
+    func testMalformedSubscriptionFinishesListenersAndBootstrapWithoutRetry() async throws {
+        let connection = ServerConfigTestConnection(mode: .malformed)
+        let retries = ServerConfigRetryRecorder()
+        let client = makeClient(connection: connection, retryDelay: { attempt in
+            await retries.record(attempt)
+            throw CancellationError()
+        })
+        addTeardownBlock { await client.disconnect() }
+        var iterator = await client.serverConfigEvents().makeAsyncIterator()
+        do {
+            _ = try await iterator.next()
+            XCTFail("Malformed configuration must fail the listener")
+        } catch {
+            XCTAssertTrue(error is DecodingError, "Unexpected listener error: \(error)")
+        }
+        do {
+            _ = try await client.serverConfig()
+            XCTFail("Malformed configuration must fail bootstrap")
+        } catch {
+            XCTAssertTrue(error is DecodingError, "Unexpected bootstrap error: \(error)")
+        }
+        let attempts = await retries.attempts
+        XCTAssertTrue(attempts.isEmpty, "Permanent decoding errors must not enter retry backoff")
+        let tags = await connection.tags()
+        XCTAssertEqual(tags, ["subscribeServerConfig", "subscribeServerConfig"])
+    }
+
     func testTerminalSubscriptionFailureRetainsListenersAndRecovers() async throws {
         let connection = ServerConfigTestConnection(mode: .recovering)
         let client = makeClient(connection: connection, retryDelay: { _ in })
@@ -551,7 +578,7 @@ private actor ServerConfigTestConnector: WebSocketConnecting {
 }
 
 private actor ServerConfigTestConnection: WebSocketConnection {
-    enum Mode { case snapshot, silent, failure(String), recovering }
+    enum Mode { case snapshot, silent, failure(String), recovering, malformed }
 
     private let mode: Mode
     private let supportsUsageLimitSources: Bool?
@@ -589,6 +616,7 @@ private actor ServerConfigTestConnection: WebSocketConnection {
             subscriptionRequestID = id
             switch mode {
             case .snapshot: try enqueue(chunk(id: id, value: snapshot(id: "codex-old")))
+            case .malformed: try enqueue(chunk(id: id, value: .object(["type": .number(42)])))
             case .silent: break
             case let .failure(message): try enqueue(failure(id: id, message: message))
             case .recovering:

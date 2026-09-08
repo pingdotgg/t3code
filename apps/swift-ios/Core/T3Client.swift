@@ -607,6 +607,7 @@ public actor T3Client {
     }
 
     private func isRetryableServerConfigSubscriptionError(_ error: any Error) -> Bool {
+        if error is DecodingError { return false }
         guard case let RPCError.remote(message) = error else { return true }
         let value = message.lowercased()
         return !value.contains("authentication")
