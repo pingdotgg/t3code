@@ -9,7 +9,7 @@ import type * as Scope from "effect/Scope";
 
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 
-export class ProviderAdapterDriverCreateError extends Schema.TaggedErrorClass<ProviderAdapterDriverCreateError>()(
+export class ProviderAdapterDriverCreateError extends Schema.TaggedError<ProviderAdapterDriverCreateError>()(
   "ProviderAdapterDriverCreateError",
   {
     driver: ProviderDriverKind,

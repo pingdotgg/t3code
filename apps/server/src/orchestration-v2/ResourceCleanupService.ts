@@ -8,7 +8,7 @@ import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
-export class ResourceCleanupError extends Schema.TaggedErrorClass<ResourceCleanupError>()(
+export class ResourceCleanupError extends Schema.TaggedError<ResourceCleanupError>()(
   "ResourceCleanupError",
   {
     operation: Schema.Literals(["terminal", "attachment"]),

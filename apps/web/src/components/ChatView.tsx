@@ -312,7 +312,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
-import { resolveComposerTimelineInset } from "./composerFooterLayout";
+import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
@@ -5697,27 +5697,48 @@ export default function ChatView(props: ChatViewProps) {
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
   );
-  const publishComposerOverlayHeight = useCallback((height: number) => {
-    const nextHeight = Math.ceil(height);
-    if (nextHeight <= 0) return;
-    const previousHeight = composerOverlayHeightRef.current;
-    if (previousHeight !== nextHeight) {
-      composerOverlayHeightRef.current = nextHeight;
-      setComposerOverlayHeight(nextHeight);
-    }
-    const nextInset = resolveComposerTimelineInset({
-      currentInset: composerTimelineInsetRef.current,
-      overlayHeight: nextHeight,
-      isResting: composerRestingRef.current,
-    });
-    if (composerTimelineInsetRef.current !== nextInset) {
-      composerTimelineInsetRef.current = nextInset;
-      setComposerTimelineInset(nextInset);
-    }
-    setScrollToEndClearance((currentClearance) =>
-      currentClearance === nextHeight ? currentClearance : nextHeight,
-    );
-  }, []);
+  const publishComposerOverlayHeight = useCallback(
+    (height: number) => {
+      const nextHeight = Math.ceil(height);
+      if (nextHeight <= 0) return;
+      const previousHeight = composerOverlayHeightRef.current;
+      if (previousHeight !== nextHeight) {
+        composerOverlayHeightRef.current = nextHeight;
+        setComposerOverlayHeight(nextHeight);
+      }
+      const nextInset = resolveComposerTimelineInset({
+        currentInset: composerTimelineInsetRef.current,
+        overlayHeight: nextHeight,
+        isResting: composerRestingRef.current,
+      });
+      if (composerTimelineInsetRef.current !== nextInset) {
+        composerTimelineInsetRef.current = nextInset;
+        setComposerTimelineInset(nextInset);
+      }
+      const mainSurface = composerOverlayElement?.querySelector<HTMLElement>(
+        '[data-chat-composer-main-surface="true"]',
+      );
+      const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
+        'button[aria-label="Scroll to end"]',
+      );
+      const clearance =
+        composerOverlayElement && mainSurface && button
+          ? resolveScrollToEndClearance({
+              overlayHeight: nextHeight,
+              mainSurfaceTop: mainSurface.getBoundingClientRect().top,
+              button: button.getBoundingClientRect(),
+              attachments: Array.from(
+                composerOverlayElement.querySelectorAll<HTMLElement>(
+                  '[data-composer-banner-surface="attached"]',
+                ),
+                (element) => element.getBoundingClientRect(),
+              ),
+            })
+          : nextHeight;
+      setScrollToEndClearance(clearance);
+    },
+    [composerOverlayElement],
+  );
   // The composer reports its resting flag from a layout effect, which runs
   // before this component's own layout effects and before any resize
   // observation, so every measurement below sees the flag for its layout.
@@ -5750,7 +5771,7 @@ export default function ChatView(props: ChatViewProps) {
     return () => {
       resizeObserver.disconnect();
     };
-  }, [composerOverlayElement, publishComposerOverlayHeight]);
+  }, [composerOverlayElement, publishComposerOverlayHeight, showScrollToBottom]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
   const activeThreadReferenceCopyTarget = useMemo(
     () =>

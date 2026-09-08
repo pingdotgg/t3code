@@ -18,7 +18,7 @@ export interface CursorSdkCatalogSnapshot {
   readonly models: ReadonlyArray<SDKModel>;
 }
 
-export class CursorSdkCatalogError extends Schema.TaggedErrorClass<CursorSdkCatalogError>()(
+export class CursorSdkCatalogError extends Schema.TaggedError<CursorSdkCatalogError>()(
   "CursorSdkCatalogError",
   {
     authenticationFailure: Schema.Boolean,
