@@ -5,6 +5,51 @@ import XCTest
 @MainActor
 @available(iOS 18.0, *)
 final class NativeThreadCatchUpTests: XCTestCase {
+    func testFaultInjectedOmittedMessageRepairsAtEqualWatermark() async throws {
+        // Deliberate application-delivery omission, not simulated TCP packet loss.
+        // HTTP is authoritative for both messages; only event 4 reaches the client.
+        for paginated in [false, true] {
+            let clock = SelectedReconciliationClock()
+            let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
+            let fixture = try await CatchUpFixture.make(
+                reconciliationClock: clock,
+                reconciliationReceipt: { receipts.continuation.yield($0) }
+            )
+            retainForSelectedReconciliationTest(fixture, clock: clock)
+            var ticks = clock.requests.stream.makeAsyncIterator()
+            var completed = receipts.stream.makeAsyncIterator()
+            var requests = fixture.requests.makeAsyncIterator()
+            var events = fixture.client.events().makeAsyncIterator()
+            _ = try await fixture.client.loadThread(id: fixture.firstID)
+            let detail = try await nextThreadRequest(&requests)
+            try await detail.synchronize()
+            _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            // The missing event would have sequence 3; later event 4 is valid.
+            try await detail.sendMessage(text: "Later delivered message", sequence: 4)
+            try await detail.synchronize()
+            _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            let before = try rawThreadForHistoryTest(fixture.client)
+            XCTAssertEqual(before.messages.map(\.id), ["message-4"])
+            await fixture.http.setFaultInjectionMessages(paginated: paginated)
+            for attempt in 1...2 {
+                let pendingTick = await ticks.next()
+                let tick = try XCTUnwrap(pendingTick)
+                clock.advance(by: .seconds(30))
+                tick.release()
+                let receipt = await completed.next()
+                XCTAssertEqual(receipt, .finished(threadID: fixture.firstID))
+                let raw = try rawThreadForHistoryTest(fixture.client)
+                let reads = await fixture.http.threadRequests.count
+                XCTAssertEqual(reads, attempt + 1)
+                print("FAULT_INJECTED_EQUAL_WATERMARK paginated=\(paginated) attempt=\(attempt) reads=\(reads) messageIDs=\(raw.messages.map(\.id))")
+                XCTAssertEqual(Set(raw.messages.map(\.id)), Set(["message-3", "message-4"]),
+                    "An authoritative equal-watermark read must repair omitted message 3; attempt \(attempt).")
+            }
+            await fixture.client.disconnect()
+        }
+    }
+
+
     func testSelectedReconciliationPreservesExplicitOlderRawFanoutBelowTenUsers() async throws {
         let clock = SelectedReconciliationClock()
         let receipts = AsyncStream<NativeSelectedThreadReconciliationReceipt>.makeStream()
@@ -115,7 +160,7 @@ final class NativeThreadCatchUpTests: XCTestCase {
             let pendingUnchanged = await ticks.next(); let unchangedTick = try XCTUnwrap(pendingUnchanged)
             clock.advance(by: .seconds(30)); unchangedTick.release(); _ = await completed.next()
             let unchangedURLs = await fixture.http.threadRequests
-            XCTAssertEqual(unchangedURLs.count, collection == "activities" ? 7 : 6, "Unchanged capped recent reads must not repeat full fallback.")
+            XCTAssertEqual(unchangedURLs.count, collection == "activities" ? 8 : 6, "A matching cursor cannot certify omitted rows outside a capped recent window.")
             raw = try rawThreadForHistoryTest(fixture.client)
             XCTAssertEqual(collection == "activities" ? raw.activities.count : raw.checkpoints.count, 299)
         }
@@ -2199,6 +2244,19 @@ private struct CatchUpFixture {
 }
 
 private actor CatchUpHTTPTransport: HTTPTransport {
+    func setFaultInjectionMessages(paginated: Bool) {
+        let authoritative = [3, 4].map { index in
+            OrchestrationMessage(id: "message-\(index)", role: "assistant",
+                text: index == 3 ? "Omitted message" : "Later delivered message",
+                attachments: [], turnId: nil, streaming: false,
+                createdAt: "2026-09-02T12:00:00Z", updatedAt: "2026-09-02T12:00:00Z")
+        }
+        messages = authoritative
+        paginatedMessages = paginated ? authoritative : nil
+        sequence = 4
+    }
+
+
     private(set) var threadRequests: [URLRequest] = []
     private(set) var threadResponseBytes: [Int] = []
     private var messages: [OrchestrationMessage] = []

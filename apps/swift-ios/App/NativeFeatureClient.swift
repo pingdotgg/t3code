@@ -51,6 +51,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let projectFaviconStore: FeatureProjectFaviconStore
     private let fallbackPollingInitialDelay: Duration
     private let fallbackPollingInterval: Duration
+    private static let shellReconciliationInterval: Duration = .seconds(30)
+    private let shellReconciliationSleep: @Sendable (String, Duration) async throws -> Void
     private let aggregateRefreshInterval: Duration
     private let aggregateIdleRefreshInterval: Duration
     private let aggregateFailureRefreshInterval: Duration
@@ -141,6 +143,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var activeStreamIsAuthoritative = false
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
+    private var shellReconciliationTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
     private var aggregateRefreshTask: Task<Void, Never>?
     private var aggregateRefreshID: UUID?
@@ -187,6 +190,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         projectFaviconStore: FeatureProjectFaviconStore = FeatureProjectFaviconStore(),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
+        shellReconciliationSleep: @escaping @Sendable (String, Duration) async throws -> Void = { _, interval in
+            try await Task.sleep(for: interval)
+        },
         aggregateRefreshInterval: Duration = NativeFeatureClient.defaultAggregateRefreshInterval,
         aggregateIdleRefreshInterval: Duration = NativeFeatureClient.defaultAggregateIdleRefreshInterval,
         aggregateFailureRefreshInterval: Duration = NativeFeatureClient.defaultAggregateFailureRefreshInterval,
@@ -247,6 +253,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.projectFaviconStore = projectFaviconStore
         self.fallbackPollingInitialDelay = fallbackPollingInitialDelay
         self.fallbackPollingInterval = fallbackPollingInterval
+        self.shellReconciliationSleep = shellReconciliationSleep
         self.aggregateRefreshInterval = aggregateRefreshInterval
         self.aggregateIdleRefreshInterval = aggregateIdleRefreshInterval
         self.aggregateFailureRefreshInterval = aggregateFailureRefreshInterval
@@ -274,6 +281,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         activeHydrationTask?.cancel()
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
+        shellReconciliationTask?.cancel()
         configurationTask?.cancel()
         aggregateRefreshTask?.cancel()
         aggregatePublishTask?.cancel()
@@ -339,6 +347,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         activeStreamIsAuthoritative = false
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
+        shellReconciliationTask?.cancel()
         configurationTask?.cancel()
         archivedRefreshTask?.cancel()
         archivedRefreshTask = nil
@@ -384,7 +393,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     self.activeHydrationPending = false
                     self.acceptActiveShell(shell, client: activeClient, environments: environments,
                                            socketAuthoritative: false, connectHeader: false)
-                } else {
+                } else if !self.activeStreamIsAuthoritative {
                     self.emitConnection(
                         self.activeHasHydrated ? .reconnecting : .disconnected,
                         detail: "Server unreachable. Retrying automatically."
@@ -1069,10 +1078,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
               selectedEnvironment == environment else { return }
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
+        shellReconciliationTask?.cancel()
         configurationTask?.cancel()
         archivedRefreshTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
+        shellReconciliationTask = nil
         configurationTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
@@ -1096,11 +1107,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let previousClient = client
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
+        shellReconciliationTask?.cancel()
         configurationTask?.cancel()
         cancelAggregateRefresh()
         archivedRefreshTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
+        shellReconciliationTask = nil
         configurationTask = nil
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
@@ -3662,6 +3675,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private func startPolling(_ activeClient: T3Client) {
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
+        shellReconciliationTask?.cancel()
         configurationTask?.cancel()
         let generation = environmentGeneration
         let bootstrapID = foregroundBootstrapID
@@ -3771,11 +3785,25 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 if !self.activeStreamIsAuthoritative {
                     self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID)
                 }
-                do {
-                    try await Task.sleep(for: fallbackPollingInterval)
-                } catch {
-                    return
-                }
+                do { try await Task.sleep(for: fallbackPollingInterval) }
+                catch { return }
+            }
+        }
+        let reconciliationSleep = shellReconciliationSleep
+        shellReconciliationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                // Ping health cannot prove shell completeness. Keep the faster
+                // outage fallback independent of this quiet reconciliation.
+                do { try await reconciliationSleep(activeClient.environment.id, Self.shellReconciliationInterval) }
+                catch { return }
+                guard let self,
+                      self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID)
+                else { return }
+                guard self.activeStreamIsAuthoritative else { continue }
+                self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID)
+                // One owner coalesces all HTTP requests. The next interval starts
+                // after this read drains, including failures and supersession.
+                await self.activeHydrationTask?.value
             }
         }
         configurationTask = Task { [weak self] in
@@ -3915,6 +3943,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let shellTimeout: TimeInterval
         let sleep: @Sendable (Duration) async throws -> Void
         let peerSleep: @Sendable (String, Duration) async throws -> Void
+        let reconciliationSleep: @Sendable (String, Duration) async throws -> Void
         let loadEnvironments: @Sendable (EnvironmentRuntime) async throws -> [Environment]
         let streamRetrySleep: @Sendable (String, Duration) async throws -> Void
         let publishSleep: @Sendable () async throws -> Void
@@ -3934,6 +3963,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             shellTimeout = owner.environmentShellTimeoutInterval
             sleep = owner.aggregateRefreshSleep
             peerSleep = owner.aggregatePeerRefreshSleep
+            reconciliationSleep = owner.shellReconciliationSleep
             loadEnvironments = owner.aggregateEnvironmentLoader
             streamRetrySleep = owner.aggregateStreamRetrySleep
             publishSleep = owner.aggregatePublishSleep
@@ -4004,19 +4034,27 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             var interval = fastInterval
             while owns(environment) {
                 do {
-                    if state.isLive { await state.waitForRepair() }
-                    if !state.needsHTTP {
+                    let wasLive = state.isLive
+                    if wasLive || !state.needsHTTP {
                         let delay = interval
                         await withTaskGroup(of: Void.self) { group in
-                            group.addTask { try? await self.peerSleep(environment.id, delay) }
-                            group.addTask { await state.waitForRepair() }
+                            group.addTask {
+                                if wasLive {
+                                    try? await self.reconciliationSleep(environment.id, NativeFeatureClient.shellReconciliationInterval)
+                                } else {
+                                    try? await self.peerSleep(environment.id, delay)
+                                }
+                            }
+                            group.addTask { await state.waitForRepair(untilLive: !wasLive) }
                             _ = await group.next()
                             group.cancelAll()
                         }
                     }
                     guard owns(environment) else { return }
+                    // A newly authoritative snapshot starts the quiet cadence;
+                    // it must not turn a fallback wake-up into a duplicate read.
+                    if !wasLive && state.isLive { continue }
                     state.needsHTTP = false
-                    guard !state.isLive else { continue }
                     guard try await currentEnvironments(for: environment) != nil else { return }
                     let client = await runtime.client(for: environment)
                     let epoch = state.epoch
@@ -4029,8 +4067,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     let currentConnection = await client.currentConnectionID()
                     guard let environments = try await currentEnvironments(for: environment) else { return }
                     guard owns(environment), epoch == state.epoch,
-                          authority == state.authorityRevision, connectionID == currentConnection,
-                          !state.isLive else { continue }
+                          authority == state.authorityRevision, connectionID == currentConnection else { continue }
+                    // HTTP failure alone says nothing about the connected stream.
+                    if shell == nil && state.isLive { continue }
                     // A validated HTTP snapshot remains in this socket's cache
                     // epoch without claiming that the live stream is complete.
                     if shell != nil { owner?.shellConnectionIDsByEnvironmentID[environment.id] = connectionID }
@@ -4122,8 +4161,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 owner.shellConnectionIDsByEnvironmentID[environment.id] = state.connectionID
                 state.authorityRevision &+= 1
                 state.cacheEpoch = state.epoch
+                let wasLive = state.isLive
                 state.isLive = true
                 state.needsHTTP = false
+                if !wasLive { state.wakeWaiter() }
             case .synchronized:
                 // A completion marker cannot make an arbitrary cached shell authoritative.
                 return state.isLive
@@ -4269,16 +4310,20 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         func requestRepair() {
             needsHTTP = true
+            wakeWaiter()
+        }
+
+        func wakeWaiter() {
             waiter?.continuation.resume()
             waiter = nil
         }
 
-        func waitForRepair() async {
-            guard !needsHTTP else { return }
+        func waitForRepair(untilLive: Bool = false) async {
+            guard !needsHTTP, !(untilLive && isLive) else { return }
             let id = UUID()
             await withTaskCancellationHandler {
                 await withCheckedContinuation { continuation in
-                    if Task.isCancelled || needsHTTP { continuation.resume() }
+                    if Task.isCancelled || needsHTTP || (untilLive && isLive) { continuation.resume() }
                     else { waiter = (id, continuation) }
                 }
             } onCancel: {
@@ -5375,10 +5420,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw CancellationError()
         }
         guard ownsReconciliationExtent() else { return }
+        // A later delivered cursor does not prove that every earlier row arrived.
+        // Independent HTTP repair must compare content, even at an equal watermark.
         if reconcile, pendingHistory == nil, let current = activeRawThread,
            snapshot.snapshotSequence >= (activeThreadSequence ?? 0),
-           snapshot.page?.threadSequence.map({ $0 <= (activeThreadSequence ?? 0) }) == true
-                || snapshot.snapshotSequence == activeThreadSequence || snapshot.thread == current {
+           snapshot.thread == current {
             return
         }
         if reconcile, snapshot.page?.hasMore == true,

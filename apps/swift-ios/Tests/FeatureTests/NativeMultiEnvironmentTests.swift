@@ -907,6 +907,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         rpcConnectionWaitTimeout: Duration = .milliseconds(5),
         fallbackPollingInitialDelay: Duration = .seconds(3),
         fallbackPollingInterval: Duration = .seconds(2),
+        shellReconciliationSleep: @escaping @Sendable (String, Duration) async throws -> Void = { _, interval in
+            try await Task.sleep(for: interval)
+        },
         aggregateRefreshInterval: Duration = NativeFeatureClient.defaultAggregateRefreshInterval,
         aggregateIdleRefreshInterval: Duration = NativeFeatureClient.defaultAggregateIdleRefreshInterval,
         aggregateFailureRefreshInterval: Duration = NativeFeatureClient.defaultAggregateFailureRefreshInterval,
@@ -1027,6 +1030,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 settingsStore: settings,
                 fallbackPollingInitialDelay: fallbackPollingInitialDelay,
                 fallbackPollingInterval: fallbackPollingInterval,
+                shellReconciliationSleep: shellReconciliationSleep,
                 aggregateRefreshInterval: aggregateRefreshInterval,
                 aggregateIdleRefreshInterval: aggregateIdleRefreshInterval,
                 aggregateFailureRefreshInterval: aggregateFailureRefreshInterval,
@@ -2156,6 +2160,90 @@ private actor GatedPassiveCatalogueConnection: WebSocketConnection {
 @Suite("Native passive live shells")
 @MainActor
 struct NativePassiveLiveShellTests {
+    @Test("Silent connected shells reconcile through bounded HTTP", arguments: ["one", "two"], [false, true])
+    func silentConnectedShellReconciles(environmentID: String, disconnect: Bool) async throws {
+        let server = PassiveLiveServer()
+        let receipts = PassiveLiveReceipts()
+        let clock = SilentShellClock()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            webSocketConnector: server,
+            fallbackPollingInitialDelay: .zero,
+            fallbackPollingInterval: .milliseconds(1),
+            shellReconciliationSleep: { id, interval in
+                if id == environmentID { try await clock.sleep(interval) }
+                else { try await Task.sleep(for: interval) }
+            },
+            aggregatePublishSleep: {},
+            aggregateRefreshReceipt: { receipts.record($0) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let seed = try await fixture.client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: fixture.client.events())
+        let host = environmentID + ".example"
+        let threadID = "thread-" + environmentID
+        try await receipts.waitForHTTP(environmentID, count: 1)
+        await server.waitForSubscriptions(host: host, count: 1)
+        try await server.snapshot(multiEnvironmentShell(
+            projectID: "project-" + environmentID, threadID: threadID,
+            title: "Live seed", snapshotSequence: 10
+        ), host: host)
+        _ = try await recorder.wait { $0.threads.contains { $0.title == "Live seed" } }
+        let reads = await fixture.transport.shellReadCount(host: host)
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-" + environmentID, threadID: threadID,
+            title: "HTTP repaired silent shell", snapshotSequence: 11
+        ), host: host)
+        let held = PassiveRequestGate()
+        let operation = Task { @MainActor in
+            try await clock.waitForRequest()
+            #expect(await clock.intervals == [.seconds(30)])
+            #expect(await fixture.transport.shellReadCount(host: host) == reads)
+            await clock.advance()
+            _ = try await recorder.wait { $0.threads.contains { $0.title == "HTTP repaired silent shell" } }
+            #expect(await fixture.transport.shellReadCount(host: host) == reads + 1)
+            try await clock.waitForRequest(2)
+            await fixture.transport.holdNextShell(host: host, gate: held)
+            await clock.advance()
+            try await held.waitUntilEnteredCancellable()
+            #expect(await clock.intervals.count == 2)
+            #expect(await fixture.transport.shellReadCount(host: host) == reads + 2)
+            let completions = receipts.httpCount(environmentID)
+            try await server.snapshot(multiEnvironmentShell(
+                projectID: "project-" + environmentID, threadID: threadID,
+                title: "Newer live shell", snapshotSequence: 20
+            ), host: host)
+            _ = try await recorder.wait { $0.threads.contains { $0.title == "Newer live shell" } }
+            await held.release()
+            try await receipts.waitForHTTP(environmentID, count: completions + 1)
+            try await clock.waitForRequest(3)
+            #expect(recorder.history.last?.threads.contains { $0.title == "Newer live shell" } == true)
+            #expect(await fixture.transport.shellReadCount(host: host) == reads + 2)
+            // A failed quiet check neither disconnects the live stream nor
+            // retries until another full reconciliation interval has elapsed.
+            await fixture.transport.setShellReadsEnabled(false, host: host)
+            await clock.advance()
+            try await clock.waitForRequest(4)
+            #expect(await fixture.transport.shellReadCount(host: host) == reads + 3)
+            #expect(recorder.history.last?.environments.first { $0.id == environmentID }?.connectionState == .connected)
+            #expect(await clock.intervals == Array(repeating: .seconds(30), count: 4))
+            if disconnect { await fixture.client.disconnect() }
+            else { fixture.client.suspendForBackground() }
+            try await clock.waitForCancellation()
+            #expect(await fixture.transport.shellReadCount(host: host) == reads + 3)
+        }
+        // Failure watchdog only; successful verification advances an explicit clock.
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled { operation.cancel() }
+        }
+        do { try await operation.value }
+        catch { Issue.record("Silent connected shell never scheduled or applied its HTTP repair: \(error)") }
+        watchdog.cancel()
+        await held.release()
+        recorder.stop()
+        await fixture.client.disconnect()
+    }
+
     @Test("Live peer bursts publish together without polling", .timeLimit(.minutes(1)))
     func livePeerBurstsPublishTogetherWithoutPolling() async throws {
         let server = PassiveLiveServer()
@@ -3279,5 +3367,48 @@ private actor FailedBootstrapAttemptConnector: WebSocketConnecting {
         var iterator = failures.stream.makeAsyncIterator()
         guard await iterator.next() != nil else { throw CancellationError() }
         try Task.checkCancellation()
+    }
+}
+
+private actor SilentShellClock {
+    private(set) var intervals: [Duration] = []
+    private let cancelled = PassiveRequestGate()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var requestWaiters: [UUID: (Int, CheckedContinuation<Void, Error>)] = [:]
+
+    func sleep(_ interval: Duration) async throws {
+        intervals.append(interval)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()) }
+                else {
+                    self.continuation = continuation
+                    let ready = requestWaiters.filter { intervals.count >= $0.value.0 }
+                    for (id, waiter) in ready {
+                        requestWaiters[id] = nil
+                        waiter.1.resume()
+                    }
+                }
+            }
+        } onCancel: { Task { await self.cancel() } }
+    }
+    func waitForRequest(_ count: Int = 1) async throws {
+        try Task.checkCancellation()
+        guard intervals.count < count else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { requestWaiters[id] = (count, $0) }
+        } onCancel: { Task { await self.cancelWaiter(id) } }
+    }
+    private func cancelWaiter(_ id: UUID) {
+        requestWaiters.removeValue(forKey: id)?.1.resume(throwing: CancellationError())
+    }
+    func advance() { continuation?.resume(); continuation = nil }
+    func waitForCancellation() async throws { try await cancelled.waitUntilEnteredCancellable() }
+    func cancel() async {
+        continuation?.resume(throwing: CancellationError())
+        continuation = nil
+        await cancelled.release()
+        await cancelled.enter()
     }
 }
