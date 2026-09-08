@@ -1225,7 +1225,7 @@ function TimelineMinimapNavigationButton({
         render={
           <span
             className={cn(
-              "absolute left-1 z-10 inline-flex -translate-x-1/2 opacity-0 pointer-events-auto transition-opacity duration-150 hover:opacity-100",
+              "absolute left-1 z-10 inline-flex -translate-x-1/2 opacity-0 pointer-events-auto transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
               previous ? "bottom-[calc(100%+2px)]" : "top-[calc(100%+2px)]",
             )}
           />
@@ -1239,7 +1239,7 @@ function TimelineMinimapNavigationButton({
           type="button"
           variant="ghost-muted"
         >
-          <Icon className="size-3" />
+          <Icon className="size-4 text-foreground/90" />
         </Button>
       </TooltipTrigger>
       <TooltipPopup side={previous ? "top" : "bottom"}>{label}</TooltipPopup>
