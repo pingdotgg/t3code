@@ -181,7 +181,7 @@ export async function navigateAfterThreadDeletion(navigate: () => Promise<void>)
  * (thread.mark-unread rewinds the server-side visited watermark, syncing the
  * marker to every device); older servers keep the browser-local marker.
  */
-export function useMarkThreadUnread() {
+function useMarkThreadUnread() {
   const markThreadUnreadMutation = useAtomCommand(threadEnvironment.markUnread, {
     reportFailure: false,
   });

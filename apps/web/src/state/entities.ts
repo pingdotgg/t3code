@@ -203,15 +203,6 @@ export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): bo
   );
 }
 
-/** Whether the environment's server understands thread title regeneration.
-    Same version-skew contract as settlement. */
-export function readEnvironmentSupportsTitleRegeneration(environmentId: EnvironmentId): boolean {
-  return (
-    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
-      .threadTitleRegeneration === true
-  );
-}
-
 /** Whether the environment's server understands thread.pin.reorder (and
     orderKey on thread.pin). Same version-skew contract as settlement. */
 export function readEnvironmentSupportsPinReorder(environmentId: EnvironmentId): boolean {
@@ -226,10 +217,6 @@ export function readEnvironmentSupportsActiveReorder(environmentId: EnvironmentI
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadActiveReorder === true
   );
-}
-
-export function readThreadProjection(ref: ScopedThreadRef): EnvironmentThread | null {
-  return appAtomRegistry.get(environmentThreadDetails.threadAtom(ref));
 }
 
 /** Whether the environment's server understands thread.settle/unsettle.

@@ -30,21 +30,11 @@ export function formatDuration(durationMs: number): string {
   return parts.join(" ");
 }
 
-export function formatElapsed(startIso: string, endIso: string | undefined): string | null {
-  if (!endIso) return null;
-  const startedAt = Date.parse(startIso);
-  const endedAt = Date.parse(endIso);
-  if (Number.isNaN(startedAt) || Number.isNaN(endedAt) || endedAt < startedAt) {
-    return null;
-  }
-  return formatDuration(endedAt - startedAt);
-}
-
-export function isLatestRunSettled(
+function isLatestRunSettled(
   latestRun: LatestRunTiming | null,
   runtime: RuntimeActivityState | null,
 ): boolean {
-  if (!latestRun?.startedAt) return false;
+  if (!latestRun) return false;
   if (!latestRun.completedAt) return false;
   if (!runtime) return true;
   if (runtime.orchestrationStatus === "running") return false;
