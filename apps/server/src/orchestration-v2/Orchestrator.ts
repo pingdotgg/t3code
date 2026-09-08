@@ -74,7 +74,7 @@ import {
 import { ThreadForkServiceV2 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 
-export class OrchestratorDispatchError extends Schema.TaggedErrorClass<OrchestratorDispatchError>()(
+export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
   {
     commandId: CommandId,
@@ -87,7 +87,7 @@ export class OrchestratorDispatchError extends Schema.TaggedErrorClass<Orchestra
   }
 }
 
-export class OrchestratorProjectionError extends Schema.TaggedErrorClass<OrchestratorProjectionError>()(
+export class OrchestratorProjectionError extends Schema.TaggedError<OrchestratorProjectionError>()(
   "OrchestratorProjectionError",
   {
     threadId: ThreadId,
@@ -99,7 +99,7 @@ export class OrchestratorProjectionError extends Schema.TaggedErrorClass<Orchest
   }
 }
 
-export class OrchestratorDomainEventStreamError extends Schema.TaggedErrorClass<OrchestratorDomainEventStreamError>()(
+export class OrchestratorDomainEventStreamError extends Schema.TaggedError<OrchestratorDomainEventStreamError>()(
   "OrchestratorDomainEventStreamError",
   {
     cause: Schema.optional(Schema.Defect()),
@@ -110,7 +110,7 @@ export class OrchestratorDomainEventStreamError extends Schema.TaggedErrorClass<
   }
 }
 
-export class OrchestratorProviderAdapterError extends Schema.TaggedErrorClass<OrchestratorProviderAdapterError>()(
+export class OrchestratorProviderAdapterError extends Schema.TaggedError<OrchestratorProviderAdapterError>()(
   "OrchestratorProviderAdapterError",
   {
     commandId: CommandId,
@@ -123,7 +123,7 @@ export class OrchestratorProviderAdapterError extends Schema.TaggedErrorClass<Or
   }
 }
 
-export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErrorClass<OrchestratorCommandPreviouslyRejectedError>()(
+export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestratorCommandPreviouslyRejectedError>()(
   "OrchestratorCommandPreviouslyRejectedError",
   {
     commandId: CommandId,
@@ -136,7 +136,7 @@ export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedErr
   }
 }
 
-export class OrchestratorCommandIdConflictError extends Schema.TaggedErrorClass<OrchestratorCommandIdConflictError>()(
+export class OrchestratorCommandIdConflictError extends Schema.TaggedError<OrchestratorCommandIdConflictError>()(
   "OrchestratorCommandIdConflictError",
   {
     commandId: CommandId,

@@ -39,7 +39,7 @@ const decodeStoredShellSnapshotJson = Schema.decodeUnknownSync(StoredShellSnapsh
 const encodeStoredThreadSnapshotJson = Schema.encodeSync(StoredThreadSnapshotJson);
 const decodeStoredThreadSnapshotJson = Schema.decodeUnknownSync(StoredThreadSnapshotJson);
 
-class TestCacheDecodeError extends Schema.TaggedErrorClass<TestCacheDecodeError>()(
+class TestCacheDecodeError extends Schema.TaggedError<TestCacheDecodeError>()(
   "TestCacheDecodeError",
   {
     message: Schema.String,

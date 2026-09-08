@@ -37,7 +37,7 @@ import {
 } from "./RunExecutionService.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
-export class ProviderTurnStartError extends Schema.TaggedErrorClass<ProviderTurnStartError>()(
+export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
   {
     runId: RunId,

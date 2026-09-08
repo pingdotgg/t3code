@@ -60,7 +60,7 @@ export const CommandPolicyCapability = Schema.Literals([
 ]);
 export type CommandPolicyCapability = typeof CommandPolicyCapability.Type;
 
-export class CommandPolicyMessageDispatchError extends Schema.TaggedErrorClass<CommandPolicyMessageDispatchError>()(
+export class CommandPolicyMessageDispatchError extends Schema.TaggedError<CommandPolicyMessageDispatchError>()(
   "CommandPolicyMessageDispatchError",
   {
     commandId: CommandId,
@@ -73,7 +73,7 @@ export class CommandPolicyMessageDispatchError extends Schema.TaggedErrorClass<C
   }
 }
 
-export class CommandPolicyUnsupportedError extends Schema.TaggedErrorClass<CommandPolicyUnsupportedError>()(
+export class CommandPolicyUnsupportedError extends Schema.TaggedError<CommandPolicyUnsupportedError>()(
   "CommandPolicyUnsupportedError",
   {
     commandId: CommandId,
@@ -87,7 +87,7 @@ export class CommandPolicyUnsupportedError extends Schema.TaggedErrorClass<Comma
   }
 }
 
-export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedErrorClass<CommandPolicyCapabilityUnsupportedError>()(
+export class CommandPolicyCapabilityUnsupportedError extends Schema.TaggedError<CommandPolicyCapabilityUnsupportedError>()(
   "CommandPolicyCapabilityUnsupportedError",
   {
     commandId: CommandId,

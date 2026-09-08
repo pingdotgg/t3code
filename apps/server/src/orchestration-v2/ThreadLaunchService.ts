@@ -79,7 +79,7 @@ export interface ThreadLaunchResult {
   readonly resumed: boolean;
 }
 
-export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError>()(
+export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   "ThreadLaunchError",
   {
     operation: Schema.Literals([

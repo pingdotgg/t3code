@@ -418,6 +418,8 @@ function waitForProjection(
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
+  clientCapabilities: {},
+  clientInfo: { name: "orchestrator-mcp-test", version: "1.0.0" },
   initializePayload: {
     protocolVersion: "2025-06-18",
     capabilities: {},

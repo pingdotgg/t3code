@@ -11,7 +11,7 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 
-export class AttachmentClaimError extends Schema.TaggedErrorClass<AttachmentClaimError>()(
+export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimError>()(
   "AttachmentClaimError",
   {
     message: Schema.String,

@@ -68,14 +68,11 @@ export const AcpRegistryErrorReason = Schema.Literals([
 ]);
 export type AcpRegistryErrorReason = typeof AcpRegistryErrorReason.Type;
 
-export class AcpRegistryError extends Schema.TaggedErrorClass<AcpRegistryError>()(
-  "AcpRegistryError",
-  {
-    reason: AcpRegistryErrorReason,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
+export class AcpRegistryError extends Schema.TaggedError<AcpRegistryError>()("AcpRegistryError", {
+  reason: AcpRegistryErrorReason,
+  detail: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {
   override get message(): string {
     return this.detail;
   }
