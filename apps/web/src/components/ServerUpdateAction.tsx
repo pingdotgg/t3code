@@ -57,7 +57,11 @@ function useServerUpdate() {
   const updateServer = useAtomCommand(serverEnvironment.updateServer, { reportFailure: false });
   return async (target: ServerUpdateTarget, failureTitle = "Server update failed") => {
     const { environmentId, serverLabel, selfUpdate, targetVersion } = target;
-    if (!canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) || pendingUpdateEnvironmentIds.has(environmentId)) return;
+    if (
+      !canUpdateServer(appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId))) ||
+      pendingUpdateEnvironmentIds.has(environmentId)
+    )
+      return;
     pendingUpdateEnvironmentIds.add(environmentId);
     try {
       const result = await updateServer({

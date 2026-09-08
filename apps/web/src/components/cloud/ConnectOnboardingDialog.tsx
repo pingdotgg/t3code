@@ -1,6 +1,11 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
-import { AuthAdministrativeScopes, AuthRelayReadScope, AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+  type AuthSessionState,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef, useState } from "react";
 
@@ -249,7 +254,13 @@ function ConfiguredConnectOnboardingDialog() {
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
                 const next = steps[index];
-                if (next === "publish" && (primaryEnvironmentId === null || !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) || !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))) return;
+                if (
+                  next === "publish" &&
+                  (primaryEnvironmentId === null ||
+                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
+                    !readEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope))
+                )
+                  return;
                 if (next) setStep(next);
               }}
             />

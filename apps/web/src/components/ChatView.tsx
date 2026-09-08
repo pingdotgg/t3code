@@ -3641,7 +3641,12 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = useCallback(async () => {
     const { activeThread, phase, setThreadError } = interruptContextRef.current;
     const input = buildRunningThreadTurnInterruptInput(activeThread, phase);
-    if (!input || !activeThread) return;
+    if (
+      !input ||
+      !activeThread ||
+      !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     const result = await interruptThreadTurn({
       environmentId: activeThread.environmentId,
       input,
@@ -3655,7 +3660,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   }, [interruptThreadTurn]);
   const canInterruptRunningThread =
-    buildRunningThreadTurnInterruptInput(activeThread, phase) !== null;
+    canOperateThread && buildRunningThreadTurnInterruptInput(activeThread, phase) !== null;
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();

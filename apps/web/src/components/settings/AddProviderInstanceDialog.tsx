@@ -421,7 +421,9 @@ export function AddProviderInstanceDialog({
           {wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
             <Button onClick={() => navigateToStep(wizardStep + 1)}>Next</Button>
           ) : (
-            <Button onClick={handleSave}>Add instance</Button>
+            <Button disabled={!canManageProviders} onClick={handleSave}>
+              Add instance
+            </Button>
           )}
         </WizardFooter>
       </WizardPopup>
