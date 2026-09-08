@@ -65,7 +65,7 @@ export class UnavailableBootstrapCredentialError extends Schema.TaggedError<Unav
   }
 }
 
-export class BootstrapCredentialScopeNotGrantedError extends Schema.TaggedErrorClass<BootstrapCredentialScopeNotGrantedError>()(
+export class BootstrapCredentialScopeNotGrantedError extends Schema.TaggedError<BootstrapCredentialScopeNotGrantedError>()(
   "BootstrapCredentialScopeNotGrantedError",
   {},
 ) {
