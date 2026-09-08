@@ -2418,8 +2418,8 @@ export const stageDesktopDmgBackground = Effect.fn("stageDesktopDmgBackground")(
   }
 
   for (const output of [
-    { suffix: "", width: 540, height: 380 },
-    { suffix: "@2x", width: 1080, height: 760 },
+    { suffix: "", width: 640, height: 432 },
+    { suffix: "@2x", width: 1280, height: 864 },
   ] as const) {
     const targetPath = path.join(
       stageResourcesDir,
@@ -2741,17 +2741,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       title: `${resolveDesktopProductName(version)} ${version} Installer`,
       background: `dmg/dmg-background-${updateChannel}.png`,
       window: {
-        width: 540,
-        // Finder counts its 32px title bar in the window bounds. The themed
-        // background itself is 380px tall, so add the chrome height here to
-        // keep the full canvas visible.
-        height: 412,
+        width: 640,
+        // The DMG backend derives bounds from the image, including Finder's
+        // 32px title bar. Keep the last 32px of the artwork free of content.
+        height: 432,
       },
       contents: [
-        { x: 130, y: 220, type: "file" },
-        { x: 410, y: 220, type: "link", path: "/Applications" },
+        { x: 166, y: 214, type: "file" },
+        { x: 474, y: 214, type: "link", path: "/Applications" },
       ],
-      iconSize: 80,
+      iconSize: 120,
       iconTextSize: 12,
     };
   }
