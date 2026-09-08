@@ -258,7 +258,6 @@ import {
   preventTerminalCloseShortcut,
 } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
-import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import {
   derivePhysicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
@@ -410,6 +409,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  resolveNewPullRequestDraftRuntimeMode,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
@@ -2268,7 +2268,9 @@ export default function ChatView(props: ChatViewProps) {
 
       const nextDraftId = newDraftId();
       const nextThreadId = newThreadId();
-      const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
+      const resolvedRuntimeMode = resolveNewPullRequestDraftRuntimeMode({
+        composerRuntimeMode,
+        viewedThreadRuntimeMode: activeThread?.runtimeMode,
         lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: settings.defaultRuntimeMode,
       });
@@ -2287,6 +2289,8 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeProject,
+      activeThread?.runtimeMode,
+      composerRuntimeMode,
       draftId,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,

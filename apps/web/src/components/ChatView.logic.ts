@@ -11,6 +11,7 @@ import {
   type ProviderInteractionMode,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type RuntimeMode,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
@@ -24,6 +25,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { videoMimeType } from "@t3tools/shared/video";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
@@ -627,6 +629,24 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 export interface PullRequestDialogState {
   initialReference: string | null;
   key: number;
+}
+
+/**
+ * Access mode for a freshly minted pull-request draft opened from ChatView.
+ * Composer overrides win over the viewed thread/session, then last-used and
+ * the machine default — same carry precedence as new-thread creation.
+ */
+export function resolveNewPullRequestDraftRuntimeMode(sources: {
+  readonly composerRuntimeMode?: RuntimeMode | null;
+  readonly viewedThreadRuntimeMode?: RuntimeMode | null;
+  readonly lastUsedRuntimeMode?: RuntimeMode | null;
+  readonly configuredRuntimeMode?: RuntimeMode | null;
+}): RuntimeMode {
+  return resolveNewThreadRuntimeMode({
+    carryRuntimeMode: sources.composerRuntimeMode ?? sources.viewedThreadRuntimeMode ?? null,
+    lastUsedRuntimeMode: sources.lastUsedRuntimeMode,
+    configuredRuntimeMode: sources.configuredRuntimeMode,
+  });
 }
 
 export function readFileAsDataUrl(file: File): Promise<string> {

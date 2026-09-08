@@ -53,6 +53,7 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
+  resolveNewPullRequestDraftRuntimeMode,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
@@ -257,6 +258,24 @@ describe("proactive panels", () => {
     expect(shouldOpenProactivePullRequest(null, "project:repo:42")).toBe(true);
     expect(shouldOpenProactivePullRequest("project:repo:42", "project:repo:42")).toBe(false);
     expect(shouldOpenProactivePullRequest("project:repo:42", null)).toBe(false);
+  });
+
+  it("carries the viewed thread mode into a new pull-request draft", () => {
+    expect(
+      resolveNewPullRequestDraftRuntimeMode({
+        viewedThreadRuntimeMode: "approval-required",
+        lastUsedRuntimeMode: null,
+        configuredRuntimeMode: "full-access",
+      }),
+    ).toBe("approval-required");
+    expect(
+      resolveNewPullRequestDraftRuntimeMode({
+        composerRuntimeMode: "auto-accept-edits",
+        viewedThreadRuntimeMode: "approval-required",
+        lastUsedRuntimeMode: "full-access",
+        configuredRuntimeMode: "full-access",
+      }),
+    ).toBe("auto-accept-edits");
   });
 
   it("follows a changed server PR link without replacing an unrelated open panel", () => {
