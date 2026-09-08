@@ -96,14 +96,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ] = [:]
     private var pendingBootstrapSubmissions: [PendingBootstrapSubmission] = []
     private var pendingTurnSubmissions: [String: PendingTurnSubmission] = [:]
-    private struct AcceptedSendRefresh: Sendable {
+    private struct AcceptedCommandRefresh: Sendable {
         let id: UUID
         let client: T3Client
         let generation: Int
         let task: Task<Void, Never>
         var pending = false
+        var needsDetail: Bool
     }
-    private var acceptedSendRefreshes: [String: AcceptedSendRefresh] = [:]
+    private var acceptedCommandRefreshes: [String: AcceptedCommandRefresh] = [:]
     private var approvalRoutes: [String: PendingRequestRoute] = [:]
     private var inputRoutes: [String: PendingRequestRoute] = [:]
     private var relayDeviceSessionIDs: Set<String> = []
@@ -223,7 +224,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detailCatchUpTask?.cancel()
         detailPublishTask?.cancel()
         projectFaviconRefreshTasks.values.forEach { $0.cancel() }
-        acceptedSendRefreshes.values.forEach { $0.task.cancel() }
+        acceptedCommandRefreshes.values.forEach { $0.task.cancel() }
         continuation.finish()
     }
 
@@ -472,7 +473,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {
         try await runtime.setEnabled(id: id, enabled: enabled)
         if !enabled {
-            cancelAcceptedSendRefreshes(environmentID: id)
+            cancelAcceptedCommandRefreshes(environmentID: id)
             environmentConnectionStates[id] = .disconnected
             environmentConnectionDetails[id] = nil
             environmentClients[id] = nil
@@ -491,7 +492,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if environment?.kind == .managedDPoP {
             try await runtime.revokeCredential(id: id)
         }
-        cancelAcceptedSendRefreshes(environmentID: id)
+        cancelAcceptedCommandRefreshes(environmentID: id)
         try await runtime.remove(id: id)
         if removesActiveEnvironment {
             await clearActiveEnvironment(disconnectClient: false)
@@ -917,7 +918,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     private func clearEnvironmentState(preserveEnvironmentSnapshots: Bool = false) {
         environmentGeneration &+= 1
-        cancelAcceptedSendRefreshes()
+        cancelAcceptedCommandRefreshes()
         resetDetailRefresh()
         resetDetailStream()
         archivedRefreshTask?.cancel()
@@ -1841,7 +1842,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail {
         let route = try threadRoute(for: id)
         if let previous = activeThreadID, previous != route.uiID {
-            cancelAcceptedSendRefreshes(threadID: previous)
+            cancelAcceptedCommandRefreshes(threadID: previous)
         }
         let client = route.client
         let environment = client.environment
@@ -1985,7 +1986,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func releaseThread(id: String) {
-        cancelAcceptedSendRefreshes(threadID: id)
+        cancelAcceptedCommandRefreshes(threadID: id)
         guard activeThreadID == id else { return }
         retainActiveThread()
         resetDetailRefresh()
@@ -2146,38 +2147,48 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if pendingTurnSubmissions[route.uiID]?.identity == pending.identity {
             pendingTurnSubmissions[route.uiID] = nil
         }
-        scheduleAcceptedSendRefresh(threadID: route.uiID, client: client, generation: generation)
+        scheduleAcceptedCommandRefresh(threadID: route.uiID, client: client, generation: generation)
     }
 
-    /// Acceptance unlocks the composer immediately. Retain HTTP convergence
-    /// separately for connections whose live events have not caught up yet.
-    private func scheduleAcceptedSendRefresh(threadID: String, client: T3Client, generation: Int) {
-        if let current = acceptedSendRefreshes[threadID],
-           current.client === client, current.generation == generation {
-            acceptedSendRefreshes[threadID]?.pending = true
+    /// Complete accepted commands without waiting for optional reads. A send
+    /// needs detail and shell recovery; Stop retains its shell-only refresh.
+    private func scheduleAcceptedCommandRefresh(
+        threadID: String, client: T3Client, generation: Int, refreshDetail: Bool = true
+    ) {
+        guard isKnownClient(client, environmentID: client.environment.id, generation: generation) else {
             return
         }
-        cancelAcceptedSendRefreshes(threadID: threadID)
+        if let current = acceptedCommandRefreshes[threadID],
+           current.client === client, current.generation == generation {
+            acceptedCommandRefreshes[threadID]?.pending = true
+            acceptedCommandRefreshes[threadID]?.needsDetail = current.needsDetail || refreshDetail
+            return
+        }
+        cancelAcceptedCommandRefreshes(threadID: threadID)
         let id = UUID()
         let task = Task { [weak self] in
-            while self?.isCurrentAcceptedSendRefresh(threadID: threadID, id: id) == true {
-                self?.acceptedSendRefreshes[threadID]?.pending = false
-                try? await self?.refreshThread(id: threadID, client: client)
-                guard self?.isCurrentAcceptedSendRefresh(threadID: threadID, id: id) == true else { break }
+            while self?.isCurrentAcceptedCommandRefresh(threadID: threadID, id: id) == true {
+                let needsDetail = self?.acceptedCommandRefreshes[threadID]?.needsDetail == true
+                self?.acceptedCommandRefreshes[threadID]?.needsDetail = false
+                self?.acceptedCommandRefreshes[threadID]?.pending = false
+                if needsDetail {
+                    try? await self?.refreshThread(id: threadID, client: client)
+                }
+                guard self?.isCurrentAcceptedCommandRefresh(threadID: threadID, id: id) == true else { break }
                 try? await self?.refresh(client: client)
-                guard self?.acceptedSendRefreshes[threadID]?.pending == true else { break }
+                guard self?.acceptedCommandRefreshes[threadID]?.pending == true else { break }
             }
-            if self?.acceptedSendRefreshes[threadID]?.id == id {
-                self?.acceptedSendRefreshes[threadID] = nil
+            if self?.acceptedCommandRefreshes[threadID]?.id == id {
+                self?.acceptedCommandRefreshes[threadID] = nil
             }
         }
-        acceptedSendRefreshes[threadID] = AcceptedSendRefresh(
-            id: id, client: client, generation: generation, task: task
+        acceptedCommandRefreshes[threadID] = AcceptedCommandRefresh(
+            id: id, client: client, generation: generation, task: task, needsDetail: refreshDetail
         )
     }
 
-    private func isCurrentAcceptedSendRefresh(threadID: String, id: UUID) -> Bool {
-        guard !Task.isCancelled, let refresh = acceptedSendRefreshes[threadID], refresh.id == id else {
+    private func isCurrentAcceptedCommandRefresh(threadID: String, id: UUID) -> Bool {
+        guard !Task.isCancelled, let refresh = acceptedCommandRefreshes[threadID], refresh.id == id else {
             return false
         }
         return isKnownClient(
@@ -2185,12 +2196,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         )
     }
 
-    private func cancelAcceptedSendRefreshes(threadID: String? = nil, environmentID: String? = nil) {
-        for (key, refresh) in acceptedSendRefreshes {
+    private func cancelAcceptedCommandRefreshes(threadID: String? = nil, environmentID: String? = nil) {
+        for (key, refresh) in acceptedCommandRefreshes {
             guard threadID.map({ $0 == key }) ?? true,
                   environmentID.map({ $0 == refresh.client.environment.id }) ?? true else { continue }
             refresh.task.cancel()
-            acceptedSendRefreshes[key] = nil
+            acceptedCommandRefreshes[key] = nil
         }
     }
 
@@ -2207,12 +2218,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     func cancelTurn(threadID: String) async throws {
         let route = try threadRoute(for: threadID)
+        let generation = environmentGeneration
         let turnID = shellsByEnvironmentID[route.environmentID]?.threads
             .first(where: { $0.id == route.wireID })?
             .latestTurn?
             .turnId
         _ = try await route.client.interrupt(threadID: route.wireID, turnID: turnID)
-        try? await refresh(client: route.client)
+        scheduleAcceptedCommandRefresh(
+            threadID: route.uiID, client: route.client, generation: generation, refreshDetail: false
+        )
     }
 
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {

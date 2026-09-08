@@ -5,6 +5,160 @@ import XCTest
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
+    func testLateStopAcknowledgementCannotCancelReplacementGenerationRefresh() async throws {
+        let fixture = try await AcceptedSendFixture.make(includePeer: true)
+        addTeardownBlock { await fixture.cleanUp() }
+        var acknowledgements = fixture.socket.heldInterrupts.makeAsyncIterator()
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.socket.holdInterruptAcknowledgements()
+        let stopping = Task { try await fixture.client.cancelTurn(threadID: fixture.threadID) }
+        addTeardownBlock {
+            await fixture.socket.releaseInterruptAcknowledgements()
+            _ = await stopping.result
+        }
+        guard await acknowledgements.next() != nil else { throw CancellationError() }
+
+        _ = try await fixture.runtime.activate(id: "accepted-peer")
+        _ = try await fixture.client.initialSnapshot()
+        await fixture.transport.holdFollowups(includeShell: false)
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Replacement generation", selection: nil)
+        let replacementRead = await reads.next()
+        let replacement = try XCTUnwrap(replacementRead)
+        XCTAssertTrue(replacement.path.hasPrefix("/api/orchestration/threads/"))
+
+        await fixture.socket.releaseInterruptAcknowledgements()
+        try await stopping.value
+        let marker = "Replacement generation published its uniquely held response"
+        XCTAssertNotEqual(fixture.model.details[fixture.threadID]?.messages.last?.text, marker)
+        await fixture.transport.release(replacement.id, detailMessage: marker)
+        try await AcceptedSendDetailReceipt(
+            model: fixture.model, threadID: fixture.threadID, expectedMessage: marker
+        ).wait()
+        XCTAssertEqual(fixture.model.details[fixture.threadID]?.messages.last?.text, marker)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.map { $0["type"]?.stringValue }, ["thread.turn.interrupt", "thread.turn.start"])
+    }
+
+    func testRejectedStopPropagatesRemoteError() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        await fixture.transport.holdFollowups()
+        let before = await fixture.transport.snapshotReadCount
+        await fixture.socket.rejectInterruptAcknowledgements()
+        do {
+            try await fixture.client.cancelTurn(threadID: fixture.threadID)
+            XCTFail("Rejected interrupt must remain a command error")
+        } catch let error as RPCError {
+            guard case .remote("Stop rejected by fixture") = error else { throw error }
+        }
+        // These counters cover the command-return boundary only; they are
+        // not a proof that no mistakenly queued future task could read later.
+        let after = await fixture.transport.snapshotReadCount
+        let pending = await fixture.transport.heldCount
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(pending, 0)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["type"]?.stringValue, "thread.turn.interrupt")
+    }
+
+    func testStopDuringHeldSendDetailPreservesDetailAndShellRecovery() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        var cancellations = fixture.transport.cancellations.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "Send before Stop", selection: nil)
+        let firstRead = await reads.next()
+        let detail = try XCTUnwrap(firstRead)
+        XCTAssertTrue(detail.path.hasPrefix("/api/orchestration/threads/"))
+        try await fixture.client.cancelTurn(threadID: fixture.threadID)
+        let count = await fixture.transport.heldCount
+        XCTAssertEqual(count, 1)
+        let detailStillPending = await fixture.transport.isPending(detail.id)
+        XCTAssertTrue(detailStillPending)
+        await fixture.transport.release(detail.id)
+        let nextRead = await reads.next()
+        let shell = try XCTUnwrap(nextRead)
+        XCTAssertEqual(shell.path, "/api/orchestration/shell")
+        await fixture.transport.release(shell.id)
+        let trailingRead = await reads.next()
+        let trailing = try XCTUnwrap(trailingRead)
+        XCTAssertEqual(trailing.path, "/api/orchestration/shell", "Stop requests shell repair without discarding or repeating the send detail repair")
+        await fixture.client.disconnect()
+        let cancelled = await cancellations.next()
+        XCTAssertEqual(cancelled, trailing.id)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 2)
+    }
+
+    func testAcceptedStopCompletesBeforeOptionalShellReadFinishes() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        let completed = expectation(description: "Accepted Stop completes without snapshot reads")
+        let stopping = Task {
+            await fixture.model.cancelTurn(threadID: fixture.threadID)
+            completed.fulfill()
+        }
+        let read = await reads.next()
+        XCTAssertEqual(read?.path, "/api/orchestration/shell")
+        await fulfillment(of: [completed], timeout: 2)
+        XCTAssertFalse(fixture.model.isPerformingAction)
+
+        await fixture.transport.failFollowups()
+        await stopping.value
+        XCTAssertNil(fixture.model.errorMessage)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["type"]?.stringValue, "thread.turn.interrupt")
+    }
+
+    func testSendDuringStopRefreshRetainsItsDetailRefresh() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        var cancellations = fixture.transport.cancellations.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.cancelTurn(threadID: fixture.threadID)
+        let shellRead = await reads.next()
+        let shell = try XCTUnwrap(shellRead)
+        XCTAssertEqual(shell.path, "/api/orchestration/shell")
+
+        try await fixture.client.sendMessage(threadID: fixture.threadID, text: "After Stop", selection: nil)
+        let heldCount = await fixture.transport.heldCount
+        XCTAssertEqual(heldCount, 1)
+        await fixture.transport.release(shell.id)
+        let detailRead = await reads.next()
+        let detail = try XCTUnwrap(detailRead)
+        XCTAssertTrue(detail.path.hasPrefix("/api/orchestration/threads/"))
+
+        await fixture.client.disconnect()
+        let cancelledID = await cancellations.next()
+        XCTAssertEqual(cancelledID, detail.id)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 2)
+    }
+
+    func testDisconnectCancelsStopRefreshWithoutAnotherInterrupt() async throws {
+        let fixture = try await AcceptedSendFixture.make()
+        addTeardownBlock { await fixture.cleanUp() }
+        var reads = fixture.transport.heldReads.makeAsyncIterator()
+        var cancellations = fixture.transport.cancellations.makeAsyncIterator()
+        await fixture.transport.holdFollowups()
+        try await fixture.client.cancelTurn(threadID: fixture.threadID)
+        let read = await reads.next()
+        let held = try XCTUnwrap(read)
+        await fixture.client.disconnect()
+        let cancelledID = await cancellations.next()
+        XCTAssertEqual(cancelledID, held.id)
+        let commands = await fixture.socket.commands
+        XCTAssertEqual(commands.count, 1)
+        let pending = await fixture.transport.heldCount
+        XCTAssertEqual(pending, 0)
+    }
+
     func testAcceptedSendCompletesOutboxBeforeOptionalReadsFinish() async throws {
         let fixture = try await AcceptedSendFixture.make()
         addTeardownBlock { await fixture.cleanUp() }
@@ -920,8 +1074,9 @@ private struct AcceptedSendFixture {
     let outbox: FeatureOutboxStore
     let transport: AcceptedSendHTTPTransport
     let socket: AcceptedSendSocket
+    let runtime: EnvironmentRuntime
 
-    static func make() async throws -> Self {
+    static func make(includePeer: Bool = false) async throws -> Self {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-accepted-send-\(UUID().uuidString)")
         let environment = Environment(
@@ -930,15 +1085,23 @@ private struct AcceptedSendFixture {
             webSocketBaseURL: URL(string: "wss://accepted-send.example")!
         )
         let store = EnvironmentStore(fileURL: directory.appendingPathComponent("environments.json"))
-        try await store.save([environment])
+        let peer = Environment(
+            id: "accepted-peer", label: "Accepted peer",
+            httpBaseURL: URL(string: "https://accepted-peer.example")!,
+            webSocketBaseURL: URL(string: "wss://accepted-peer.example")!
+        )
+        try await store.save(includePeer ? [environment, peer] : [environment])
         try await store.setActiveEnvironment(id: environment.id)
         let transport = AcceptedSendHTTPTransport()
         let socket = AcceptedSendSocket()
         let runtime = EnvironmentRuntime(
             environmentStore: store,
-            credentialStore: InMemoryCredentialStore(credentials: [environment.id: EnvironmentCredential(accessToken: "fixture-token")]),
+            credentialStore: InMemoryCredentialStore(credentials: [
+                environment.id: EnvironmentCredential(accessToken: "fixture-token"),
+                peer.id: EnvironmentCredential(accessToken: "fixture-peer-token"),
+            ]),
             httpTransport: transport,
-            webSocketConnector: AcceptedSendConnector(socket: socket)
+            webSocketConnector: AcceptedSendConnector(socket: socket, peer: AcceptedSendSocket())
         )
         let settingsName = "t3-accepted-send-\(UUID().uuidString)"
         let client = NativeFeatureClient(
@@ -951,11 +1114,11 @@ private struct AcceptedSendFixture {
         let modelTask = Task { await model.start() }
         do {
             try await AcceptedSendRootReadiness(model: model).wait()
-            let threadID = try XCTUnwrap(model.snapshot.threads.first?.id)
+            let threadID = FeatureScopedID.thread(environmentID: environment.id, wireID: "thread-existing")
             _ = await model.detail(for: threadID)
             return Self(modelTask: modelTask, directory: directory, threadID: threadID,
                         settingsName: settingsName, client: client, model: model,
-                        outbox: outbox, transport: transport, socket: socket)
+                        outbox: outbox, transport: transport, socket: socket, runtime: runtime)
         } catch {
             modelTask.cancel()
             await client.disconnect()
@@ -1014,6 +1177,48 @@ private final class AcceptedSendRootReadiness {
     }
 }
 
+@MainActor
+private final class AcceptedSendDetailReceipt {
+    private let model: FeatureRootModel
+    private let threadID: String
+    private let expectedMessage: String
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    init(model: FeatureRootModel, threadID: String, expectedMessage: String) {
+        self.model = model
+        self.threadID = threadID
+        self.expectedMessage = expectedMessage
+    }
+
+    func wait() async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
+                self.continuation = continuation
+                observe()
+            }
+        } onCancel: {
+            Task { @MainActor in self.finish(CancellationError()) }
+        }
+    }
+
+    private func observe() {
+        guard continuation != nil else { return }
+        let ready = withObservationTracking {
+            model.details[threadID]?.messages.last?.text == expectedMessage
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.observe() }
+        }
+        if ready { finish(nil) }
+    }
+
+    private func finish(_ error: Error?) {
+        guard let pending = continuation else { return }
+        continuation = nil
+        if let error { pending.resume(throwing: error) } else { pending.resume() }
+    }
+}
+
 private actor AcceptedSendHTTPTransport: HTTPTransport {
     struct HeldRead: Sendable {
         let id: UUID
@@ -1023,9 +1228,12 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
     nonisolated let cancellations: AsyncStream<UUID>
     private let reads: AsyncStream<HeldRead>.Continuation
     private let cancelled: AsyncStream<UUID>.Continuation
+    private(set) var snapshotReadCount = 0
+    private var holdsShell = true
     private var holds = false
     private var fails = false
     private var pending: [UUID: CheckedContinuation<Void, Error>] = [:]
+    private var detailMessages: [UUID: String] = [:]
 
     init() {
         (heldReads, reads) = AsyncStream.makeStream()
@@ -1040,9 +1248,12 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
         guard path == "/api/orchestration/shell" || path.hasPrefix("/api/orchestration/threads/") else {
             throw URLError(.unsupportedURL)
         }
+        snapshotReadCount += 1
         if fails { throw URLError(.networkConnectionLost) }
-        if holds {
+        var heldID: UUID?
+        if holds && (holdsShell || path != "/api/orchestration/shell") {
             let id = UUID()
+            heldID = id
             try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                     if Task.isCancelled { continuation.resume(throwing: CancellationError()); return }
@@ -1053,19 +1264,39 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
                 Task { await self.cancel(id) }
             }
         }
-        let data = if path == "/api/orchestration/shell" {
-            try JSONEncoder.t3.encode(retryShellSnapshot())
+        let data: Data
+        if path == "/api/orchestration/shell" {
+            data = try JSONEncoder.t3.encode(retryShellSnapshot())
         } else {
-            try JSONEncoder.t3.encode(retryEmptyThreadDetail(id: request.url!.lastPathComponent))
+            let snapshot = retryEmptyThreadDetail(id: request.url!.lastPathComponent)
+            if let heldID, let text = detailMessages.removeValue(forKey: heldID) {
+                var thread = try JSONValue.encode(snapshot.thread).decode([String: JSONValue].self)
+                thread["messages"] = .array([.object([
+                    "id": .string("replacement-generation-message"), "role": .string("assistant"),
+                    "text": .string(text), "turnId": .null, "streaming": .bool(false),
+                    "attachments": .array([]), "createdAt": .string("2026-07-30T12:00:00.000Z"),
+                    "updatedAt": .string("2026-07-30T12:00:00.000Z"),
+                ])])
+                data = try JSONEncoder.t3.encode(OrchestrationThreadDetailSnapshot(
+                    snapshotSequence: 99,
+                    thread: try JSONValue.object(thread).decode(OrchestrationThread.self)
+                ))
+            } else { data = try JSONEncoder.t3.encode(snapshot) }
         }
         return (data, retryHTTPResponse(request))
     }
 
     var heldCount: Int { pending.count }
 
-    func holdFollowups() { holds = true }
+    func isPending(_ id: UUID) -> Bool { pending[id] != nil }
 
-    func release(_ id: UUID) { pending.removeValue(forKey: id)?.resume() }
+    func holdFollowups(includeShell: Bool = true) { holds = true; holdsShell = includeShell }
+
+    func release(_ id: UUID, detailMessage: String? = nil) {
+        guard let continuation = pending.removeValue(forKey: id) else { return }
+        if let detailMessage { detailMessages[id] = detailMessage }
+        continuation.resume()
+    }
 
     func failFollowups() {
         fails = true
@@ -1084,10 +1315,28 @@ private actor AcceptedSendHTTPTransport: HTTPTransport {
 
 private struct AcceptedSendConnector: WebSocketConnecting {
     let socket: AcceptedSendSocket
-    func connect(to _: URL) -> any WebSocketConnection { socket }
+    let peer: AcceptedSendSocket
+    func connect(to url: URL) -> any WebSocketConnection {
+        url.host == "accepted-peer.example" ? peer : socket
+    }
 }
 
 private actor AcceptedSendSocket: WebSocketConnection {
+    nonisolated let heldInterrupts: AsyncStream<Void>
+    private let interruptReceipts: AsyncStream<Void>.Continuation
+    private var holdsInterrupts = false
+    private var rejectsInterrupts = false
+    private var pendingInterruptResponses: [Data] = []
+
+    init() { (heldInterrupts, interruptReceipts) = AsyncStream.makeStream() }
+    func holdInterruptAcknowledgements() { holdsInterrupts = true }
+    func rejectInterruptAcknowledgements() { rejectsInterrupts = true }
+    func releaseInterruptAcknowledgements() {
+        holdsInterrupts = false
+        let responses = pendingInterruptResponses
+        pendingInterruptResponses.removeAll()
+        responses.forEach { enqueue($0) }
+    }
     private(set) var commands: [JSONValue] = []
     private var queued: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
@@ -1100,10 +1349,19 @@ private actor AcceptedSendSocket: WebSocketConnection {
             enqueue(response)
         } else if tag == RPCMethod.dispatchCommand.rawValue, let payload = request["payload"] {
             commands.append(payload)
-            enqueue(try JSONEncoder.t3.encode(JSONValue.object([
-                "_tag": .string("Exit"), "requestId": request["id"]!,
-                "exit": .object(["_tag": .string("Success"), "value": .object(["sequence": .number(2)])])
-            ])))
+            let isInterrupt = payload["type"]?.stringValue == "thread.turn.interrupt"
+            let exit: JSONValue = isInterrupt && rejectsInterrupts
+                ? .object(["_tag": .string("Failure"), "cause": .array([
+                    .object(["_tag": .string("Fail"), "error": .object(["message": .string("Stop rejected by fixture")])]),
+                ])])
+                : .object(["_tag": .string("Success"), "value": .object(["sequence": .number(2)])])
+            let response = try JSONEncoder.t3.encode(JSONValue.object([
+                "_tag": .string("Exit"), "requestId": request["id"]!, "exit": exit,
+            ]))
+            if isInterrupt && holdsInterrupts {
+                pendingInterruptResponses.append(response)
+                interruptReceipts.yield(())
+            } else { enqueue(response) }
         }
     }
 
