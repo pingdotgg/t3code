@@ -255,7 +255,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             await fixture.client.disconnect()
             try? FileManager.default.removeItem(at: fixture.directory)
         }
-        _ = try await fixture.hydratedSnapshot()
+        _ = try await fixture.client.initialSnapshot()
         let wireID = "queued-archived"
         let archived = multiEnvironmentDetail(
             projectID: "project-two", threadID: wireID, archivedAt: "2026-07-31T12:00:00.000Z"
@@ -285,7 +285,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
             await fixture.client.disconnect()
             try? FileManager.default.removeItem(at: fixture.directory)
         }
-        _ = try await fixture.hydratedSnapshot()
+        _ = try await fixture.client.initialSnapshot()
         let cases = [
             (404, #"{"code":"not_found","reason":"thread_not_found"}"#, true),
             (404, #"{"message":"Proxy route missing"}"#, false),
@@ -311,7 +311,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 await fixture.client.disconnect()
                 try? FileManager.default.removeItem(at: fixture.directory)
             }
-            _ = try await fixture.hydratedSnapshot()
+            _ = try await fixture.client.initialSnapshot()
             if deleted {
                 await fixture.transport.setQueuedRecoveryResponse(
                     status: 404, body: #"{"code":"not_found","reason":"thread_not_found"}"#
@@ -1746,7 +1746,7 @@ private actor BlockingRuntimeCloseConnection: WebSocketConnection {
 }
 
 private actor RuntimeReplacementHTTPTransport: HTTPTransport {
-    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         guard request.url?.path == "/api/auth/websocket-ticket" else {
             throw URLError(.unsupportedURL)
         }
