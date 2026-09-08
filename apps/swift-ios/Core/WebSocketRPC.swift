@@ -491,6 +491,25 @@ public actor WebSocketRPCClient {
         }
     }
 
+    public func subscribeBatchesOnCurrentConnection<Value: Decodable & Sendable>(
+        _ tag: String,
+        payload: JSONValue = .object([:]),
+        as type: Value.Type
+    ) async throws -> (events: AsyncThrowingStream<[Value], Error>, connectionID: UUID) {
+        try Task.checkCancellation()
+        start()
+        while true {
+            try Task.checkCancellation()
+            if let id = connectionID {
+                return (
+                    subscribeBatches(tag, payload: payload, reconnect: false, as: type),
+                    id
+                )
+            }
+            _ = try await waitForConnection(after: nil)
+        }
+    }
+
     private func requestRaw(_ tag: String, payload: JSONValue) async throws -> JSONValue {
         start()
         let id = allocateRequestID()
