@@ -279,7 +279,7 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
     }),
   );
 
-  it.effect("keeps an unsettled workspace when the owning service scope closes", () =>
+  it.effect("keeps an unsettled workspace on scope close and removes it once the SDK settles", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const ownerScope = yield* Scope.make();
@@ -308,6 +308,10 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
       const disposeDone = new Promise<void>((resolve) => {
         signalDisposeDone = resolve;
       });
+      let signalCleanupDone!: () => void;
+      const cleanupDone = new Promise<void>((resolve) => {
+        signalCleanupDone = resolve;
+      });
       cursorSdkMock.status = "running";
       cursorSdkMock.create.mockImplementationOnce(async (options) => {
         metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
@@ -331,9 +335,17 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
         cursorSdkMock.status = "cancelled";
         signalCancelCalled();
       });
+      const trackingFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        remove: (path, options) =>
+          fileSystem.remove(path, options).pipe(Effect.tap(() => Effect.sync(signalCleanupDone))),
+      });
       const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",
-      }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+      }).pipe(
+        Effect.provideService(Scope.Scope, ownerScope),
+        Effect.provideService(FileSystem.FileSystem, trackingFileSystem),
+      );
 
       const caller = yield* textGeneration
         .generateCommitMessage({
@@ -368,7 +380,8 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
       });
       yield* Effect.promise(() => cancelCalled);
       yield* Effect.promise(() => disposeDone);
-      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(true);
+      yield* Effect.promise(() => cleanupDone);
+      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(false);
     }),
   );
 

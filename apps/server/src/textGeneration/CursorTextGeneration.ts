@@ -125,6 +125,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const ownerScope = yield* Effect.scope;
+  const ownerContext = yield* Effect.context<never>();
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -208,13 +209,30 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           }).pipe(
             Effect.onExit((exit) =>
               exit._tag === "Failure" && Cause.hasInterrupts(exit.cause)
-                ? Effect.sync(request.cancel)
+                ? Effect.sync(() => {
+                    request.cancel();
+                    // The scope closed while the SDK request was in flight. The
+                    // workspace must outlive the interruption only until the SDK
+                    // settles (cancellation and disposal), then removal is ours.
+                    void request.result
+                      .catch(() => undefined)
+                      .then(() => {
+                        void Effect.runPromiseWith(ownerContext)(
+                          ignoreCursorCleanupFailure(
+                            fileSystem.remove(metadataWorkspace, {
+                              recursive: true,
+                              force: true,
+                            }),
+                          ),
+                        ).catch(() => undefined);
+                      });
+                  })
                 : ignoreCursorCleanupFailure(
                     fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
                   ),
             ),
             Effect.interruptible,
-            Effect.forkIn(ownerScope),
+            Effect.forkIn(ownerScope, { startImmediately: true }),
           );
           return yield* restore(Fiber.join(completionFiber)).pipe(
             Effect.onInterrupt(() => Effect.sync(request.cancel)),
