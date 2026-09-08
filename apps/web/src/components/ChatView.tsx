@@ -2687,14 +2687,20 @@ export default function ChatView(props: ChatViewProps) {
       Object.fromEntries(pendingQuestionDraftKeys.map((key) => [key, state.counts[key] ?? 0])),
     ),
   );
-  const questionThreadReady = serverThread != null && !threadDetailLoading;
   useEffect(() => {
-    if (!activeThreadId || !questionThreadReady) return;
-    const prefix = questionAttachmentDraftPrefix(environmentId, activeThreadId);
+    if (routeThreadState.status !== "live" || routeThreadState.data._tag !== "Some") return;
+    const questionThread = routeThreadState.data.value;
+    const { userInputs: currentRequests } = derivePendingRequests(questionThread.activities);
+    const prefix = questionAttachmentDraftPrefix(environmentId, questionThread.id);
     const retained = new Set(
-      pendingUserInputs.flatMap((request) =>
+      currentRequests.flatMap((request) =>
         request.questions.map((question) =>
-          questionAttachmentDraftId(environmentId, activeThreadId, request.requestId, question.id),
+          questionAttachmentDraftId(
+            environmentId,
+            questionThread.id,
+            request.requestId,
+            question.id,
+          ),
         ),
       ),
     );
@@ -2706,7 +2712,7 @@ export default function ChatView(props: ChatViewProps) {
       if (key.startsWith(prefix) && !retained.has(DraftId.make(key)))
         clearQuestionAttachmentDraft(DraftId.make(key));
     }
-  }, [activeThreadId, questionThreadReady, environmentId, pendingUserInputs]);
+  }, [environmentId, routeThreadState.data, routeThreadState.status]);
   const activePendingDraftAnswers = useMemo(() => {
     if (!activePendingUserInput || !activeThreadId) return EMPTY_PENDING_USER_INPUT_ANSWERS;
     return Object.fromEntries(

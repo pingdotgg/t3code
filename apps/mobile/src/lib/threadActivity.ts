@@ -989,6 +989,7 @@ function buildWorkEntryExpandedBody(entry: WorkLogEntry): string | null {
  * for every row (see the deferred-expansion test).
  */
 function workEntryCanExpand(entry: WorkLogEntry): boolean {
+  if (entry.questionAnswer) return true;
   if (entry.agentSpawn) return agentSpawnMembers(entry.agentSpawn).length > 0;
   if (entry.itemType === "mcp_tool_call" && entry.toolData !== undefined) return true;
   if (entry.changedFiles?.some((path) => path.trim().length > 0)) return true;

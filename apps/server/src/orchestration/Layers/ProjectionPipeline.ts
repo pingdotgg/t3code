@@ -363,9 +363,9 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
   const path = yield* Effect.service(Path.Path);
 
   const attachmentsRootDir = serverConfig.attachmentsDir;
-  const readAttachmentRootEntries = fileSystem
-    .readDirectory(attachmentsRootDir, { recursive: false })
-    .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+  const readAttachmentRootEntries = fileSystem.readDirectory(attachmentsRootDir, {
+    recursive: false,
+  });
 
   const removeDeletedThreadAttachmentEntry = Effect.fn("removeDeletedThreadAttachmentEntry")(
     function* (threadSegment: string, entry: string) {
@@ -427,7 +427,7 @@ const runAttachmentSideEffects = Effect.fn("runAttachmentSideEffects")(function*
     }
 
     const absolutePath = path.join(attachmentsRootDir, relativePath);
-    const fileInfo = yield* fileSystem.stat(absolutePath).pipe(Effect.orElseSucceed(() => null));
+    const fileInfo = yield* fileSystem.stat(absolutePath);
     if (!fileInfo || fileInfo.type !== "File") {
       return;
     }
@@ -1894,12 +1894,13 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       Effect.provideService(ServerConfig, serverConfig),
       (effect, event) =>
         effect.pipe(
+          Effect.as(true),
           Effect.catch((cause) =>
             Effect.logWarning("failed to apply projected attachment side-effects", {
               sequence: event.sequence,
               eventType: event.type,
               cause,
-            }),
+            }).pipe(Effect.as(false)),
           ),
         ),
     );
@@ -1968,7 +1969,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           );
           // Return the cleanup effect so the caller runs it after the outer transaction commits.
           // @effect-diagnostics-next-line returnEffectInGen:off
-          return applyAttachmentSideEffects(event, attachmentSideEffects);
+          return applyAttachmentSideEffects(event, attachmentSideEffects).pipe(Effect.asVoid);
         },
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -2020,12 +2021,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       for (const event of pendingCleanup.values()) {
         if (event.type !== "thread.reverted" && event.type !== "thread.deleted") continue;
         const threadId = event.payload.threadId;
-        yield* applyAttachmentSideEffects(event, {
+        const cleaned = yield* applyAttachmentSideEffects(event, {
           deletedThreadIds: new Set(event.type === "thread.deleted" ? [threadId] : []),
           prunedThreadRelativePaths: new Map(
             event.type === "thread.reverted" ? [[threadId, new Set<string>()]] : [],
           ),
         });
+        // Leave the cleanup cursor behind this event so the next bootstrap retries it.
+        if (!cleaned) return;
       }
       if (lastEvent) {
         yield* projectionStateRepository.upsert({

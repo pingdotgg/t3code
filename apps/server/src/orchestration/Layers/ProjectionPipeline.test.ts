@@ -3964,7 +3964,7 @@ const engineLayer = it.layer(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provideMerge(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
@@ -4349,6 +4349,25 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         WHERE command_id = ${cleanupFailureCommandId}
       `;
       assert.deepEqual(cleanupFailureReceipts, [{ status: "accepted" }]);
+
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const cleanupCursor = sql<{ readonly lastAppliedSequence: number }>`
+        SELECT last_applied_sequence AS "lastAppliedSequence" FROM projection_state
+        WHERE projector = 'projection.attachment-cleanup'
+      `;
+      const cursorBeforeRetry = yield* cleanupCursor;
+      yield* pipeline.bootstrap;
+      assert.deepEqual(yield* cleanupCursor, cursorBeforeRetry);
+      assert.isTrue(yield* exists(blockedAttachmentPath));
+
+      yield* fileSystem.remove(blockedAttachmentPath, { recursive: true });
+      yield* fileSystem.writeFileString(blockedAttachmentPath, "retry this attachment");
+      yield* pipeline.bootstrap;
+      assert.isFalse(yield* exists(blockedAttachmentPath));
+      assert.isAbove(
+        (yield* cleanupCursor)[0]!.lastAppliedSequence,
+        cursorBeforeRetry[0]!.lastAppliedSequence,
+      );
     }),
   );
 });
