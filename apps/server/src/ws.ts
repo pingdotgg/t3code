@@ -160,6 +160,8 @@ import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
+import * as GitButlerProjectRegistry from "./gitButler/GitButlerProjectRegistry.ts";
+import * as GitButlerWorkspace from "./gitButler/GitButlerWorkspace.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -642,6 +644,7 @@ const makeWsRpcLayer = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const gitButlerWorkspace = yield* GitButlerWorkspace.GitButlerWorkspace;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2561,6 +2564,10 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.gitButlerWorkspaceStatus]: ({ cwd }) =>
+          observeRpcEffect(WS_METHODS.gitButlerWorkspaceStatus, gitButlerWorkspace.read(cwd), {
+            "rpc.aggregate": "gitbutler",
+          }),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetTraceDiagnostics,
@@ -3794,6 +3801,9 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                     ),
                   ),
                 ),
+              ),
+              Layer.provide(
+                GitButlerWorkspace.layer.pipe(Layer.provide(GitButlerProjectRegistry.layer)),
               ),
             ),
           ),

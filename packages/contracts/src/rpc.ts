@@ -77,6 +77,7 @@ import {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "./git.ts";
+import { GitButlerWorkspaceInput, GitButlerWorkspaceStatus } from "./gitButler.ts";
 import {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
@@ -321,6 +322,9 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+
+  // GitButler methods
+  gitButlerWorkspaceStatus: "gitButler.workspaceStatus",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -587,6 +591,12 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsGitButlerWorkspaceStatusRpc = Rpc.make(WS_METHODS.gitButlerWorkspaceStatus, {
+  payload: GitButlerWorkspaceInput,
+  success: GitButlerWorkspaceStatus,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1404,6 +1414,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsGitButlerWorkspaceStatusRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,

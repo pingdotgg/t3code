@@ -37,6 +37,16 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("keeps GitButler workspace reads gated across server version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.gitButlerWorkspace).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, gitButlerWorkspace: true },
+      }).capabilities.gitButlerWorkspace,
+    ).toBe(true);
+  });
+
   it("treats a missing attachment upload capability as unsupported", () => {
     expect(decodeDescriptor(descriptor).capabilities.attachmentUploads).toBeUndefined();
   });
