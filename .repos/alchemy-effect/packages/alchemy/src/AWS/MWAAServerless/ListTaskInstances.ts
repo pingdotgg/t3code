@@ -18,9 +18,8 @@ export type ListTaskInstancesInput = Omit<
  * Lists the task instances of a run of the bound {@link Workflow} with
  * their statuses and durations. Provide the implementation with
  * `Effect.provide(AWS.MWAAServerless.ListTaskInstancesHttp)`.
- * @binding
- * @section Observing Tasks
- * @example List A Run's Task Instances
+ * ### Observing Tasks
+ * **Example:** List A Run's Task Instances
  * ```typescript
  * // init — bind the operation to the workflow
  * const listTaskInstances = yield* AWS.MWAAServerless.ListTaskInstances(workflow);
@@ -31,6 +30,8 @@ export type ListTaskInstancesInput = Omit<
  *   yield* Effect.log(`${task.TaskInstanceId}: ${task.Status}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListTaskInstances extends Binding.Service<
   ListTaskInstances,

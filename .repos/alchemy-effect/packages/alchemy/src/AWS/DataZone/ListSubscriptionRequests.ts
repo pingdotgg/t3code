@@ -14,9 +14,8 @@ export interface ListSubscriptionRequestsRequest extends Omit<
  * Lists subscription requests in the bound domain, optionally by status — e.g. the PENDING queue an approval bot works through. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.ListSubscriptionRequestsHttp)`.
- * @binding
- * @section Subscription Workflows
- * @example List Pending Requests
+ * ### Subscription Workflows
+ * **Example:** List Pending Requests
  * ```typescript
  * // init — bind the operation to the domain
  * const listSubscriptionRequests = yield* AWS.DataZone.ListSubscriptionRequests(domain);
@@ -24,6 +23,8 @@ export interface ListSubscriptionRequestsRequest extends Omit<
  * // runtime
  * const pending = yield* listSubscriptionRequests({ status: "PENDING" });
  * ```
+ *
+ * @binding
  */
 export interface ListSubscriptionRequests extends Binding.Service<
   ListSubscriptionRequests,

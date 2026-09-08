@@ -211,6 +211,27 @@ describe("searchSettings", () => {
     });
   });
 
+  it("routes conditional window capture settings to the stable toggle row", () => {
+    const targets = [
+      "capture accessibility data",
+      "capture shortcut",
+      "capture sound",
+      "capture flash",
+      "capture animations",
+    ].map((query) => {
+      const match = searchSettings(query)[0];
+      return [match?.id, match?.targetId];
+    });
+
+    expect(targets).toEqual([
+      ["snap-shot-accessibility", "snap-shot-enabled"],
+      ["snap-shot-shortcut", "snap-shot-enabled"],
+      ["snap-shot-sound", "snap-shot-enabled"],
+      ["snap-shot-flash", "snap-shot-enabled"],
+      ["snap-shot-animations", "snap-shot-enabled"],
+    ]);
+  });
+
   it("routes browser recording quality to integrations", () => {
     const result = searchSettings("recording frame rate")[0];
     expect(result).toMatchObject({

@@ -1,180 +1,124 @@
 ---
 title: Websites
-description: Deploy static sites and Vite apps to S3 and CloudFront as a single StaticSite resource.
+description: Deploy Vite, Astro, Next.js, Nuxt, React Router, SvelteKit, TanStack Start, Waku, Octane, or any static build to AWS with first-class Website resources.
+sidebar:
+  label: Overview
+  order: 1
 ---
 
-**`AWS.Website.StaticSite`** deploys a static site — plain HTML
-or a built Vite app — to S3 and CloudFront as one resource. It
-uploads your files to a private bucket, stands up a CloudFront
-distribution with an edge router in front, and invalidates the
-cache when content changes. For multiple sites (or a site plus
-an API) behind one distribution, compose it with
-**`AWS.Website.Router`**.
+Alchemy deploys frontends to AWS with a family of `AWS.Website`
+resources. Each one builds your project programmatically and deploys
+it as a serverless site — the SSR server on a streaming Lambda
+Function URL, static assets in a private S3 bucket, and a CloudFront
+distribution whose edge router serves uploaded files from S3 and
+forwards everything else to the server — with no AWS-specific
+configuration: no CDK, no CloudFormation, no adapter setup. Your
+framework's own config file (`astro.config.*`, `nuxt.config.ts`,
+`vite.config.ts`, ...) loads natively; Alchemy layers its AWS
+integration on top.
 
-## Prerequisites
+- [`Vite`](/aws/frontend/vite) — any client-only Vite project (React,
+  Vue, Solid, or a plain SPA): assets-only, no Lambda; your
+  `vite.config.*` loads natively.
+- [`Foldkit`](/aws/frontend/foldkit) — Foldkit apps; `Vite` with SPA
+  deep links on by default.
+- [`Astro`](/aws/frontend/astro) — Astro sites, server-rendered or
+  fully static; your `astro.config.*` loads natively.
+- [`Nextjs`](/aws/frontend/nextjs) — Next.js apps built through the
+  OpenNext (`@opennextjs/aws`) pipeline, with streaming SSR, image
+  optimization, and ISR wiring; your `next.config.*` is honored
+  as-is.
+- [`Nuxt`](/aws/frontend/nuxt) — Nuxt apps built through nitro's
+  `aws-lambda` preset; your `nuxt.config.ts` loads natively.
+- [`ReactRouter`](/aws/frontend/react-router) — React Router v7 in
+  framework mode, built through your own `vite build`.
+- [`SvelteKit`](/aws/frontend/sveltekit) — SvelteKit apps with a
+  wrangler-free in-memory AWS adapter; your `vite.config.ts` loads
+  natively.
+- [`TanStackStart`](/aws/frontend/tanstack-start) — TanStack Start
+  (React or Solid), built through your own `vite build`.
+- [`Waku`](/aws/frontend/waku) — Waku (React Server Components)
+  apps.
+- [`Octane`](/aws/frontend/octane) — OctaneJS fullstack apps built
+  through your own `vite build` with the AWS marker adapter.
+- [`StaticSite`](/aws/frontend/static-site) — any directory of files,
+  optionally produced by a build command, for static generators like
+  Zola and Hugo or pre-built SPAs.
+- [`Router`](/aws/frontend/static-site#compose-sites-with-a-router) —
+  a shared CloudFront front door: one distribution serving several
+  sites (or a site plus an API), routed at the edge.
 
-Install Alchemy and connect your AWS account — see
-[Setup](/aws/setup).
+Every resource shares the same surface: `domain` (ACM certificate +
+Route 53 records), server configuration (`memorySize`, `timeout`,
+`env`), `assets`, `edge` customizations, and `invalidation`.
+All builds are memoized by content-hashing the input files — an
+unchanged project skips the build and deploy entirely. Under
+`alchemy dev`, every resource runs the framework's own dev server
+(native HMR) instead of deploying; `Alchemy.remote()` opts back into
+the full live deployment.
 
-## Deploy a static site
+## What's supported
 
-Point `StaticSite` at a directory of files and surface its URL
-from the Stack:
+| Framework | Resource | Guide |
+| --- | --- | --- |
+| React / Vite SPA | `Vite` | [React SPA](/aws/frontend/vite-spa) |
+| Vue | `Vite` | [Vue](/aws/frontend/vue) |
+| Foldkit | `Foldkit` | [Foldkit](/aws/frontend/foldkit) |
+| TanStack Start (React & Solid) | `TanStackStart` | [TanStack Start](/aws/frontend/tanstack-start) |
+| React Router | `ReactRouter` | [React Router](/aws/frontend/react-router) |
+| Astro | `Astro` | [Astro](/aws/frontend/astro) |
+| Next.js | `Nextjs` | [Next.js](/aws/frontend/nextjs) |
+| Nuxt | `Nuxt` | [Nuxt](/aws/frontend/nuxt) |
+| SvelteKit | `SvelteKit` | [SvelteKit](/aws/frontend/sveltekit) |
+| Waku | `Waku` | [Waku](/aws/frontend/waku) |
+| OctaneJS (fullstack) | `Octane` | [Octane](/aws/frontend/octane) |
+| Zola, Hugo, or any static generator | `StaticSite` | [Static sites](/aws/frontend/static-site) |
 
-```typescript
-// alchemy.run.ts
-import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as Effect from "effect/Effect";
+Every row is backed by a checked-in example or a live deploy test in
+the Alchemy repository. The last row is deliberately open-ended:
+`StaticSite` deploys any directory of files (running your build
+command first if you give it one), so any generator works the same
+way.
 
-export default Alchemy.Stack(
-  "MySite",
-  {
-    providers: AWS.providers(),
-    state: AWS.state(),
-  },
-  Effect.gen(function* () {
-    const site = yield* AWS.Website.StaticSite("MarketingSite", {
-      path: "./site",
-      forceDestroy: true,
-    });
+## How to choose
 
-    return { url: site.url };
-  }),
-);
-```
+Use the resource named after your framework. `Astro`, `Nextjs`,
+`Nuxt`, `ReactRouter`, `SvelteKit`, `TanStackStart`,
+`Waku`, and `Octane` each drive their framework's own build and know
+its output layout, config surface, and dev server.
 
-`path` is the local directory to upload (defaults to `"."`).
-`forceDestroy: true` lets `alchemy destroy` empty the bucket
-before deleting it — leave it off for sites you never intend to
-tear down.
+Use `Vite` when the app is client-only and a single `vite build`
+produces the whole thing — a React or Vue SPA, or any Vite project
+with no server. It creates no Lambda.
 
-```sh
-bun alchemy deploy
-```
+Use `StaticSite` when the output is plain files from an arbitrary
+build command that emits a directory (Zola, Hugo, or any other
+generator without a dedicated resource).
 
-The first deploy takes a few minutes while CloudFront
-provisions; after that, deploys only re-upload changed files and
-`site.url` serves your site over HTTPS from the edge.
-
-## Build a Vite app
-
-For a site with a build step, add `build` and Alchemy runs the
-command before uploading the output directory:
-
-```typescript
-const site = yield* AWS.Website.StaticSite("Web", {
-  path: "./frontend",
-  build: {
-    command: "bun run build",
-    output: "dist",
-  },
-  environment: {
-    VITE_STAGE: "production",
-  },
-});
-```
-
-`environment` is exposed to the build command, and values accept
-outputs from other resources — so a `VITE_API_URL` can reference
-a Function URL deployed in the same Stack. The build is
-memoized: it re-runs only when the hash of its inputs changes
-(all files by default, filtered by your gitignore rules;
-tune with `build.include` / `build.exclude`).
-
-Requests that don't match an uploaded file fall back to the
-index page, so client-side SPA routing works out of the box. Set
-`errorPage` to serve a real 404 page instead.
-
-## Add a custom domain
-
-Set `domain` with a Route 53 hosted zone and Alchemy handles the
-certificate and DNS:
-
-```typescript
-const site = yield* AWS.Website.StaticSite("MarketingSite", {
-  path: "./site",
-  domain: {
-    name: "www.example.com",
-    hostedZoneId: "Z1234567890",
-  },
-});
-```
-
-This creates an ACM certificate for the domain (plus any
-`aliases`), attaches it to the distribution, and creates Route
-53 alias records pointing at CloudFront. Bring your own
-certificate with `domain.cert`, or set `dns: false` to skip
-record creation and manage DNS elsewhere.
-
-## Share one distribution with a Router
-
-CloudFront distributions are slow to create and each custom
-domain can only attach to one of them. `Router` owns a single
-distribution and routes requests at the edge via a CloudFront
-KeyValueStore — sites attach to it instead of creating their
-own:
-
-```typescript
-const router = yield* AWS.Website.Router("WebsiteRouter", {
-  domain: {
-    name: "example.com",
-    hostedZoneId: "Z1234567890",
-  },
-});
-
-const docs = yield* AWS.Website.StaticSite("Docs", {
-  path: "./docs",
-  router: {
-    instance: router,
-    path: "/docs",
-  },
-});
-```
-
-The site registers its file manifest in the Router's KV store
-and is served under `/docs` — no second distribution, and adding
-or updating a site never touches the distribution config. The
-`domain` lives on the Router; sites attached to a Router must
-not set their own.
-
-Routers also take inline `routes` for origins that aren't static
-sites — for example, forwarding a path prefix to an API:
-
-```typescript
-const router = yield* AWS.Website.Router("WebsiteRouter", {
-  routes: {
-    "/*": { url: api.functionUrl },
-  },
-});
-```
-
-## What Alchemy automates
-
-One `StaticSite` fans out into the whole S3 + CloudFront stack:
-
-- **Bucket and uploads** — a private S3 bucket (or an existing
-  one via `assets.bucket`), each file uploaded with an inferred
-  `Content-Type` and sensible cache headers: HTML is
-  `no-cache`, other assets `max-age=31536000,public,immutable`.
-  Stale files are purged on each deploy.
-- **Distribution and edge routing** — a CloudFront distribution
-  whose viewer-request CloudFront Function resolves each request
-  against a KeyValueStore manifest of your files, with index and
-  error-page fallbacks handled at the edge.
-- **Certificate and DNS** — an ACM certificate and Route 53
-  alias records whenever `domain` includes a `hostedZoneId`.
-- **Invalidation** — a CloudFront invalidation keyed to the
-  uploaded asset hash, so caches refresh exactly when content
-  changes. Defaults to `{ paths: "all", wait: false }`;
-  disable with `invalidation: false`.
+Use `Router` when several sites (or a site plus an API) should share
+one CloudFront distribution and one domain — distributions take
+minutes to create, and each custom domain can only attach to one.
 
 ## Where next
 
-- [Static site guide](/aws/frontend/static-site) — an end-to-end
-  walkthrough from empty directory to custom domain.
-- [Lambda](/aws/compute/lambda) — deploy an API to route behind the same
-  Router.
-- [`StaticSite` reference](/providers/aws/website/staticsite)
-  and [`Router` reference](/providers/aws/website/router) —
-  every prop and attribute.
+- [The Vite resource](/aws/frontend/vite) — build model, env
+  inlining, SPA fallback, dev mode.
+- [The StaticSite resource](/aws/frontend/static-site) — build
+  commands, SPA/404 handling, Router composition, invalidation.
+- Framework guides:
+  [React SPA](/aws/frontend/vite-spa),
+  [Vue](/aws/frontend/vue),
+  [Foldkit](/aws/frontend/foldkit),
+  [TanStack Start](/aws/frontend/tanstack-start),
+  [React Router](/aws/frontend/react-router),
+  [Astro](/aws/frontend/astro),
+  [Next.js](/aws/frontend/nextjs),
+  [Nuxt](/aws/frontend/nuxt),
+  [SvelteKit](/aws/frontend/sveltekit),
+  [Waku](/aws/frontend/waku),
+  [Octane](/aws/frontend/octane).
+- [Full-stack RPC + Drizzle](/aws/frontend/full-stack-tanstack-rpc-drizzle) —
+  a TanStack Start UI driving an Effect RPC Lambda over Aurora DSQL.
+- [`StaticSite` reference](/providers/aws/website/staticsite) and
+  [`Router` reference](/providers/aws/website/router) — every prop
+  and attribute.

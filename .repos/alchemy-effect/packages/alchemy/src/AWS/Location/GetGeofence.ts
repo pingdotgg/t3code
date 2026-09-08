@@ -19,15 +19,16 @@ export interface GetGeofenceRequest extends Omit<
  * `geo:GetGeofence`), scoped to one {@link GeofenceCollection}. Provide the implementation with
  * `Effect.provide(AWS.Location.GetGeofenceHttp)`.
  *
- * @binding
- * @section Reading Geofences
- * @example Read a Geofence
+ * ### Reading Geofences
+ * **Example:** Read a Geofence
  * ```typescript
  * const getGeofence = yield* Location.GetGeofence(collection);
  *
  * const fence = yield* getGeofence({ GeofenceId: "warehouse" });
  * // fence.Status → "ACTIVE" once evaluable
  * ```
+ *
+ * @binding
  */
 export interface GetGeofence extends Binding.Service<
   GetGeofence,

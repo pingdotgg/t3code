@@ -83,9 +83,8 @@ export interface Permission extends Resource<
 /**
  * A Lambda permission that grants an AWS service or another account permission to
  * invoke a function.
- * @resource
- * @section Granting Permissions
- * @example S3 Notification Permission
+ * ### Granting Permissions
+ * **Example:** S3 Notification Permission
  * ```typescript
  * const perm = yield* Permission("S3Invoke", {
  *   action: "lambda:InvokeFunction",
@@ -96,7 +95,7 @@ export interface Permission extends Resource<
  * });
  * ```
  *
- * @example Cross Account Invoke
+ * **Example:** Cross Account Invoke
  * ```typescript
  * const perm = yield* Permission("CrossAccount", {
  *   action: "lambda:InvokeFunction",
@@ -105,7 +104,7 @@ export interface Permission extends Resource<
  * });
  * ```
  *
- * @example Public Function URL
+ * **Example:** Public Function URL
  * ```typescript
  * const perm = yield* Permission("PublicUrl", {
  *   action: "lambda:InvokeFunctionUrl",
@@ -114,6 +113,8 @@ export interface Permission extends Resource<
  *   functionUrlAuthType: "NONE",
  * });
  * ```
+ *
+ * @resource
  */
 export const Permission = Resource<Permission>("AWS.Lambda.Permission");
 
@@ -235,12 +236,10 @@ export const PermissionProvider = () =>
                     .filter(
                       (s): s is { Sid: string } => typeof s.Sid === "string",
                     )
-                    .map(
-                      (s): PermissionAttrs => ({
-                        statementId: s.Sid,
-                        functionName,
-                      }),
-                    );
+                    .map((s): PermissionAttrs => ({
+                      statementId: s.Sid,
+                      functionName,
+                    }));
                 }).pipe(
                   // Functions with no resource policy / removed out of band
                   // between list and getPolicy — skip them.

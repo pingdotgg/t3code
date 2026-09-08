@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:DescribeCapability` is granted on the cluster's sub-resource ARNs.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeCapabilityHttp)`.
- * @binding
- * @section Cluster Capabilities
- * @example Check a Capability's Status
+ * ### Cluster Capabilities
+ * **Example:** Check a Capability's Status
  * ```typescript
  * // init
  * const describeCapability = yield* AWS.EKS.DescribeCapability(cluster);
@@ -21,6 +20,8 @@ import type { Cluster } from "./Cluster.ts";
  * const { capability } = yield* describeCapability({ capabilityName: "argocd" });
  * const status = capability?.status;
  * ```
+ *
+ * @binding
  */
 export interface DescribeCapability extends Binding.Service<
   DescribeCapability,

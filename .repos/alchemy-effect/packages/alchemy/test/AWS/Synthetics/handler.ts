@@ -27,7 +27,7 @@ export class SyntheticsBindingsFunction extends Lambda.Function<Lambda.Function>
 export default SyntheticsBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(120),
   },
   Effect.gen(function* () {

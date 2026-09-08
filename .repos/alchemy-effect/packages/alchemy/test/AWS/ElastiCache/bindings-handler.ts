@@ -28,7 +28,7 @@ export class ElastiCacheBindingsTestFunction extends Lambda.Function<Lambda.Func
 export default ElastiCacheBindingsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // Event source: subscribe the host to ElastiCache cache/snapshot

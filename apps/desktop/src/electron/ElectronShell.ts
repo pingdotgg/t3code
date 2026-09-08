@@ -67,6 +67,7 @@ export class ElectronShell extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronShell.of({
   openExternal: (rawUrl) =>
     Option.match(parseSafeExternalUrl(rawUrl), {
@@ -87,9 +88,7 @@ export const make = ElectronShell.of({
       ),
     ),
   copyText: (text) =>
-    Effect.sync(() => {
-      Electron.clipboard.writeText(text);
-    }),
+    Effect.promise(() => Electron.clipboard.writeText(text).catch(() => undefined)),
 });
 
 export const layer = Layer.succeed(ElectronShell, make);

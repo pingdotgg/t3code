@@ -54,7 +54,7 @@ function nowIso() {
   return "2026-05-01T00:00:00.000Z";
 }
 
-class IntegrationWaitTimeoutError extends Schema.TaggedErrorClass<IntegrationWaitTimeoutError>()(
+class IntegrationWaitTimeoutError extends Schema.TaggedError<IntegrationWaitTimeoutError>()(
   "IntegrationWaitTimeoutError",
   {
     description: Schema.String,

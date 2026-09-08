@@ -1,13 +1,72 @@
+	# reference-only checkout of the repos — skipped by
+	# `git submodule update --init` (CI included). Fetch explicitly with
+	# `git submodule update --init --checkout -- .vendor/<repo>`.
 [submodule "vendor/alchemy"]
 	path = .vendor/alchemy
-	url = https://github.com/alchemy-run/alchemy.git
-	# ~900MB reference-only checkout of the v1 repo — skipped by
-	# `git submodule update --init` (CI included). Fetch explicitly with
-	# `git submodule update --init --checkout .vendor/alchemy`.
+	url = https://github.com/alchemy-run/alchemy-async.git
+	shallow = true
 	update = none
+	ignore = all
+[submodule "vendor/workers-sdk"]
+	path = .vendor/workers-sdk
+	url = https://github.com/cloudflare/workers-sdk.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/next.js"]
+	path = .vendor/next.js
+	url = https://github.com/vercel/next.js.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/opennextjs-cloudflare"]
+	path = .vendor/opennextjs-cloudflare
+	url = https://github.com/opennextjs/opennextjs-cloudflare.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/astro"]
+	path = .vendor/astro
+	url = https://github.com/withastro/astro.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/sveltekit"]
+	path = .vendor/sveltekit
+	url = https://github.com/sveltejs/kit.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/waku"]
+	path = .vendor/waku
+	url = https://github.com/wakujs/waku.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/nuxt"]
+	path = .vendor/nuxt
+	url = https://github.com/nuxt/nuxt.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/nitro"]
+	path = .vendor/nitro
+	url = https://github.com/nitrojs/nitro.git
+	shallow = true
+	update = none
+	ignore = all
+[submodule "vendor/nitro-cloudflare-dev"]
+	path = .vendor/nitro-cloudflare-dev
+	url = https://github.com/nitrojs/nitro-cloudflare-dev.git
+	shallow = true
+	update = none
+	ignore = all
 [submodule "distilled"]
 	path = distilled
 	url = https://github.com/alchemy-run/distilled.git
-[submodule "cloudflare-tools"]
-	path = cloudflare-tools
-	url = https://github.com/alchemy-run/cloudflare-tools.git
+[submodule "vendor/floci"]
+	path = .vendor/floci
+	url = https://github.com/alchemy-run/floci.git
+	shallow = true
+	update = none
+	ignore = all

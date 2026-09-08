@@ -192,11 +192,8 @@ export type LoadBalancer = Resource<
  * Requires the Load Balancing subscription to be enabled for the zone;
  * without it, creation fails with the typed `LoadBalancingNotEnabledForZone`
  * error.
- * @resource
- * @product Load Balancers
- * @category Performance & Reliability
- * @section Creating a Load Balancer
- * @example DNS-only (unproxied) load balancer
+ * ### Creating a Load Balancer
+ * **Example:** DNS-only (unproxied) load balancer
  * ```typescript
  * const lb = yield* Cloudflare.LoadBalancer.LoadBalancer("ApiLb", {
  *   zoneId: zone.zoneId,
@@ -208,7 +205,7 @@ export type LoadBalancer = Resource<
  * });
  * ```
  *
- * @example Proxied load balancer with steering and affinity
+ * **Example:** Proxied load balancer with steering and affinity
  * ```typescript
  * const lb = yield* Cloudflare.LoadBalancer.LoadBalancer("AppLb", {
  *   zoneId: zone.zoneId,
@@ -221,8 +218,8 @@ export type LoadBalancer = Resource<
  * });
  * ```
  *
- * @section Geo steering
- * @example Region pools
+ * ### Geo steering
+ * **Example:** Region pools
  * ```typescript
  * yield* Cloudflare.LoadBalancer.LoadBalancer("GeoLb", {
  *   zoneId: zone.zoneId,
@@ -238,6 +235,10 @@ export type LoadBalancer = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/load-balancing/
+ *
+ * @resource
+ * @product Load Balancers
+ * @category Performance & Reliability
  */
 export const LoadBalancer = Resource<LoadBalancer>(TypeId, {
   aliases: ["Cloudflare.LoadBalancer"],

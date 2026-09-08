@@ -19,6 +19,7 @@ import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/rela
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
+import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
@@ -181,7 +182,7 @@ const getDefaultArch = Effect.fn("getDefaultArch")(function* (platform: typeof B
   return yield* getDefaultBuildArch(platform, config);
 });
 
-export class MacPasskeySigningConfigurationResolutionError extends Schema.TaggedErrorClass<MacPasskeySigningConfigurationResolutionError>()(
+export class MacPasskeySigningConfigurationResolutionError extends Schema.TaggedError<MacPasskeySigningConfigurationResolutionError>()(
   "MacPasskeySigningConfigurationResolutionError",
   {
     cause: Schema.Defect(),
@@ -200,7 +201,7 @@ export class MacPasskeySigningConfigurationResolutionError extends Schema.Tagged
   }
 }
 
-export class KeyringNativePackageMissingError extends Schema.TaggedErrorClass<KeyringNativePackageMissingError>()(
+export class KeyringNativePackageMissingError extends Schema.TaggedError<KeyringNativePackageMissingError>()(
   "KeyringNativePackageMissingError",
   {
     packageName: Schema.String,
@@ -216,7 +217,7 @@ export class KeyringNativePackageMissingError extends Schema.TaggedErrorClass<Ke
   }
 }
 
-export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedErrorClass<ClerkPasskeyNativePackageMissingError>()(
+export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedError<ClerkPasskeyNativePackageMissingError>()(
   "ClerkPasskeyNativePackageMissingError",
   {
     packageName: Schema.String,
@@ -232,7 +233,7 @@ export class ClerkPasskeyNativePackageMissingError extends Schema.TaggedErrorCla
   }
 }
 
-export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<UnsupportedHostBuildPlatformError>()(
+export class UnsupportedHostBuildPlatformError extends Schema.TaggedError<UnsupportedHostBuildPlatformError>()(
   "UnsupportedHostBuildPlatformError",
   {
     hostPlatform: Schema.String,
@@ -243,7 +244,7 @@ export class UnsupportedHostBuildPlatformError extends Schema.TaggedErrorClass<U
   }
 }
 
-export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildArchitectureError>()(
+export class UnsupportedDesktopBuildArchitectureError extends Schema.TaggedError<UnsupportedDesktopBuildArchitectureError>()(
   "UnsupportedDesktopBuildArchitectureError",
   {
     platform: BuildPlatform,
@@ -262,7 +263,7 @@ const InvalidMockUpdateServerPortReason = Schema.Literals([
   "out-of-range",
 ]);
 
-export class InvalidMockUpdateServerPortError extends Schema.TaggedErrorClass<InvalidMockUpdateServerPortError>()(
+export class InvalidMockUpdateServerPortError extends Schema.TaggedError<InvalidMockUpdateServerPortError>()(
   "InvalidMockUpdateServerPortError",
   {
     reason: InvalidMockUpdateServerPortReason,
@@ -283,7 +284,7 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedErrorClass<In
   }
 }
 
-export class BuildCommandFailedError extends Schema.TaggedErrorClass<BuildCommandFailedError>()(
+export class BuildCommandFailedError extends Schema.TaggedError<BuildCommandFailedError>()(
   "BuildCommandFailedError",
   {
     command: Schema.String,
@@ -316,7 +317,7 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
   { id: "imagemagick", description: "ImageMagick", packages: ["imagemagick"] },
 ] as const;
 
-export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<LinuxDesktopBuildPrerequisitesMissingError>()(
+export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<LinuxDesktopBuildPrerequisitesMissingError>()(
   "LinuxDesktopBuildPrerequisitesMissingError",
   {
     missing: Schema.Array(Schema.String),
@@ -363,7 +364,7 @@ const MAC_DESKTOP_BUILD_PREREQUISITES = [
   { id: "lipo", description: "Xcode universal-binary tool (lipo)" },
 ] as const;
 
-export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<MacDesktopBuildPrerequisitesMissingError>()(
+export class MacDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<MacDesktopBuildPrerequisitesMissingError>()(
   "MacDesktopBuildPrerequisitesMissingError",
   {
     missing: Schema.Array(Schema.String),
@@ -400,7 +401,7 @@ const WINDOWS_DESKTOP_BUILD_PREREQUISITES = [
   { id: "tar", description: "tar for the bundled WSL runtime" },
 ] as const;
 
-export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedErrorClass<WindowsDesktopBuildPrerequisitesMissingError>()(
+export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedError<WindowsDesktopBuildPrerequisitesMissingError>()(
   "WindowsDesktopBuildPrerequisitesMissingError",
   {
     missing: Schema.Array(Schema.String),
@@ -427,7 +428,7 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
   }
 }
 
-export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedErrorClass<ResourceMonitorBuildOutputMissingError>()(
+export class ResourceMonitorBuildOutputMissingError extends Schema.TaggedError<ResourceMonitorBuildOutputMissingError>()(
   "ResourceMonitorBuildOutputMissingError",
   {
     binaryPath: Schema.String,
@@ -447,7 +448,7 @@ const desktopIconPlatformNames = {
   win: "Windows",
 } satisfies Record<typeof BuildPlatform.Type, string>;
 
-export class LinuxBrowserSecretHostError extends Schema.TaggedErrorClass<LinuxBrowserSecretHostError>()(
+export class LinuxBrowserSecretHostError extends Schema.TaggedError<LinuxBrowserSecretHostError>()(
   "LinuxBrowserSecretHostError",
   { hostPlatform: Schema.String },
 ) {
@@ -456,7 +457,7 @@ export class LinuxBrowserSecretHostError extends Schema.TaggedErrorClass<LinuxBr
   }
 }
 
-export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<DesktopIconSourceMissingError>()(
+export class DesktopIconSourceMissingError extends Schema.TaggedError<DesktopIconSourceMissingError>()(
   "DesktopIconSourceMissingError",
   {
     platform: BuildPlatform,
@@ -468,7 +469,7 @@ export class DesktopIconSourceMissingError extends Schema.TaggedErrorClass<Deskt
   }
 }
 
-export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorClass<DesktopDmgBackgroundSourceMissingError>()(
+export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedError<DesktopDmgBackgroundSourceMissingError>()(
   "DesktopDmgBackgroundSourceMissingError",
   {
     channel: Schema.Literals(["latest", "nightly"]),
@@ -480,7 +481,7 @@ export class DesktopDmgBackgroundSourceMissingError extends Schema.TaggedErrorCl
   }
 }
 
-export class BundledClientAssetsMissingError extends Schema.TaggedErrorClass<BundledClientAssetsMissingError>()(
+export class BundledClientAssetsMissingError extends Schema.TaggedError<BundledClientAssetsMissingError>()(
   "BundledClientAssetsMissingError",
   {
     indexPath: Schema.String,
@@ -494,7 +495,7 @@ export class BundledClientAssetsMissingError extends Schema.TaggedErrorClass<Bun
   }
 }
 
-export class UnsupportedDesktopBuildPlatformError extends Schema.TaggedErrorClass<UnsupportedDesktopBuildPlatformError>()(
+export class UnsupportedDesktopBuildPlatformError extends Schema.TaggedError<UnsupportedDesktopBuildPlatformError>()(
   "UnsupportedDesktopBuildPlatformError",
   {
     platform: Schema.String,
@@ -516,7 +517,7 @@ const DependencyResolutionKind = Schema.Literals([
   "desktop-runtime",
 ]);
 
-export class DesktopBuildDependencyResolutionError extends Schema.TaggedErrorClass<DesktopBuildDependencyResolutionError>()(
+export class DesktopBuildDependencyResolutionError extends Schema.TaggedError<DesktopBuildDependencyResolutionError>()(
   "DesktopBuildDependencyResolutionError",
   {
     kind: DependencyResolutionKind,
@@ -529,7 +530,7 @@ export class DesktopBuildDependencyResolutionError extends Schema.TaggedErrorCla
   }
 }
 
-export class MissingServerProductionDependenciesError extends Schema.TaggedErrorClass<MissingServerProductionDependenciesError>()(
+export class MissingServerProductionDependenciesError extends Schema.TaggedError<MissingServerProductionDependenciesError>()(
   "MissingServerProductionDependenciesError",
   {
     manifestPath: Schema.String,
@@ -581,7 +582,7 @@ if (!result.ok) throw new Error(result.error);
 result.value.destroy();
 `;
 
-export class ExternalizedBundleError extends Schema.TaggedErrorClass<ExternalizedBundleError>()(
+export class ExternalizedBundleError extends Schema.TaggedError<ExternalizedBundleError>()(
   "ExternalizedBundleError",
   { sentinel: Schema.String, inlinedPackageCount: Schema.Number },
 ) {
@@ -590,7 +591,7 @@ export class ExternalizedBundleError extends Schema.TaggedErrorClass<Externalize
   }
 }
 
-export class BundleNotSelfContainedError extends Schema.TaggedErrorClass<BundleNotSelfContainedError>()(
+export class BundleNotSelfContainedError extends Schema.TaggedError<BundleNotSelfContainedError>()(
   "BundleNotSelfContainedError",
   { exitCode: Schema.Number, output: Schema.String },
 ) {
@@ -600,7 +601,7 @@ ${this.output}`;
   }
 }
 
-export class InlinedNativePackageError extends Schema.TaggedErrorClass<InlinedNativePackageError>()(
+export class InlinedNativePackageError extends Schema.TaggedError<InlinedNativePackageError>()(
   "InlinedNativePackageError",
   { packages: Schema.Array(Schema.String) },
 ) {
@@ -609,7 +610,7 @@ export class InlinedNativePackageError extends Schema.TaggedErrorClass<InlinedNa
   }
 }
 
-export class InlinedExternalPackageError extends Schema.TaggedErrorClass<InlinedExternalPackageError>()(
+export class InlinedExternalPackageError extends Schema.TaggedError<InlinedExternalPackageError>()(
   "InlinedExternalPackageError",
   { packages: Schema.Array(Schema.String) },
 ) {
@@ -618,7 +619,7 @@ export class InlinedExternalPackageError extends Schema.TaggedErrorClass<Inlined
   }
 }
 
-export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<MissingDesktopBuildInputError>()(
+export class MissingDesktopBuildInputError extends Schema.TaggedError<MissingDesktopBuildInputError>()(
   "MissingDesktopBuildInputError",
   {
     artifact: DesktopBuildInputArtifact,
@@ -631,7 +632,7 @@ export class MissingDesktopBuildInputError extends Schema.TaggedErrorClass<Missi
   }
 }
 
-export class MacProvisioningProfileNotFoundError extends Schema.TaggedErrorClass<MacProvisioningProfileNotFoundError>()(
+export class MacProvisioningProfileNotFoundError extends Schema.TaggedError<MacProvisioningProfileNotFoundError>()(
   "MacProvisioningProfileNotFoundError",
   {
     provisioningProfilePath: Schema.String,
@@ -642,7 +643,7 @@ export class MacProvisioningProfileNotFoundError extends Schema.TaggedErrorClass
   }
 }
 
-export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedErrorClass<DesktopBuildDistDirectoryMissingError>()(
+export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedError<DesktopBuildDistDirectoryMissingError>()(
   "DesktopBuildDistDirectoryMissingError",
   {
     distPath: Schema.String,
@@ -655,7 +656,7 @@ export class DesktopBuildDistDirectoryMissingError extends Schema.TaggedErrorCla
   }
 }
 
-export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClass<DesktopBuildNoArtifactsProducedError>()(
+export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<DesktopBuildNoArtifactsProducedError>()(
   "DesktopBuildNoArtifactsProducedError",
   {
     distPath: Schema.String,
@@ -668,7 +669,7 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedErrorClas
   }
 }
 
-export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslNodePtyPrebuildMissingError>()(
+export class WslNodePtyPrebuildMissingError extends Schema.TaggedError<WslNodePtyPrebuildMissingError>()(
   "WslNodePtyPrebuildMissingError",
   {
     prebuildPath: Schema.String,
@@ -679,7 +680,7 @@ export class WslNodePtyPrebuildMissingError extends Schema.TaggedErrorClass<WslN
   }
 }
 
-export class WindowsServerSidecarPackError extends Schema.TaggedErrorClass<WindowsServerSidecarPackError>()(
+export class WindowsServerSidecarPackError extends Schema.TaggedError<WindowsServerSidecarPackError>()(
   "WindowsServerSidecarPackError",
   {
     asarPath: Schema.String,
@@ -691,7 +692,7 @@ export class WindowsServerSidecarPackError extends Schema.TaggedErrorClass<Windo
   }
 }
 
-export class WindowsPrimaryNativeProbeError extends Schema.TaggedErrorClass<WindowsPrimaryNativeProbeError>()(
+export class WindowsPrimaryNativeProbeError extends Schema.TaggedError<WindowsPrimaryNativeProbeError>()(
   "WindowsPrimaryNativeProbeError",
   {
     executablePath: Schema.String,
@@ -715,7 +716,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "file-limit-exceeded",
 ]);
 
-export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorClass<WindowsPackagedPayloadValidationError>()(
+export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<WindowsPackagedPayloadValidationError>()(
   "WindowsPackagedPayloadValidationError",
   {
     reason: WindowsPackagedPayloadValidationReason,
@@ -752,7 +753,7 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedErrorCla
   }
 }
 
-export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNodePtyManifestReadError>()(
+export class WslNodePtyManifestReadError extends Schema.TaggedError<WslNodePtyManifestReadError>()(
   "WslNodePtyManifestReadError",
   {
     manifestPath: Schema.String,
@@ -764,7 +765,7 @@ export class WslNodePtyManifestReadError extends Schema.TaggedErrorClass<WslNode
   }
 }
 
-export class LinuxIconResizeError extends Schema.TaggedErrorClass<LinuxIconResizeError>()(
+export class LinuxIconResizeError extends Schema.TaggedError<LinuxIconResizeError>()(
   "LinuxIconResizeError",
   {
     operation: Schema.Literal("resize"),
@@ -969,6 +970,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/prod-resources/windows-server/**/*",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
   "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+  "!apps/desktop/gnome-extension",
+  "!apps/desktop/gnome-extension/**/*",
 ] as const;
 // Windows terminal helpers cannot run on macOS and slow signing and notarization.
 export const MAC_FILE_EXCLUSIONS = [
@@ -997,9 +1000,9 @@ export function resolveMacFileExclusions(arch?: typeof BuildArch.Type) {
 // DesktopWslServerTree can still materialize this sidecar as a fallback.
 export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // dlopen/spawn need real files, so native modules, shared libraries, and
-// helper executables live in the server.asar.unpacked sibling (the standard
+// helper executables live in each archive's .unpacked sibling (the standard
 // asar redirect convention). Everything else stays packed.
-export const WINDOWS_SERVER_ASAR_UNPACK_GLOB =
+export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
@@ -1092,6 +1095,21 @@ export const DESKTOP_EXTRA_RESOURCES = [
     to: "resource-monitor",
   },
 ] as const;
+export const LINUX_CAPTURE_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/hyprland-capture",
+    to: "hyprland-capture",
+  },
+  {
+    from: "apps/desktop/prod-resources/kde-capture",
+    to: "kde-capture",
+  },
+  {
+    from: "apps/desktop/gnome-extension",
+    to: "gnome-extension",
+    filter: gnomeCaptureBundle.files,
+  },
+] as const;
 export const LINUX_BROWSER_SECRET_EXTRA_RESOURCES = [
   { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
 ] as const;
@@ -1116,7 +1134,7 @@ export const InvalidMacPasskeyRpDomainReason = Schema.Literals([
 ]);
 export type InvalidMacPasskeyRpDomainReason = typeof InvalidMacPasskeyRpDomainReason.Type;
 
-export class InvalidMacPasskeyRpDomainError extends Schema.TaggedErrorClass<InvalidMacPasskeyRpDomainError>()(
+export class InvalidMacPasskeyRpDomainError extends Schema.TaggedError<InvalidMacPasskeyRpDomainError>()(
   "InvalidMacPasskeyRpDomainError",
   {
     reason: InvalidMacPasskeyRpDomainReason,
@@ -1129,7 +1147,7 @@ export class InvalidMacPasskeyRpDomainError extends Schema.TaggedErrorClass<Inva
   }
 }
 
-export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppleTeamIdError>()(
+export class InvalidAppleTeamIdError extends Schema.TaggedError<InvalidAppleTeamIdError>()(
   "InvalidAppleTeamIdError",
   {
     teamId: Schema.String,
@@ -1140,7 +1158,7 @@ export class InvalidAppleTeamIdError extends Schema.TaggedErrorClass<InvalidAppl
   }
 }
 
-export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErrorClass<MissingMacPasskeyProvisioningProfileError>()(
+export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedError<MissingMacPasskeyProvisioningProfileError>()(
   "MissingMacPasskeyProvisioningProfileError",
   {},
 ) {
@@ -1149,7 +1167,7 @@ export class MissingMacPasskeyProvisioningProfileError extends Schema.TaggedErro
   }
 }
 
-export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErrorClass<MissingMacPasskeyDomainConfigurationError>()(
+export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedError<MissingMacPasskeyDomainConfigurationError>()(
   "MissingMacPasskeyDomainConfigurationError",
   {},
 ) {
@@ -1158,7 +1176,7 @@ export class MissingMacPasskeyDomainConfigurationError extends Schema.TaggedErro
   }
 }
 
-export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedErrorClass<InvalidMacPasskeyPublishableKeyError>()(
+export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedError<InvalidMacPasskeyPublishableKeyError>()(
   "InvalidMacPasskeyPublishableKeyError",
   {
     cause: Schema.Defect(),
@@ -1169,7 +1187,7 @@ export class InvalidMacPasskeyPublishableKeyError extends Schema.TaggedErrorClas
   }
 }
 
-export class MissingMacPasskeyRpDomainError extends Schema.TaggedErrorClass<MissingMacPasskeyRpDomainError>()(
+export class MissingMacPasskeyRpDomainError extends Schema.TaggedError<MissingMacPasskeyRpDomainError>()(
   "MissingMacPasskeyRpDomainError",
   {},
 ) {
@@ -1739,16 +1757,19 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
   const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
     Config.withDefault(false),
   );
+  const reuseCaptureHelpers = yield* Config.boolean(
+    "T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
+  ).pipe(Config.withDefault(false));
+  // Rust is only optional when every Linux Rust artifact comes from a cache.
+  const needsRust = !reuseResourceMonitor || !reuseCaptureHelpers;
   const rustTarget = resolveResourceMonitorRustTargets("linux", arch)[0]!;
 
   const checks = yield* Effect.all(
     {
-      cargo: reuseResourceMonitor
-        ? Effect.succeed(true)
-        : desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
-      "rust-target": reuseResourceMonitor
-        ? Effect.succeed(true)
-        : rustTargetIsInstalled(rustTarget),
+      cargo: needsRust
+        ? desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo")
+        : Effect.succeed(true),
+      "rust-target": needsRust ? rustTargetIsInstalled(rustTarget) : Effect.succeed(true),
       cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
       libsecret: desktopBuildProbeSucceeds(
@@ -2137,6 +2158,69 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
     );
   },
 );
+
+export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(function* (input: {
+  readonly backend: "kde" | "hyprland";
+  readonly repoRoot: string;
+  readonly stageResourcesDir: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const [rustTarget] = resolveResourceMonitorRustTargets("linux", input.arch);
+  // Release CI restores these binaries from a cache keyed on the crate sources and
+  // skips the Rust toolchain on a hit, so the build must be skippable too.
+  const reuseHelpers = yield* Config.boolean("T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS").pipe(
+    Config.withDefault(false),
+  );
+  const binaryPath = path.join(
+    input.repoRoot,
+    `native/${input.backend}-snap-shot/target`,
+    rustTarget!,
+    `release/t3-${input.backend}-snap-shot`,
+  );
+  if (!reuseHelpers) {
+    const spawnCommand = yield* resolveSpawnCommand("cargo", [
+      "build",
+      "--locked",
+      "--release",
+      "--manifest-path",
+      path.join(input.repoRoot, `native/${input.backend}-snap-shot/Cargo.toml`),
+      "--target",
+      rustTarget!,
+    ]);
+    yield* runCommand(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: input.repoRoot,
+        shell: spawnCommand.shell,
+      }),
+      {
+        label: `cargo build ${input.backend} capture helper (${rustTarget})`,
+        verbose: input.verbose,
+      },
+    );
+  } else if (!(yield* fs.exists(binaryPath))) {
+    return yield* new ResourceMonitorBuildOutputMissingError({
+      binaryPath,
+      rustTarget: rustTarget!,
+      platform: "linux",
+      arch: input.arch,
+    });
+  }
+  const destination = path.join(input.stageResourcesDir, `${input.backend}-capture`);
+  yield* fs.makeDirectory(destination, { recursive: true });
+  const executable = path.join(destination, `t3-${input.backend}-snap-shot`);
+  yield* fs.copyFile(binaryPath, executable);
+  yield* fs.chmod(executable, 0o755);
+  if (input.backend === "hyprland") {
+    // The official protocol XML includes the BSD notices required with binary distribution.
+    yield* fs.copy(
+      path.join(input.repoRoot, "native/hyprland-snap-shot/protocols"),
+      path.join(destination, "protocols"),
+    );
+  }
+});
 
 export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
   readonly repoRoot: string;
@@ -2593,12 +2677,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
-    // All platforms keep app.asar fully packed; electron-builder's default
-    // smart unpack extracts native libraries, which loaders find in
-    // app.asar.unpacked. Windows additionally ships the server tree as the
-    // hand-packed server.asar sidecar (see WINDOWS_SERVER_ASAR_RESOURCE).
+    // Smart unpack extracts entire native packages, including JavaScript and
+    // metadata. Windows keeps those files archived so native dependencies do
+    // not inflate the loose-file count and slow NSIS installation.
+    ...(platform === "win"
+      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
+      : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
@@ -2626,6 +2713,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      extendInfo: {
+        NSScreenCaptureUsageDescription:
+          "T3 Code captures the active window when you use the window capture shortcut.",
+      },
       protocols: [
         {
           name: "T3 Code",
@@ -2867,7 +2958,7 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
-        unpack: WINDOWS_SERVER_ASAR_UNPACK_GLOB,
+        unpack: WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
         globOptions: { ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch) },
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
@@ -3554,6 +3645,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
+  if (options.platform === "linux") {
+    const extensionDir = path.join(stageAppDir, "apps/desktop/gnome-extension");
+    yield* fs.makeDirectory(extensionDir, { recursive: true });
+    for (const file of gnomeCaptureBundle.files) {
+      yield* fs.copyFile(
+        path.join(repoRoot, "apps/desktop/gnome-extension", file),
+        path.join(extensionDir, file),
+      );
+    }
+  }
   if (options.platform === "mac" && options.target === "dmg") {
     yield* stageDesktopDmgBackground(
       stageResourcesDir,
@@ -3573,6 +3674,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     verbose: options.verbose,
   });
+  if (options.platform === "linux") {
+    for (const backend of ["kde", "hyprland"] as const)
+      yield* stageLinuxCaptureHelper({
+        backend,
+        repoRoot,
+        stageResourcesDir,
+        arch: options.arch,
+        verbose: options.verbose,
+      });
+  }
   yield* stageBrowserSecret({
     repoRoot,
     stageResourcesDir,

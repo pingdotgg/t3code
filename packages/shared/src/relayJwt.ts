@@ -11,7 +11,7 @@ export const RELAY_MINT_RESPONSE_TYP = "t3-env-mint+jwt";
 export const RELAY_HEALTH_RESPONSE_TYP = "t3-env-health+jwt";
 export const RELAY_ACTIVITY_PUBLISH_TYP = "t3-env-activity+jwt";
 
-export class RelayJwtError extends Schema.TaggedErrorClass<RelayJwtError>()("RelayJwtError", {
+export class RelayJwtError extends Schema.TaggedError<RelayJwtError>()("RelayJwtError", {
   operation: Schema.Literals(["sign", "verify"]),
   typ: Schema.String,
   issuer: Schema.optional(Schema.String),

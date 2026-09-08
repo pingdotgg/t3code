@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Returns per-CloudFormation-stack (or per-tag/per-service) insight counts across the organization's accounts.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.DescribeOrganizationResourceCollectionHealthHttp)`.
- * @binding
- * @section Organization Visibility
- * @example Read Per-Stack Health Across Accounts
+ * ### Organization Visibility
+ * **Example:** Read Per-Stack Health Across Accounts
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeOrganizationResourceCollectionHealth = yield* AWS.DevOpsGuru.DescribeOrganizationResourceCollectionHealth();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`stacks analyzed: ${page.CloudFormation?.length}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrganizationResourceCollectionHealth extends Binding.Service<
   DescribeOrganizationResourceCollectionHealth,

@@ -273,9 +273,8 @@ export interface Fleet extends Resource<
  * or service-managed EC2 instances) that run render jobs from associated
  * queues.
  *
- * @resource
- * @section Creating Fleets
- * @example Customer-Managed Fleet
+ * ### Creating Fleets
+ * **Example:** Customer-Managed Fleet
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -297,7 +296,7 @@ export interface Fleet extends Resource<
  * });
  * ```
  *
- * @example Service-Managed EC2 Fleet
+ * **Example:** Service-Managed EC2 Fleet
  * ```typescript
  * const fleet = yield* AWS.Deadline.Fleet("Workers", {
  *   farmId: farm.farmId,
@@ -317,6 +316,8 @@ export interface Fleet extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Fleet = Resource<Fleet>("AWS.Deadline.Fleet");
 

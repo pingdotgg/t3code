@@ -1,14 +1,26 @@
+import { AlchemyContext } from "@/AlchemyContext.ts";
+import { ArtifactStore, createArtifactStore } from "@/Artifacts.ts";
 import * as AWS from "@/AWS";
+import { AWSEnvironment } from "@/AWS/Environment.ts";
 import { Role } from "@/AWS/IAM";
 import { Bucket } from "@/AWS/S3";
+import { BucketProvider } from "@/AWS/S3/Bucket.ts";
+import { InstanceId } from "@/InstanceId.ts";
 import * as Provider from "@/Provider";
+import { Stack, type StackSpec } from "@/Stack.ts";
+import { Stage } from "@/Stage.ts";
 import { State } from "@/State";
 import * as Test from "@/Test/Alchemy";
+import { Credentials, fromCredentials } from "@distilled.cloud/aws/Credentials";
+import { Region } from "@distilled.cloud/aws/Region";
 import * as S3 from "@distilled.cloud/aws/s3";
-import { expect } from "alchemy-test";
+import { NodeServices } from "@effect/platform-node";
+import { describe, expect, it } from "alchemy-test";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 const { test } = Test.make({ providers: AWS.providers() });
@@ -1123,5 +1135,196 @@ const assertBucketDeleted = Effect.fn(function* (bucketName: string) {
     }),
     Effect.catchTag("NotFound", () => Effect.void),
     Effect.catch(() => Effect.void),
+  );
+});
+
+// ── destructive deletes require explicit opt-in ────────────────────────
+//
+// DATA-PROTECTION INVARIANT: `delete` may remove the bucket, but it must
+// NEVER destroy the bucket's CONTENTS unless the user opted in on the
+// resource (`forceDestroy`) or an operator ran `alchemy unsafe nuke`
+// (which passes `force: true`).
+//
+// S3 refuses to delete a non-empty bucket (`BucketNotEmpty`). That refusal
+// is the last line of defense for production data, and emptying the bucket
+// first silently converts a routine teardown into irreversible data loss
+// (see https://github.com/alchemy-run/alchemy/issues/1248 for the R2
+// incident this guards against here too).
+//
+// A live test can only observe that a bucket survived, not that no
+// destructive request was ever issued. These run the REAL provider
+// `delete` against a recording transport and assert on the wire traffic.
+
+type Recorded = { method: string; url: string };
+
+/** Fetch transport that records every request and answers from `respond`. */
+const recordingTransport = (respond: (call: Recorded) => Response) => {
+  const calls: Recorded[] = [];
+  const fetch = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    calls.push({
+      method: (input instanceof Request ? input.method : init?.method) ?? "GET",
+      url: input instanceof Request ? input.url : String(input),
+    });
+    return respond(calls[calls.length - 1]!);
+  };
+  return {
+    calls,
+    layer: FetchHttpClient.layer.pipe(
+      Layer.provide(
+        Layer.succeed(FetchHttpClient.Fetch, fetch as typeof globalThis.fetch),
+      ),
+    ),
+  };
+};
+
+const TEST_REGION = "us-east-1";
+const INSTANCE_ID = "0123456789abcdef0123456789abcdef";
+
+const testStack: Omit<StackSpec, "output"> = {
+  name: "my-stack",
+  stage: "dev",
+  resources: {},
+  bindings: {},
+  actions: {},
+};
+
+// Built with distilled's own helper: the signer reads credentials through
+// distilled's copy of `effect`, whose `Redacted` values a `Redacted.make`
+// from this package's copy cannot unwrap.
+const testCredentials = fromCredentials(
+  { accessKeyId: "AKIAIOSFODNN7EXAMPLE", secretAccessKey: "test-secret-key" },
+  TEST_REGION,
+);
+
+const stubbedEnv = (transport: Layer.Layer<HttpClient.HttpClient>) =>
+  Layer.mergeAll(
+    Layer.effect(
+      AWSEnvironment,
+      Effect.map(Credentials, (credentials) =>
+        Effect.succeed({
+          accountId: "123456789012",
+          region: TEST_REGION,
+          credentials,
+        } as never),
+      ),
+    ).pipe(Layer.provide(testCredentials)),
+    testCredentials,
+    Layer.succeed(Region, Effect.succeed(TEST_REGION)),
+    Layer.succeed(Stack, testStack),
+    Layer.succeed(Stage, testStack.stage),
+    Layer.succeed(InstanceId, INSTANCE_ID),
+    Layer.succeed(AlchemyContext, {
+      dotAlchemy: "/tmp/.alchemy-test",
+      dev: false,
+      adopt: false,
+    }),
+    Layer.sync(ArtifactStore, createArtifactStore),
+    NodeServices.layer,
+  ).pipe(Layer.provideMerge(transport));
+
+const stubbedOutput = {
+  bucketName: "my-bucket",
+  bucketArn: "arn:aws:s3:::my-bucket",
+  region: TEST_REGION,
+  bucketDomainName: "my-bucket.s3.amazonaws.com",
+  bucketRegionalDomainName: "my-bucket.s3.us-east-1.amazonaws.com",
+  hostedZoneId: "Z3AQBSTGFYJSTF",
+  tags: {},
+};
+
+/** `POST /?delete` — S3's bulk object/version delete. */
+const objectDeletes = (calls: Recorded[]) =>
+  calls.filter((c) => c.method === "POST" && /[?&]delete/.test(c.url));
+
+/** `GET /?versions` — enumerating what to wipe. */
+const versionListings = (calls: Recorded[]) =>
+  calls.filter((c) => c.method === "GET" && /[?&]versions/.test(c.url));
+
+const bucketDeletes = (calls: Recorded[]) =>
+  calls.filter((c) => c.method === "DELETE" && !/[?&]/.test(c.url));
+
+/** One object version, so the empty path has something to delete. */
+const stubResponse = (call: Recorded) =>
+  /[?&]versions/.test(call.url)
+    ? new Response(
+        `<?xml version="1.0" encoding="UTF-8"?>
+         <ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+           <Name>my-bucket</Name>
+           <IsTruncated>false</IsTruncated>
+           <Version>
+             <Key>precious.txt</Key>
+             <VersionId>null</VersionId>
+           </Version>
+         </ListVersionsResult>`,
+        { status: 200, headers: { "content-type": "application/xml" } },
+      )
+    : new Response("", {
+        status: 204,
+        headers: { "content-type": "application/xml" },
+      });
+
+/** Run the real provider delete; return every request it made. */
+const recordDelete = (
+  props: { forceDestroy?: boolean },
+  options?: { force?: boolean },
+) =>
+  Effect.gen(function* () {
+    const transport = recordingTransport(stubResponse);
+    yield* Effect.gen(function* () {
+      const provider = yield* Provider.Provider<Bucket>("AWS.S3.Bucket");
+      yield* provider.delete({
+        id: "Bucket",
+        fqn: "Bucket",
+        instanceId: INSTANCE_ID,
+        olds: props,
+        output: stubbedOutput as never,
+        bindings: [] as never,
+        session: {
+          emit: () => Effect.void,
+          done: () => Effect.void,
+          note: () => Effect.void,
+        },
+        force: options?.force,
+      });
+    }).pipe(
+      Effect.provide(BucketProvider()),
+      Effect.provide(stubbedEnv(transport.layer)),
+    );
+    return transport.calls;
+  });
+
+describe("destructive delete requires explicit opt-in", () => {
+  it.effect("no forceDestroy never empties the bucket", () =>
+    Effect.gen(function* () {
+      const calls = yield* recordDelete({});
+
+      expect(objectDeletes(calls)).toEqual([]);
+      expect(versionListings(calls)).toEqual([]);
+      // The bucket delete itself is still attempted — S3 answers
+      // `BucketNotEmpty`, which is the protection.
+      expect(bucketDeletes(calls).length).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("forceDestroy empties the bucket first", () =>
+    Effect.gen(function* () {
+      const calls = yield* recordDelete({ forceDestroy: true });
+
+      expect(objectDeletes(calls).length).toBeGreaterThan(0);
+      expect(bucketDeletes(calls).length).toBeGreaterThan(0);
+    }),
+  );
+
+  // Nuke enumerates buckets from the cloud, so `olds` carries Attributes and
+  // never has `forceDestroy` — the operator's confirmation IS the flag.
+  it.effect("nuke's force empties without the prop", () =>
+    Effect.gen(function* () {
+      const calls = yield* recordDelete({}, { force: true });
+
+      expect(objectDeletes(calls).length).toBeGreaterThan(0);
+    }),
   );
 });

@@ -19,14 +19,13 @@ export interface SendEventRequest extends Omit<
  * notices) alongside user chat messages; `attributes` carries the payload
  * as string key-value pairs.
  *
- * @binding
- * @section Broadcasting Events
+ * ### Broadcasting Events
  * Provide the `SendEventHttp` implementation layer on the Function effect,
  * bind the room in the init phase, then call the returned client at
  * runtime. The binding grants `ivschat:SendEvent` on the room and injects
  * its ARN as the `roomIdentifier` automatically.
  *
- * @example Broadcast from a Lambda
+ * **Example:** Broadcast from a Lambda
  * ```typescript
  * // init
  * const room = yield* IVSChat.Room("LiveChat");
@@ -45,6 +44,8 @@ export interface SendEventRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(IVSChat.SendEventHttp))
  * ```
+ *
+ * @binding
  */
 export interface SendEvent extends Binding.Service<
   SendEvent,

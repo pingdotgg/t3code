@@ -20,14 +20,15 @@ export interface ListJobsRequest extends Omit<
  * {@link Vault}, optionally filtered by status code or completion.
  * Provide the implementation with
  * `Effect.provide(AWS.Glacier.ListJobsHttp)`.
- * @binding
- * @section Retrieving Archives
- * @example List the vault's jobs
+ * ### Retrieving Archives
+ * **Example:** List the vault's jobs
  * ```typescript
  * const listJobs = yield* AWS.Glacier.ListJobs(vault);
  *
  * const { JobList } = yield* listJobs({ completed: "true" });
  * ```
+ *
+ * @binding
  */
 export interface ListJobs extends Binding.Service<
   ListJobs,

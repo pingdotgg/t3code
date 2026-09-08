@@ -43,22 +43,23 @@ export interface AccountName extends Resource<
  * resource stops managing the name and leaves the last value in place (an
  * account always has a name).
  *
- * @resource
- * @section Naming the Account
- * @example Set the Calling Account's Name
+ * ### Naming the Account
+ * **Example:** Set the Calling Account's Name
  * ```typescript
  * const name = yield* AccountName("Name", {
  *   accountName: "acme-prod",
  * });
  * ```
  *
- * @example Rename an Organizations Member Account
+ * **Example:** Rename an Organizations Member Account
  * ```typescript
  * const name = yield* AccountName("MemberName", {
  *   accountName: "acme-sandbox",
  *   accountId: "123456789012",
  * });
  * ```
+ *
+ * @resource
  */
 export const AccountName = Resource<AccountName>("AWS.Account.AccountName");
 

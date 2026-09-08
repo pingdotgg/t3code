@@ -41,11 +41,11 @@
     "@rollup/plugin-terser": "^1.0.0",
     "effect": "workspace:^",
     "glob": "^13.0.6",
-    "rollup": "^4.62.2",
+    "rollup": "^4.62.5",
     "rollup-plugin-esbuild": "^6.2.1",
-    "rollup-plugin-visualizer": "^7.0.1"
+    "rollup-plugin-visualizer": "^7.1.1"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1"
+    "@types/node": "^26.2.0"
   }
 }

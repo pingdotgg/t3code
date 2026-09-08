@@ -14,9 +14,8 @@ export interface PutTelemetryRecordsRequest
  * provide the implementation with `Effect.provide(XRay.PutTelemetryRecordsHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:PutTelemetryRecords`, so the binding grants it on `*`.
- * @binding
- * @section Writing Traces
- * @example Report segment transmission telemetry
+ * ### Writing Traces
+ * **Example:** Report segment transmission telemetry
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -34,6 +33,8 @@ export interface PutTelemetryRecordsRequest
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutTelemetryRecords extends Binding.Service<
   PutTelemetryRecords,

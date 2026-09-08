@@ -40,8 +40,9 @@ export type SchemaProps = {
   /**
    * Output directory for generated migrations. Each migration is written as
    * `{out}/{timestamp}_migration/{migration.sql, snapshot.json}`. Pass this
-   * value through to `Neon.Branch`/`Cloudflare.D1.Database` as `migrationsDir`
-   * to apply pending migrations on deploy.
+   * through as a database resource's `migrations` prop (`Neon.Branch`,
+   * `Fly.Postgres`, `Cloudflare.D1.Database`, …) to apply pending
+   * migrations on deploy.
    *
    * @default "./migrations"
    */
@@ -81,8 +82,8 @@ export type Schema = Resource<
  * Wraps drizzle-kit's programmatic API (`generateDrizzleJson` /
  * `generateMigration`) so migration SQL is regenerated as part of `alchemy
  * deploy` whenever the source schema changes. The output directory is
- * intended to be passed straight to a database resource's `migrationsDir`,
- * giving you a single deploy-driven flow:
+ * intended to be passed straight to a database resource's `migrations`
+ * prop, giving you a single deploy-driven flow:
  *
  * ```typescript
  * const schema = yield* Drizzle.Schema("app-schema", {
@@ -91,17 +92,23 @@ export type Schema = Resource<
  *
  * const branch = yield* Neon.Branch("app-branch", {
  *   project,
- *   migrationsDir: schema.out,
+ *   migrations: schema,
+ * });
+ *
+ * const db = yield* Fly.Postgres("Db", {
+ *   region: "iad",
+ *   migrations: schema,
  * });
  * ```
  *
- * `Drizzle.Schema` runs first (because `Neon.Branch` depends on its `out`
- * output), regenerates pending migration files, and `Neon.Branch` then
- * applies them transactionally.
+ * `Drizzle.Schema` runs first (because the database resource depends
+ * on its `out` output), regenerates pending migration files, and the
+ * database resource then applies them.
  *
  * The resource is delete-safe: removing it from the stack does **not** wipe
  * the migrations directory, since migration files are typically checked in
  * and shared with other environments.
+ *
  * @resource
  */
 export const Schema = Resource<Schema>("Drizzle.Schema");

@@ -40,7 +40,7 @@ const FLAG_HTTP_ONLY = 0x4;
 export const SafariCookieReadFailure = Schema.Literals(["needsFullDiskAccess", "readFailed"]);
 export type SafariCookieReadFailure = typeof SafariCookieReadFailure.Type;
 
-export class SafariCookieReadError extends Schema.TaggedErrorClass<SafariCookieReadError>()(
+export class SafariCookieReadError extends Schema.TaggedError<SafariCookieReadError>()(
   "SafariCookieReadError",
   {
     reason: SafariCookieReadFailure,

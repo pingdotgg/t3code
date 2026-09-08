@@ -27,12 +27,12 @@
  *
  * **Example** (Escaping special characters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { JsonPointer } from "effect"
  *
- * JsonPointer.escapeToken("a/b") // "a~1b"
- * JsonPointer.escapeToken("c~d") // "c~0d"
- * JsonPointer.escapeToken("path/to~key") // "path~1to~0key"
+ * JsonPointer.escapeToken("a/b") // => "a~1b"
+ * JsonPointer.escapeToken("c~d") // => "c~0d"
+ * JsonPointer.escapeToken("path/to~key") // => "path~1to~0key"
  * ```
  *
  * @see {@link unescapeToken} The inverse operation for decoding escaped tokens
@@ -63,12 +63,12 @@ export function escapeToken(token: string): string {
  *
  * **Example** (Unescaping special characters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { JsonPointer } from "effect"
  *
- * JsonPointer.unescapeToken("a~1b") // "a/b"
- * JsonPointer.unescapeToken("c~0d") // "c~d"
- * JsonPointer.unescapeToken("path~1to~0key") // "path/to~key"
+ * JsonPointer.unescapeToken("a~1b") // => "a/b"
+ * JsonPointer.unescapeToken("c~0d") // => "c~d"
+ * JsonPointer.unescapeToken("path~1to~0key") // => "path/to~key"
  * ```
  *
  * @see {@link escapeToken} The inverse operation for encoding tokens

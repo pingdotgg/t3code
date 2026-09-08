@@ -97,7 +97,7 @@ export function makeComponentLogger(component: string): DesktopComponentLogger {
   };
 }
 
-class DesktopLogFileWriterConfigurationError extends Schema.TaggedErrorClass<DesktopLogFileWriterConfigurationError>()(
+class DesktopLogFileWriterConfigurationError extends Schema.TaggedError<DesktopLogFileWriterConfigurationError>()(
   "DesktopLogFileWriterConfigurationError",
   {
     option: Schema.Literals(["maxBytes", "maxFiles"]),

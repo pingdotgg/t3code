@@ -130,9 +130,8 @@ export interface Rule extends Resource<
  * the Region, optionally minus exclusion tags). Changing `resourceType`
  * replaces the rule; every other property updates in place.
  *
- * @resource
- * @section Creating Retention Rules
- * @example Tag-level rule for EBS snapshots
+ * ### Creating Retention Rules
+ * **Example:** Tag-level rule for EBS snapshots
  * ```typescript
  * import * as Rbin from "alchemy/AWS/Rbin";
  *
@@ -144,7 +143,7 @@ export interface Rule extends Resource<
  * });
  * ```
  *
- * @example Region-level rule for AMIs
+ * **Example:** Region-level rule for AMIs
  * ```typescript
  * const rule = yield* Rbin.Rule("AmiRetention", {
  *   resourceType: "EC2_IMAGE",
@@ -153,7 +152,7 @@ export interface Rule extends Resource<
  * });
  * ```
  *
- * @example Region-level rule with exclusion tags
+ * **Example:** Region-level rule with exclusion tags
  * ```typescript
  * const rule = yield* Rbin.Rule("SnapshotRetention", {
  *   resourceType: "EBS_SNAPSHOT",
@@ -162,12 +161,12 @@ export interface Rule extends Resource<
  * });
  * ```
  *
- * @section Locking
+ * ### Locking
  * A Region-level rule (without exclusion tags) can be locked so it cannot
  * be modified or deleted. Removing `lockConfiguration` unlocks the rule,
  * which stays protected in `pending_unlock` until the unlock delay expires.
  *
- * @example Locked Region-level rule
+ * **Example:** Locked Region-level rule
  * ```typescript
  * const rule = yield* Rbin.Rule("LockedRetention", {
  *   resourceType: "EBS_SNAPSHOT",
@@ -176,8 +175,8 @@ export interface Rule extends Resource<
  * });
  * ```
  *
- * @section Tagging
- * @example Tag the rule itself
+ * ### Tagging
+ * **Example:** Tag the rule itself
  * ```typescript
  * const rule = yield* Rbin.Rule("SnapshotRetention", {
  *   resourceType: "EBS_SNAPSHOT",
@@ -186,6 +185,8 @@ export interface Rule extends Resource<
  *   tags: { CostCenter: "storage" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Rule = Resource<Rule>("AWS.Rbin.Rule");
 

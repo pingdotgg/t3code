@@ -1,0 +1,20 @@
+---
+// On-demand SSR: the middleware sets `Astro.locals.requestId` before this
+// page renders and mirrors the same value onto the `x-request-id` response
+// header — the test asserts header and body agree, proving the middleware
+// and the page ran in the same request.
+const requestId =
+  (Astro.locals as { requestId?: string }).requestId ?? "missing";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Locals — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>Locals</h1>
+    <p id="locals">locals-request-id={requestId}</p>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

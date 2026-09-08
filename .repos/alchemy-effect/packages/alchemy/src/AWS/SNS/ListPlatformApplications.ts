@@ -11,13 +11,14 @@ export interface ListPlatformApplicationsRequest
  * An account-scoped operation — pages through the mobile-push platform
  * applications in the account/region.
  * Provide the `ListPlatformApplicationsHttp` layer on the Function to implement the binding.
- * @binding
- * @section Mobile Push
- * @example List Platform Applications
+ * ### Mobile Push
+ * **Example:** List Platform Applications
  * ```typescript
  * const listApplications = yield* SNS.ListPlatformApplications();
  * const { PlatformApplications } = yield* listApplications();
  * ```
+ *
+ * @binding
  */
 export interface ListPlatformApplications extends Binding.Service<
   ListPlatformApplications,

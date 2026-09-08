@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Resolves the `MembershipId` linking a user to a group in the bound instance's identity store. The instance's
  * `IdentityStoreId` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.GetGroupMembershipIdHttp)`.
- * @binding
- * @section Querying Group Memberships
- * @example Resolve a MembershipId
+ * ### Querying Group Memberships
+ * **Example:** Resolve a MembershipId
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const getGroupMembershipId = yield* AWS.IdentityCenter.GetGroupMembershipId(instance);
@@ -23,6 +22,8 @@ import type { Instance } from "./Instance.ts";
  *   MemberId: { UserId: userId },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetGroupMembershipId extends Binding.Service<
   GetGroupMembershipId,

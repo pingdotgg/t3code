@@ -17,7 +17,7 @@ export class RumBindingsFunction extends Lambda.Function<Lambda.Function>()(
 export default RumBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(120),
   },
   Effect.gen(function* () {
