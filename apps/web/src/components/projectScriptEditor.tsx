@@ -9,12 +9,57 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  BinaryIcon,
+  BotIcon,
+  BoxesIcon,
+  BracesIcon,
+  BracketsIcon,
+  BrainCircuitIcon,
   BugIcon,
+  CircleEllipsisIcon,
+  CloudIcon,
+  Code2Icon,
+  ContainerIcon,
+  CpuIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  FileCode2Icon,
   FlaskConicalIcon,
+  FolderCodeIcon,
+  GaugeIcon,
+  GitBranchIcon,
+  GitCommitHorizontalIcon,
+  GithubIcon,
+  GitMergeIcon,
+  GitPullRequestIcon,
+  Globe2Icon,
   HammerIcon,
+  HardDriveIcon,
+  KeyRoundIcon,
+  LaptopIcon,
   ListChecksIcon,
+  LockKeyholeIcon,
+  MemoryStickIcon,
+  MonitorIcon,
+  NetworkIcon,
+  PackageIcon,
   PlayIcon,
+  RefreshCwIcon,
+  RegexIcon,
+  SearchCodeIcon,
+  ServerIcon,
+  Settings2Icon,
+  ShieldCheckIcon,
+  SlidersHorizontalIcon,
+  SmartphoneIcon,
+  SparklesIcon,
+  TerminalIcon,
+  UploadIcon,
+  WebhookIcon,
+  WorkflowIcon,
   WrenchIcon,
+  ZapIcon,
+  type LucideIcon,
 } from "lucide-react";
 import React, { type FormEvent, type KeyboardEvent, useEffect, useState } from "react";
 
@@ -49,14 +94,64 @@ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
 
-const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
-  { id: "play", label: "Play" },
-  { id: "test", label: "Test" },
-  { id: "lint", label: "Lint" },
-  { id: "configure", label: "Configure" },
-  { id: "build", label: "Build" },
-  { id: "debug", label: "Debug" },
+const SCRIPT_ICONS: ReadonlyArray<{
+  id: ProjectScriptIcon;
+  label: string;
+  icon: LucideIcon;
+}> = [
+  { id: "play", label: "Play", icon: PlayIcon },
+  { id: "test", label: "Test", icon: FlaskConicalIcon },
+  { id: "lint", label: "Lint", icon: ListChecksIcon },
+  { id: "configure", label: "Configure", icon: WrenchIcon },
+  { id: "build", label: "Build", icon: HammerIcon },
+  { id: "debug", label: "Debug", icon: BugIcon },
+  { id: "terminal", label: "Terminal", icon: TerminalIcon },
+  { id: "code", label: "Code", icon: Code2Icon },
+  { id: "braces", label: "Braces", icon: BracesIcon },
+  { id: "brackets", label: "Brackets", icon: BracketsIcon },
+  { id: "file-code", label: "Code File", icon: FileCode2Icon },
+  { id: "folder-code", label: "Code Folder", icon: FolderCodeIcon },
+  { id: "git-branch", label: "Branch", icon: GitBranchIcon },
+  { id: "git-commit", label: "Commit", icon: GitCommitHorizontalIcon },
+  { id: "git-merge", label: "Merge", icon: GitMergeIcon },
+  { id: "git-pull-request", label: "Pull Request", icon: GitPullRequestIcon },
+  { id: "github", label: "GitHub", icon: GithubIcon },
+  { id: "database", label: "Database", icon: DatabaseIcon },
+  { id: "server", label: "Server", icon: ServerIcon },
+  { id: "cloud", label: "Cloud", icon: CloudIcon },
+  { id: "container", label: "Container", icon: ContainerIcon },
+  { id: "package", label: "Package", icon: PackageIcon },
+  { id: "packages", label: "Packages", icon: BoxesIcon },
+  { id: "cpu", label: "CPU", icon: CpuIcon },
+  { id: "memory", label: "Memory", icon: MemoryStickIcon },
+  { id: "hard-drive", label: "Storage", icon: HardDriveIcon },
+  { id: "network", label: "Network", icon: NetworkIcon },
+  { id: "globe", label: "Web", icon: Globe2Icon },
+  { id: "monitor", label: "Desktop", icon: MonitorIcon },
+  { id: "smartphone", label: "Mobile", icon: SmartphoneIcon },
+  { id: "laptop", label: "Laptop", icon: LaptopIcon },
+  { id: "binary", label: "Binary", icon: BinaryIcon },
+  { id: "regex", label: "Regex", icon: RegexIcon },
+  { id: "search-code", label: "Search", icon: SearchCodeIcon },
+  { id: "shield-check", label: "Verify", icon: ShieldCheckIcon },
+  { id: "key", label: "Key", icon: KeyRoundIcon },
+  { id: "lock", label: "Lock", icon: LockKeyholeIcon },
+  { id: "webhook", label: "Webhook", icon: WebhookIcon },
+  { id: "workflow", label: "Workflow", icon: WorkflowIcon },
+  { id: "refresh", label: "Refresh", icon: RefreshCwIcon },
+  { id: "download", label: "Download", icon: DownloadIcon },
+  { id: "upload", label: "Upload", icon: UploadIcon },
+  { id: "zap", label: "Fast", icon: ZapIcon },
+  { id: "settings", label: "Settings", icon: Settings2Icon },
+  { id: "sliders", label: "Controls", icon: SlidersHorizontalIcon },
+  { id: "gauge", label: "Performance", icon: GaugeIcon },
+  { id: "bot", label: "Bot", icon: BotIcon },
+  { id: "brain", label: "AI", icon: BrainCircuitIcon },
+  { id: "sparkles", label: "Generate", icon: SparklesIcon },
+  { id: "more", label: "Other", icon: CircleEllipsisIcon },
 ];
+
+const SCRIPT_ICON_BY_ID = new Map(SCRIPT_ICONS.map((entry) => [entry.id, entry.icon]));
 
 export function ScriptIcon({
   icon,
@@ -65,12 +160,8 @@ export function ScriptIcon({
   icon: ProjectScriptIcon;
   className?: string;
 }) {
-  if (icon === "test") return <FlaskConicalIcon className={className} />;
-  if (icon === "lint") return <ListChecksIcon className={className} />;
-  if (icon === "configure") return <WrenchIcon className={className} />;
-  if (icon === "build") return <HammerIcon className={className} />;
-  if (icon === "debug") return <BugIcon className={className} />;
-  return <PlayIcon className={className} />;
+  const Icon = SCRIPT_ICON_BY_ID.get(icon) ?? PlayIcon;
+  return <Icon className={className} />;
 }
 
 export interface NewProjectScriptInput {
@@ -276,15 +367,15 @@ export function ProjectScriptEditorDialog({
                     >
                       <ScriptIcon icon={icon} className="size-4.5" />
                     </PopoverTrigger>
-                    <PopoverPopup align="start">
-                      <div className="grid grid-cols-3 gap-2">
+                    <PopoverPopup align="start" className="w-[min(28rem,calc(100vw-2rem))] p-2">
+                      <div className="grid max-h-80 grid-cols-4 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-5">
                         {SCRIPT_ICONS.map((entry) => {
                           const isSelected = entry.id === icon;
                           return (
                             <button
                               key={entry.id}
                               type="button"
-                              className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs dark:border-transparent ${
+                              className={`relative min-w-0 flex flex-col items-center gap-1.5 rounded-md border px-1 py-2 text-xs dark:border-transparent ${
                                 isSelected
                                   ? "border-primary/70 bg-primary/10 dark:ring-1 dark:ring-primary/30"
                                   : "border-border/70 hover:bg-accent/60 dark:bg-white/[0.035]"
@@ -295,7 +386,9 @@ export function ProjectScriptEditorDialog({
                               }}
                             >
                               <ScriptIcon icon={entry.id} className="size-4" />
-                              <span>{entry.label}</span>
+                              <span className="w-full truncate text-center" title={entry.label}>
+                                {entry.label}
+                              </span>
                             </button>
                           );
                         })}
