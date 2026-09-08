@@ -59,6 +59,7 @@ private struct FeatureFileDirectoryView: View {
     @State private var includesHidden = false
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var loadGeneration = FeatureAsyncGeneration()
 
     var body: some View {
         Group {
@@ -71,18 +72,37 @@ private struct FeatureFileDirectoryView: View {
                     systemImage: "folder.badge.questionmark",
                     description: Text(errorMessage)
                 )
-            } else if filteredEntries.isEmpty {
+            } else if filteredEntries.isEmpty, errorMessage == nil {
                 ContentUnavailableView(
                     searchText.isEmpty ? "Empty folder" : "No matches",
                     systemImage: "folder",
                     description: Text(searchText.isEmpty ? "This folder has no visible files." : "Try another search.")
                 )
             } else {
-                List(filteredEntries) { entry in
-                    NavigationLink {
-                        destination(for: entry)
-                    } label: {
-                        FeatureFileRow(entry: entry)
+                List {
+                    if let errorMessage {
+                        FeatureRefreshFailureRow(message: errorMessage) {
+                            Task { await load() }
+                        }
+                    }
+                    if filteredEntries.isEmpty {
+                        ContentUnavailableView(
+                            searchText.isEmpty ? "Empty folder" : "No matches",
+                            systemImage: "folder",
+                            description: Text(
+                                searchText.isEmpty
+                                    ? "The last successful refresh found no visible files."
+                                    : "Try another search."
+                            )
+                        )
+                        .listRowBackground(Color.clear)
+                    }
+                    ForEach(filteredEntries) { entry in
+                        NavigationLink {
+                            destination(for: entry)
+                        } label: {
+                            FeatureFileRow(entry: entry)
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -137,12 +157,18 @@ private struct FeatureFileDirectoryView: View {
     }
 
     private func load() async {
+        let generation = loadGeneration.begin()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadGeneration.accepts(generation) { isLoading = false }
+        }
         do {
-            entries = try await client.listFiles(threadID: threadID, path: path)
+            let loaded = try await client.listFiles(threadID: threadID, path: path)
+            guard loadGeneration.accepts(generation) else { return }
+            entries = loaded
             errorMessage = nil
         } catch {
+            guard loadGeneration.accepts(generation) else { return }
             errorMessage = error.localizedDescription
         }
     }
