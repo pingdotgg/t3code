@@ -2620,9 +2620,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         | null = null;
       let restartHandoff: OrchestrationV2ContextHandoff | null = null;
       let restartTransfer: OrchestrationV2ContextTransfer | null = null;
+      const canResumeAcrossInstances =
+        providerInstanceChanged &&
+        providerThread.nativeThreadRef !== null &&
+        (yield* providerSwitchService
+          .plan({
+            projection: {
+              ...input.projection,
+              thread: { ...input.projection.thread, modelSelection: targetRun.modelSelection },
+            },
+            targetModelSelection: input.modelSelection,
+          })
+          .pipe(mapDispatchError(input.command))).transition.type === "restart_and_resume";
       const requiresProviderThreadHandoff =
-        providerInstanceChanged || selectionTransition?.type === "create_with_handoff";
-      const requiresProviderSessionRestart = selectionTransition?.type === "restart_session";
+        (providerInstanceChanged && !canResumeAcrossInstances) ||
+        selectionTransition?.type === "create_with_handoff";
+      const requiresProviderSessionRestart =
+        canResumeAcrossInstances || selectionTransition?.type === "restart_session";
       if (requiresProviderThreadHandoff) {
         const targetAdapter = yield* providerAdapters.get(input.modelSelection.instanceId).pipe(
           Effect.mapError(
@@ -2753,6 +2767,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         restartProviderThread = {
           ...providerThread,
+          providerInstanceId: input.modelSelection.instanceId,
           providerSessionId: nextProviderSessionId,
           status: "not_loaded",
           updatedAt: now,
@@ -3491,6 +3506,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const isProviderSwitch =
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== modelSelection.instanceId;
+      // Account overlays share native history. Selection commands may already
+      // have updated the app thread, so classify against the native thread's owner.
+      const canResumeAcrossInstances =
+        isProviderSwitch &&
+        activeProviderThread.nativeThreadRef !== null &&
+        (yield* providerSwitchService
+          .plan({
+            projection: {
+              ...projection,
+              thread: {
+                ...projection.thread,
+                modelSelection: {
+                  ...projection.thread.modelSelection,
+                  instanceId: activeProviderThread.providerInstanceId,
+                },
+              },
+            },
+            targetModelSelection: modelSelection,
+          })
+          .pipe(mapDispatchError(command))).transition.type === "restart_and_resume";
 
       if (
         pendingForkTransfer === undefined &&
@@ -3871,11 +3906,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      const targetProviderThread = isProviderSwitch
-        ? rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0]
-        : activeProviderThread;
+      const targetProviderThread =
+        isProviderSwitch && !canResumeAcrossInstances
+          ? rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0]
+          : activeProviderThread;
       const providerSessionId =
-        targetProviderThread?.providerSessionId ??
+        (canResumeAcrossInstances ? undefined : targetProviderThread?.providerSessionId) ??
         (yield* mapDispatchError(command)(
           providerSessionIdFor({
             adapter,
@@ -3971,6 +4007,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }
           : {
               ...targetProviderThread,
+              providerInstanceId: modelSelection.instanceId,
               providerSessionId,
               updatedAt: now,
             };
@@ -4022,7 +4059,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const requiresFullProviderSwitchContext =
         isProviderSwitch && pendingMergeBackTransfer !== undefined;
       const providerSwitchCoveredRuns =
-        !isProviderSwitch || latestCompletedRun === undefined
+        !isProviderSwitch || canResumeAcrossInstances || latestCompletedRun === undefined
           ? []
           : projection.runs.filter(
               (run) =>
@@ -4110,7 +4147,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       const legacyImportRecoveryHandoff =
-        isProviderSwitch && latestCompletedRun === undefined && legacyImportItems.length > 0
+        isProviderSwitch &&
+        !canResumeAcrossInstances &&
+        latestCompletedRun === undefined &&
+        legacyImportItems.length > 0
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId: command.threadId,
@@ -4702,6 +4742,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      if (canResumeAcrossInstances && activeProviderThread.providerSessionId !== null) {
+        const previousProviderSessionId = activeProviderThread.providerSessionId;
+        yield* emitEvent({
+          type: "provider-session.detached",
+          threadId: command.threadId,
+          driver: activeProviderThread.driver,
+          providerInstanceId: activeProviderThread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            providerSessionId: previousProviderSessionId,
+            detachedAt: now,
+            reason: "Provider account changed; continuing the native thread.",
+          },
+        });
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:provider-session.detach:${previousProviderSessionId}`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: {
+              type: "provider-session.detach",
+              providerSessionId: previousProviderSessionId,
+              detail: "Provider account changed; continuing the native thread.",
+            },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+      }
       const pendingEffect = {
         id: `effect:${command.commandId}:provider-turn.start:${runId}`,
         commandId: command.commandId,

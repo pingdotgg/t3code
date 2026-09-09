@@ -4,7 +4,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 /**
  * Tracks the incremental import of v1 materialized thread state into the v2
  * event model. Shells are imported synchronously at startup; full transcripts
- * are hydrated on demand and by a low-priority background pass.
+ * are hydrated on demand and by a low-priority background pass. This table
+ * setup is composed by migration 050.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
