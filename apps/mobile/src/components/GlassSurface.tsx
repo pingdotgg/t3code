@@ -1,17 +1,20 @@
+import { BlurView } from "expo-blur";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import type { ReactNode, Ref } from "react";
+import { useContext, type ReactNode, type Ref, type RefObject } from "react";
 import {
   Platform,
+  StyleSheet,
   useColorScheme,
   View,
   type ColorValue,
-  type StyleProp,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
+import { GlassBlurTargetContext } from "../lib/glassBlurTarget";
+import { themeColorWithAlpha } from "../lib/mobileTheme";
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
 const ThemedGlassView = withUniwind(GlassView, {
@@ -26,8 +29,9 @@ interface GlassSurfaceProps extends ViewProps {
   readonly tintColor?: ColorValue;
   readonly tintColorClassName?: string;
   readonly chrome?: "default" | "none";
-  /** Styling used only when native Liquid Glass is unavailable. */
-  readonly fallbackStyle?: StyleProp<ViewStyle>;
+  /** Base color for the frosted tint, or solid fill when blur is unavailable. */
+  readonly fallbackColor?: ColorValue;
+  readonly blurTarget?: RefObject<View | null>;
   /** Uniwind styling used only when native Liquid Glass is unavailable. */
   readonly fallbackClassName?: string;
 }
@@ -39,13 +43,21 @@ export function GlassSurface({
   chrome = "default",
   tintColor,
   tintColorClassName,
-  fallbackStyle,
+  fallbackColor,
+  blurTarget,
   fallbackClassName,
   className,
   style,
   ...props
 }: GlassSurfaceProps) {
   const isDarkMode = useColorScheme() === "dark";
+  const inheritedBlurTarget = useContext(GlassBlurTargetContext);
+  const target = blurTarget ?? inheritedBlurTarget;
+  const supportsBlur =
+    Platform.OS === "ios" ||
+    (Platform.OS === "android" && Platform.Version >= 31 && target !== undefined);
+  const backgroundColor =
+    fallbackColor === undefined ? undefined : themeColorWithAlpha(String(fallbackColor), 1);
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
   const surfaceStyle: ViewStyle = {
     borderRadius: 32,
@@ -95,14 +107,27 @@ export function GlassSurface({
       {...props}
       ref={ref}
       className={cn(
-        chrome === "none"
-          ? "border-0 border-transparent bg-transparent"
-          : "border border-border bg-glass-surface",
+        chrome === "none" ? "border-0 border-transparent" : "border border-border",
         fallbackClassName,
         className,
       )}
-      style={[surfaceStyle, fallbackStyle, style]}
+      style={[surfaceStyle, style]}
     >
+      {supportsBlur ? (
+        <BlurView
+          pointerEvents="none"
+          blurTarget={target}
+          blurMethod="dimezisBlurViewSdk31Plus"
+          intensity={80}
+          tint={isDarkMode ? "dark" : "default"}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
+      <View
+        pointerEvents="none"
+        className="absolute inset-0 bg-card"
+        style={{ backgroundColor, opacity: supportsBlur ? (isDarkMode ? 0.25 : 0.55) : 1 }}
+      />
       {children}
     </View>
   );

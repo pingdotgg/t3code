@@ -143,7 +143,7 @@ export interface ThreadComposerProps {
 
 /**
  * The pill / card container — renders with Expo's native GlassView on supported
- * iOS 26+ devices and keeps the existing opaque fallback elsewhere.
+ * iOS 26+ devices, with a frosted blur fallback where supported.
  * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
 // The bottom-anchored dock position and clipped surface height use the same
@@ -172,6 +172,7 @@ export function ComposerSurface(props: {
   readonly animateLayout?: boolean;
 }) {
   const { materialYouStyleLayoutActive } = useAppearancePreferences();
+  const colors = useUniwindTheme();
   const targetBorderRadius =
     typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
   const animatedBorderRadius = useSharedValue(targetBorderRadius);
@@ -210,10 +211,11 @@ export function ComposerSurface(props: {
     >
       <AnimatedGlassSurface
         chrome="none"
+        fallbackColor={
+          materialYouStyleLayoutActive ? colors["--color-composer-surface"] : colors["--color-card"]
+        }
         fallbackClassName={
-          materialYouStyleLayoutActive
-            ? "border border-composer-border bg-composer-surface"
-            : "border border-border bg-card-translucent"
+          materialYouStyleLayoutActive ? "border border-composer-border" : "border border-border"
         }
         glassEffectStyle="regular"
         // The composer is a passive material containing interactive controls.
