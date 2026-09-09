@@ -753,10 +753,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   return DeviceService.of({
     agentCli: Effect.fail(
-      new DeviceOperationError({
-        operation: "install agent CLI",
-        reason: "command_failed",
-        cause: new Error("CLI installation unavailable"),
+      new DeviceHostUnavailableError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        reason: "Agent CLI installation is unavailable in this device service.",
       }),
     ),
     agentTarget: (input) =>
