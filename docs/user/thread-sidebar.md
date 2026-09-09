@@ -19,7 +19,7 @@ In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Ent
 on Windows and Linux to start a new thread and immediately open another draft. The
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree. If `Cmd+Enter`
-is your send key, hold Shift as well.
+or `Ctrl+Enter` is your send key, hold Shift as well.
 
 ## Pin and reorder threads
 
