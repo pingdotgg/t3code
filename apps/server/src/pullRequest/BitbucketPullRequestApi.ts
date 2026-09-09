@@ -1,5 +1,8 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -136,6 +139,18 @@ const CONVERSATION_PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * How long one read of a pull request's patch keeps answering the version reads behind it, and how
+ * many pull requests are held that way at once.
+ *
+ * A reader ticking files off names one new path at a time, and a path the caller has not asked
+ * about before is a path it cannot answer from what it holds, so without this every tick pays for
+ * the whole patch again. Deliberately far shorter than the window the caller holds versions for:
+ * a refresh drops what the caller holds precisely so the next read reaches Bitbucket, and this
+ * must not be what answers it instead.
+ */
+const REVISION_PATCH_TTL = Duration.seconds(5);
+const REVISION_PATCH_CAPACITY = 16;
 export interface BitbucketPullRequestBatch {
   readonly items: ReadonlyArray<BitbucketPullRequest>;
   readonly truncated: boolean;
@@ -189,8 +204,10 @@ export class BitbucketPullRequestApi extends Context.Service<
      * path the patch does not carry is answered as the empty revision, and left out altogether
      * when the patch was cut short at the byte ceiling and so cannot be spoken for.
      *
-     * Held by the caller rather than here: the marks and the badge they feed share one window,
-     * and a second one underneath it would keep answering after a refresh had asked it not to.
+     * The versions themselves are held by the caller rather than here: the marks and the badge
+     * they feed share one window, and a second one underneath it would keep answering after a
+     * refresh had asked it not to. The patch they are read out of is held for a few seconds, which
+     * is what keeps a reader ticking one file after another from downloading it once per tick.
      */
     readonly getFileRevisions: (input: {
       readonly repository: string;
@@ -569,6 +586,24 @@ export const make = Effect.gen(function* () {
             ),
         );
 
+  /**
+   * The pull request's whole patch, shared by the version reads that come one tick at a time. A
+   * second tick arriving while the first read is still in flight waits on that read rather than
+   * starting another.
+   */
+  const revisionPatches = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number];
+      return pullRequestDiff({ repository, number });
+    },
+    {
+      capacity: REVISION_PATCH_CAPACITY,
+      // A failure is not held: the tick after it should reach Bitbucket rather than be handed the
+      // same error for as long as a good patch would have lasted.
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISION_PATCH_TTL : Duration.zero),
+    },
+  );
+
   return BitbucketPullRequestApi.of({
     getViewer: () =>
       bitbucket.request({ method: "GET", url: "/user" }).pipe(
@@ -645,7 +680,7 @@ export const make = Effect.gen(function* () {
     getFileRevisions: (input) =>
       input.paths.length === 0
         ? Effect.succeed(new Map())
-        : pullRequestDiff({ repository: input.repository, number: input.number }).pipe(
+        : Cache.get(revisionPatches, JSON.stringify([input.repository, input.number])).pipe(
             Effect.map((diff) => {
               const all = parseDiffFileRevisions(diff.patch);
               // Narrowed to what was asked for rather than handed back whole: the caller compares

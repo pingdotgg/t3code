@@ -1,6 +1,8 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -428,6 +430,66 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       });
 
       assert.deepStrictEqual([...revisions], [["a.ts", "2222222"]]);
+    }),
+  );
+
+  it.effect("reads the patch once for a run of ticks, not once a tick", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.succeed(
+          response(
+            [
+              "diff --git a/a.ts b/a.ts",
+              "index 1111111..2222222 100644",
+              "@@ -1 +1 @@",
+              "diff --git a/b.ts b/b.ts",
+              "index 3333333..4444444 100644",
+              "@@ -1 +1 @@",
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const first = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 74,
+        paths: ["a.ts"],
+      });
+      // A path nobody has asked about before, which is what every tick after the first names.
+      const second = yield* api.getFileRevisions({
+        repository: "acme/web",
+        number: 74,
+        paths: ["b.ts"],
+      });
+
+      assert.deepStrictEqual([...first], [["a.ts", "2222222"]]);
+      assert.deepStrictEqual([...second], [["b.ts", "4444444"]]);
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("reads the patch afresh once the one it held has aged out", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.succeed(
+          response("diff --git a/a.ts b/a.ts\nindex 1111111..2222222 100644\n@@ -1 +1 @@\n"),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const read = () =>
+        api.getFileRevisions({ repository: "acme/web", number: 75, paths: ["a.ts"] });
+
+      yield* read();
+      yield* read();
+      assert.strictEqual(mockedRequest.mock.calls.length, 1);
+
+      // Well inside the window the caller holds versions for: a refresh drops what it holds so
+      // that the read after it reaches Bitbucket, and this must not answer that read instead.
+      yield* TestClock.adjust(Duration.seconds(30));
+      yield* read();
+      assert.strictEqual(mockedRequest.mock.calls.length, 2);
     }),
   );
 
