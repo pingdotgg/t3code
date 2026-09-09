@@ -94,7 +94,7 @@ describe("deriveToolCallFacts", () => {
     ).toEqual([{ path: "/repo/b.ts", kind: "write", additions: 3, deletions: 0 }]);
   });
 
-  it("reads ACP content text and diff parts for Cursor and Grok", () => {
+  it("reads ACP content text and diff parts for Cursor, Grok, and Antigravity", () => {
     const data = {
       kind: "edit",
       content: [
@@ -102,7 +102,7 @@ describe("deriveToolCallFacts", () => {
         { type: "diff", path: "src/x.ts", oldText: "a\nb", newText: "a\nc" },
       ],
     };
-    for (const provider of ["cursor", "grok"]) {
+    for (const provider of ["cursor", "grok", "antigravity"]) {
       expect(deriveToolCallFacts({ provider, data })).toEqual({
         output: { text: "Applied", lineCount: 1, truncated: false },
         files: [{ path: "src/x.ts", additions: 1, deletions: 1 }],

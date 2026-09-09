@@ -3348,7 +3348,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   // Plain progress notes ("Probe which subpaths Metro can resolve") are the
   // agent's intent for the calls that follow. Inside an expanded group they
   // read as a quiet section label rather than another tool row.
-  const isIntentLabel =
+  const looksLikeIntentNote =
     isExpandedToolGroupEntry && action === "update" && !showWarningIndicator && !isToolLike;
 
   // The command, with any leading `cd <dir> &&` pulled into a cwd chip.
@@ -3375,9 +3375,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     Boolean(
       (!commandMatchesVisibleLabel &&
         (workEntryRawCommand(workEntry) || workEntry.command?.trim())) ||
-        workEntry.detail?.trim() ||
-        workEntry.changedFiles?.length ||
-        viewedImage,
+      workEntry.detail?.trim() ||
+      workEntry.changedFiles?.length ||
+      viewedImage,
     );
   const expandedBody = expanded
     ? buildToolCallExpandedBody(
@@ -3425,7 +3425,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       }
     : {};
 
-  if (isIntentLabel) {
+  // Only a note with nothing else to show collapses to a label; a row that
+  // carries an answer, an image, or a body still renders in full.
+  if (looksLikeIntentNote && !workEntry.questionAnswer && !canExpand && !viewedImage) {
     return (
       <div className="flex items-baseline gap-2 ps-2 pt-2 pb-0.5 text-[0.8125rem] leading-relaxed text-secondary-label">
         <span
@@ -3487,9 +3489,6 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
               </p>
             )}
           </div>
-          {showFailedIndicator && toolPresentation ? (
-            <XIcon aria-hidden className="size-3 shrink-0 text-icon-muted" />
-          ) : null}
           {isToolLike ? (
             <ToolRowMeta
               durationMs={durationMs}

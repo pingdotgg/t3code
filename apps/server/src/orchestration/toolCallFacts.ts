@@ -4,7 +4,8 @@
  * Each provider reports tool calls in its own vocabulary. Codex sends
  * `cwd`/`exitCode`/`durationMs`/`aggregatedOutput`/`changes[].diff` on the
  * item; Claude sends the tool input plus a `tool_result` block; the ACP
- * providers (Cursor, Grok) send `rawInput`/`rawOutput`/`content`; OpenCode
+ * providers (Cursor, Grok, Antigravity) send `rawInput`/`rawOutput`/`content`;
+ * OpenCode
  * sends `state` with `input`/`output`/`time`. This module is the one place
  * that knows those shapes, so clients only ever read `payload.facts`.
  *
@@ -327,6 +328,7 @@ export function deriveToolCallFacts(input: {
       return fromClaude(data);
     case "cursor":
     case "grok":
+    case "antigravity":
       return fromAcp(data);
     case "opencode":
       return fromOpenCode(data);
