@@ -846,6 +846,7 @@ export function HomeScreen(props: HomeScreenProps) {
             thread,
             serverConfigs.get(thread.environmentId)?.providers,
           )}
+          providerInstance={resolveThreadProviderInstance(serverConfigs, thread)}
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
