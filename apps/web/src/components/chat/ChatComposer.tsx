@@ -1264,18 +1264,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showResumeAction =
     canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    (!composerSendState.hasSendableContent && !showResumeAction);
-  const collapsedComposerPrimaryActionLabel = showResumeAction
-    ? "Resume thread"
-    : props.resumeCompactionTokens !== null && !props.keepFullHistory
-      ? "Open composer to compact and send"
-      : "Send message";
+    !canInterrupt &&
+    (phase === "running" ||
+      isSendBusy ||
+      isSendDisabled ||
+      noProviderAvailable ||
+      projectSelectionRequired ||
+      environmentUnavailable !== null ||
+      (!composerSendState.hasSendableContent && !showResumeAction));
+  const collapsedComposerPrimaryActionLabel = canInterrupt
+    ? "Stop generation"
+    : showResumeAction
+      ? "Resume thread"
+      : props.resumeCompactionTokens !== null && !props.keepFullHistory
+        ? "Open composer to compact and send"
+        : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -3381,13 +3384,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
-                    if (showResumeAction) onResume();
-                    else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
-                      expandMobileComposer();
+                    if (canInterrupt) handleInterruptPrimaryAction();
+                    else if (showResumeAction) onResume();
+                    // Compacting first is only sent from the labeled button, so expand to show it.
+                    else if (props.resumeCompactionTokens !== null && !props.keepFullHistory) expandMobileComposer();
                     else submitComposer();
                   }}
                 >
-                  {showResumeAction ? (
+                  {canInterrupt ? (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden>
+                      <rect x="2" y="2" width="8" height="8" rx="1.5" />
+                    </svg>
+                  ) : showResumeAction ? (
                     <PlayIcon className="size-4 fill-current" aria-hidden="true" />
                   ) : (
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
