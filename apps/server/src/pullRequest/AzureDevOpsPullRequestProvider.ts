@@ -30,6 +30,14 @@ import type {
   AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 
+/**
+ * How many of a slice's files are read at once. Every file is two `az` invocations, each paying a
+ * Python interpreter's start-up, so reading them one after another is most of what the Code tab
+ * waits for. Four files means eight processes at once: the fan-out the GitHub CLI reads its
+ * per-file stats with here, and low enough not to swamp the host's throttling or the machine.
+ */
+const DIFF_FILE_CONCURRENCY = 4;
+
 const CAPABILITIES: PullRequestCapabilities = {
   // Azure serves no patch of its own, so the one the Code tab reads is built here out of the
   // files an iteration changed and both sides of each of them.
@@ -200,8 +208,10 @@ export const make = Effect.gen(function* () {
   const EMPTY_ITEM: AzureDevOpsItemContent = { contents: "", isBinary: false };
 
   /**
-   * Both sides of one changed file. Only the sides a change actually has are asked for: Azure
-   * answers for a file that is not at a commit with a failure rather than with nothing.
+   * Both sides of one changed file, read at once because neither answer depends on the other and
+   * `az` pays a Python interpreter's start-up for each. Only the sides a change actually has are
+   * asked for: Azure answers for a file that is not at a commit with a failure rather than with
+   * nothing.
    */
   const readTexts = (input: {
     readonly cwd: string;
@@ -209,34 +219,35 @@ export const make = Effect.gen(function* () {
     readonly iteration: AzureDevOpsIteration;
     readonly change: Pick<AzureDevOpsChangeEntry, "changeKind" | "path" | "oldPath">;
   }) =>
-    Effect.gen(function* () {
-      const oldItem =
+    Effect.all(
+      [
         input.change.changeKind === "new"
-          ? EMPTY_ITEM
-          : yield* cli.readItemContent({
+          ? Effect.succeed(EMPTY_ITEM)
+          : cli.readItemContent({
               cwd: input.cwd,
               location: input.location,
               path: input.change.oldPath,
               commit: input.iteration.mergeBaseCommit,
-            });
-      const newItem =
+            }),
         input.change.changeKind === "deleted"
-          ? EMPTY_ITEM
-          : yield* cli.readItemContent({
+          ? Effect.succeed(EMPTY_ITEM)
+          : cli.readItemContent({
               cwd: input.cwd,
               location: input.location,
               path: input.change.path,
               commit: input.iteration.headCommit,
-            });
-      const texts: AzureDevOpsFileTexts = {
+            }),
+      ],
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(([oldItem, newItem]): AzureDevOpsFileTexts => ({
         oldContents: oldItem.contents,
         newContents: newItem.contents,
         // Azure hands a file it calls binary over in an encoding of its own, so its own word on
         // that is taken rather than looked for in bytes it may never have sent verbatim.
         binary: oldItem.isBinary || newItem.isBinary,
-      };
-      return texts;
-    });
+      })),
+    );
 
   /**
    * What the whole pull request changed, taken from its latest push. An iteration's changes are
@@ -390,40 +401,46 @@ export const make = Effect.gen(function* () {
         let truncated = listed.truncated;
         let bytes = 0;
         let index = cursor?.fileIndex ?? 0;
-        while (index < changes.length) {
-          const change = changes.at(index);
-          if (change === undefined) break;
-          // One file per pair of reads, and a pair Azure refuses is one file rather than the
-          // whole slice: an oversize blob or a path `az` will not carry through leaves that file
-          // listed without its hunks, and everything around it still renders.
-          const texts = yield* readTexts({
-            cwd: input.cwd,
-            location: scope.location,
-            iteration,
-            change,
-          }).pipe(
-            // Only what is this one file's problem. A signed-out CLI, a rate limit or no `az` at
-            // all is the read failing rather than the file, and belongs to the caller, which
-            // pauses the host rather than showing every file in the change as unreadable.
-            Effect.catchTags({
-              AzureDevOpsPullRequestNotFoundError: () => Effect.succeed(null),
-              AzureDevOpsCommandFailedError: () => Effect.succeed(null),
-              AzureDevOpsPullRequestReadError: () => Effect.succeed(null),
-            }),
+        let full = false;
+        while (!full && index < changes.length) {
+          const batch = changes.slice(index, index + DIFF_FILE_CONCURRENCY);
+          const read = yield* Effect.forEach(
+            batch,
+            (change) =>
+              // A pair Azure refuses is one file rather than the whole slice: an oversize blob or
+              // a path `az` will not carry through leaves that file listed without its hunks, and
+              // everything around it still renders.
+              readTexts({ cwd: input.cwd, location: scope.location, iteration, change }).pipe(
+                // Only what is this one file's problem. A signed-out CLI, a rate limit or no `az`
+                // at all is the read failing rather than the file, and belongs to the caller,
+                // which pauses the host rather than showing every file as unreadable.
+                Effect.catchTags({
+                  AzureDevOpsPullRequestNotFoundError: () => Effect.succeed(null),
+                  AzureDevOpsCommandFailedError: () => Effect.succeed(null),
+                  AzureDevOpsPullRequestReadError: () => Effect.succeed(null),
+                }),
+                Effect.map((texts) => ({ change, texts })),
+              ),
+            { concurrency: DIFF_FILE_CONCURRENCY },
           );
-          const file =
-            texts === null
-              ? azureDevOpsUnreadableFilePatch(change)
-              : azureDevOpsFilePatch({ change, texts, timeoutMillis: MAX_FILE_DIFF_MILLIS });
-          sections.push(file.section);
-          bytes += byteLength(file.section);
-          truncated = truncated || file.truncated;
-          index += 1;
-          // A file whose diff was given up on spent the whole of what one file is allowed and has
-          // a header to show for it, so the byte budget would let a change full of them spend that
-          // over and over in the one request. The slice ends there instead, and reading on picks
-          // up at the file behind it.
-          if (bytes >= MAX_DIFF_SLICE_BYTES || file.abandoned) break;
+          for (const { change, texts } of read) {
+            const file =
+              texts === null
+                ? azureDevOpsUnreadableFilePatch(change)
+                : azureDevOpsFilePatch({ change, texts, timeoutMillis: MAX_FILE_DIFF_MILLIS });
+            sections.push(file.section);
+            bytes += byteLength(file.section);
+            truncated = truncated || file.truncated;
+            index += 1;
+            // A file whose diff was given up on spent the whole of what one file is allowed and
+            // has a header to show for it, so the byte budget would let a change full of them
+            // spend that over and over in the one request. What the batch read past the point the
+            // slice filled is left for the next one rather than carried into this answer.
+            if (bytes >= MAX_DIFF_SLICE_BYTES || file.abandoned) {
+              full = true;
+              break;
+            }
+          }
         }
 
         const slice: ProviderDiffSlice = {
