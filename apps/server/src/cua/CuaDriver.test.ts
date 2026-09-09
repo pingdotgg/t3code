@@ -14,7 +14,7 @@ import {
 
 const mcp: CuaDriverMcpConfiguration = { command: "/driver", args: ["mcp"], environment: [] };
 
-const standaloneFixture = Effect.fn(function* () {
+const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
   const start = Promise.withResolvers<EmbeddedDriverConnection>();
   const stop = Promise.withResolvers<void>();
   const monitor = Promise.withResolvers<never>();
@@ -46,6 +46,7 @@ const standaloneFixture = Effect.fn(function* () {
       uniffiDestroy() {
         destroys++;
         destroyed.resolve();
+        if (failFirstDestroy && destroys === 1) throw new Error("destroy failed");
       }
     },
   }));
@@ -73,6 +74,26 @@ const standaloneFixture = Effect.fn(function* () {
 });
 
 describe("standalone Cua Driver ownership", () => {
+  it.effect("releases ownership after native destruction throws without retrying cleanup", () =>
+    Effect.gen(function* () {
+      const f = yield* standaloneFixture(true);
+      const host = yield* f.factory;
+      f.start.resolve(f.connection);
+      yield* host.start;
+      f.stop.resolve();
+      f.monitor.reject(new Error("monitor cancelled"));
+      expect(yield* Effect.flip(host.stop)).toEqual(
+        new CuaDriverError({ message: "Could not stop Cua Driver." }),
+      );
+      expect(Exit.isFailure(yield* Effect.exit(host.stop))).toBe(true);
+      expect(f.counts()).toEqual({ creates: 1, stops: 1, destroys: 1 });
+      const replacement = yield* f.factory;
+      expect(yield* replacement.start).toEqual(mcp);
+      yield* replacement.stop;
+      expect(f.counts()).toEqual({ creates: 2, stops: 2, destroys: 2 });
+    }),
+  );
+
   it.effect("retains a cancelled start until start and stop settle, with one cleanup", () =>
     Effect.gen(function* () {
       const f = yield* standaloneFixture();

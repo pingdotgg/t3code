@@ -203,8 +203,11 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
               } catch {
                 /* Cancellation ends the monitor. */
               }
-              host.uniffiDestroy();
-              occupied = false;
+              try {
+                host.uniffiDestroy();
+              } finally {
+                occupied = false;
+              }
             })();
           }
           return releasing;
