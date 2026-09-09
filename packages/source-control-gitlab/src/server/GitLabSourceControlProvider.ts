@@ -296,6 +296,7 @@ export const make = Effect.gen(function* () {
             ...(input.target ? { target: input.target } : {}),
             title: input.title,
             bodyFile: input.bodyFile,
+            ...(input.body !== undefined ? { body: input.body } : {}),
           })
           .pipe(
             Effect.mapError(
