@@ -226,6 +226,57 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const failure of ["enumeration", "abort", "not-found", "timeout"] as const) {
+    it.effect(`reports descendant cleanup ${failure}`, () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const called = promiseGate<void>();
+        let childSignal: AbortSignal | undefined;
+        const harness = yield* makeOpenCodeRuntimeHarness(`cleanup-${failure}`, "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async () => ({ data: true }),
+            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            messages: async () => ({ data: [] }),
+            children: async ({ sessionID }: { sessionID: string }) => {
+              if (failure === "enumeration") throw new Error("cannot enumerate");
+              return { data: sessionID === "root" ? [{ id: "child" }] : [] };
+            },
+            abort: async (
+              { sessionID }: { sessionID: string },
+              options: { signal: AbortSignal },
+            ) => {
+              if (sessionID === "root") return { data: true };
+              childSignal = options.signal;
+              called.resolve();
+              if (failure === "timeout") return new Promise(() => {});
+              if (failure === "not-found") throw { status: 404 };
+              throw new Error("child abort failed");
+            },
+          },
+        });
+        yield* harness.startTurn();
+        const snapshot = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        const stop = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: snapshot.providerTurns.at(-1)!.id,
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        if (failure === "timeout") {
+          yield* Effect.promise(() => called.promise);
+          yield* TestClock.adjust("15 seconds");
+        }
+        const result = yield* Fiber.join(stop);
+        assert.equal(Exit.isSuccess(result), failure === "not-found");
+        if (failure === "timeout") assert.isTrue(childSignal?.aborted);
+      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    );
+  }
+
   it.effect(
     "preserves tool lifecycle, approval kinds, and late assistant text without cached tool payloads",
     () =>
@@ -591,6 +642,7 @@ describe("OpenCodeAdapterV2", () => {
             })(),
           }),
           messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
           abort: async () => {
             abortCalled.resolve();
             return { data: true };
@@ -884,6 +936,7 @@ describe("OpenCodeAdapterV2", () => {
             data: { "native-opencode-initial-stop": { type: "idle" as const } },
           }),
           messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
           abort: async () => {
             abortCalls += 1;
             abortCalled.resolve();
@@ -1125,6 +1178,7 @@ describe("OpenCodeAdapterV2", () => {
             return { data: { [nativeSessionId]: { type: "idle" as const } } };
           },
           messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
           abort: async () => ({ data: true }),
         },
         mcp: { add: async () => ({ data: true }) },
@@ -1213,6 +1267,7 @@ describe("OpenCodeAdapterV2", () => {
             return { data: { [nativeSessionId]: { type: "idle" as const } } };
           },
           messages: async () => ({ data: [] }),
+          children: async () => ({ data: [] }),
           abort: async () => ({ data: true }),
         },
         mcp: { add: async () => ({ data: true }) },
