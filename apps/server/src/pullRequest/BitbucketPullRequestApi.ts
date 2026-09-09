@@ -561,7 +561,7 @@ export const make = Effect.gen(function* () {
     input.commit !== undefined && !isCommitSha(input.commit)
       ? Effect.fail(new BitbucketDiffCommitError())
       : withRepository(input.repository, (path) =>
-          // Already a unified patch, so it needs no decoding at all — only a bound, which a
+          // Already a unified patch, so it needs no decoding at all, only a bound, which a
           // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
           // request's at `/diff/{sha}` and reads the same way.
           bitbucket
