@@ -29,6 +29,19 @@ export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, st
   rebase: "Rebase and merge",
 };
 
+/** Old environments keep their existing actions; new ones must finish stack discovery first. */
+export function allowsSinglePullRequestMerge(input: {
+  supportsStackActions: boolean;
+  hasStack: boolean;
+  stackPending: boolean;
+  stackError: string | null;
+}): boolean {
+  return (
+    !input.supportsStackActions ||
+    (!input.hasStack && !input.stackPending && input.stackError === null)
+  );
+}
+
 export function resolvePullRequestMergeMethod(
   allowed: ReadonlyArray<PullRequestMergeMethod>,
   current: PullRequestMergeMethod | null,

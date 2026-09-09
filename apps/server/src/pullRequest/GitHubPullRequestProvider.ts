@@ -71,7 +71,7 @@ const CAPABILITIES: PullRequestCapabilities = {
  */
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
-    ...(access.canWrite || access.didAuthor ? { stackRebase: true } : {}),
+    ...(access.canWrite ? { stackRebase: true } : {}),
     actions: [
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.

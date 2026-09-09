@@ -1950,6 +1950,7 @@ function PullRequestsRouteView() {
                 updateSearch({
                   repository: reference.repository,
                   number: reference.number,
+                  host: reference.host,
                   selectedProjectId: reference.projectId,
                   selectedEnvironmentId: panelEnvironmentId,
                 });
@@ -1958,6 +1959,9 @@ function PullRequestsRouteView() {
                 projectId: renderedPullRequestSurface.projectId as ProjectId,
                 repository: renderedPullRequestSurface.repository,
                 number: renderedPullRequestSurface.number,
+                ...(renderedPullRequestSurface.host
+                  ? { host: renderedPullRequestSurface.host }
+                  : {}),
               }}
               listEntry={
                 listedPullRequestsBySurface.get(
