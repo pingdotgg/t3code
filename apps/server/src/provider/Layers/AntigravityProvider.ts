@@ -135,6 +135,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   settings: AntigravitySettings,
   options: AntigravityProviderOptions,
 ) {
+  const scope = yield* Effect.scope;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
     ...buildServerProvider({
@@ -321,7 +322,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               )
             : Effect.void,
         ),
-        Effect.forkChild,
+        Effect.forkIn(scope),
       );
     }
   });

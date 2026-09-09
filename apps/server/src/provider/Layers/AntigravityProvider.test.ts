@@ -705,9 +705,7 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
             }
             return {
               checkedAt: "2026-09-09T02:00:00.000Z",
-              windows: [
-                { id: "new_session", kind: "session", label: "New", usedPercent: 10 },
-              ],
+              windows: [{ id: "new_session", kind: "session", label: "New", usedPercent: 10 }],
             };
           }),
         });
@@ -720,9 +718,7 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
           ),
         );
 
-        const fiber1 = yield* harness.provider
-          .onSessionStarted(started)
-          .pipe(Effect.forkChild);
+        const fiber1 = yield* harness.provider.onSessionStarted(started).pipe(Effect.forkChild);
         yield* Deferred.await(session1Gate);
 
         const session2Started: AcpSessionRuntimeStartResult = {
@@ -748,4 +744,3 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
     ),
   );
 });
-
