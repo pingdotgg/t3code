@@ -128,7 +128,7 @@ export const make = Effect.gen(function* () {
         return null;
       }
       if (target.platform === "android") {
-        return yield* fcmDeliveries.enqueue({ target, state: null });
+        return yield* fcmDeliveries.enqueue({ target, state: null, replay: true });
       }
       const now = yield* DateTime.now;
       const aggregate = makeAggregateState({

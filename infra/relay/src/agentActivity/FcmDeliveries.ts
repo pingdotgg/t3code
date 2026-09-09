@@ -38,6 +38,7 @@ export const FcmDeliveryJob = Schema.Struct({
   token: Schema.String,
   state: Schema.NullOr(RelayAgentActivityState),
   queuedAt: Schema.Number,
+  replay: Schema.optional(Schema.Boolean),
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
@@ -116,6 +117,7 @@ export class FcmDeliveries extends Context.Service<
     readonly enqueue: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly state: RelayAgentActivityState | null;
+      readonly replay?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, FcmDeliveryError>;
     readonly process: (
       body: unknown,
@@ -164,6 +166,7 @@ export const make = Effect.gen(function* () {
           deviceId: input.target.device_id,
           token: input.target.push_token,
           state: input.state,
+          ...(input.replay ? { replay: true } : {}),
           queuedAt: now.epochMilliseconds,
         })
         .pipe(Effect.mapError((cause) => new FcmDeliveryError({ operation: "enqueue", cause })));
@@ -208,7 +211,10 @@ export const make = Effect.gen(function* () {
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))
         : null;
       let alert: ReturnType<typeof androidAlertForState> = null;
-      let acknowledgeAggregate = true;
+      // Deletion jobs can observe another thread's newly completed state. They
+      // update the card, but must leave that transition for its own alert job.
+      // Registration replay deliberately establishes a silent baseline.
+      let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
       if (job.state && preferences.value.notificationsEnabled) {
         const state = yield* rows.getForUserThread({
           userId: job.userId,

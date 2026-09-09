@@ -299,13 +299,39 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  for (const phase of [
+    "completed",
+    "waiting_for_approval",
+    "waiting_for_input",
+    "failed",
+  ] as const) {
+    it.effect(`deleting one thread preserves another thread's ${phase} alert`, () => {
+      const h = harness();
+      h.current.otherStates = [secondState];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries;
+        yield* delivery.process(h.job);
+        h.current.otherStates = [];
+        h.current.state = { ...state, phase };
+        yield* delivery.enqueue({ target, state: null });
+        yield* delivery.process(h.queued[0]);
+        expect(h.sent.at(-1)?.alert).toBe(false);
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    });
+  }
+
   it.effect("registration replay establishes a baseline without alerting", () => {
     const h = harness();
     h.current.state = { ...state, phase: "waiting_for_approval" };
     h.current.otherStates = [{ ...secondState, phase: "waiting_for_input" }];
     return Effect.gen(function* () {
       const delivery = yield* FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: null });
+      yield* delivery.enqueue({ target, state: null, replay: true });
+      yield* delivery.process(h.queued[0]);
       yield* delivery.process({ ...h.job, state: h.current.state });
       expect(h.sent.every((message) => !message.alert)).toBe(true);
       expect(h.marked[0]?.aggregate?.activities).toHaveLength(2);
@@ -558,11 +584,11 @@ describe("Android delivery routing", () => {
           activity_expires_at: "900000",
         });
         yield* TestClock.adjust("5 minutes");
-        yield* delivery.process({ ...h.job, queuedAt: 300000, state: null });
+        yield* delivery.process({ ...h.job, queuedAt: 300000, state: null, replay: true });
         expect(h.sent[1]?.data.activity_expires_at).toBe("900000");
         expect(h.sent[1]?.alert).toBe(false);
         yield* TestClock.adjust("11 minutes");
-        yield* delivery.process({ ...h.job, queuedAt: 960000, state: null });
+        yield* delivery.process({ ...h.job, queuedAt: 960000, state: null, replay: true });
         expect(h.sent[2]?.data).toMatchObject({ active: "false", activity_expires_at: "0" });
         expect(h.marked.at(-1)?.aggregate).toBeNull();
       }).pipe(Effect.provide(h.layer));

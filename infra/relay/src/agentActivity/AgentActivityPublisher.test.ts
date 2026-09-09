@@ -158,7 +158,7 @@ describe("AgentActivityPublisher", () => {
       });
       expect(fcmCalls).toEqual([
         { target: android, state },
-        { target: android, state: null },
+        { target: android, state: null, replay: true },
       ]);
       expect(appleDevices).toEqual(["ios"]);
     }).pipe(
