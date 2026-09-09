@@ -203,6 +203,7 @@ export function useOpenChangeRequestLink(
               state: previous.state ?? "all",
               repository,
               number: parsed.number,
+              selectedHost: parsed.host,
               selectedProjectId: project.id,
               selectedEnvironmentId: project.environmentId,
             }),
@@ -220,6 +221,7 @@ export function useOpenChangeRequestLink(
           state: "all",
           repository,
           number: parsed.number,
+          selectedHost: parsed.host,
           selectedProjectId: project.id,
           // Named so the page opens the right one of two servers holding this project.
           selectedEnvironmentId: project.environmentId,

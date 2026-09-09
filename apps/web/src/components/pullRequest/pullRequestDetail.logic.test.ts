@@ -35,6 +35,7 @@ import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
+  allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   resolvePullRequestMergeMethod,
@@ -1462,4 +1463,22 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
   });
+});
+
+describe("single-PR merge compatibility during stack discovery", () => {
+  it.each([
+    [false, true, false, null, true],
+    [false, false, true, null, true],
+    [true, false, true, null, false],
+    [true, false, false, "Lookup failed", false],
+    [true, true, false, null, false],
+    [true, false, false, null, true],
+  ] as const)(
+    "capability=%s stack=%s pending=%s error=%s permits=%s",
+    (supportsStackActions, hasStack, stackPending, stackError, allowed) => {
+      expect(
+        allowsSinglePullRequestMerge({ supportsStackActions, hasStack, stackPending, stackError }),
+      ).toBe(allowed);
+    },
+  );
 });

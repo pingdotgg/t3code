@@ -1564,6 +1564,48 @@ it.effect("refuses a repository that does not belong to the requested project", 
   }),
 );
 
+it.effect("caches stack membership separately from action details", () =>
+  Effect.gen(function* () {
+    const reads: Array<boolean> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestStack: (input) =>
+            Effect.sync(() => {
+              reads.push(input.includeDetails === true);
+              return {
+                id: "9",
+                number: 3,
+                url: "https://github.com/acme/web/stacks/3",
+                base: "main",
+                layers: [
+                  {
+                    number: 7,
+                    headBranch: "a",
+                    state: "open" as const,
+                    ...(input.includeDetails ? { title: "First layer", headSha: "abc" } : {}),
+                  },
+                ],
+              };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 7 };
+    yield* service.stack(reference, { includeDetails: false });
+    yield* service.stack(reference, { includeDetails: false });
+    const detail = yield* service.stack(reference);
+    yield* service.stack(reference);
+    assert.deepStrictEqual(reads, [false, true]);
+    assert.strictEqual(detail?.layers[0]?.headSha, "abc");
+    yield* service.invalidate({ reference });
+    yield* service.stack(reference, { includeDetails: false });
+    yield* service.stack(reference);
+    assert.deepStrictEqual(reads, [false, true, false, true]);
+  }),
+);
+
 it.effect("reads a host-native stack through the provider and null where it has none", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
@@ -3994,6 +4036,91 @@ it.effect('resolves an author filter of "me" to the viewer before narrowing a ho
       result.entries.map((entry) => entry.number),
       [2],
     );
+  }),
+);
+
+it.effect("authorizes stack rebases independently of whether the selected layer is behind", () =>
+  Effect.gen(function* () {
+    let taken = 0;
+    let summaryReads = 0;
+    let mutationFails = false;
+    let stackRebase = true;
+    let stackActions = true;
+    const capabilities = {
+      diff: true,
+      comment: true,
+      actions: ["update-branch"] as const,
+      mergeMethods: ["merge"] as const,
+      updateMethods: ["rebase"] as const,
+      get stackActions() {
+        return stackActions;
+      },
+      search: true,
+      reactions: true,
+      review: FULL_REVIEW,
+      reviewers: FULL_REVIEWERS,
+    };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities,
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: [],
+              stackRebase,
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          getChangeRequestSummary: () =>
+            Effect.sync(() => {
+              summaryReads++;
+              return changeRequest(8, "2026-07-01T00:00:00Z");
+            }),
+          runAction: () =>
+            Effect.gen(function* () {
+              taken++;
+              if (mutationFails) return yield* requestFailed;
+            }),
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 3,
+      action: "update-branch" as const,
+      updateMethod: "rebase" as const,
+      stackNumber: 50,
+      expectedStackHeads: [{ number: 3, headSha: "ccc" }],
+    };
+    yield* service.runAction(input);
+    assert.strictEqual(taken, 1);
+    const unrelated = { ...input, number: 8 };
+    yield* service.summary(unrelated);
+    assert.strictEqual(summaryReads, 1);
+    stackRebase = false;
+    assert.strictEqual(
+      (yield* Effect.flip(service.runAction(input)))._tag,
+      "PullRequestOperationError",
+    );
+    stackRebase = true;
+    stackActions = false;
+    assert.strictEqual(
+      (yield* Effect.flip(service.runAction(input)))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(taken, 1);
+    yield* service.summary(unrelated);
+    assert.strictEqual(summaryReads, 1);
+    stackActions = true;
+    mutationFails = true;
+    yield* Effect.flip(service.runAction(input));
+    assert.strictEqual(taken, 2);
+    yield* service.summary(unrelated);
+    assert.strictEqual(summaryReads, 2);
   }),
 );
 

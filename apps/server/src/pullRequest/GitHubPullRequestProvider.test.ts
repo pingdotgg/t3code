@@ -130,6 +130,7 @@ describe("gitHubViewerPermissions", () => {
       ],
       comment: true,
       resolve: true,
+      stackRebase: true,
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
       labels: true,

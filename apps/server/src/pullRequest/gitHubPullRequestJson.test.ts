@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildReviewSubmissionJson,
+  buildPullRequestStackMembershipsGraphQlQuery,
+  decodePullRequestStackMembershipsJson,
   buildReviewerRequestJson,
   decodeBaseComparisonJson,
   decodePullRequestActivityJson,
@@ -21,6 +23,7 @@ import {
   decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
+  pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
 function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
@@ -164,6 +167,17 @@ describe("pull request search decoding", () => {
       },
     });
   }
+
+  it("keeps stack membership beside search results without extra per-PR reads", () => {
+    const raw = JSON.parse(searchJson(["SUCCESS", null]));
+    raw.data.search.nodes[0].stack = { number: 3, size: 2, baseRefName: "main" };
+    raw.data.search.nodes[0].stackEntry = { position: 1 };
+    const batch = expectSuccess(decodePullRequestSearchJson(JSON.stringify(raw)));
+    expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, position: 1, base: "main" });
+    expect(batch.items[1]?.stack).toBeUndefined();
+    expect(pullRequestSearchGraphQlQuery(20, true)).toContain("stackEntry");
+    expect(pullRequestSearchGraphQlQuery(20)).not.toContain("stackEntry");
+  });
 
   it("maps the rollup enum the search answers with onto the same three words", () => {
     // The search asks GitHub for the verdict rather than the checks behind it, so this path sees
@@ -1548,6 +1562,32 @@ describe("host-native stack decoding", () => {
     });
   });
 
+  it("retains the detailed layer titles, draft state and expected revision", () => {
+    expect(
+      expectStack({
+        pull_requests: [
+          {
+            number: 11,
+            title: "Second layer",
+            draft: true,
+            head: { ref: "feat/two", sha: "abc123" },
+            state: "open",
+            merged_at: null,
+          },
+        ],
+      }).layers,
+    ).toEqual([
+      {
+        number: 11,
+        title: "Second layer",
+        isDraft: true,
+        headSha: "abc123",
+        headBranch: "feat/two",
+        state: "open",
+      },
+    ]);
+  });
+
   it("accepts a base named as a bare branch, which is what the preview started out sending", () => {
     expect(expectStack({ base: "develop" }).base).toBe("develop");
   });
@@ -1577,5 +1617,40 @@ describe("host-native stack decoding", () => {
       ),
     ).toBe(false);
     expect(Result.isSuccess(decodePullRequestStacksJson("{"))).toBe(false);
+  });
+});
+
+describe("pull request stack membership batches", () => {
+  it("maps aliases while skipping missing pull requests and incomplete memberships", () => {
+    const memberships = expectSuccess(
+      decodePullRequestStackMembershipsJson(
+        JSON.stringify({
+          data: {
+            s0: {
+              pullRequest: {
+                stack: { number: 3, size: 2, baseRefName: "main" },
+                stackEntry: { position: 1 },
+              },
+            },
+            s1: null,
+            s2: { pullRequest: null },
+            s3: { pullRequest: { stack: null, stackEntry: null } },
+            s4: { pullRequest: { stack: { number: 3, size: 2, baseRefName: "main" } } },
+          },
+        }),
+      ),
+    );
+    expect([...memberships]).toEqual([[0, { number: 3, size: 2, base: "main", position: 1 }]]);
+  });
+
+  it("refuses malformed responses and unsafe query selectors", () => {
+    expect(Result.isFailure(decodePullRequestStackMembershipsJson('{"errors":[]}'))).toBe(true);
+    expect(buildPullRequestStackMembershipsGraphQlQuery('acme/web") { x } #', [1])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [0])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [1.5])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [])).toBeNull();
+    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])).toContain(
+      "pullRequest(number: 8)",
+    );
   });
 });

@@ -192,13 +192,11 @@ import {
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
-  PR_STATE_COLOR_CLASS,
-  ThreadPullRequestBadgeIcon,
+  ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
   ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
-  settledPrHoverColorClass,
   terminalStatusFromRunningIds,
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
@@ -220,7 +218,7 @@ import {
 } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { Button, InlineButton } from "./ui/button";
+import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
   Combobox,
@@ -1179,7 +1177,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     currentGitBranch: visibleGitStatus?.refName ?? null,
   });
   const prStatus = prStatusIndicator(pr, linkedPullRequestStatus?.sourceControlProvider);
-  const settledPrHoverClass = pr ? settledPrHoverColorClass(pr.state, pr.isDraft) : undefined;
 
   const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
@@ -1488,85 +1485,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     </span>
   );
 
-  // One badge shape for every thread: the glyph says stack or not, the number is the current
-  // pull request, and "+N" counts the others behind it. A real link so cmd/ctrl+click and
-  // middle-click open the host in the browser; a plain click opens T3's pull request view.
+  // Stacks show their layer count; unrelated links show the current PR and a remainder count.
+  // Plain clicks open T3; individual PR links also support opening the host in a new tab.
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
     : null;
-  const prBadgeClassName = (state: "open" | "merged" | "closed", colorClass: string) =>
-    cn(
-      // Sidebar chrome follows the interface font; tabular digits keep the number from
-      // reflowing as PR states stream in. A border rather than text-decoration, so the line
-      // runs under the glyph as well as the number.
-      "text-xs tabular-nums",
-      variant === "slim" && variantAction === "unsettle"
-        ? props.isActive
-          ? "text-secondary-label"
-          : cn("text-secondary-label transition-colors", settledPrHoverColorClass(state))
-        : colorClass,
-    );
   const handlePrStackClick = useCallback(() => {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
   const prBadge =
-    prBadgeShape?.kind === "stack" ? (
-      // A stack is one thing with N layers; naming one of them would misrepresent it, so the
-      // badge counts layers and opens the thread's pull-requests surface.
-      <InlineButton
-        underline
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={handlePrStackClick}
-        className={prBadgeClassName(prBadgeShape.state, PR_STATE_COLOR_CLASS[prBadgeShape.state])}
-        aria-label={`Stack of ${prBadgeShape.layers} pull requests, ${prBadgeShape.state}`}
-      >
-        <ThreadPullRequestBadgeIcon icon="stack" />
-        {prBadgeShape.layers}
-      </InlineButton>
-    ) : prStatus && pr ? (
-      <a
-        href={pr.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={handlePrClick}
-        className={cn(
-          // Sidebar chrome follows the interface font; tabular digits keep the
-          // number from reflowing as PR states stream in.
-          "inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-xs tabular-nums hover:underline",
-          variant === "slim" && variantAction === "unsettle"
-            ? cn("text-secondary-label transition-colors", settledPrHoverClass)
-            : prStatus.colorClass,
-        )}
-        aria-label={
-          prBadgeShape && prBadgeShape.kind === "pull-request" && prBadgeShape.others > 0
-            ? `${prStatus.tooltip}, and ${prBadgeShape.others} more linked`
-            : prStatus.tooltip
-        }
-      >
-        <ThreadPullRequestBadgeIcon icon="pull-request" />
-        {pr.number}
-        {prBadgeShape && prBadgeShape.others > 0 ? (
-          <span className="opacity-70">+{prBadgeShape.others}</span>
-        ) : null}
-      </a>
-    ) : currentLinkedPr ? (
-      <a
-        href={currentLinkedPr.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={handlePrClick}
-        className="inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums text-muted-foreground hover:underline"
-        aria-label={`PR #${currentLinkedPr.number}, status pending`}
-      >
-        <ThreadPullRequestBadgeIcon icon="pull-request" />
-        {currentLinkedPr.number}
-        {prBadgeShape?.kind === "pull-request" && prBadgeShape.others > 0 ? (
-          <span>+{prBadgeShape.others}</span>
-        ) : null}
-      </a>
+    prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
+      <ThreadPullRequestBadgeControl
+        variant="underline"
+        badge={prBadgeShape}
+        number={pr?.number ?? currentLinkedPr?.number}
+        url={pr?.url ?? currentLinkedPr?.url}
+        status={prStatus}
+        onOpenStack={handlePrStackClick}
+        onOpenPullRequest={handlePrClick}
+      />
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
     <span

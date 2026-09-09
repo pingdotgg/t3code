@@ -5,12 +5,55 @@ import {
   buildBrowseGroups,
   buildProjectActionItems,
   buildThreadActionItems,
+  buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("linked pull request thread navigation", () => {
+  it("keeps archived relations searchable and routes them through the PR environment", async () => {
+    const environmentId = EnvironmentId.make("remote");
+    const id = ThreadId.make("archived-thread");
+    const runThread = vi.fn(async () => {});
+    const query = "https://github.com/acme/web/pull/42";
+    const linkedThreads = {
+      environmentId,
+      threads: [
+        {
+          id,
+          projectId: ProjectId.make("project"),
+          title: "Completed work",
+          archivedAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const state = reduceCommandPaletteUiState(
+      { open: false, mode: "command", openIntent: null },
+      {
+        _tag: "OpenSearch",
+        query,
+        linkedThreads,
+      },
+    );
+    expect(state.openIntent).toEqual({ kind: "search", query, linkedThreads });
+    const items = buildLinkedThreadActionItems({ ...linkedThreads, query, icon: null, runThread });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query,
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [],
+      threadSearchItems: items,
+    });
+    expect(groups.flatMap((group) => group.items)).toEqual(items);
+    expect(items[0]?.description).toBe("Archived thread");
+    await items[0]?.run();
+    expect(runThread).toHaveBeenCalledWith({ environmentId, id });
+  });
+});
 
 describe("reduceCommandPaletteUiState", () => {
   const closedState = { open: false, mode: "command", openIntent: null } as const;
@@ -45,6 +88,32 @@ describe("reduceCommandPaletteUiState", () => {
         openIntent: null,
       },
     );
+  });
+
+  it("opens PR search from another overlay and replaces an earlier search", () => {
+    const first = reduceCommandPaletteUiState(
+      { open: true, mode: "files", openIntent: null },
+      {
+        _tag: "OpenSearch",
+        query: "https://github.com/acme/web/pull/7",
+      },
+    );
+    expect(first).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "search", query: "https://github.com/acme/web/pull/7" },
+    });
+    const second = reduceCommandPaletteUiState(first, {
+      _tag: "OpenSearch",
+      query: "https://github.com/acme/web/pull/8",
+    });
+    expect(second.openIntent).toEqual({
+      kind: "search",
+      query: "https://github.com/acme/web/pull/8",
+    });
+    expect(
+      reduceCommandPaletteUiState(second, { _tag: "SetOpen", open: false }).openIntent,
+    ).toBeNull();
   });
 
   it("routes open intents to command mode", () => {

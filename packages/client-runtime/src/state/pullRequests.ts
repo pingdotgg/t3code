@@ -63,12 +63,14 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
 /** The host-native stack a pull request belongs to; null where it is not stacked. */
 export function createPullRequestStackAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
   return createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:stack",
     tag: WS_METHODS.pullRequestsStack,
     staleTimeMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
+    refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
   });
 }
 

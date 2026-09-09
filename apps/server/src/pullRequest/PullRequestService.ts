@@ -155,6 +155,7 @@ export class PullRequestService extends Context.Service<
      */
     readonly stack: (
       input: PullRequestRef,
+      options?: { readonly includeDetails?: boolean },
     ) => Effect.Effect<PullRequestStack | null, PullRequestError>;
     readonly subscribeMerges: Effect.Effect<
       Stream.Stream<PullRequestMergeEvent>,
@@ -907,6 +908,7 @@ export const make = Effect.gen(function* () {
   }): PullRequestListEntry => {
     const viewer = input.viewer.toLowerCase();
     return {
+      ...(input.item.stack === undefined ? {} : { stack: input.item.stack }),
       provider: input.project.api.kind,
       host: input.project.host,
       projectId: input.project.project.id,
@@ -1331,7 +1333,7 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const stackUncached: PullRequestService["Service"]["stack"] = (input) =>
+  const stackUncached: PullRequestService["Service"]["stack"] = (input, options) =>
     requireProject(input).pipe(
       Effect.flatMap((project) => {
         const read = project.api.getChangeRequestStack;
@@ -1341,6 +1343,7 @@ export const make = Effect.gen(function* () {
           repository: project.repository,
           host: project.host,
           number: input.number,
+          includeDetails: options?.includeDetails !== false,
         }).pipe(
           Effect.mapError(toPullRequestError("stack")),
           Effect.map((stack): PullRequestStack | null =>
@@ -1352,6 +1355,7 @@ export const make = Effect.gen(function* () {
                   url: stack.url,
                   base: stack.base,
                   layers: stack.layers.map((layer) => ({
+                    ...layer,
                     number: layer.number,
                     headBranch: layer.headBranch,
                     state: layer.state,
@@ -1531,6 +1535,20 @@ export const make = Effect.gen(function* () {
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
+        if (
+          input.stackNumber !== undefined &&
+          (project.api.capabilities.stackActions !== true ||
+            !["merge", "update-branch"].includes(input.action) ||
+            input.expectedStackHeads === undefined ||
+            (input.action === "update-branch" && input.updateMethod !== "rebase"))
+        ) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "runAction",
+              detail: "This stack action is not supported or has no expected head revision.",
+            }),
+          );
+        }
         // The surface hides what a host cannot do, and this refuses it as well: a request that
         // reached here anyway must not be handed to a provider that never claimed the action.
         if (!project.api.capabilities.actions.includes(input.action)) {
@@ -1573,7 +1591,10 @@ export const make = Effect.gen(function* () {
         // above do not.
         return viewerPermissionsOf(project, input, "runAction").pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
-            if (!viewer.actions.includes(input.action)) {
+            const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
+            if (
+              stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
+            ) {
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "runAction",
@@ -1582,6 +1603,7 @@ export const make = Effect.gen(function* () {
               );
             }
             if (
+              !stackRebase &&
               input.updateMethod !== undefined &&
               !(viewer.updateMethods ?? []).includes(input.updateMethod)
             ) {
@@ -1599,10 +1621,17 @@ export const make = Effect.gen(function* () {
                 host: project.host,
                 number: input.number,
                 action: input.action,
+                ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+                ...(input.expectedStackHeads === undefined
+                  ? {}
+                  : { expectedStackHeads: input.expectedStackHeads }),
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })
               .pipe(
+                // Once the authorized provider action starts, a failure may leave partial
+                // remote updates. Validation and permission failures above changed nothing.
+                Effect.ensuring(input.stackNumber === undefined ? Effect.void : refreshAfterTurn),
                 Effect.mapError(toPullRequestError("runAction")),
                 Effect.as(
                   project.api.kind === "azure-devops"
@@ -2327,12 +2356,18 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  const stackCache = yield* Cache.makeWith((key: string) => stackUncached(refOfCacheKey(key)), {
-    capacity: DETAIL_CACHE_CAPACITY,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? SUMMARY_CACHE_TTL : Duration.zero),
-  });
-  const stack: PullRequestService["Service"]["stack"] = (input) =>
-    Cache.get(stackCache, refCacheKey(input));
+  const stackCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [referenceKey, includeDetails] = JSON.parse(key) as [string, boolean];
+      return stackUncached(refOfCacheKey(referenceKey), { includeDetails });
+    },
+    {
+      capacity: DETAIL_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? SUMMARY_CACHE_TTL : Duration.zero),
+    },
+  );
+  const stack: PullRequestService["Service"]["stack"] = (input, options) =>
+    Cache.get(stackCache, JSON.stringify([refCacheKey(input), options?.includeDetails !== false]));
 
   // Keys serialize positionally and parse back in the lookup, so the cache is the only holder
   // of in-flight state: concurrent identical reads coalesce on the key into one host request.

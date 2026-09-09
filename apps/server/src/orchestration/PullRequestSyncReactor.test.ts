@@ -178,8 +178,9 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       return yield* options.summary?.(input) ?? Effect.succeed(makeSummary(input));
     });
 
-  const stack: PullRequestService["Service"]["stack"] = (input) =>
+  const stack: PullRequestService["Service"]["stack"] = (input, readOptions) =>
     Effect.gen(function* () {
+      assert.strictEqual(readOptions?.includeDetails, false);
       yield* Ref.update(stackCalls, (calls) => [...calls, input]);
       return yield* options.stack?.(input) ?? Effect.succeed(null);
     });

@@ -12,9 +12,11 @@ import {
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
+  type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type MouseEvent } from "react";
+import { buttonVariants, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -122,7 +124,7 @@ export {
 } from "@t3tools/shared/threadPullRequests";
 
 /** The glyph a row's badge wears: the layers icon for a stack, the pull-request one otherwise. */
-export function ThreadPullRequestBadgeIcon({
+function ThreadPullRequestBadgeIcon({
   icon,
   className,
 }: {
@@ -131,6 +133,86 @@ export function ThreadPullRequestBadgeIcon({
 }) {
   const Icon = icon === "stack" ? LayersIcon : GitPullRequestArrowIcon;
   return <Icon aria-hidden className={cn("size-3 shrink-0", className)} />;
+}
+
+/** The complete linked-PR control shared by the sidebar and composer footer. */
+export function ThreadPullRequestBadgeControl({
+  variant,
+  badge,
+  number,
+  url,
+  status,
+  onOpenStack,
+  onOpenPullRequest,
+}: {
+  variant: "underline" | "ghost";
+  badge: ThreadPullRequestBadge | null;
+  number?: number | undefined;
+  url?: string | undefined;
+  status: PrStatusIndicator | null;
+  onOpenStack: () => void;
+  onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const isStack = badge?.kind === "stack";
+  if (!isStack && (number === undefined || url === undefined)) return null;
+  const label = isStack
+    ? `Stack of ${badge.layers} pull requests, ${badge.state}`
+    : `${status?.tooltip ?? `PR #${number}, status pending`}${
+        badge?.kind === "pull-request" && badge.others > 0
+          ? `, and ${badge.others} more linked`
+          : ""
+      }`;
+  const className = cn(
+    variant === "ghost"
+      ? buttonVariants({ variant: "ghost", size: "xs" })
+      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+    "text-xs tabular-nums",
+    variant === "ghost" &&
+      "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
+    isStack ? PR_STATE_COLOR_CLASS[badge.state] : (status?.colorClass ?? "text-muted-foreground"),
+  );
+  const content = (
+    <>
+      <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
+      {isStack ? badge.layers : number}
+      {badge?.kind === "pull-request" && badge.others > 0 ? (
+        <span className="opacity-70">+{badge.others}</span>
+      ) : null}
+    </>
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          isStack ? (
+            <InlineButton
+              className={className}
+              aria-label={label}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpenStack();
+              }}
+            />
+          ) : (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={className}
+              aria-label={label}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpenPullRequest}
+            />
+          )
+        }
+      >
+        {content}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 /**
@@ -192,7 +274,7 @@ export function ThreadPullRequestsMiniList({
 }
 
 /** The ink each pull-request state wears in the sidebar, shared by the number and stack badges. */
-export const PR_STATE_COLOR_CLASS: Record<NonNullable<ThreadPr>["state"], string> = {
+const PR_STATE_COLOR_CLASS: Record<NonNullable<ThreadPr>["state"], string> = {
   open: "text-emerald-600 dark:text-emerald-300/90",
   merged: "text-violet-600 dark:text-violet-300/90",
   closed: "text-red-600 dark:text-red-300/90",
