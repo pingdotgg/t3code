@@ -4730,58 +4730,134 @@ it.effect("finishes two presses on one file in the order they were made", () =>
   }),
 );
 
+/** Azure, whose selector is a bare repository name, backed by this environment's own marks. */
+const azureViewedService = (projects: ReadonlyArray<OrchestrationProjectShell>) =>
+  makeService({
+    projects,
+    providers: [
+      fakeProvider("azure-devops", {
+        capabilities: {
+          diff: true,
+          comment: true,
+          actions: ["merge"],
+          mergeMethods: ["merge"],
+          search: true,
+          reactions: true,
+          viewedFiles: "environment",
+          review: FULL_REVIEW,
+          reviewers: FULL_REVIEWERS,
+        },
+        getFilesViewed: () => Effect.die("the host keeps no marks of this environment's own"),
+        setFilesViewed: () => Effect.die("the host keeps no marks of this environment's own"),
+        getFileRevisions: (input) =>
+          Effect.succeed({ revisions: new Map(input.paths.map((path) => [path, "blob-a"])) }),
+      }),
+    ],
+  });
+
+const AZURE_PAIR = [
+  project({
+    id: "p1",
+    title: "platform web",
+    workspaceRoot: "/a",
+    repository: "acme/platform/_git/web",
+    provider: "azure-devops",
+    host: "dev.azure.com",
+  }),
+  project({
+    id: "p2",
+    title: "other web",
+    workspaceRoot: "/b",
+    repository: "acme/other/_git/web",
+    provider: "azure-devops",
+    host: "dev.azure.com",
+  }),
+];
+
+const AZURE_PLATFORM = { projectId: "p1" as ProjectId, repository: "web", number: 1 };
+const AZURE_OTHER = { projectId: "p2" as ProjectId, repository: "web", number: 1 };
+
+/** A project as an older environment recorded it, before this identity field was written. */
+const withoutIdentityField = (
+  current: OrchestrationProjectShell,
+  field: "canonicalKey" | "displayName",
+) => {
+  const { [field]: _dropped, ...identity } = current.repositoryIdentity!;
+  return { ...current, repositoryIdentity: identity } as unknown as OrchestrationProjectShell;
+};
+
 it.effect("keeps the marks of two Azure repositories of the same name apart", () =>
   Effect.gen(function* () {
     // Azure addresses a repository by its bare name, which is unique inside one of its projects
     // and not across an organisation. Two `web` repositories would otherwise share one row.
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "p1",
-          title: "platform web",
-          workspaceRoot: "/a",
-          repository: "acme/platform/_git/web",
-          provider: "azure-devops",
-          host: "dev.azure.com",
-        }),
-        project({
-          id: "p2",
-          title: "other web",
-          workspaceRoot: "/b",
-          repository: "acme/other/_git/web",
-          provider: "azure-devops",
-          host: "dev.azure.com",
-        }),
-      ],
-      providers: [
-        fakeProvider("azure-devops", {
-          capabilities: {
-            diff: true,
-            comment: true,
-            actions: ["merge"],
-            mergeMethods: ["merge"],
-            search: true,
-            reactions: true,
-            viewedFiles: "environment",
-            review: FULL_REVIEW,
-            reviewers: FULL_REVIEWERS,
-          },
-          getFilesViewed: () => Effect.die("the host keeps no marks of this environment's own"),
-          setFilesViewed: () => Effect.die("the host keeps no marks of this environment's own"),
-          getFileRevisions: (input) =>
-            Effect.succeed({ revisions: new Map(input.paths.map((path) => [path, "blob-a"])) }),
-        }),
-      ],
+    const service = yield* azureViewedService(AZURE_PAIR);
+
+    yield* service.setFilesViewed({
+      ...AZURE_PLATFORM,
+      files: [{ path: "src/a.ts", viewed: true }],
     });
-    const platform = { projectId: "p1" as ProjectId, repository: "web", number: 1 };
-    const other = { projectId: "p2" as ProjectId, repository: "web", number: 1 };
 
-    yield* service.setFilesViewed({ ...platform, files: [{ path: "src/a.ts", viewed: true }] });
-
-    assert.deepStrictEqual((yield* service.filesViewed(platform)).files, [
+    assert.deepStrictEqual((yield* service.filesViewed(AZURE_PLATFORM)).files, [
       { path: "src/a.ts", state: "viewed" },
     ]);
-    assert.deepStrictEqual((yield* service.filesViewed(other)).files, []);
+    assert.deepStrictEqual((yield* service.filesViewed(AZURE_OTHER)).files, []);
+  }),
+);
+
+it.effect("keeps two same-named Azure repositories apart without a canonical key", () =>
+  Effect.gen(function* () {
+    // The path below the host is the only spelling left that tells the two apart.
+    const service = yield* azureViewedService(
+      AZURE_PAIR.map((current) => withoutIdentityField(current, "canonicalKey")),
+    );
+
+    yield* service.setFilesViewed({
+      ...AZURE_PLATFORM,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual((yield* service.filesViewed(AZURE_PLATFORM)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+    assert.deepStrictEqual((yield* service.filesViewed(AZURE_OTHER)).files, []);
+  }),
+);
+
+it.effect("keeps a repository's marks when its identity carries only owner and name", () =>
+  Effect.gen(function* () {
+    const current = project({
+      id: "p1",
+      title: "on gitlab",
+      workspaceRoot: "/a",
+      repository: "group/project",
+      provider: "gitlab",
+    });
+    const stripped = withoutIdentityField(
+      withoutIdentityField(current, "canonicalKey"),
+      "displayName",
+    );
+    const service = yield* makeService({
+      projects: [
+        {
+          ...stripped,
+          repositoryIdentity: {
+            ...stripped.repositoryIdentity,
+            owner: "group",
+            name: "project",
+          },
+        } as unknown as OrchestrationProjectShell,
+      ],
+      providers: [environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), [])],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
   }),
 );
 

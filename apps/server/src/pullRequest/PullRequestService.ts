@@ -273,6 +273,11 @@ interface SupportedProject {
   readonly repository: string;
   /** The host the repository lives on, which is the account boundary rather than the kind. */
   readonly host: string;
+  /**
+   * The normalised remote, which is what this environment's own records are keyed by. Unique
+   * where `repository` is not: Azure's is a bare name that repeats across an organisation.
+   */
+  readonly remote: string;
 }
 
 /**
@@ -684,6 +689,9 @@ export const make = Effect.gen(function* () {
             api: withRateLimitBackoff(api, host, rateLimits),
             repository,
             host,
+            // Rungs for an identity missing its canonical key, the bare selector last because
+            // Azure's repeats across an organisation.
+            remote: identity.canonicalKey?.trim() || identity.displayName?.trim() || repository,
           });
         }
         return { supported, unimplemented, viewerRoots };
@@ -1459,34 +1467,14 @@ export const make = Effect.gen(function* () {
   const runFork = Effect.runForkWith(context);
 
   /**
-   * Which repository a row belongs to, spelled widely enough that two of them are two rows.
-   *
-   * A provider's own selector is what the reads are addressed by, and Azure's is the bare
-   * repository name: unique inside one project and not across an organisation, so `api` in two
-   * projects would otherwise share one row and show each other's ticks. The remote already
-   * carries the whole path, so the marks are keyed by that instead.
-   */
-  const filesViewedRepositoryOf = (project: SupportedProject) => {
-    if (project.api.kind !== "azure-devops") return project.repository;
-    const identity = project.project.repositoryIdentity;
-    const path = identity?.displayName?.trim();
-    if (path !== undefined && path.length > 0) return path;
-    // The scope carries no project id, so the bare name Azure is addressed by would put two
-    // repositories called `api` on one row. The canonical remote repeats the host this scope
-    // already holds, and is the only other spelling that keeps the whole identity.
-    const canonical = identity?.canonicalKey?.trim();
-    return canonical === undefined || canonical.length === 0 ? project.repository : canonical;
-  };
-
-  /**
-   * Which change request's marks, and whose. The host is part of it because the same
-   * `owner/repo` exists on more than one install, and the reader is part of it for the reason a
+   * Which change request's marks, and whose. Provider and host lead the table's key because the
+   * same repository exists on more than one install, and the reader is part of it for the reason a
    * host's own record is per-account. A host that names no reader is one reader, not none.
    */
   const filesViewedScope = (project: SupportedProject, number: number, viewer: string | null) => ({
     provider: project.api.kind,
     host: project.host,
-    repository: filesViewedRepositoryOf(project),
+    repository: project.remote,
     number,
     viewer: viewer ?? "",
   });
@@ -1733,7 +1721,7 @@ export const make = Effect.gen(function* () {
     // lookup and the insert lets two presses each find nothing, each make a gate of their own,
     // and neither wait on the other, which is the ordering this exists for.
     Effect.suspend(() => {
-      const key = `${project.project.id} ${filesViewedRepositoryOf(project).trim().toLowerCase()} ${number}`;
+      const key = `${project.project.id} ${project.remote} ${number}`;
       const held = filesViewedGates.get(key);
       const entry = held ?? { gate: Semaphore.makeUnsafe(1), pending: 0 };
       if (held === undefined) filesViewedGates.set(key, entry);
