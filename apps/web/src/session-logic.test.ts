@@ -340,7 +340,7 @@ describe("V2 session presentation", () => {
       ["work", commandItem.id],
       ["event", resultItem.id],
       ["work", errorItem.id],
-      ["event", threadCreatedItem.id],
+      ["work", threadCreatedItem.id],
     ]);
     const commandEntry = entries[2];
     const userEntry = entries[0];
@@ -368,9 +368,9 @@ describe("V2 session presentation", () => {
       expect(errorEntry.entry.toolLifecycleStatus).toBe("failed");
     }
     const threadCreatedEntry = entries[5];
-    expect(threadCreatedEntry?.kind).toBe("event");
-    if (threadCreatedEntry?.kind === "event") {
-      expect(threadCreatedEntry.projectedItem.item.type).toBe("thread_created");
+    expect(threadCreatedEntry?.kind).toBe("work");
+    if (threadCreatedEntry?.kind === "work") {
+      expect(threadCreatedEntry.entry.projectedItem?.item.type).toBe("thread_created");
     }
   });
 

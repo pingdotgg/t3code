@@ -458,6 +458,8 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       projectedItem: OrchestrationV2ProjectedTurnItem;
+      subagents?: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+      resourceSummary?: boolean;
     }
   | {
       kind: "proposed-plan";
@@ -640,7 +642,10 @@ function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "work") {
     return entry.entry.runId ?? null;
   }
-  if (entry.kind === "event" && timelineEntryIsPersistentResourceCard(entry)) {
+  if (
+    entry.kind === "event" &&
+    (timelineEntryIsPersistentResourceCard(entry) || entry.projectedItem.item.type === "subagent")
+  ) {
     return entry.projectedItem.item.runId;
   }
   return null;
@@ -874,6 +879,15 @@ function attachTrailingToolGroupsToAssistant(
         break;
       }
       if (candidate.kind === "work-toggle" && candidate.runId === runId) {
+        hasTrailingToolGroup = true;
+        lastTrailingWorkIndex = index;
+        continue;
+      }
+      if (
+        candidate.kind === "event" &&
+        candidate.resourceSummary &&
+        candidate.projectedItem.item.runId === runId
+      ) {
         hasTrailingToolGroup = true;
         lastTrailingWorkIndex = index;
         continue;
@@ -1328,6 +1342,22 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "event") {
+      const previous = nextRows.at(-1);
+      if (
+        timelineEntry.projectedItem.item.type === "subagent" &&
+        previous?.kind === "event" &&
+        previous.projectedItem.item.type === "subagent" &&
+        previous.projectedItem.item.runId === timelineEntry.projectedItem.item.runId
+      ) {
+        nextRows[nextRows.length - 1] = {
+          ...previous,
+          subagents: [
+            ...(previous.subagents ?? [previous.projectedItem]),
+            timelineEntry.projectedItem,
+          ],
+        };
+        continue;
+      }
       nextRows.push({
         kind: "event",
         id: timelineEntry.id,
@@ -1388,7 +1418,58 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  return attachTrailingToolGroupsToAssistant(nextRows);
+  return attachTrailingToolGroupsToAssistant(
+    attachCreatedThreadSummaries(nextRows, input.timelineEntries),
+  );
+}
+
+// Keep created chats below the final answer even when the work that created them folds away.
+function attachCreatedThreadSummaries(
+  rows: MessagesTimelineRow[],
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): MessagesTimelineRow[] {
+  const terminalIndexes = new Map<RunId, number>();
+  const collapsedRuns = new Set<RunId>();
+  const createdByRun = new Map<RunId, Array<Extract<MessagesTimelineRow, { kind: "event" }>>>();
+  for (const [index, row] of rows.entries()) {
+    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+      terminalIndexes.set(row.message.runId, index);
+    }
+    if (row.kind === "turn-fold" && !row.expanded) collapsedRuns.add(row.runId);
+  }
+  for (const entry of timelineEntries) {
+    const projectedItem =
+      entry.kind === "work"
+        ? entry.entry.projectedItem
+        : entry.kind === "event"
+          ? entry.projectedItem
+          : undefined;
+    if (projectedItem?.item.type === "thread_created" && projectedItem.item.runId) {
+      const runId = projectedItem.item.runId;
+      const entries = createdByRun.get(runId) ?? [];
+      entries.push({ kind: "event", id: entry.id, createdAt: entry.createdAt, projectedItem });
+      createdByRun.set(runId, entries);
+    }
+  }
+  return rows.flatMap((row, index): MessagesTimelineRow[] => {
+    if (row.kind === "event" && row.projectedItem.item.type === "thread_created") {
+      const runId = row.projectedItem.item.runId;
+      const terminalIndex = runId === null ? undefined : terminalIndexes.get(runId);
+      if (terminalIndex !== undefined && (collapsedRuns.has(runId!) || index > terminalIndex))
+        return [];
+    }
+    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+      return [
+        row,
+        ...(createdByRun.get(row.message.runId) ?? []).map((entry) => ({
+          ...entry,
+          id: `summary:${entry.id}`,
+          resourceSummary: true,
+        })),
+      ];
+    }
+    return [row];
+  });
 }
 
 type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
@@ -1572,7 +1653,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.proposedPlan === (b as typeof a).proposedPlan;
 
     case "event":
-      return a.projectedItem === (b as typeof a).projectedItem;
+      return (
+        a.projectedItem === (b as typeof a).projectedItem &&
+        a.resourceSummary === (b as typeof a).resourceSummary &&
+        Equal.equals(a.subagents, (b as typeof a).subagents)
+      );
 
     case "work": {
       const bw = b as typeof a;

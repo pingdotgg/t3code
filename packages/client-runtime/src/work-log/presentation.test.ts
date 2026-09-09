@@ -204,6 +204,19 @@ describe("summarizeToolGroup", () => {
     ...overrides,
   });
 
+  it("counts created threads alongside adjacent commands", () => {
+    expect(
+      summarizeToolGroup([
+        entry("command", { itemType: "command_execution", command: "vp test run" }),
+        entry("created", {
+          itemType: "thread_created",
+
+          label: "Created thread",
+        }),
+      ]).summary,
+    ).toBe("Ran 1 command and created 1 thread");
+  });
+
   it("deduplicates named sources ahead of ordinary actions", () => {
     const source = { key: "browser-use:chrome", name: "Chrome", kind: "integration" as const };
     expect(

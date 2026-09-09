@@ -1451,6 +1451,7 @@ type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
+  const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
 
@@ -1459,7 +1460,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
-        isExpandedToolGroup
+        isExpandedToolGroup || isSubagentGroup
           ? "pb-1"
           : isExpandedToolGroupHeader
             ? "pb-0"
@@ -2264,10 +2265,31 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
+  if (item.type === "subagent") {
+    return (
+      <div
+        className="-mt-1 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-0.5"
+        data-subagent-group
+      >
+        {(row.subagents ?? [row.projectedItem]).map((projected) => (
+          <V2LifecycleRow
+            key={projected.item.id}
+            item={projected.item}
+            createdAt={row.createdAt}
+            timestampFormat={ctx.timestampFormat}
+            providerStatuses={ctx.providerStatuses}
+            runs={ctx.runs}
+            onOpenThread={ctx.onOpenThread}
+          />
+        ))}
+      </div>
+    );
+  }
   if (isV2LifecycleItem(item)) {
     return (
       <V2LifecycleRow
         item={item}
+        resourceSummary={row.resourceSummary}
         createdAt={row.createdAt}
         timestampFormat={ctx.timestampFormat}
         providerStatuses={ctx.providerStatuses}
@@ -2879,6 +2901,8 @@ function toolGroupSummaryIconName(
       return "square-pen";
     case "command":
       return "terminal";
+    case "thread-create":
+      return "t3-code";
     case "browser":
       return "browser";
     case "search":
@@ -3846,6 +3870,10 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry = false, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand } = ctx;
+  const createdThread =
+    workEntry.projectedItem?.item.type === "thread_created"
+      ? workEntry.projectedItem.item
+      : undefined;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
@@ -3882,13 +3910,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           workspaceRoot,
         })
       : null;
-  const commandMatchesVisibleLabel = workEntry.command?.trim() === previewText.trim();
   const canExpand =
-    (showFailedIndicator && previewText.trim().length > 0) ||
+    previewText.trim().length > 0 ||
     (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) ||
     Boolean(
-      (!commandMatchesVisibleLabel &&
-        (workEntryRawCommand(workEntry) || workEntry.command?.trim())) ||
+      workEntryRawCommand(workEntry) ||
+      workEntry.command?.trim() ||
       workEntry.detail?.trim() ||
       workEntry.changedFiles?.length ||
       viewedImage,
@@ -3944,7 +3971,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-md px-0.5 transition-colors",
+        "flex min-w-0 w-full flex-col rounded-md px-0.5 transition-colors",
         isExpandedToolGroupEntry ? "py-0" : "py-0.5",
         canExpandProjectedItem &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
@@ -3972,18 +3999,28 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               <span
                 className={cn(
                   "min-w-0 flex-1",
-                  showWarningIndicator || expanded || (commandMatchesVisibleLabel && !canExpand)
-                    ? "whitespace-pre-wrap break-words select-text"
-                    : "truncate",
+                  expanded ? "whitespace-pre-wrap break-words" : "truncate",
                   headingClass,
                 )}
-                onClick={expanded ? stopRowToggle : undefined}
-                onPointerDown={expanded ? stopRowToggle : undefined}
               >
                 {previewText}
               </span>
             </p>
           </div>
+          {createdThread ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-sm text-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Open ${createdThread.title ?? "created thread"}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                ctx.onOpenThread(createdThread.targetThreadId);
+              }}
+              onKeyDown={stopRowToggle}
+            >
+              Open chat
+            </button>
+          ) : null}
           {showFailedIndicator &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
