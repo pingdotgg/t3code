@@ -1140,7 +1140,8 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               keybindings={keybindings}
               availableEditors={availableEditors}
-              openInCwd={absolutePath}
+              openInPath={absolutePath}
+              pathKind="file"
               compact
               enableShortcut={false}
             />

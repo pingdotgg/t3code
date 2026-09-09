@@ -426,7 +426,8 @@ export const ChatHeader = memo(function ChatHeader({
             environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}
             availableEditors={availableEditors}
-            openInCwd={openInCwd}
+            openInPath={openInCwd}
+            pathKind="folder"
           />
         )}
         {activeProjectName && (
