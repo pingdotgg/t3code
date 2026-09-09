@@ -32,6 +32,9 @@ const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
 const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+// Per string value, in UTF-16 code units rather than bytes: `String.length` is
+// O(1), while measuring real bytes would scan every string on the write path.
+const DEFAULT_MAX_STRING_LENGTH = 256 * 1024;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -80,6 +83,7 @@ export interface EventNdjsonLogStoreOptions {
   readonly retentionCheckIntervalMs?: number;
   readonly maxBufferedBytes?: number;
   readonly maxBufferedRecords?: number;
+  readonly maxStringLength?: number;
   readonly attribution?: ResourceAttribution["Service"];
 }
 
@@ -126,6 +130,7 @@ interface ResolvedOptions {
   readonly retentionCheckIntervalMs: number;
   readonly maxBufferedBytes: number;
   readonly maxBufferedRecords: number;
+  readonly maxStringLength: number;
   readonly attribution: ResourceAttribution["Service"] | undefined;
 }
 
@@ -373,6 +378,7 @@ function resolveOptions(
       options.retentionCheckIntervalMs ?? DEFAULT_RETENTION_CHECK_INTERVAL_MS,
     maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
     maxBufferedRecords: options.maxBufferedRecords ?? DEFAULT_MAX_BUFFERED_RECORDS,
+    maxStringLength: options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH,
     attribution: options.attribution,
   } satisfies ResolvedOptions;
 
@@ -385,6 +391,7 @@ function resolveOptions(
     ["retentionCheckIntervalMs", resolved.retentionCheckIntervalMs, 1],
     ["maxBufferedBytes", resolved.maxBufferedBytes, 1],
     ["maxBufferedRecords", resolved.maxBufferedRecords, 1],
+    ["maxStringLength", resolved.maxStringLength, 1],
   ] as const;
 
   for (const [option, value, minimum] of validations) {
@@ -492,6 +499,68 @@ function drainPending(input: {
       lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
     },
   ];
+}
+
+function truncateString(value: string, maxLength: number): string {
+  // Never cut between a surrogate pair; a lone surrogate would survive into the log line.
+  const lastCode = value.charCodeAt(maxLength - 1);
+  const keep = lastCode >= 0xd800 && lastCode <= 0xdbff ? maxLength - 1 : maxLength;
+  return `${value.slice(0, keep)}[truncated by t3, ${value.length} characters total]`;
+}
+
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const prototype = Reflect.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Bounds the string values of one event before it is serialized. A provider can
+ * hand us a payload far larger than any log record should be (a Codex
+ * `turn/diff/updated` diff reaches hundreds of MiB on a big turn), and encoding
+ * it whole materializes an equally large line that can exhaust the heap.
+ *
+ * Values that already fit are returned by reference, so an ordinary event
+ * allocates nothing. Anything that is not a plain object or array is left alone,
+ * because `toJSON` carriers such as `Date` must reach the encoder intact. A cycle
+ * is returned untouched at the point it closes, so serialization still fails the
+ * way it did before and `serializeEvent` reports it.
+ */
+function clampStrings(value: unknown, maxLength: number, ancestors: Set<object>): unknown {
+  if (typeof value === "string") {
+    return value.length > maxLength ? truncateString(value, maxLength) : value;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (!isPlainContainer(value) || ancestors.has(value)) return value;
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const entries = value as ReadonlyArray<unknown>;
+      let clampedEntries: Array<unknown> | undefined;
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const clamped = clampStrings(entry, maxLength, ancestors);
+        if (clamped !== entry && clampedEntries === undefined) {
+          clampedEntries = entries.slice(0, index);
+        }
+        clampedEntries?.push(clamped);
+      }
+      return clampedEntries ?? value;
+    }
+
+    const fields = value as Record<string, unknown>;
+    let clampedFields: Record<string, unknown> | undefined;
+    for (const [key, entry] of Object.entries(fields)) {
+      const clamped = clampStrings(entry, maxLength, ancestors);
+      if (clamped === entry) continue;
+      clampedFields ??= { ...fields };
+      clampedFields[key] = clamped;
+    }
+    return clampedFields ?? value;
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
@@ -613,7 +682,9 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 
     const write = Effect.fnUntraced(function* (event: unknown, threadId: ThreadId | null) {
       if (!shouldPersist(stream, event)) return;
-      const payload = yield* serializeEvent(event);
+      const payload = yield* serializeEvent(
+        clampStrings(event, resolved.maxStringLength, new Set()),
+      );
       if (payload === undefined) return;
 
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));

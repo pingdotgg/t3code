@@ -127,6 +127,46 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("truncates oversized string values before serializing an event", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "canonical",
+          maxStringLength: 64,
+        });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        // A real Codex turn diff reaches hundreds of MiB. Serializing it whole,
+        // twice over, is what exhausted the backend heap.
+        const diff = "d".repeat(200_000);
+        yield* logger.write(
+          {
+            type: "turn.diff.updated",
+            id: "evt-diff",
+            payload: { unifiedDiff: diff },
+            raw: { method: "turn/diff/updated", payload: { diff } },
+          },
+          ThreadId.make("thread-diff"),
+        );
+        yield* logger.close();
+
+        const line = NodeFS.readFileSync(ownedLogPath(basePath, "thread-diff"), "utf8").trim();
+        assert.equal(line.length < 1_000, true);
+        assert.notInclude(line, "d".repeat(65));
+        assert.include(line, "[truncated by t3, 200000 characters total]");
+        assert.include(line, '"id":"evt-diff"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect(
     "falls back to a global segment when orchestration thread id is missing or invalid",
     () =>
