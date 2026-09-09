@@ -2421,6 +2421,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updatedAt: completedAt,
               type: "command_execution",
               input: tracked.command,
+              ...(tracked.processId === undefined ? {} : { processId: tracked.processId }),
               ...(tracked.aggregatedOutput === undefined
                 ? {}
                 : { output: tracked.aggregatedOutput }),
@@ -3687,6 +3688,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             updatedAt,
             type: "command_execution",
             input: item.command,
+            ...(item.processId == null ? {} : { processId: item.processId }),
             ...(item.aggregatedOutput === null || item.aggregatedOutput === undefined
               ? {}
               : { output: item.aggregatedOutput }),
@@ -7310,6 +7312,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           // Dropping this connection's subscription lets the shared app-server
           // shut the native thread (and its MCP servers) down once it is idle.
+          terminateCommand: (input) =>
+            Effect.gen(function* () {
+              const nativeThreadId = yield* getNativeThreadId(input.providerThread);
+              yield* terminateBackgroundTerminal(nativeThreadId, input.processId);
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: "Failed to stop a Codex background command.",
+                    cause: normalizeCodexCause(cause),
+                  }),
+              ),
+            ),
           unloadThread: Effect.fn("CodexAdapterV2.unloadThread")(
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);

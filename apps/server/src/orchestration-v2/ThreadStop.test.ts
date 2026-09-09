@@ -161,6 +161,115 @@ const threadState = (threadId: ThreadId) =>
     };
   });
 
+it.effect(
+  "per-command Stop targets the recorded process and leaves the run and sibling work alone",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread:stop-one-command");
+      yield* createWatchingThread(threadId, 10);
+      yield* send(threadId, "work", "start_immediately");
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const run = projection.runs[0]!;
+      const now = yield* DateTime.now;
+      const providerThreadId = ProviderThreadId.make("provider-thread:stop-one-command");
+      const providerTurnId = ProviderTurnId.make("provider-turn:stop-one-command");
+      yield* projections.apply({
+        id: EventId.make("event:stop-one-command:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: instanceId,
+          providerSessionId: ProviderSessionId.make("session:stop-one-command"),
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: ProviderDriverKind.make("codex"),
+            nativeId: "native-thread",
+            strength: "strong",
+          },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      for (const [ordinal, name] of ["target", "sibling"].entries()) {
+        yield* projections.apply({
+          id: EventId.make(`event:command:${name}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:${name}`),
+            threadId,
+            runId: run.id,
+            nodeId: null,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "running",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "command_execution",
+            input: "long-running-command",
+            processId: name === "target" ? "18604" : "18605",
+          },
+        });
+      }
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).turnItems.filter(
+          (item) => item.type === "command_execution",
+        ).length,
+        2,
+      );
+      const command = {
+        type: "thread.tool.stop" as const,
+        commandId: CommandId.make("stop-one-command"),
+        threadId,
+        itemId: TurnItemId.make("item:target"),
+      };
+      yield* orchestrator.dispatch(command);
+      yield* orchestrator.dispatch(command);
+      const effects = yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_v2_effect_outbox WHERE command_id = ${command.commandId}`;
+      assert.equal(effects.length, 1);
+      assert.equal(JSON.parse(effects[0]!.payload_json).processId, "18604");
+      yield* orchestrator.dispatch({
+        type: "thread.tool.stop.complete",
+        commandId: CommandId.make("stop-one-command:completed"),
+        threadId,
+        itemId: command.itemId,
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        after.turnItems.find((item) => item.id === command.itemId)?.status,
+        "interrupted",
+      );
+      assert.equal(
+        after.turnItems.find((item) => item.id === TurnItemId.make("item:sibling"))?.status,
+        "running",
+      );
+      assert.equal(after.runs[0]?.status, run.status);
+      assert.isUndefined(after.runs[0]?.queueHeld);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
   ["idle", "thread.stop"],
   ["idle", "run.interrupt"],

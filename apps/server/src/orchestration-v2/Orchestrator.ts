@@ -593,6 +593,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "prepared-run.retry":
     case "subagent.stop":
     case "run.interrupt":
+    case "thread.tool.stop":
+    case "thread.tool.stop.complete":
+    case "thread.tool.stop.failed":
     case "queued-message.promote-to-steer":
     case "queued-run.start":
     case "queue.resume":
@@ -13562,6 +13565,95 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "subagent.stop":
         yield* dispatchSubagentStop(command, events, effects);
         break;
+      case "thread.tool.stop":
+      case "thread.tool.stop.complete":
+      case "thread.tool.stop.failed": {
+        const now = yield* DateTime.now;
+        const emitEvent = emit(events, command);
+        const projection = yield* projectionStore
+          .getThreadRecords(command.threadId, ["turnItems", "providerThreads"], {
+            turnItemTypes: ["command_execution"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        const item = projection.turnItems.find((candidate) => candidate.id === command.itemId);
+        if (
+          item?.type !== "command_execution" ||
+          !["pending", "running", "waiting"].includes(item.status)
+        )
+          break;
+        if (command.type === "thread.tool.stop.complete") {
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            occurredAt: now,
+            payload: {
+              ...item,
+              stopRequested: false,
+              status: "interrupted",
+              completedAt: now,
+              updatedAt: now,
+            },
+          });
+          break;
+        }
+        if (command.type === "thread.tool.stop.failed") {
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            ...(item.runId === null ? {} : { runId: item.runId }),
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            occurredAt: now,
+            payload: { ...item, stopRequested: false, updatedAt: now },
+          });
+          break;
+        }
+        if (item.stopRequested) break;
+        const providerThread = projection.providerThreads.find(
+          (candidate) => candidate.id === item.providerThreadId,
+        );
+        if (
+          item.processId === undefined ||
+          item.providerTurnId === null ||
+          providerThread?.providerSessionId == null ||
+          providerThread.nativeThreadRef?.driver !== "codex"
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "This item does not identify a stoppable Codex background command.",
+          });
+        }
+        const stopEffect = {
+          id: `effect:${command.commandId}:provider-command.stop:${item.id}`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: {
+            type: "provider-command.stop",
+            providerSessionId: providerThread.providerSessionId,
+            providerThreadId: providerThread.id,
+            providerTurnId: item.providerTurnId,
+            itemId: item.id,
+            processId: item.processId,
+          },
+        } satisfies PendingOrchestrationEffectV2;
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          ...(item.runId === null ? {} : { runId: item.runId }),
+          ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+          occurredAt: now,
+          payload: { ...item, stopRequested: true, updatedAt: now },
+        });
+        yield* Ref.update(effects, (existing) => [...existing, stopEffect]);
+        break;
+      }
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         if (command.holdQueue === true) {
@@ -13845,6 +13937,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.filterOrFail(
         (planned) =>
           planned.events.length > 0 ||
+          command.type === "thread.tool.stop" ||
+          command.type === "thread.tool.stop.complete" ||
+          command.type === "thread.tool.stop.failed" ||
           command.type === "thread.background-work.settle" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||

@@ -138,6 +138,42 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-command.stop":
+            return providerTurnControl
+              .terminateCommand({
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                providerThreadId: effect.request.providerThreadId,
+                providerTurnId: effect.request.providerTurnId,
+                processId: effect.request.processId,
+              })
+              .pipe(
+                Effect.andThen(
+                  threads.dispatch({
+                    type: "thread.tool.stop.complete",
+                    commandId: CommandId.make(`${effect.id}:completed`),
+                    threadId: effect.threadId,
+                    itemId: effect.request.itemId,
+                  }),
+                ),
+                Effect.asVoid,
+                Effect.tapError(() =>
+                  threads.dispatch({
+                    type: "thread.tool.stop.failed",
+                    commandId: CommandId.make(`${effect.id}:failed:${effect.attemptCount}`),
+                    threadId: effect.threadId,
+                    itemId: effect.request.itemId,
+                  }),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-turn.start":
             return providerTurnStart
               .start({ threadId: effect.threadId, runId: effect.request.runId, willRetry })
