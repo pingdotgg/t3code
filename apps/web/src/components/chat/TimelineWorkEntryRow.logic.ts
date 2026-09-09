@@ -5,7 +5,7 @@ import {
   toolGroupAction,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
-import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { formatWorkspaceRelativePath, formatWorkspaceAbsolutePath, resolveChangedFilePaths } from "../../filePathDisplay";
 import { type TimelineWorkEntry, type TimelineRow } from "./timelineRowContext";
 import { type WorkEntryIconName } from "./TimelineToolActivityIcon";
 
@@ -96,6 +96,11 @@ export function buildToolCallExpandedBody(
   visibleLabel: string,
   viewedImagePath: string | null,
 ): string | null {
+  const resolvedChangedFiles = resolveChangedFilePaths(workEntry.changedFiles ?? [], workspaceRoot);
+  if (resolvedChangedFiles.length > 0 && toolGroupAction(workEntry) === "edit") {
+    return resolvedChangedFiles.map(({ fullPath }) => fullPath).join("\n");
+  }
+
   const blocks: string[] = [];
   const seen = new Set<string>([visibleLabel.trim()]);
   const addBlock = (value: string | null | undefined) => {
@@ -128,20 +133,23 @@ export function buildToolCallExpandedBody(
   }
   const viewedImagePaths = new Set(
     viewedImagePath
-      ? [viewedImagePath.trim(), formatWorkspaceRelativePath(viewedImagePath, workspaceRoot)]
+      ? [
+          viewedImagePath.trim(),
+          formatWorkspaceRelativePath(viewedImagePath, workspaceRoot),
+          formatWorkspaceAbsolutePath(viewedImagePath, workspaceRoot),
+        ]
       : [],
   );
-  const changedFiles = (workEntry.changedFiles ?? []).flatMap((filePath) => {
-    const formattedPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
-    return viewedImagePaths.has(filePath) ||
-      viewedImagePaths.has(formattedPath) ||
-      filePath.trim() === detail ||
-      formattedPath === detail
+  const changedFiles = resolvedChangedFiles.flatMap(({ displayPath, fullPath }) => {
+    return viewedImagePaths.has(displayPath) ||
+      viewedImagePaths.has(fullPath) ||
+      displayPath === detail ||
+      fullPath === detail
       ? []
-      : [formattedPath];
+      : [fullPath];
   });
   if (changedFiles.length > 0) {
-    addBlock([...new Set(changedFiles)].join("\n"));
+    addBlock(changedFiles.join("\n"));
   }
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }

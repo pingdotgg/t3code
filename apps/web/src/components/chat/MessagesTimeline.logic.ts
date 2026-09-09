@@ -70,7 +70,7 @@ import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
 import { dynamicToolTitle } from "@t3tools/shared/toolActivity";
-import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { formatWorkspaceRelativePath, resolveChangedFilePaths } from "../../filePathDisplay";
 import {
   collectToolFilePaths,
   formatReadToolLabel,
@@ -162,17 +162,24 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
     item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
   if (title) return title;
   const compactDetail = entry.detail?.trim();
+  const [firstPath, ...remainingPaths] = resolveChangedFilePaths(
+    entry.changedFiles ?? [],
+    workspaceRoot,
+  );
+  if (firstPath && action === "edit") {
+    return remainingPaths.length === 0
+      ? firstPath.displayPath
+      : `${firstPath.displayPath} +${remainingPaths.length} more`;
+  }
   const detailIsSearchOutput =
     (action === "code-search" || action === "search") && /[\r\n]/.test(compactDetail ?? "");
   if (compactDetail && !providerRetry && action !== "read" && !detailIsSearchOutput) {
     return compactDetail;
   }
-  const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
-    const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
-    return entry.changedFiles!.length === 1
-      ? path
-      : `${path} +${entry.changedFiles!.length - 1} more`;
+    return remainingPaths.length === 0
+      ? firstPath.displayPath
+      : `${firstPath.displayPath} +${remainingPaths.length} more`;
   }
   if (action === "read" && !entry.viewedImagePath) {
     return "Read file";
@@ -2001,10 +2008,9 @@ export function deriveMessagesTimelineRows(input: {
             createdAt: timelineEntry.createdAt,
             groupedEntries: visibleGroupedEntries,
             isExpandedToolGroup: false,
-            displayLabel:
-              toolGroupAction(singleEntry) === "edit"
-                ? summarizeToolGroup(visibleGroupedEntries).summary
-                : singleToolCallLabel(singleEntry),
+            ...(toolGroupAction(singleEntry) === "edit"
+              ? {}
+              : { displayLabel: singleToolCallLabel(singleEntry) }),
           });
         } else {
           const groupId = workGroupId(timelineEntry.id);
