@@ -229,7 +229,7 @@ import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton, ComposerSpeechStatus, resolveSpeechPresentation } from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechCancelButton, ComposerSpeechStatus, resolveSpeechPresentation } from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 
 
@@ -3544,16 +3544,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     {composerControls}
                   </div>
                   {speechInput.available ? (
-                    <ComposerSpeechButton
-                      state={speechInput.state}
-                      progress={speechInput.progress}
-                      disabled={
-                        isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
-                      }
-                      onStart={() => void speechInput.start()}
-                      onStop={() => void speechInput.stop()}
-                      onCancel={() => void speechInput.cancel()}
-                    />
+                    <>
+                      <ComposerSpeechCancelButton
+                        state={speechInput.state}
+                        onCancel={() => void speechInput.cancel()}
+                      />
+                      <ComposerSpeechButton
+                        state={speechInput.state}
+                        progress={speechInput.progress}
+                        disabled={
+                          isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
+                        }
+                        onStart={() => void speechInput.start()}
+                        onStop={() => void speechInput.stop()}
+                        onCancel={() => void speechInput.cancel()}
+                      />
+                    </>
                   ) : null}
                   {speechPresentation.showsSend ? (
                   <ComposerFooterPrimaryActions

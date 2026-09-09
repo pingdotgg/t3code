@@ -136,7 +136,6 @@ export function ComposerSpeechStatus(props: {
   state: VoiceInputState;
   progress: { downloaded: number; total: number } | null;
   level: number;
-  onCancel(): void;
 }) {
   const presentation = resolveSpeechPresentation(props.state, props.progress);
 
@@ -151,19 +150,6 @@ export function ComposerSpeechStatus(props: {
       aria-live={isRecording ? "off" : "polite"}
       aria-label={presentation.status}
     >
-      {presentation.showsCancel ? (
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Cancel voice input"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={props.onCancel}
-          className="shrink-0"
-        >
-          <XIcon />
-        </Button>
-      ) : null}
       {isRecording ? (
         <RecordingStatus level={props.level} />
       ) : (
@@ -176,20 +162,33 @@ export function ComposerSpeechStatus(props: {
           {presentation.status}
         </span>
       )}
-      {isError ? (
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Dismiss voice input error"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={props.onCancel}
-          className="shrink-0"
-        >
-          <XIcon />
-        </Button>
-      ) : null}
     </div>
+  );
+}
+
+export function ComposerSpeechCancelButton(props: { state: VoiceInputState; onCancel(): void }) {
+  if (props.state.phase === "idle") return null;
+  const label = props.state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label={label}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={props.onCancel}
+            className="shrink-0"
+          >
+            <XIcon />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
