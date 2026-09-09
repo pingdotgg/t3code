@@ -11,7 +11,15 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { Button, InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialog";
+import {
+  Dialog,
+  DialogPopup,
+  DialogTitle,
+  DialogDescription,
+  DialogHeader,
+  DialogPanel,
+  DialogFooter,
+} from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { resolvePullRequestState } from "./pullRequestPresentation";
 import { cn } from "~/lib/utils";
@@ -179,31 +187,35 @@ export function PullRequestStackMenu({
         }}
       >
         <DialogPopup className="max-w-md" showCloseButton={!pending}>
-          <DialogTitle>
-            {confirmation === "merge"
-              ? `Merge ${unmerged.length} pull requests?`
-              : `Rebase ${unmerged.length} pull requests?`}
-          </DialogTitle>
-          <DialogDescription>
-            {confirmation === "merge"
-              ? `Merge the entire stack into ${stack.base} using ${mergeMethod}. GitHub checks every layer's rules before merging or queueing the stack.`
-              : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
-          </DialogDescription>
-          <div className="my-3 max-h-48 overflow-y-auto text-sm">
-            {unmerged.map((layer) => (
-              <div key={layer.number}>
-                #{layer.number} {layer.title || layer.headBranch}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-end gap-2">
+          <DialogHeader>
+            <DialogTitle>
+              {confirmation === "merge"
+                ? `Merge ${unmerged.length} pull requests?`
+                : `Rebase ${unmerged.length} pull requests?`}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmation === "merge"
+                ? `Merge the entire stack into ${stack.base} using ${mergeMethod}. GitHub checks every layer's rules before merging or queueing the stack.`
+                : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="max-h-48 overflow-y-auto text-sm">
+              {unmerged.map((layer) => (
+                <div key={layer.number}>
+                  #{layer.number} {layer.title || layer.headBranch}
+                </div>
+              ))}
+            </div>
+          </DialogPanel>
+          <DialogFooter>
             <Button variant="outline" disabled={pending} onClick={() => setConfirmation(null)}>
               Cancel
             </Button>
             <Button disabled={pending} onClick={() => void run()}>
               {pending ? "Working…" : confirmation === "merge" ? "Merge stack" : "Rebase stack"}
             </Button>
-          </div>
+          </DialogFooter>
         </DialogPopup>
       </Dialog>
     </>
