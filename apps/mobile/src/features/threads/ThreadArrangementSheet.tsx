@@ -85,6 +85,8 @@ function DragHandle(props: {
   onMove: (translation: number) => void;
   onEnd: (cancelled: boolean) => void;
   onStep: (direction: "up" | "down") => void;
+  sectionActions: readonly { name: "pinned" | "active" | "settled"; label: string }[];
+  onSectionMove: (section: "pinned" | "active" | "settled") => void;
   canMoveUp: boolean;
   canMoveDown: boolean;
 }) {
@@ -110,14 +112,19 @@ function DragHandle(props: {
         accessible
         accessibilityRole="adjustable"
         accessibilityLabel={`Reorder ${props.title}`}
-        accessibilityHint="Drag between Pinned and Active, or use the move actions"
+        accessibilityHint="Move up and Move down reorder within this section. Other actions move between sections."
         accessibilityState={{ disabled: props.disabled }}
         accessibilityActions={[
+          ...props.sectionActions,
           ...(props.canMoveUp ? [{ name: "decrement", label: "Move up" }] : []),
           ...(props.canMoveDown ? [{ name: "increment", label: "Move down" }] : []),
         ]}
         onAccessibilityAction={({ nativeEvent }) => {
           if (props.disabled) return;
+          const sectionAction = props.sectionActions.find(
+            (action) => action.name === nativeEvent.actionName,
+          );
+          if (sectionAction) props.onSectionMove(sectionAction.name);
           if (nativeEvent.actionName === "decrement" && props.canMoveUp) props.onStep("up");
           if (nativeEvent.actionName === "increment" && props.canMoveDown) props.onStep("down");
         }}
@@ -406,6 +413,38 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                   item.section === "pinned" || item.section === "active"
                     ? planners[item.section]
                     : null;
+                const capabilities =
+                  thread && configs.get(thread.environmentId)?.environment.capabilities;
+                const sectionActions = thread
+                  ? (["pinned", "active", "settled"] as const).flatMap<{
+                      name: "pinned" | "active" | "settled";
+                      label: string;
+                    }>((section) => {
+                      if (section === item.section) return [];
+                      const label = threadDragAction(item.section, section);
+                      if (!label) return [];
+                      if (section === "settled")
+                        return capabilities?.threadSettlement ? [{ name: section, label }] : [];
+                      if (
+                        ((section === "pinned" || thread.pinnedAt != null) &&
+                          !capabilities?.threadPinning) ||
+                        (section === "active" &&
+                          item.section === "settled" &&
+                          !capabilities?.threadSettlement) ||
+                        (section === "active" &&
+                          item.section === "snoozed" &&
+                          !capabilities?.threadSnooze)
+                      )
+                        return [];
+                      return planners[section](item.key, {
+                        section,
+                        targetId: null,
+                        placement: "before",
+                      })
+                        ? [{ name: section, label }]
+                        : [];
+                    })
+                  : [];
                 return (
                   <ArrangementRow
                     height={item.height}
@@ -439,6 +478,14 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                                 .threadActiveReorder
                             )
                           }
+                          sectionActions={sectionActions}
+                          onSectionMove={(section) => {
+                            void moveThread(thread, {
+                              section,
+                              targetId: null,
+                              placement: "before",
+                            });
+                          }}
                           canMoveUp={planner?.(item.key, "up") != null}
                           canMoveDown={planner?.(item.key, "down") != null}
                           onStep={(direction) => {
