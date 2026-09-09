@@ -48,6 +48,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
   stacks: true,
+  stackActions: true,
   labels: true,
 };
 
@@ -70,6 +71,7 @@ const CAPABILITIES: PullRequestCapabilities = {
  */
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
+    ...(access.canWrite || access.didAuthor ? { stackRebase: true } : {}),
     actions: [
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.
@@ -558,6 +560,10 @@ export const make = Effect.gen(function* () {
           host: input.host,
           number: input.number,
           action: input.action,
+          ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })

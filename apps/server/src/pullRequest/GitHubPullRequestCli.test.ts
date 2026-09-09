@@ -320,6 +320,51 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("fetches layer titles only when the caller asks for stack details", () =>
+    Effect.gen(function* () {
+      const minimal = {
+        url: "https://api.github.com/repos/acme/web/stacks/3",
+        number: 3,
+        base: { ref: "main" },
+        pull_requests: [
+          { number: 7, head: { ref: "feat/two", sha: "abc123" }, state: "open", merged_at: null },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify([minimal]))));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              ...minimal,
+              pull_requests: [{ ...minimal.pull_requests[0], title: "Second layer", draft: false }],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const stack = yield* cli.getPullRequestStack({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        includeDetails: true,
+      });
+      expect(stack?.layers[0]).toMatchObject({
+        title: "Second layer",
+        headSha: "abc123",
+        isDraft: false,
+      });
+      expect(callAt(1).args).toEqual([
+        "api",
+        "--hostname",
+        "github.com",
+        "repos/acme/web/stacks/3",
+      ]);
+    }),
+  );
+
   it.effect("reads an empty stacks listing as not stacked", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));

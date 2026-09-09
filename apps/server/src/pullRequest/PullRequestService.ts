@@ -907,6 +907,7 @@ export const make = Effect.gen(function* () {
   }): PullRequestListEntry => {
     const viewer = input.viewer.toLowerCase();
     return {
+      ...(input.item.stack === undefined ? {} : { stack: input.item.stack }),
       provider: input.project.api.kind,
       host: input.project.host,
       projectId: input.project.project.id,
@@ -1341,6 +1342,7 @@ export const make = Effect.gen(function* () {
           repository: project.repository,
           host: project.host,
           number: input.number,
+          includeDetails: true,
         }).pipe(
           Effect.mapError(toPullRequestError("stack")),
           Effect.map((stack): PullRequestStack | null =>
@@ -1352,6 +1354,7 @@ export const make = Effect.gen(function* () {
                   url: stack.url,
                   base: stack.base,
                   layers: stack.layers.map((layer) => ({
+                    ...layer,
                     number: layer.number,
                     headBranch: layer.headBranch,
                     state: layer.state,
@@ -1531,6 +1534,20 @@ export const make = Effect.gen(function* () {
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
+        if (
+          input.stackNumber !== undefined &&
+          (project.api.capabilities.stackActions !== true ||
+            !["merge", "update-branch"].includes(input.action) ||
+            input.expectedHeadSha === undefined ||
+            (input.action === "update-branch" && input.updateMethod !== "rebase"))
+        ) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "runAction",
+              detail: "This stack action is not supported or has no expected head revision.",
+            }),
+          );
+        }
         // The surface hides what a host cannot do, and this refuses it as well: a request that
         // reached here anyway must not be handed to a provider that never claimed the action.
         if (!project.api.capabilities.actions.includes(input.action)) {
@@ -1573,7 +1590,10 @@ export const make = Effect.gen(function* () {
         // above do not.
         return viewerPermissionsOf(project, input, "runAction").pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
-            if (!viewer.actions.includes(input.action)) {
+            const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
+            if (
+              stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
+            ) {
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "runAction",
@@ -1582,6 +1602,7 @@ export const make = Effect.gen(function* () {
               );
             }
             if (
+              !stackRebase &&
               input.updateMethod !== undefined &&
               !(viewer.updateMethods ?? []).includes(input.updateMethod)
             ) {
@@ -1599,6 +1620,10 @@ export const make = Effect.gen(function* () {
                 host: project.host,
                 number: input.number,
                 action: input.action,
+                ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+                ...(input.expectedHeadSha === undefined
+                  ? {}
+                  : { expectedHeadSha: input.expectedHeadSha }),
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })
@@ -2639,7 +2664,9 @@ export const make = Effect.gen(function* () {
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
-    const repository = yield* runAction(input);
+    const repository = yield* runAction(input).pipe(
+      Effect.ensuring(input.stackNumber === undefined ? Effect.void : refreshAfterTurn),
+    );
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
     if (input.action === "merge") {

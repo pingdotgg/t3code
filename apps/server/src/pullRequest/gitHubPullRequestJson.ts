@@ -3,6 +3,7 @@ import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  PullRequestStackMembership,
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -117,6 +118,13 @@ const RawListItemSchema = Schema.Struct({
  * because a node that is not a pull request decodes as an empty object, which is skipped.
  */
 const RawSearchItemSchema = Schema.Struct({
+  stack: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ number: Schema.Int, size: Schema.Int, baseRefName: Schema.String }),
+    ),
+  ),
+  stackEntry: Schema.optional(Schema.NullOr(Schema.Struct({ position: Schema.Int }))),
+
   number: Schema.Int,
   title: Schema.String,
   url: Schema.String,
@@ -648,12 +656,13 @@ export const PULL_REQUEST_SEARCH_MAX_ROWS = GRAPHQL_PAGE_SIZE;
  * than twenty labels shows twenty, and one that has asked more than twenty people for a review
  * is already past what a row can say.
  */
-export function pullRequestSearchGraphQlQuery(rows: number): string {
+export function pullRequestSearchGraphQlQuery(rows: number, includeStacks = false): string {
   return `query($q: String!) {
   search(query: $q, type: ISSUE, first: ${Math.min(Math.max(Math.trunc(rows), 1), PULL_REQUEST_SEARCH_MAX_ROWS)}) {
     pageInfo { hasNextPage }
     nodes {
       ... on PullRequest {
+        ${includeStacks ? "stack { number size baseRefName } stackEntry { position }" : ""}
         number
         title
         url
@@ -1019,6 +1028,7 @@ export const REPOSITORY_ACCESS_JSON_FIELDS =
   "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerPermission";
 
 export interface GitHubPullRequestListItem {
+  readonly stack?: PullRequestStackMembership;
   /** The author's node id, kept so a batch can resolve the avatar the listing does not carry. */
   readonly authorId: string | null;
   readonly number: number;
@@ -1541,6 +1551,16 @@ export function decodePullRequestSearchJson(
           return state === null ? [] : [{ state }];
         }),
       }),
+      ...(node.stack && node.stackEntry
+        ? {
+            stack: {
+              number: node.stack.number,
+              size: node.stack.size,
+              base: node.stack.baseRefName,
+              position: node.stackEntry.position,
+            },
+          }
+        : {}),
       repository,
     });
   }
@@ -2448,8 +2468,10 @@ export function decodePullRequestFilesJson(
 
 /** One pull request as the stacks API lists it: a number, a head, and whether it is done. */
 const RawStackPullRequestSchema = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  draft: Schema.optional(Schema.Boolean),
   number: Schema.Int,
-  head: Schema.Struct({ ref: Schema.String }),
+  head: Schema.Struct({ ref: Schema.String, sha: Schema.optional(Schema.String) }),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   merged_at: Schema.optional(Schema.NullOr(Schema.String)),
 });
@@ -2473,6 +2495,9 @@ const RawStackSchema = Schema.Struct({
 const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
 
 export interface GitHubPullRequestStackLayer {
+  readonly title?: string;
+  readonly isDraft?: boolean;
+  readonly headSha?: string;
   readonly number: number;
   readonly headBranch: string;
   readonly state: PullRequestState;
@@ -2505,6 +2530,9 @@ export function decodePullRequestStacksJson(
     url: trimmed(stack.html_url) ?? stack.url,
     base: typeof stack.base === "string" ? stack.base : stack.base.ref,
     layers: stack.pull_requests.map((pullRequest) => ({
+      ...(pullRequest.title === undefined ? {} : { title: pullRequest.title }),
+      ...(pullRequest.draft === undefined ? {} : { isDraft: pullRequest.draft }),
+      ...(pullRequest.head.sha === undefined ? {} : { headSha: pullRequest.head.sha }),
       number: pullRequest.number,
       headBranch: pullRequest.head.ref,
       state: toState({ state: pullRequest.state, mergedAt: pullRequest.merged_at }),

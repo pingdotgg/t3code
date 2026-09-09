@@ -418,6 +418,7 @@ export const PullRequestCapabilities = Schema.Struct({
    * the stack the host shows. Absent means chains are only ever inferred from base branches.
    */
   stacks: Schema.optional(Schema.Boolean),
+  stackActions: Schema.optional(Schema.Boolean),
   /**
    * The repository's labels can be listed, and one put on a change request or taken off it.
    * Optional for the same reason `edit` is: a server that says nothing about labels has no way
@@ -438,6 +439,8 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * offering one they may not use ends in the host's own refusal — which at least says why.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  /** May request remote stack rebases, including when this layer is already current. */
+  stackRebase: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: Schema.Array(PullRequestAction),
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
@@ -469,7 +472,16 @@ export const PullRequestMergeCapabilities = Schema.Struct({
 });
 export type PullRequestMergeCapabilities = typeof PullRequestMergeCapabilities.Type;
 
+export const PullRequestStackMembership = Schema.Struct({
+  number: PositiveInt,
+  position: PositiveInt,
+  size: PositiveInt,
+  base: TrimmedNonEmptyString,
+});
+export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
+
 export const PullRequestListEntry = Schema.Struct({
+  stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
   /**
    * The host below which `repository` is addressed, so the same provider kind can serve more
@@ -686,6 +698,9 @@ export const PullRequestStack = Schema.Struct({
   layers: Schema.Array(
     Schema.Struct({
       number: PositiveInt,
+      title: Schema.optional(Schema.String),
+      isDraft: Schema.optional(Schema.Boolean),
+      headSha: Schema.optional(TrimmedNonEmptyString),
       headBranch: TrimmedNonEmptyString,
       state: PullRequestState,
     }),
@@ -909,6 +924,9 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
 export const PullRequestActionInput = Schema.Struct({
+  /** Native stack scope; only send to environments advertising pullRequestStackActions. */
+  stackNumber: Schema.optional(PositiveInt),
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   /**

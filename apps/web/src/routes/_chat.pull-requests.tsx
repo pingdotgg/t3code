@@ -1938,6 +1938,22 @@ function PullRequestsRouteView() {
             <PullRequestDetailPanel
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
+              onSelectPullRequest={(reference) => {
+                if (rightPanelRef === null) return;
+                useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                  projectId: reference.projectId,
+                  repository: reference.repository,
+                  number: reference.number,
+                  ...(reference.host ? { host: reference.host } : {}),
+                  environmentId: panelEnvironmentId,
+                });
+                updateSearch({
+                  repository: reference.repository,
+                  number: reference.number,
+                  selectedProjectId: reference.projectId,
+                  selectedEnvironmentId: panelEnvironmentId,
+                });
+              }}
               reference={{
                 projectId: renderedPullRequestSurface.projectId as ProjectId,
                 repository: renderedPullRequestSurface.repository,

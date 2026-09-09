@@ -130,6 +130,7 @@ describe("gitHubViewerPermissions", () => {
       ],
       comment: true,
       resolve: true,
+      stackRebase: true,
       verdicts: ["comment", "approve", "request-changes"],
       requestReviewers: true,
       labels: true,
@@ -182,6 +183,7 @@ describe("gitHubViewerPermissions", () => {
       actions: ["ready", "draft", "close", "reopen"],
       comment: true,
       resolve: true,
+      stackRebase: true,
       // GitHub refuses an author's approval of their own change, so the page does not offer one.
       verdicts: ["comment"],
       requestReviewers: false,

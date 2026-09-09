@@ -1,3 +1,4 @@
+import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -334,6 +335,7 @@ export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedError<G
 }
 
 export type GitHubPullRequestCliError =
+  | GitHubStackActionError
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
   | GitHubDiffCursorError
@@ -488,6 +490,7 @@ export class GitHubPullRequestCli extends Context.Service<
      */
     readonly getPullRequestStack: (input: {
       readonly cwd: string;
+      readonly includeDetails?: boolean;
       readonly repository: string;
       readonly host: string;
       readonly number: number;
@@ -627,6 +630,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
       readonly action: PullRequestAction;
+      readonly stackNumber?: number;
+      readonly expectedHeadSha?: string;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
@@ -1581,7 +1586,7 @@ export const make = Effect.gen(function* () {
         operation: "searchPullRequests",
         // The reader's own words are in the query, so it travels over stdin rather than in argv.
         privateVariables: { q: query },
-        query: pullRequestSearchGraphQlQuery(rows),
+        query: pullRequestSearchGraphQlQuery(rows, input.host === "github.com"),
         decode: decodePullRequestSearchJson,
       }).pipe(
         Effect.map((batch) => ({
@@ -1708,6 +1713,34 @@ export const make = Effect.gen(function* () {
                     cause: decoded.failure,
                   }),
                 );
+          }),
+          Effect.flatMap((stack) => {
+            if (!input.includeDetails || stack === null) return Effect.succeed(stack);
+            return github
+              .execute({
+                cwd: input.cwd,
+                args: [
+                  "api",
+                  "--hostname",
+                  input.host,
+                  `repos/${owner}/${name}/stacks/${stack.number}`,
+                ],
+              })
+              .pipe(
+                Effect.flatMap((result) => {
+                  const decoded = decodePullRequestStacksJson(`[${result.stdout.trim()}]`);
+                  return Result.isSuccess(decoded)
+                    ? Effect.succeed(decoded.success)
+                    : Effect.fail(
+                        new GitHubPullRequestReadError({
+                          command: "gh",
+                          cwd: input.cwd,
+                          operation: "getPullRequestStack",
+                          cause: decoded.failure,
+                        }),
+                      );
+                }),
+              );
           }),
           // Hosts without the stacks preview return 404. Other failures must preserve the
           // previously synced stack and let the caller retry.
@@ -2109,6 +2142,8 @@ export const make = Effect.gen(function* () {
     },
 
     runPullRequestAction: (input) => {
+      if (input.stackNumber !== undefined)
+        return runGitHubStackAction(github.execute, { ...input, stackNumber: input.stackNumber });
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
           Effect.flatMap((pullRequestId) =>

@@ -73,7 +73,7 @@ import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment, pullRequestStackAtom } from "~/state/pullRequests";
 import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { PullRequestStackMap } from "./PullRequestStackMap";
+import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -459,8 +459,10 @@ export function PullRequestDetailPanel({
   context = "page",
   composerDraftTarget,
   onBack,
+  onSelectPullRequest,
 }: {
   environmentId: EnvironmentId;
+  onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
   /**
    * The thread this panel sits beside, if any. Links that are not the pull
    * request itself (check details, host permalinks) can open in that thread's
@@ -730,11 +732,12 @@ export function PullRequestDetailPanel({
     isStackedPullRequestBase(detail.baseBranch, branchRefsQuery.data?.refs ?? []);
   // The host's own stack, where it keeps one. Only asked for once the detail has landed so a
   // pull request nobody can read costs one request rather than two.
-  const nativeStack = useEnvironmentQuery(
+  const nativeStackQuery = useEnvironmentQuery(
     detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
       ? null
       : pullRequestStackAtom({ environmentId, input: reference }),
-  ).data;
+  );
+  const nativeStack = nativeStackQuery.data;
   const activityPending = activityQuery.isPending && activity === null;
   const activityError = activity === null ? activityQuery.error : null;
   const refreshDetail = useCallback(() => {
@@ -1351,9 +1354,9 @@ export function PullRequestDetailPanel({
         checksState,
         autoMergeEnabled: detail.autoMergeEnabled,
         hasMergeMethod: allowedMergeMethods.length > 0,
-        canMerge: can("merge"),
+        canMerge: !nativeStack && can("merge"),
         canMarkReady: can("ready"),
-        canEnableAutoMerge: can("enable-auto-merge"),
+        canEnableAutoMerge: !nativeStack && can("enable-auto-merge"),
       })
     : null;
   // What the menu's action group holds. Named once so the separators around it are drawn from
@@ -1363,6 +1366,7 @@ export function PullRequestDetailPanel({
     can(detail.isDraft ? "ready" : "draft") &&
     !(detail.isDraft && primaryAction === "ready");
   const showsAutoMerge =
+    !nativeStack &&
     detail?.state === "open" &&
     ((autoMergeArmed && can("disable-auto-merge")) ||
       (!autoMergeArmed &&
@@ -1372,6 +1376,7 @@ export function PullRequestDetailPanel({
         can("enable-auto-merge") &&
         allowedMergeMethods.length > 0));
   const showsMergeNow =
+    !nativeStack &&
     detail?.state === "open" &&
     (primaryAction === "enable-auto-merge" || primaryAction === "auto-merge-armed") &&
     can("merge") &&
@@ -1569,6 +1574,33 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {detail ? (
             <>
+              {nativeStack ? (
+                <PullRequestStackMenu
+                  stack={nativeStack}
+                  reference={reference}
+                  environmentId={environmentId}
+                  onSelect={onSelectPullRequest}
+                  mergeMethod={selectedMergeMethod}
+                  canMerge={
+                    environmentConfigs.get(environmentId)?.environment.capabilities
+                      .pullRequestStackActions === true &&
+                    detail.capabilities.stackActions === true &&
+                    can("merge") &&
+                    allowedMergeMethods.length > 0
+                  }
+                  canRebase={
+                    environmentConfigs.get(environmentId)?.environment.capabilities
+                      .pullRequestStackActions === true &&
+                    detail.capabilities.stackActions === true &&
+                    detail.viewerPermissions.stackRebase === true
+                  }
+                  onActed={() => {
+                    nativeStackQuery.refresh();
+                    refreshDetail();
+                    onActed?.();
+                  }}
+                />
+              ) : null}
               {context === "page" ? (
                 <PullRequestThreadLinks
                   display="count"
@@ -2102,13 +2134,6 @@ export function PullRequestDetailPanel({
                     />
                   </span>
                 </div>
-                {nativeStack ? (
-                  <PullRequestStackMap
-                    stack={nativeStack}
-                    currentNumber={detail.number}
-                    className="mt-1"
-                  />
-                ) : null}
               </div>
             ) : null}
           </div>

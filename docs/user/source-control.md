@@ -115,3 +115,13 @@ review is terminal. An open or unsynced link keeps it active.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
+
+## GitHub stacks
+
+The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
+review to navigate its layers. **Merge stack** submits every unmerged layer to GitHub together,
+respecting branch rules and merge queues. The confirmation shows the scope and merge strategy.
+
+**Rebase stack** updates remote branches from bottom to top without changing your local checkout.
+It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
+layer before retrying. Stack actions require an environment that supports them.

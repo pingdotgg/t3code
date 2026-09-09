@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
+  PullRequestStackMembership,
   PullRequestAction,
   PullRequestActor,
   PullRequestBaseComparison,
@@ -65,6 +66,7 @@ export interface PullRequestProviderFailure {
 
 /** A change request as the provider sees it, before the service attaches project context. */
 export interface ProviderChangeRequest {
+  readonly stack?: PullRequestStackMembership;
   readonly number: number;
   readonly title: string;
   readonly url: string;
@@ -115,6 +117,9 @@ export interface ProviderChangeRequestSummary {
 
 /** One layer of a host-native stack, bottom to top order is the array's. */
 export interface ProviderChangeRequestStackLayer {
+  readonly title?: string;
+  readonly isDraft?: boolean;
+  readonly headSha?: string;
   readonly number: number;
   readonly headBranch: string;
   readonly state: PullRequestState;
@@ -364,7 +369,7 @@ export interface PullRequestProviderApi {
    * because most hosts have no such object; the service derives chains from base branches there.
    */
   readonly getChangeRequestStack?: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & { readonly includeDetails?: boolean; readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestStack | null, PullRequestProviderError>;
 
   /** Comments, line threads, and commits, kept off the critical path for the core detail. */
@@ -426,6 +431,8 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly action: PullRequestAction;
+      readonly stackNumber?: number;
+      readonly expectedHeadSha?: string;
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */

@@ -1,4 +1,4 @@
-import { SearchIcon } from "lucide-react";
+import { LayersIcon, SearchIcon } from "lucide-react";
 import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -116,6 +116,22 @@ function PullRequestRowImpl({
           {entry.title}
         </span>
         <span className="col-start-2 row-start-1 flex max-w-36 items-center justify-self-end gap-2 text-xs">
+          {entry.stack ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-normal text-muted-foreground" />
+                }
+              >
+                <LayersIcon aria-hidden className="size-3" />
+                {entry.stack.position}/{entry.stack.size}
+              </TooltipTrigger>
+              <TooltipPopup>
+                Stack #{entry.stack.number}, layer {entry.stack.position} of {entry.stack.size},
+                targeting {entry.stack.base}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           {/* Only a verdict somebody has actually given: "review required" is the absence of
               one, and saying so on every unreviewed row would say nothing. */}
           {entry.reviewDecision === "approved" || entry.reviewDecision === "changes-requested" ? (

@@ -3997,6 +3997,72 @@ it.effect('resolves an author filter of "me" to the viewer before narrowing a ho
   }),
 );
 
+it.effect("authorizes stack rebases independently of whether the selected layer is behind", () =>
+  Effect.gen(function* () {
+    let taken = 0;
+    let stackRebase = true;
+    let stackActions = true;
+    const capabilities = {
+      diff: true,
+      comment: true,
+      actions: ["update-branch"] as const,
+      mergeMethods: ["merge"] as const,
+      updateMethods: ["rebase"] as const,
+      get stackActions() {
+        return stackActions;
+      },
+      search: true,
+      reactions: true,
+      review: FULL_REVIEW,
+      reviewers: FULL_REVIEWERS,
+    };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities,
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: [],
+              stackRebase,
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          runAction: () =>
+            Effect.sync(() => {
+              taken++;
+            }),
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 3,
+      action: "update-branch" as const,
+      updateMethod: "rebase" as const,
+      stackNumber: 50,
+      expectedHeadSha: "ccc",
+    };
+    yield* service.runAction(input);
+    assert.strictEqual(taken, 1);
+    stackRebase = false;
+    assert.strictEqual(
+      (yield* Effect.flip(service.runAction(input)))._tag,
+      "PullRequestOperationError",
+    );
+    stackRebase = true;
+    stackActions = false;
+    assert.strictEqual(
+      (yield* Effect.flip(service.runAction(input)))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(taken, 1);
+  }),
+);
+
 it.effect("refuses a way of updating a branch that the host or the viewer does not allow", () =>
   Effect.gen(function* () {
     let taken: string | null = null;
