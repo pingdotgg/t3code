@@ -128,28 +128,22 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(verified.expiresAt?.toString()).toBe(issued.expiresAt.toString());
     }).pipe(Effect.provide(makeSessionStoreLayer())),
   );
-  it.effect("expands scopes in tokens issued before they were split", () =>
+  it.effect("keeps recorded scopes unchanged for both token versions", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
       const secrets = yield* ServerSecretStore.ServerSecretStore;
       const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
       const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
-      // Re-sign the same claims as a v1 token, which is what an existing
-      // credential looks like after the server upgrades.
+      // Accept prerelease v2 credentials without widening their recorded grant.
       const [encodedPayload] = issued.token.split(".");
       const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
-      expect(currentClaims).toContain('"v":2');
-      const legacyPayload = base64UrlEncode(currentClaims.replace('"v":2', '"v":1'));
+      expect(currentClaims).toContain('"v":1');
+      const legacyPayload = base64UrlEncode(currentClaims.replace('"v":1', '"v":2'));
       const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
       const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, secret)}`;
 
       expect((yield* sessions.verify(issued.token)).scopes).toEqual(legacyScopes);
-      expect((yield* sessions.verify(legacyToken)).scopes).toEqual([
-        ...legacyScopes,
-        "filesystem:read",
-        "diagnostics:read",
-        "terminal:read",
-      ]);
+      expect((yield* sessions.verify(legacyToken)).scopes).toEqual(legacyScopes);
     }).pipe(
       Effect.provide(
         SessionStore.layer.pipe(

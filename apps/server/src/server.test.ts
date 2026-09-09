@@ -170,7 +170,6 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
-import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./auth/utils.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -1292,6 +1291,22 @@ const getHttpServerUrl = (pathname = "") =>
     return `http://127.0.0.1:${address.port}${pathname}`;
   });
 
+// Frozen response vocabulary from clients before granular permissions.
+const legacyScopeResponse = Schema.Struct({
+  scopes: Schema.Array(
+    Schema.Literals([
+      "orchestration:read",
+      "orchestration:operate",
+      "terminal:operate",
+      "review:write",
+      "access:read",
+      "access:write",
+      "relay:read",
+      "relay:write",
+    ]),
+  ),
+});
+
 const bootstrapBrowserSession = (
   credential = defaultDesktopBootstrapToken,
   options?: {
@@ -1315,6 +1330,7 @@ const bootstrapBrowserSession = (
       readonly sessionMethod: string;
       readonly expiresAt: string;
     }>(response);
+    if (response.status === 200) yield* Schema.decodeUnknownEffect(legacyScopeResponse)(body);
     return {
       response,
       body,
@@ -2332,6 +2348,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               responseJsonEffect<{
                 readonly authenticated: boolean;
                 readonly scopes?: ReadonlyArray<string>;
+                readonly permissions?: ReadonlyArray<string>;
               }>,
             ),
           );
@@ -2457,12 +2474,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly authenticated: boolean;
         readonly sessionMethod?: string;
         readonly scopes?: ReadonlyArray<string>;
+        readonly permissions?: ReadonlyArray<string>;
       }>(sessionResponse);
 
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "bearer-access-token");
-      assert.deepEqual(sessionBody.scopes, AuthAdministrativeScopes);
+      assert.deepEqual(sessionBody.permissions, AuthAdministrativeScopes);
+      yield* Schema.decodeUnknownEffect(legacyScopeResponse)(sessionBody);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4735,13 +4754,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           readonly id: string;
           readonly label?: string;
           readonly scopes: ReadonlyArray<string>;
+          readonly permissions?: ReadonlyArray<string>;
         }>
       >(response);
       const listed = links.find((link) => link.id === created.id);
       assert.isDefined(listed);
+      yield* Schema.decodeUnknownEffect(legacyScopeResponse)(listed);
       assert.deepInclude(listed, {
         label: "Synthetic phone",
-        scopes: [...AuthStandardClientScopes],
+        permissions: [...AuthStandardClientScopes],
       });
 
       const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
@@ -7693,61 +7714,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("expands tokens issued before scopes were split", () =>
-    Effect.gen(function* () {
-      const config = yield* buildAppUnderTest();
-      const secrets = yield* ServerSecretStore.ServerSecretStore.pipe(
-        Effect.provide(
-          ServerSecretStore.layer.pipe(
-            Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
-          ),
-        ),
-      );
-
-      // A v1 token carrying the pre-split standard grant (minus review:write,
-      // which can no longer be requested), which is what an existing bearer
-      // credential looks like after the server upgrades. Stored session rows
-      // are rewritten by migration 048, covered by its own test.
-      const current = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
-        scope: "orchestration:read orchestration:operate terminal:operate relay:read",
-      });
-      assert.equal(current.response.status, 200);
-      const [encodedPayload] = (current.body.access_token ?? "").split(".");
-      const claims = base64UrlDecodeUtf8(encodedPayload!);
-      assert.include(claims, '"v":2');
-      const legacyPayload = base64UrlEncode(claims.replace('"v":2', '"v":1'));
-      const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
-      const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, secret)}`;
-
-      // The current token was issued with split scopes and must not widen.
-      const currentSession = yield* HttpClient.get("/api/auth/session", {
-        headers: { authorization: `Bearer ${current.body.access_token ?? ""}` },
-      });
-      const currentScopes = (
-        (yield* currentSession.json) as { readonly scopes?: ReadonlyArray<string> }
-      ).scopes;
-      assert.notInclude(currentScopes ?? [], "filesystem:read");
-
-      const legacySession = yield* HttpClient.get("/api/auth/session", {
-        headers: { authorization: `Bearer ${legacyToken}` },
-      });
-      const legacyScopes = (
-        (yield* legacySession.json) as { readonly scopes?: ReadonlyArray<string> }
-      ).scopes;
-      assert.include(legacyScopes ?? [], "filesystem:read");
-      assert.include(legacyScopes ?? [], "filesystem:write");
-      assert.include(legacyScopes ?? [], "terminal:read");
-      // Expansion only covers the split scopes; access administration was
-      // never part of a standard grant.
-      assert.notInclude(legacyScopes ?? [], "access:write");
-
-      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
-        headers: { authorization: `Bearer ${legacyToken}` },
-      });
-      assert.equal(ticketResponse.status, 200);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
   it.effect("requires filesystem read for host asset URLs while preserving attachment access", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -7817,14 +7783,56 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("does not issue the retired review scope", () =>
+  it.effect("pairs old clients with the granted subset and survives denied optional RPCs", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
-      const retired = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
-        scope: "review:write",
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({ scopes: ["orchestration:read"] }),
       });
-      assert.equal(retired.response.status, 400);
-      assert.equal(retired.body.reason, "invalid_scope");
+      const created = (yield* createdResponse.json) as { credential: string };
+      const empty = yield* exchangeAccessToken(created.credential, {
+        scope: "review:write future:unknown access:write",
+      });
+      assert.notEqual(empty.response.status, 200);
+      // Failure above must leave the one-time link usable.
+      const paired = yield* exchangeAccessToken(created.credential, {
+        scope:
+          "orchestration:read orchestration:operate terminal:operate review:write relay:read future:unknown",
+      });
+      assert.equal(paired.response.status, 200);
+      assert.equal(paired.body.scope, "orchestration:read");
+      const headers = { authorization: `Bearer ${paired.body.access_token}` };
+      const session = yield* HttpClient.get("/api/auth/session", { headers });
+      const body = yield* session.json;
+      assert.deepEqual((yield* Schema.decodeUnknownEffect(legacyScopeResponse)(body)).scopes, [
+        "orchestration:read",
+      ]);
+      assert.deepInclude(body, { authenticated: true, permissions: ["orchestration:read"] });
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", { headers });
+      const ticket = (yield* ticketResponse.json) as { ticket: string };
+      const wsUrl = new URL(yield* getHttpServerUrl("/ws"));
+      wsUrl.protocol = "ws:";
+      wsUrl.searchParams.set("wsTicket", ticket.ticket);
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl.toString(), (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.serverGetConfig]({});
+            const denied = yield* client[WS_METHODS.subscribeTerminalEvents]({}).pipe(
+              Stream.runHead,
+              Effect.flip,
+            );
+            assert.equal(denied._tag, "EnvironmentAuthorizationError");
+            // A denied subscription must not tear down the shared connection.
+            yield* client[WS_METHODS.serverGetConfig]({});
+          }),
+        ),
+      );
+      const reused = yield* exchangeAccessToken(created.credential, {
+        scope: "orchestration:read",
+      });
+      assert.equal(reused.response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

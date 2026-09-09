@@ -3,6 +3,7 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 import {
   AuthSessionId,
+  ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
   TrimmedNonEmptyString,
@@ -126,56 +127,46 @@ export type AuthGrantScope = typeof AuthGrantScope.Type;
 export const AuthGrantScopes = Schema.Array(AuthGrantScope);
 export type AuthGrantScopes = typeof AuthGrantScopes.Type;
 
-/**
- * Scopes that were split out of a broader one. A grant recorded before the
- * split carries the parent; expanding it yields what the same grant means now.
- * Servers apply this to stored credentials; clients use it in reverse to ask an
- * older server for the parent when it does not know the split-out scope.
- */
-export const LEGACY_SCOPE_EXPANSIONS: Readonly<
-  Partial<Record<AuthEnvironmentScope, ReadonlyArray<AuthEnvironmentScope>>>
-> = {
-  [AuthOrchestrationReadScope]: [AuthFilesystemReadScope, AuthDiagnosticsReadScope],
-  [AuthOrchestrationOperateScope]: [
-    AuthSettingsWriteScope,
-    AuthProvidersManageScope,
-    AuthEnvironmentMaintainScope,
-    AuthPreviewOperateScope,
-    AuthSourceControlWriteScope,
-    AuthFilesystemWriteScope,
-  ],
-  [AuthTerminalOperateScope]: [AuthTerminalReadScope],
-  [AuthReviewWriteScope]: [AuthFilesystemReadScope],
+// Frozen wire vocabulary for clients released before granular permissions.
+const legacyScopes = new Set<AuthEnvironmentScope>([
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+]);
+
+/** Format public auth metadata without changing the server's authorization grant. */
+export function authScopeResponse(scopes: ReadonlyArray<AuthEnvironmentScope>) {
+  return { scopes: scopes.filter((scope) => legacyScopes.has(scope)), permissions: scopes };
+}
+
+const authScopeResponseFields = {
+  scopes: AuthEnvironmentScopes,
+  permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
 };
 
-export function expandLegacyScopes(
-  scopes: ReadonlyArray<AuthEnvironmentScope>,
-): ReadonlyArray<AuthEnvironmentScope> {
-  const expanded = new Set(scopes);
-  for (const scope of scopes) {
-    for (const implied of LEGACY_SCOPE_EXPANSIONS[scope] ?? []) expanded.add(implied);
-  }
-  return expanded.size === scopes.length ? scopes : [...expanded];
-}
+// Only clients talking to an old server use these parent checks. Servers never
+// expand stored grants, and an explicitly empty permissions array grants nothing.
+const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
+  [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
+  [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
+  [AuthSettingsWriteScope]: AuthOrchestrationOperateScope,
+  [AuthProvidersManageScope]: AuthOrchestrationOperateScope,
+  [AuthEnvironmentMaintainScope]: AuthOrchestrationOperateScope,
+  [AuthPreviewOperateScope]: AuthOrchestrationOperateScope,
+  [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
+  [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
+  [AuthTerminalReadScope]: AuthTerminalOperateScope,
+};
 
-/** The scope an older server checked before `scope` was split out, if any. */
-export function legacyParentScope(scope: AuthEnvironmentScope): AuthEnvironmentScope | null {
-  for (const [parent, children] of Object.entries(LEGACY_SCOPE_EXPANSIONS)) {
-    if (parent !== AuthReviewWriteScope && children?.includes(scope)) {
-      return parent as AuthEnvironmentScope;
-    }
-  }
-  return null;
-}
-
-/**
- * Whether a session grants `scope`. An older server does not know the
- * split-out scopes and still authorizes those RPCs with the parent, so a
- * client checks the parent when the server does not advertise the split.
- */
 export interface SessionGrantInput {
   readonly authenticated: boolean;
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | undefined;
+  readonly permissions?: ReadonlyArray<AuthEnvironmentScope> | undefined;
   readonly auth?: { readonly serverUpdateScope?: string | undefined } | undefined;
 }
 
@@ -183,11 +174,13 @@ export function sessionGrantsScope(
   session: SessionGrantInput,
   scope: AuthEnvironmentScope,
 ): boolean {
-  if (!session.authenticated || session.scopes === undefined) return false;
-  if (session.scopes.includes(scope)) return true;
+  if (!session.authenticated) return false;
+  if (session.permissions !== undefined) return session.permissions.includes(scope);
+  if (session.scopes?.includes(scope)) return true;
+  // Also recognize servers from the first granular-scope release.
   if (session.auth?.serverUpdateScope !== undefined) return false;
-  const parent = legacyParentScope(scope);
-  return parent !== null && session.scopes.includes(parent);
+  const parent = legacyParents[scope];
+  return parent !== undefined && session.scopes?.includes(parent) === true;
 }
 
 export const AuthStandardClientScopes = [
@@ -255,7 +248,7 @@ export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
 
 export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   sessionMethod: ServerAuthSessionMethod,
   expiresAt: Schema.DateTimeUtc,
 });
@@ -321,7 +314,7 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 // Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
@@ -342,7 +335,7 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   method: ServerAuthSessionMethod,
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
@@ -449,6 +442,7 @@ export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });

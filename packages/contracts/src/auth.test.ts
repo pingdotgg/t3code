@@ -5,7 +5,8 @@ import {
   AuthEnvironmentScopes,
   AuthGrantScopes,
   AuthStandardClientScopes,
-  expandLegacyScopes,
+  authScopeResponse,
+  AuthSessionState,
   sessionGrantsScope,
 } from "./auth.ts";
 
@@ -18,25 +19,65 @@ describe("authorization grants", () => {
     expect(AuthStandardClientScopes).not.toContain("review:write");
   });
 
-  it("expands a pre-split standard grant to the current standard set", () => {
-    const expanded = expandLegacyScopes([
+  // Frozen vocabulary from the client before granular scopes shipped. Do not
+  // derive it from the current enum: that would hide compatibility regressions.
+  const oldScopes = Schema.Array(
+    Schema.Literals([
       "orchestration:read",
       "orchestration:operate",
       "terminal:operate",
       "review:write",
+      "access:read",
+      "access:write",
       "relay:read",
-    ]);
-    for (const scope of AuthStandardClientScopes) expect(expanded).toContain(scope);
-    expect(expanded).not.toContain("access:write");
-    expect(expanded).not.toContain("relay:write");
+      "relay:write",
+    ]),
+  );
+
+  const decodeOldScopes = Schema.decodeUnknownSync(oldScopes);
+
+  it("keeps old clients able to decode grants with new permissions", () => {
+    const response = authScopeResponse(AuthStandardClientScopes);
+    expect(decodeOldScopes(response.scopes)).toEqual(response.scopes);
+    expect(response.permissions).toEqual(AuthStandardClientScopes);
+    expect(response.scopes).not.toContain("filesystem:read");
   });
 
-  it("returns the same array when nothing needs expanding", () => {
-    const scopes = ["filesystem:read", "relay:read"] as const;
-    expect(expandLegacyScopes(scopes)).toBe(scopes);
+  it("ignores unknown response permissions without falling back to broader scopes", () => {
+    const session = Schema.decodeUnknownSync(AuthSessionState)({
+      authenticated: true,
+      auth: {
+        policy: "loopback-browser",
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "session",
+      },
+      scopes: ["orchestration:operate"],
+      permissions: ["future:permission"],
+    });
+    expect(session.permissions).toEqual([]);
+    expect(sessionGrantsScope(session, "orchestration:operate")).toBe(false);
+    expect(sessionGrantsScope(session, "settings:write")).toBe(false);
   });
 
   it.each([
+    {
+      label: "exact permissions over the legacy presentation",
+      session: {
+        authenticated: true,
+        scopes: ["orchestration:operate"],
+        permissions: ["filesystem:read"],
+      },
+      scope: "settings:write",
+      expected: false,
+    },
+    {
+      label: "a permission absent from the legacy presentation",
+      session: { authenticated: true, scopes: [], permissions: ["filesystem:read"] },
+      scope: "filesystem:read",
+      expected: true,
+    },
+
     {
       label: "the parent on a server that predates the split",
       session: { authenticated: true, scopes: ["orchestration:operate"], auth: {} },

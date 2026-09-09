@@ -30,15 +30,16 @@ authenticate the upgrade with their cookie. A successful handshake grants no
 extra authority: [every RPC declares a required
 scope](../../apps/server/src/auth/RpcAuthorization.ts).
 
-Splitting a scope must not change what an existing credential can do.
-[`LEGACY_SCOPE_EXPANSIONS`](../../packages/contracts/src/auth.ts) records which
-scopes were carved out of which parent. The server applies it in two places: a
-migration rewrites stored pairing links and session rows, and session tokens
-carry a claims version so a pre-split token is expanded when verified. Clients
-apply it in reverse through `sessionGrantsScope`: a server that omits
-`auth.serverUpdateScope` predates the split and still authorizes the split-out
-RPCs with the parent scope, so the client checks the parent instead. Add to the
-table whenever a scope is split; never remove from it.
+Scope changes must not prevent older clients from connecting. Token exchange
+intersects recognized requests with the pairing grant; retired and unknown names
+are dropped. A request with no granted scopes fails before consuming the link.
+Stored credentials are never expanded when scopes split.
+
+Auth responses keep `scopes` within the original wire vocabulary and include
+`permissions` for the exact grant. New clients use `permissions` when present,
+even if empty. Older servers omit it, so clients use legacy parent checks for
+features those servers already support. These client checks never change server
+authorization. Unknown response permissions are ignored; grant inputs stay strict.
 
 Desktop restarts forget the previous local bearer token, so its reusable
 bootstrap grant replaces earlier sessions for the same subject and method.
