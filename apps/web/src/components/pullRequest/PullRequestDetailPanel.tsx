@@ -756,7 +756,8 @@ export function PullRequestDetailPanel({
   const refreshDetail = useCallback(() => {
     detailQuery.refresh();
     activityQuery.refresh();
-  }, [activityQuery.refresh, detailQuery.refresh]);
+    nativeStackQuery.refresh();
+  }, [activityQuery.refresh, detailQuery.refresh, nativeStackQuery.refresh]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
@@ -1602,7 +1603,6 @@ export function PullRequestDetailPanel({
                   canMerge={supportsStackActions && can("merge") && allowedMergeMethods.length > 0}
                   canRebase={supportsStackActions && detail.viewerPermissions.stackRebase === true}
                   onActed={() => {
-                    nativeStackQuery.refresh();
                     refreshDetail();
                     onActed?.();
                   }}

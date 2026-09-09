@@ -74,7 +74,10 @@ export function useSharedPullRequestSummary(
   }, [atom, current, environmentId]);
   return newestPullRequestSummary(current, observed);
 }
-export const pullRequestStackAtom = createPullRequestStackAtomFamily(connectionAtomRuntime);
+export const pullRequestStackAtom = createPullRequestStackAtomFamily(
+  connectionAtomRuntime,
+  pullRequestEnvironment.refreshes,
+);
 
 export interface EnvironmentQueryTarget<Input> {
   readonly environmentId: EnvironmentId;
