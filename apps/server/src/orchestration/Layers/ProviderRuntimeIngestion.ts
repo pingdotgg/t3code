@@ -57,8 +57,14 @@ import { canReplaceThreadTitle } from "../threadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+// Turn-keyed thinking buffers reuse the provider turn key; reasoning that
+// arrived while no turn was active lands on the thread's "no-turn" key. Both
+// share the thread-id prefix so a session-exit sweep can find every buffer
+// the thread still holds (the "no-turn" suffix is reserved: provider turn ids
+// never equal it).
+const NO_TURN_BUFFER_SUFFIX = "no-turn";
 const thinkingBufferKey = (threadId: ThreadId, turnId: TurnId | undefined) =>
-  turnId ? providerTurnKey(threadId, turnId) : `${threadId}:no-turn`;
+  turnId ? providerTurnKey(threadId, turnId) : `${threadId}:${NO_TURN_BUFFER_SUFFIX}`;
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -116,10 +122,16 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
-// One thinking activity holds at most this much text; longer buffers split
-// across several activities so a thinking-heavy turn (e.g. Gemini) cannot
-// stuff an unbounded blob into a single activity payload.
-const MAX_THINKING_CHARS_PER_ACTIVITY = 8_000;
+// One thinking activity holds at most this many code points; longer buffers
+// split across several activities so a thinking-heavy turn (e.g. Gemini)
+// cannot stuff an unbounded blob into a single activity payload. Splitting on
+// code points (not UTF-16 units) keeps astral characters whole.
+const MAX_THINKING_CODE_POINTS_PER_ACTIVITY = 8_000;
+// Reasoning buffers at most this many full activity chunks between flush
+// points. A turn can reason for a long time without flushing (no tool rows,
+// no pauses); crossing the cap spills the oldest completed chunks as thinking
+// activities while appending so a single cache value stays bounded.
+const MAX_BUFFERED_THINKING_CHUNKS = 3;
 const BUFFERED_THINKING_TEXT_BY_TURN_CACHE_CAPACITY = 10_000;
 const BUFFERED_THINKING_TEXT_BY_TURN_TTL = Duration.minutes(120);
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
@@ -960,9 +972,11 @@ const make = Effect.gen(function* () {
 
   // Reasoning streams (`reasoning_text` / `reasoning_summary_text`) buffer
   // here until a flush point (tool activity, approval pause, assistant
-  // completion, turn end) persists them as `thinking` activities. Without
-  // this, providers that narrate through their reasoning channel read as
-  // bare tool lists with only a final answer.
+  // completion, turn end, session exit) persists them as `thinking`
+  // activities. Without this, providers that narrate through their reasoning
+  // channel read as bare tool lists with only a final answer. Entries hold at
+  // most MAX_BUFFERED_THINKING_CHUNKS per-activity budgets of text; overflow
+  // spills to activities while appending (see appendBufferedThinkingText).
   const bufferedThinkingTextByTurnKey = yield* Cache.make<string, BufferedThinking>({
     capacity: BUFFERED_THINKING_TEXT_BY_TURN_CACHE_CAPACITY,
     timeToLive: BUFFERED_THINKING_TEXT_BY_TURN_TTL,
@@ -1161,49 +1175,130 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
+  // Reasoning deltas accumulate in one cache entry per turn until a flush
+  // point (tool activity, approval pause, assistant completion, turn end,
+  // session exit) persists them as `thinking` activities. The value is capped
+  // so a turn that reasons without any flush point cannot grow one entry
+  // without bound: crossing the cap spills the oldest full chunks as
+  // activities right away (persisting while buffering) and keeps only the
+  // newest tail buffered. The returned spill chunks carry the buffer's first
+  // delta timestamp so every chunk of one reasoning stretch sorts together.
   const appendBufferedThinkingText = (
     threadId: ThreadId,
     turnId: TurnId | undefined,
     delta: string,
     createdAt: string,
-  ) =>
+  ): Effect.Effect<
+    | { readonly firstCreatedAt: string; readonly chunks: ReadonlyArray<string> }
+    | null
+  > =>
     Cache.getOption(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId)).pipe(
       Effect.flatMap((existing) => {
         const previous = Option.getOrElse(existing, () => ({ text: "", firstCreatedAt: "" }));
-        return Cache.set(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId), {
-          text: `${previous.text}${delta}`,
-          firstCreatedAt:
-            previous.firstCreatedAt.length > 0 ? previous.firstCreatedAt : createdAt,
-        });
+        const combinedText = `${previous.text}${delta}`;
+        const firstCreatedAt =
+          previous.firstCreatedAt.length > 0 ? previous.firstCreatedAt : createdAt;
+        // Fast path: text within one per-activity budget in UTF-16 units also
+        // fits it in code points, so no code-point scan is needed.
+        if (combinedText.length <= MAX_THINKING_CODE_POINTS_PER_ACTIVITY) {
+          return Cache.set(
+            bufferedThinkingTextByTurnKey,
+            thinkingBufferKey(threadId, turnId),
+            { text: combinedText, firstCreatedAt },
+          ).pipe(Effect.as(null));
+        }
+
+        // Split on code points so a surrogate pair never straddles the spill
+        // boundary or an activity chunk. The oldest whole chunks spill; the
+        // tail keeps at most MAX_BUFFERED_THINKING_CHUNKS of them buffered.
+        const codePoints = Array.from(combinedText);
+        const combinedChunkCount = Math.ceil(
+          codePoints.length / MAX_THINKING_CODE_POINTS_PER_ACTIVITY,
+        );
+        if (combinedChunkCount <= MAX_BUFFERED_THINKING_CHUNKS) {
+          return Cache.set(
+            bufferedThinkingTextByTurnKey,
+            thinkingBufferKey(threadId, turnId),
+            { text: combinedText, firstCreatedAt },
+          ).pipe(Effect.as(null));
+        }
+        const spillChunkCount = combinedChunkCount - MAX_BUFFERED_THINKING_CHUNKS;
+        const spillPointCount = spillChunkCount * MAX_THINKING_CODE_POINTS_PER_ACTIVITY;
+        const spillText = codePoints.slice(0, spillPointCount).join("");
+        const tailText = codePoints.slice(spillPointCount).join("");
+        return Cache.set(
+          bufferedThinkingTextByTurnKey,
+          thinkingBufferKey(threadId, turnId),
+          { text: tailText, firstCreatedAt },
+        ).pipe(
+          Effect.as({
+            firstCreatedAt,
+            chunks: splitThinkingText(spillText),
+          }),
+        );
       }),
     );
 
-  const takeBufferedThinkingText = (
-    threadId: ThreadId,
-    turnId: TurnId | undefined,
-  ): Effect.Effect<BufferedThinking> =>
-    Cache.getOption(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId)).pipe(
-      Effect.flatMap((existing) =>
-        Cache.invalidate(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId)).pipe(
-          Effect.as(
-            Option.getOrElse(existing, (): BufferedThinking => ({ text: "", firstCreatedAt: "" })),
-          ),
-        ),
-      ),
-    );
-
+  // Splits reasoning text into per-activity chunks on code-point boundaries.
+  // A whole chunk keeps its length in code points within the per-activity
+  // budget; astral characters (surrogate pairs in UTF-16) stay intact.
   const splitThinkingText = (text: string): Array<string> => {
+    const codePoints = Array.from(text);
     const chunks: Array<string> = [];
-    for (let index = 0; index < text.length; index += MAX_THINKING_CHARS_PER_ACTIVITY) {
-      chunks.push(text.slice(index, index + MAX_THINKING_CHARS_PER_ACTIVITY));
+    for (
+      let index = 0;
+      index < codePoints.length;
+      index += MAX_THINKING_CODE_POINTS_PER_ACTIVITY
+    ) {
+      chunks.push(
+        codePoints.slice(index, index + MAX_THINKING_CODE_POINTS_PER_ACTIVITY).join(""),
+      );
     }
     return chunks;
   };
 
+  const dispatchThinkingChunk = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    turnId?: TurnId;
+    /** Activity timestamp: the chunked reasoning's first delta. */
+    activityCreatedAt: string;
+    /** Command timestamp: the event that triggered this flush or spill. */
+    createdAt: string;
+    commandTag: string;
+    chunkIdTag: string;
+    chunkIndex: number;
+    chunk: string;
+  }) =>
+    Effect.gen(function* () {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.activity.append",
+        commandId: yield* providerCommandId(
+          input.event,
+          `${input.commandTag}:${input.chunkIndex}`,
+        ),
+        threadId: input.threadId,
+        activity: {
+          id: EventId.make(
+            `${input.event.eventId}:thinking:${input.chunkIdTag}:${input.turnId ?? NO_TURN_BUFFER_SUFFIX}:${input.chunkIndex}`,
+          ),
+          createdAt: input.activityCreatedAt,
+          tone: "info",
+          kind: THINKING_ACTIVITY_KIND,
+          summary: THINKING_ACTIVITY_SUMMARY,
+          payload: { detail: input.chunk },
+          turnId: input.turnId ?? null,
+        },
+        createdAt: input.createdAt,
+      });
+    });
+
   // Persists buffered reasoning as `thinking` activities, oldest chunk first,
-  // so the rows interleave with the tool calls the thinking explains. Consumes
-  // the buffer; a later flush for the same turn is a no-op until new deltas
-  // arrive. Long buffers split across several activities instead of dropping.
+  // so the rows interleave with the tool calls the thinking explains. The
+  // buffer is only consumed once every chunk committed: a flush that fails
+  // halfway keeps the whole text so the next flush point retries it (chunk
+  // activity ids are deterministic, so re-appending a chunk that already
+  // committed replaces it in the projection instead of duplicating it).
   // Activities carry the first delta's timestamp so they sort before the tool
   // rows that flushed them.
   const flushBufferedThinkingForTurn = (input: {
@@ -1214,28 +1309,68 @@ const make = Effect.gen(function* () {
     commandTag: string;
   }) =>
     Effect.gen(function* () {
-      const buffered = yield* takeBufferedThinkingText(input.threadId, input.turnId);
+      const key = thinkingBufferKey(input.threadId, input.turnId);
+      const existing = yield* Cache.getOption(bufferedThinkingTextByTurnKey, key);
+      const buffered = Option.getOrElse(
+        existing,
+        (): BufferedThinking => ({ text: "", firstCreatedAt: "" }),
+      );
       if (!hasRenderableAssistantText(buffered.text)) {
+        // Whitespace-only (or absent) buffer: drop the entry so a later flush
+        // for the same turn stays a no-op until new deltas arrive.
+        yield* Cache.invalidate(bufferedThinkingTextByTurnKey, key);
         return;
       }
       const chunks = splitThinkingText(buffered.text);
-      for (const [chunkIndex, chunk] of chunks.entries()) {
-        yield* orchestrationEngine.dispatch({
-          type: "thread.activity.append",
-          commandId: yield* providerCommandId(input.event, `${input.commandTag}:${chunkIndex}`),
+      yield* Effect.forEach(chunks, (chunk, chunkIndex) =>
+        dispatchThinkingChunk({
+          event: input.event,
           threadId: input.threadId,
-          activity: {
-            id: EventId.make(`${input.event.eventId}:thinking:${chunkIndex}`),
-            createdAt: buffered.firstCreatedAt,
-            tone: "info",
-            kind: THINKING_ACTIVITY_KIND,
-            summary: THINKING_ACTIVITY_SUMMARY,
-            payload: { detail: chunk },
-            turnId: input.turnId ?? null,
-          },
+          ...(input.turnId ? { turnId: input.turnId } : {}),
+          activityCreatedAt: buffered.firstCreatedAt,
           createdAt: input.createdAt,
-        });
-      }
+          commandTag: input.commandTag,
+          chunkIdTag: "flush",
+          chunkIndex,
+          chunk,
+        }),
+      );
+      yield* Cache.invalidate(bufferedThinkingTextByTurnKey, key);
+    });
+
+  // Session exit can strand reasoning from turns the provider superseded
+  // without completing them (steering, abrupt stops). Flush every buffered
+  // stream the thread still holds — not just the active turn's — so none of
+  // them is dropped from the timeline.
+  const flushBufferedThinkingForThread = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    createdAt: string;
+    commandTag: string;
+  }) =>
+    Effect.gen(function* () {
+      const threadPrefix = `${input.threadId}:`;
+      const keys = Array.from(yield* Cache.keys(bufferedThinkingTextByTurnKey));
+      yield* Effect.forEach(
+        keys,
+        (key) =>
+          Effect.gen(function* () {
+            if (!key.startsWith(threadPrefix)) {
+              return;
+            }
+            const turnKeySegment = key.slice(threadPrefix.length);
+            yield* flushBufferedThinkingForTurn({
+              event: input.event,
+              threadId: input.threadId,
+              ...(turnKeySegment === NO_TURN_BUFFER_SUFFIX
+                ? {}
+                : { turnId: TurnId.make(turnKeySegment) }),
+              createdAt: input.createdAt,
+              commandTag: input.commandTag,
+            });
+          }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
     });
 
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
@@ -1591,12 +1726,38 @@ const make = Effect.gen(function* () {
         ) {
           const thread = yield* resolveThreadRuntimeContext(event.threadId);
           if (thread) {
-            yield* appendBufferedThinkingText(
+            // Providers do not always tag reasoning deltas with the running
+            // turn; scope them to the active turn so they flush alongside its
+            // tool rows instead of lingering unscoped until a no-turn flush
+            // or TTL expiry.
+            const reasoningTurnId =
+              toTurnId(event.turnId) ?? thread.session?.activeTurnId ?? undefined;
+            const buffered = yield* appendBufferedThinkingText(
               thread.id,
-              toTurnId(event.turnId),
+              reasoningTurnId,
               event.payload.delta,
               event.createdAt,
             );
+            if (buffered !== null) {
+              // The buffer cap overflowed: persist the oldest full chunks as
+              // activities right away (the retained tail stays buffered). If
+              // this dispatch fails the spilled text is dropped — the same
+              // trade-off as the assistant buffer spill — while the retained
+              // tail still flushes at the next flush point.
+              yield* Effect.forEach(buffered.chunks, (chunk, chunkIndex) =>
+                dispatchThinkingChunk({
+                  event,
+                  threadId: thread.id,
+                  ...(reasoningTurnId ? { turnId: reasoningTurnId } : {}),
+                  activityCreatedAt: buffered.firstCreatedAt,
+                  createdAt: event.createdAt,
+                  commandTag: "thinking-spill",
+                  chunkIdTag: "spill",
+                  chunkIndex,
+                  chunk,
+                }),
+              );
+            }
           }
         }
         return;
@@ -2058,11 +2219,9 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "session.exited") {
-        const exitedActiveTurnId = thread.session?.activeTurnId ?? undefined;
-        yield* flushBufferedThinkingForTurn({
+        yield* flushBufferedThinkingForThread({
           event,
           threadId: thread.id,
-          ...(exitedActiveTurnId ? { turnId: exitedActiveTurnId } : {}),
           createdAt: now,
           commandTag: "thinking-flush-on-session-exit",
         });

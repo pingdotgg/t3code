@@ -1170,6 +1170,73 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("keeps thinking visible outside the live work group while the turn runs", () => {
+    const turnId = "turn-1" as never;
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "running-command-entry",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:01Z",
+          entry: {
+            id: "running-command",
+            createdAt: "2026-01-01T00:00:01Z",
+            turnId,
+            label: "Running tests",
+            command: "vp test run",
+            requestKind: "command",
+            tone: "tool" as const,
+            toolLifecycleStatus: "inProgress" as const,
+          },
+        },
+        {
+          id: "thinking-1",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "thinking-1",
+            createdAt: "2026-01-01T00:00:02Z",
+            turnId,
+            label: "Thinking",
+            detail: "Checking the checklist first.",
+            tone: "info" as const,
+            sourceActivityKind: "thinking",
+          },
+        },
+      ],
+      latestTurn: {
+        turnId,
+        state: "running",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    const liveRow = rows.find((row) => row.kind === "work-live");
+    expect(liveRow).toBeDefined();
+    expect(liveRow).toMatchObject({
+      entry: { id: "running-command" },
+      active: true,
+    });
+    // The thinking entry must not be swept into the collapsed live group.
+    expect(
+      rows.some(
+        (row) =>
+          row.kind === "work-live" &&
+          row.groupedEntries.some((entry) => entry.sourceActivityKind === "thinking"),
+      ),
+    ).toBe(false);
+    expect(rows.map((row) => row.id)).toEqual([
+      "working-indicator-row",
+      "work-live:running-command-entry",
+      "work-toggle:thinking-1",
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

@@ -921,6 +921,10 @@ export function deriveMessagesTimelineRows(input: {
       entry.kind !== "work" ||
       entry.entry.agentSpawn !== undefined ||
       entry.entry.sourceActivityKind === "context-compaction" ||
+      // Thinking rows stay standalone outside the live work group (see the
+      // grouping boundary below); collecting them here would hide them inside
+      // the collapsed `work-live` group while the turn runs.
+      isThinkingWorkEntry(entry.entry) ||
       entry.entry.tone === "error"
     ) {
       break;
