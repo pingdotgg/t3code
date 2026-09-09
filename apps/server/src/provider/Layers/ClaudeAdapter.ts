@@ -43,6 +43,7 @@ import {
   type TurnTokenUsage,
   type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
+  type RuntimeErrorClass,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
@@ -2274,6 +2275,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     context: ClaudeSessionContext,
     message: string,
     cause?: unknown,
+    errorClass: RuntimeErrorClass = "provider_error",
   ) {
     if (cause !== undefined) {
       void cause;
@@ -2289,7 +2291,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
       payload: {
         message,
-        class: "provider_error",
+        class: errorClass,
         ...(cause !== undefined ? { detail: cause } : {}),
       },
       providerRefs: nativeProviderRefs(context),
@@ -3266,15 +3268,26 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const turn = context.turnState;
+    const usageLimited =
+      turn !== undefined &&
+      (turn.rejectedRateLimitTypes.size > 0 || turn.latestAssistantRateLimited);
     const failureHint =
       turn?.authenticationFailureMessage ??
-      (turn && (turn.rejectedRateLimitTypes.size > 0 || turn.latestAssistantRateLimited)
+      (usageLimited
         ? "Claude usage limit reached. Send the message again once the limit resets."
         : undefined);
     const { status, errorMessage } = resultOutcome(message, failureHint);
 
     if (status === "failed") {
-      yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
+      // Classed so clients can show the stop as Limited; the turn still fails.
+      yield* emitRuntimeError(
+        context,
+        errorMessage ?? "Claude turn failed.",
+        undefined,
+        usageLimited || message.terminal_reason === "blocking_limit"
+          ? "usage_limit"
+          : "provider_error",
+      );
     }
 
     yield* completeTurn(context, status, errorMessage, message);

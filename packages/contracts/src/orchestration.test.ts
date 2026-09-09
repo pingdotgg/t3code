@@ -1166,6 +1166,23 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    // Sessions from servers predating the classification still decode.
+    assert.strictEqual(parsed.lastErrorClass, undefined);
+  }),
+);
+
+it.effect("decodes a usage-limited orchestration session", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationSession({
+      threadId: "thread-1",
+      status: "error",
+      providerName: "claude",
+      activeTurnId: null,
+      lastError: "Claude usage limit reached.",
+      lastErrorClass: "usage_limit",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.lastErrorClass, "usage_limit");
   }),
 );
 

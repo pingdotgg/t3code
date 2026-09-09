@@ -70,6 +70,12 @@ If dragging is unavailable for one environment, update the T3 Code server runnin
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.
 
+## Thread status
+
+A thread whose agent stopped on an error shows **Failed**. When the provider's usage
+limit stopped it, the status reads **Limited** instead, and the thread can continue
+once that limit resets.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

@@ -161,6 +161,28 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(thread)).toBe("approval");
   });
 
+  it("resolves limited only when a usage limit stopped the session", () => {
+    const errored = (lastErrorClass: "usage_limit" | null) =>
+      makeThread({
+        id: ThreadId.make("t"),
+        title: "t",
+        session: {
+          threadId: ThreadId.make("t"),
+          status: "error",
+          providerName: "Claude",
+          providerInstanceId: ProviderInstanceId.make("claude"),
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "stopped",
+          lastErrorClass,
+          updatedAt: NOW,
+        },
+      });
+
+    expect(resolveThreadListV2Status(errored("usage_limit"))).toBe("limited");
+    expect(resolveThreadListV2Status(errored(null))).toBe("failed");
+  });
+
   it("resolves ready for quiescent threads", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",

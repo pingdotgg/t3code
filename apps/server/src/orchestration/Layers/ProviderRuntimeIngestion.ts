@@ -1605,6 +1605,12 @@ const make = Effect.gen(function* () {
               : status === "ready" || status === "interrupted"
                 ? null
                 : (thread.session?.lastError ?? null);
+        // Set by the runtime.error that precedes a failed turn.completed, so
+        // it rides along with lastError instead of being re-derived here.
+        const lastErrorClass =
+          status === "ready" || status === "interrupted"
+            ? null
+            : (thread.session?.lastErrorClass ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1641,6 +1647,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              lastErrorClass,
               updatedAt: now,
             },
             createdAt: now,
@@ -1936,6 +1943,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              lastErrorClass: event.payload.class === "usage_limit" ? "usage_limit" : null,
               updatedAt: now,
             },
             createdAt: now,
