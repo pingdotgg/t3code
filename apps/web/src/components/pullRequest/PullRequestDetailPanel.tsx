@@ -748,7 +748,7 @@ export function PullRequestDetailPanel({
   const canMergeSinglePullRequest = allowsSinglePullRequestMerge({
     supportsStackActions,
     hasStack: nativeStack !== null,
-    stackPending: nativeStackQuery.isPending,
+    stackPending: !nativeStackQuery.isSuccess || nativeStackQuery.isPending,
     stackError: nativeStackQuery.error,
   });
   const activityPending = activityQuery.isPending && activity === null;
