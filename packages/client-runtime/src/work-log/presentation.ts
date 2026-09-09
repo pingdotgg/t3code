@@ -84,7 +84,7 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
             : file;
         const output = asRecord(item.output);
         let diagnostics = asRecord(output?.structuredContent);
-        if (diagnostics === undefined && Array.isArray(output?.content)) {
+        if (diagnostics === null && Array.isArray(output?.content)) {
           for (const block of output.content) {
             const text = asRecord(block)?.text;
             if (typeof text !== "string") continue;
@@ -93,7 +93,7 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
             } catch {
               continue;
             }
-            if (diagnostics !== undefined) break;
+            if (diagnostics !== null) break;
           }
         }
         const problemCount = diagnostics?.problemCount;
