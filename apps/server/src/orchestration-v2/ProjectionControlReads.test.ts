@@ -210,7 +210,26 @@ for (const storage of ["sqlite", "memory"] as const) {
         VALUES ('message:unrelated-obsolete', ${threadId}, ${runId}, ${nodeId}, 'assistant', 0,
           ${DateTime.formatIso(now)}, ${DateTime.formatIso(now)}, '{"obsolete":"transcript"}')`;
         assert.equal((yield* Effect.exit(store.getThreadProjection(threadId)))._tag, "Failure");
+        const queryPlan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN
+          SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND node_id = ${nodeId}
+            AND type IN ('approval_request', 'user_input_request')
+            AND json_extract(payload_json, '$.requestId') = ${requestId}
+          ORDER BY ordinal ASC LIMIT 1`;
+        assert.isTrue(queryPlan.some((row) => row.detail.includes("turn_items_node_ordinal_idx")));
       }
+      const running = yield* store.getRunningTurnContext(threadId);
+      assert.equal(running.run?.id, runId);
+      assert.equal(running.providerThread?.id, providerThreadId);
+      assert.equal(running.providerTurn?.id, providerTurnId);
+      const providerContext = yield* store.getThreadProviderContext(threadId, providerInstanceId);
+      assert.equal(providerContext.thread.id, threadId);
+      assert.deepEqual(
+        providerContext.providerThreads.map((thread) => thread.id),
+        [providerThreadId],
+      );
+      const responseContext = yield* store.getRuntimeResponseContext(threadId, requestId);
+      assert.equal(responseContext.request?.id, requestId);
       const target = { providerThreadId, providerTurnId, attemptId, messageId };
       const context = yield* store.getProviderControlContext(threadId, target);
       assert.equal(context.providerThread?.id, providerThreadId);
