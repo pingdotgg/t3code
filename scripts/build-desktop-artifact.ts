@@ -2846,6 +2846,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         ],
         NSMicrophoneUsageDescription:
           "T3 Code uses your microphone for voice input. Audio is transcribed on your T3 environment.",
+        NSScreenCaptureUsageDescription:
+          "T3 Code captures the active window when you use the window capture shortcut.",
       },
       protocols: [
         {
