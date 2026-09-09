@@ -142,15 +142,13 @@ describe("buildProjectGroups", () => {
     const rootIdentity = { ...repositoryIdentity, rootPath: "/work/t3code" };
     const projects = [
       makeProject("root", "/work/t3code", { repositoryIdentity: rootIdentity }),
-      makeProject("java", "/work/t3code/java", { repositoryIdentity: rootIdentity }),
-      makeProject("account_approval", "/work/t3code/python/account_approval", {
-        repositoryIdentity: rootIdentity,
-      }),
+      makeProject("web", "/work/t3code/apps/web", { repositoryIdentity: rootIdentity }),
+      makeProject("api", "/work/t3code/services/api", { repositoryIdentity: rootIdentity }),
     ];
 
     for (const mode of ["repository", "repository_path"] as const) {
       const groups = buildProjectGroups({ projects, settings: settings(mode) });
-      expect(groups.map((group) => group.label)).toEqual(["root", "java", "account_approval"]);
+      expect(groups.map((group) => group.label)).toEqual(["root", "web", "api"]);
     }
   });
 
@@ -182,10 +180,10 @@ describe("buildProjectGroups", () => {
 
   it("groups checkouts of one monorepo workspace across environments", () => {
     const projects = [
-      makeProject("local", "/work/t3code/java", {
+      makeProject("local", "/work/t3code/apps/web", {
         repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/t3code" },
       }),
-      makeProject("remote", "/srv/t3code/java", {
+      makeProject("remote", "/srv/t3code/apps/web", {
         environmentId: EnvironmentId.make("remote-environment"),
         repositoryIdentity: { ...repositoryIdentity, rootPath: "/srv/t3code" },
       }),
