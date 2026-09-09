@@ -68,6 +68,32 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
         data: { input: { queries: item.patterns } },
       });
     case "dynamic_tool": {
+      const ideToolName = item.toolName
+        ?.split(/[./]|__/u)
+        .at(-1)
+        ?.toLowerCase();
+      if (ideToolName === "ide_reformat_code") {
+        const output = asRecord(item.output);
+        let result = asRecord(output?.structuredContent);
+        if (result === null && Array.isArray(output?.content)) {
+          for (const block of output.content) {
+            const text = asRecord(block)?.text;
+            if (typeof text !== "string") continue;
+            try {
+              result = asRecord(JSON.parse(text));
+            } catch {
+              continue;
+            }
+            if (result !== null) break;
+          }
+        }
+        const message = typeof result?.message === "string" ? result.message.trim() : "";
+        if (message)
+          return {
+            summary: item.title?.trim() || "IDE reformat code",
+            detail: message.replace(/\s+/gu, " ").slice(0, 240),
+          };
+      }
       if (
         item.toolName
           ?.split(/[./]|__/u)

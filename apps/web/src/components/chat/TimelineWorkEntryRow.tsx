@@ -358,13 +358,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     "flex size-4 items-center justify-center",
     showWarningIndicator
       ? "text-warning"
-      : showDestructiveRowStyle
-        ? "text-destructive"
-        : showFailedIndicator
-          ? failedToolIconClassName
-          : workEntry.tone === "tool"
-            ? "text-icon-muted"
-            : iconConfig.className,
+      : workEntry.toolLifecycleStatus === "inProgress"
+        ? "text-sky-500 dark:text-sky-300/80"
+        : showDestructiveRowStyle
+          ? "text-destructive"
+          : showFailedIndicator
+            ? failedToolIconClassName
+            : workEntry.tone === "tool"
+              ? "text-icon-muted"
+              : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
@@ -373,13 +375,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";
+  const showRunningIndicator = workEntry.toolLifecycleStatus === "inProgress";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
     .join(": ");
   const accessibleDisplayText = showFailedIndicator
     ? `${accessiblePreview}, tool call failed`
-    : accessiblePreview;
+    : showRunningIndicator
+      ? `${accessiblePreview}, tool call running`
+      : accessiblePreview;
   const rowToggleProps = canExpandProjectedItem
     ? {
         role: "button" as const,
@@ -404,8 +409,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       icon={
         <span
           className={iconWrapperClass}
-          role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          role={showFailedIndicator || showRunningIndicator ? "img" : undefined}
+          aria-label={
+            showFailedIndicator
+              ? "Tool call failed"
+              : showRunningIndicator
+                ? "Tool call running"
+                : undefined
+          }
         >
           <ToolActivityIconView
             icon={entryToolIcon}

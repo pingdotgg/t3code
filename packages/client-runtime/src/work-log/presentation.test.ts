@@ -64,6 +64,31 @@ describe("turnItemToolActivityPresentation", () => {
       });
     }
   });
+  it("presents IDE reformat result messages from structured or text output", () => {
+    const {
+      type: _type,
+      input: _input,
+      exitCode: _exitCode,
+      ...base
+    } = commandItem() as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
+    for (const output of [
+      { structuredContent: { message: "Reformatted src/main.ts" } },
+      { content: [{ type: "text", text: '{"message":"Reformatted src/main.ts"}' }] },
+    ]) {
+      expect(
+        turnItemToolActivityPresentation({
+          ...base,
+          type: "dynamic_tool",
+          toolName: "ide_reformat_code",
+          input: {},
+          output,
+        }),
+      ).toEqual({
+        summary: "IDE reformat code",
+        detail: "Reformatted src/main.ts",
+      });
+    }
+  });
   it("keeps the command while its V2 item moves from running to failed", () => {
     expect(turnItemToolActivityPresentation(commandItem({ status: "running" }))).toEqual({
       summary: "Running command",
