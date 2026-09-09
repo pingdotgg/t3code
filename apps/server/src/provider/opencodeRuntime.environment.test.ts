@@ -139,8 +139,11 @@ describe("verifyOpenCodeServerVersion", () => {
       expect(error).toBeInstanceOf(OpenCodeRuntimeError);
       expect(error.category).toBe("http");
       expect(error.status).toBe(401);
-      expect(error.detail).toContain("status=401");
-      expect(error.detail).toContain("Unauthorized");
+      expect(error.detail).toBe("OpenCode global.health failed with HTTP 401.");
+      expect(error.cause).toEqual({
+        response: { status: 401 },
+        error: { message: "Unauthorized" },
+      });
     }),
   );
 

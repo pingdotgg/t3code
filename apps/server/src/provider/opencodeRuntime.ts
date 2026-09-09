@@ -175,7 +175,10 @@ export const runOpenCodeSdk = <A>(
       return new OpenCodeRuntimeError({
         operation,
         ...(status !== undefined ? { category: "http" as const, status } : {}),
-        detail: openCodeRuntimeErrorDetail(cause),
+        detail:
+          status === undefined
+            ? `OpenCode ${operation} failed.`
+            : `OpenCode ${operation} failed with HTTP ${status}.`,
         cause,
       });
     },
