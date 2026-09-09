@@ -1,7 +1,11 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
-import { resolveMarkdownLinkPresentation, type MarkdownFileIcon } from "./markdownLinks";
+import {
+  resolveMarkdownInlineCodePresentation,
+  resolveMarkdownLinkPresentation,
+  type MarkdownFileIcon,
+} from "./markdownLinks";
 
 export interface NativeMarkdownTextRun {
   readonly text: string;
@@ -191,7 +195,8 @@ function appendRun(
   return runs;
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
@@ -283,8 +288,17 @@ function appendNode(
       return appendRun(runs, textNodeContent(nodeTextContent(node)), context);
     case "html_inline":
       return appendRun(runs, inlineHtmlText(nodeTextContent(node)), context);
-    case "code_inline":
-      return appendRun(runs, nodeTextContent(node), { ...context, code: true });
+    case "code_inline": {
+      const content = nodeTextContent(node);
+      const presentation = context.href ? null : resolveMarkdownInlineCodePresentation(content);
+      return presentation
+        ? appendRun(runs, presentation.label, {
+            ...context,
+            href: presentation.href,
+            fileIcon: presentation.icon,
+          })
+        : appendRun(runs, content, { ...context, code: true });
+    }
     case "soft_break":
       return appendRun(runs, " ", context);
     case "line_break":

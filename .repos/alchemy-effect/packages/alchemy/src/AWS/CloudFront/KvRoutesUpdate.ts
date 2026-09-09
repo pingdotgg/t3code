@@ -11,6 +11,7 @@ import {
   extractValue,
   getKvsEtag,
   isKvsPreconditionFailed,
+  cappedKvsRetrySchedule,
   retryForKvsReadiness,
   withKvsRegionFn,
 } from "./common.ts";
@@ -56,9 +57,8 @@ export interface KvRoutesUpdate extends Resource<
  *
  * The routes array is stored at key `{namespace}:{key}` and supports automatic
  * chunking when the serialized array exceeds 1000 characters.
- * @resource
- * @section Managing Routes
- * @example Add A Route Entry
+ * ### Managing Routes
+ * **Example:** Add A Route Entry
  * ```typescript
  * const update = yield* KvRoutesUpdate("MyRoute", {
  *   store: store.keyValueStoreArn,
@@ -67,6 +67,8 @@ export interface KvRoutesUpdate extends Resource<
  *   entry: "site,mysite,*,/",
  * });
  * ```
+ *
+ * @resource
  */
 export const KvRoutesUpdate = Resource<KvRoutesUpdate>(
   "AWS.CloudFront.KvRoutesUpdate",
@@ -199,10 +201,7 @@ export const KvRoutesUpdateProvider = () =>
             while: (error) =>
               error._tag === "ValidationException" &&
               isKvsPreconditionFailed(error),
-            schedule: Schedule.max([
-              Schedule.exponential("100 millis"),
-              Schedule.recurs(24),
-            ]),
+            schedule: cappedKvsRetrySchedule,
           }),
         );
 
@@ -232,10 +231,7 @@ export const KvRoutesUpdateProvider = () =>
             while: (error) =>
               error._tag === "ValidationException" &&
               isKvsPreconditionFailed(error),
-            schedule: Schedule.max([
-              Schedule.exponential("100 millis"),
-              Schedule.recurs(24),
-            ]),
+            schedule: cappedKvsRetrySchedule,
           }),
         );
 

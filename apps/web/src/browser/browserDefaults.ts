@@ -13,10 +13,13 @@
  *
  * @module browserDefaults
  */
-import type {
-  DesktopPreviewTabDefaults,
-  PreviewAppearancePreference,
-  PreviewViewportSetting,
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  resolveBrowserProfiles,
+  type BrowserProfile,
+  type DesktopPreviewTabDefaults,
+  type PreviewAppearancePreference,
+  type PreviewViewportSetting,
 } from "@t3tools/contracts";
 
 import {
@@ -32,6 +35,8 @@ export interface BrowserDefaults {
   readonly zoomFactor: number;
   readonly appearance: PreviewAppearancePreference;
   readonly autoShowFloatingPreview: boolean;
+  readonly profiles: ReadonlyArray<BrowserProfile>;
+  readonly profileId: string;
 }
 
 const toBrowserDefaults = (settings: {
@@ -39,12 +44,29 @@ const toBrowserDefaults = (settings: {
   readonly browserDefaultZoomFactor: number;
   readonly browserDefaultAppearance: PreviewAppearancePreference;
   readonly browserAutoShowFloatingPreview: boolean;
-}): BrowserDefaults => ({
-  viewport: settings.browserDefaultViewport,
-  zoomFactor: settings.browserDefaultZoomFactor,
-  appearance: settings.browserDefaultAppearance,
-  autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
-});
+  readonly browserProfiles: ReadonlyArray<BrowserProfile>;
+  readonly browserDefaultProfileId: string;
+}): BrowserDefaults => {
+  const profiles = resolveBrowserProfiles(settings.browserProfiles);
+  return {
+    viewport: settings.browserDefaultViewport,
+    zoomFactor: settings.browserDefaultZoomFactor,
+    appearance: settings.browserDefaultAppearance,
+    autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
+    profiles,
+    // A default pointing at a deleted profile falls back rather than opening
+    // tabs into a partition with no profile behind it.
+    // Incognito is a per-tab choice, not a default: a profile that discards
+    // everything on close would leave every new tab signed out. Excluding it
+    // here keeps the resolved default equal to what the settings list offers,
+    // so the row badged "Default" is the one tabs actually open under.
+    profileId:
+      profiles.find(
+        (profile) =>
+          profile.id === settings.browserDefaultProfileId && profile.kind !== "incognito",
+      )?.id ?? DEFAULT_BROWSER_PROFILE_ID,
+  };
+};
 
 /** Non-hook accessor for imperative open paths (menu actions, automation hosts). */
 export function getBrowserDefaults(): BrowserDefaults {
@@ -57,6 +79,7 @@ export function getBrowserDefaults(): BrowserDefaults {
  * Opening a preview is asynchronous anyway, and before hydration the snapshot
  * is the schema defaults rather than the user's — a tab opened in that window
  * would be born at the wrong viewport, zoom and appearance and never corrected.
+ * Read failures reject so a new tab cannot use the wrong profile or viewport.
  */
 export async function resolveBrowserDefaults(): Promise<BrowserDefaults> {
   await ensureClientSettingsHydrated();
@@ -87,6 +110,13 @@ export function browserDefaultOpenViewport(
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): PreviewViewportSetting {
   return defaults.viewport;
+}
+
+/** Profile a tab opens under when the caller doesn't name one. */
+export function browserDefaultOpenProfileId(
+  defaults: BrowserDefaults = getBrowserDefaults(),
+): string {
+  return defaults.profileId;
 }
 
 /**

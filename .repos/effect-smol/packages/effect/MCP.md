@@ -12,7 +12,7 @@ Here is an example of a MCP server implementation:
 import { NodeRuntime, NodeSink, NodeStream } from "@effect/platform-node"
 import { Effect, Layer, Logger } from "effect"
 import { Schema } from "effect/schema"
-import { McpServer, Tool, Toolkit } from "effect/unstable/ai"
+import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai"
 
 // Define a simple tool
 const DemoTool = Tool.make("DemoTool", {
@@ -58,6 +58,7 @@ const ServerLayer = Layer.mergeAll(
     McpServer.layerStdio({
       name: "Demo MCP Server",
       version: "1.0.0",
+      protocols: [McpProtocol.v2025_06_18],
       stdin: NodeStream.stdin,
       stdout: NodeSink.stdout
     })
@@ -78,8 +79,14 @@ The server exposes three main parts:
 
 The part layers are merged into one layer that has a MCP server implementation as dependency.
 `McpServer.layerStdio` is used to create a standard I/O–based MCP server identified by its name and
-version. Because of the layer architecture the server implementation can be easily exchanged with an
-HTTP based implementation with `McpServer.layerHttp`. Finally, a logging layer is added with
+version. Its ordered, non-empty `protocols` declaration names implemented protocol adapters rather
+than arbitrary version strings. This release supports `McpProtocol.v2024_11_05`,
+`McpProtocol.v2025_03_26`, and `McpProtocol.v2025_06_18`. The `v2024_11_05` adapter implements that
+revision's RPC schemas and stdio framing, including its batch policy. It does not implement the
+historical two-endpoint HTTP+SSE transport. `McpServer.layerHttp` instead offers the 2024 RPC schema
+through the same single-endpoint HTTP compatibility transport used by the 2025 adapters. Because of
+the layer architecture the server implementation can be easily exchanged with this HTTP-based
+implementation. Finally, a logging layer is added with
 `Logger.layer([Logger.consolePretty({ stderr: true })])`, ensuring logs are written to `stderr`.
 This is essential when using stdio, as any output to `stdout` would interfere with the protocol
 communication.
@@ -238,7 +245,7 @@ Here's a complete, copy/pastable MCP server example that combines all the concep
 ```typescript
 import { NodeRuntime, NodeStdio } from "@effect/platform-node"
 import { Effect, Layer, Logger, Schema } from "effect"
-import { McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai"
+import { McpProtocol, McpSchema, McpServer, Tool, Toolkit } from "effect/unstable/ai"
 
 // Define tools
 const GreetTool = Tool.make("GreetTool", {
@@ -357,7 +364,8 @@ const ServerLayer = Layer.mergeAll(
   Layer.provide(
     McpServer.layerStdio({
       name: "Demo MCP Server",
-      version: "1.0.0"
+      version: "1.0.0",
+      protocols: [McpProtocol.v2025_06_18]
     })
   ),
   Layer.provide(NodeStdio.layer),

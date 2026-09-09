@@ -60,7 +60,7 @@ export type TypeId = "~@effect/sql-pglite/PgliteClient"
 /**
  * PGlite-backed PostgreSQL client service, extending `SqlClient` with access to the PGlite instance, JSON fragments, LISTEN/NOTIFY, data directory dumps, and array type refresh.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface PgliteClient extends Client.SqlClient {
@@ -436,13 +436,13 @@ const escapeLiteral = (value: string) => `'${value.replace(/'/g, "''")}'`
 /**
  * PGlite-specific custom statement fragments supported by the compiler, currently JSON parameter fragments.
  *
- * @category custom types
+ * @category models
  * @since 4.0.0
  */
 export type PgCustom = PgJson
 
 /**
- * @category custom types
+ * @category models
  * @since 4.0.0
  */
 interface PgJson extends Custom<"PgJson", unknown> {}

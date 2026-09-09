@@ -8,9 +8,18 @@ This document covers the unified release workflow for stable and nightly desktop
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - push tag matching `v*.*.*` for stable releases
-  - scheduled nightly check every three hours
-  - manual `workflow_dispatch` for either channel
+  - manual `workflow_dispatch` with `channel=stable`, the normal way to ship stable
+  - push tag matching `v*.*.*` for a stable release of an explicit commit
+  - scheduled nightly check every 30 minutes
+  - manual `workflow_dispatch` with `channel=nightly`
+- A manual stable release builds the commit of the latest published nightly, not `main` HEAD.
+  Nightly is the release candidate: verify the nightly, then promote it. Merges to `main` keep
+  landing while you verify and never leak into the stable build.
+  - The version defaults to the one the nightly previewed (`0.0.39-nightly.*` ships as `0.0.39`).
+    Pass the `version` input to override it, for example for a minor bump.
+  - The stable tag is created on the nightly's commit when the GitHub Release is published.
+  - Pushing a `vX.Y.Z` tag by hand still works and builds exactly the tagged commit. Use it when
+    the commit to ship is not the latest nightly, such as a cherry-picked fix on a release branch.
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
 - Builds four artifacts in parallel for both channels:
@@ -102,6 +111,17 @@ Developers deploy personal stages locally rather than through pull-request autom
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
 
+## Marketing site deployment
+
+After a nightly release is published, the release workflow deploys the same commit
+to the marketing site's Vercel production project. Stable releases do not deploy
+the marketing site because they can promote an older nightly commit.
+
+The job looks up the `t3code-marketing` project using the existing `VERCEL_TOKEN`
+and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
+variable. The Vercel project's root directory must be `apps/marketing`.
+Git deployments remain disabled in `apps/marketing/vercel.ts`.
+
 ## Hosted web app release deployment
 
 The hosted app is intentionally not deployed by Vercel's Git integration. The
@@ -158,8 +178,10 @@ One-time Vercel dashboard setup:
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - scheduled check every three hours
+  - scheduled check every 30 minutes
   - manual `workflow_dispatch` with `channel=nightly`
+- Automatic nightlies require new commits and at least six hours since the last nightly was published, including manual nightlies.
+- Manual nightlies bypass the time and change checks. Nightly runs remain serialized. Scheduled runs wait for an active nightly to finish, then check the publication gap before building.
 - Runs the same desktop quality gates and artifact matrix as the tagged release flow.
 - Publishes a GitHub prerelease only:
   - current tag format: `vX.Y.Z-nightly.YYYYMMDD.<run_number>`
@@ -222,10 +244,17 @@ Windows packages the bundled server and only its runtime-external/native
 dependency closure in `resources/server.asar`. Native modules and helper
 executables declared as unpacked by that archive must be present at the matching
 paths below `resources/server.asar.unpacked`. The Windows-native backend reads
-the archive in place through Electron. WSL cannot read ASAR files, so enabling
-the WSL backend extracts the server tree once into the desktop state directory
-under `wsl-server-tree/<version>` and reuses the completed version until the app
-is updated.
+the archive in place through Electron. Packaged Windows builds also ship a
+Linux-only `resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar. WSL verifies
+and extracts that archive into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside
+the selected distro, then reuses it for later launches of the same update. The
+Windows-side `wsl-server-tree/<version>` extraction remains a fallback and is
+removed after the distro-local runtime passes preflight.
+
+Windows keeps JavaScript and package metadata inside `app.asar` and unpacks only
+native libraries and helper executables. Avoid enabling whole-package smart
+unpacking: each loose file adds work to NSIS installation and counts against
+the payload limit.
 
 The artifact builder rejects a Windows package when any of these invariants
 break:
@@ -236,6 +265,11 @@ break:
 - On same-architecture Windows builds, the packaged primary cannot load the fff
   native library from inside `server.asar` through its `.unpacked` sibling.
 - The isolated, extracted sidecar cannot load the server entry with plain Node.
+- A Windows build with a WSL node-pty prebuild omits the WSL archive or SHA-256
+  sidecar, the sidecar digest does not match the emitted archive, or required
+  Linux runtime members are absent.
+- The emitted WSL archive contains Windows/Darwin node-pty payloads, ConPTY,
+  pnpm install metadata, or Windows-only FFF, ffi-rs, or msgpackr bindings.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 
@@ -279,11 +313,11 @@ to validate the workflow.
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
 validate checks and builds without shipping. To exercise the complete release graph at lower stable
 risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, and hosted nightly alias, but it does not update stable aliases or
+prerelease, desktop updater release, hosted nightly alias, and marketing site, but it does not update stable app aliases or
 commit a version bump to `main`. Only run it when a real nightly release is acceptable.
 
-Manual `channel=stable` with a version input is also a real stable-channel release. Omitting signing
-secrets only makes platform artifacts unsigned; it does not prevent publication.
+Manual `channel=stable` is also a real stable-channel release. Omitting signing secrets only makes
+platform artifacts unsigned; it does not prevent publication.
 
 ## 2) Apple signing + notarization setup (macOS)
 
@@ -322,7 +356,7 @@ Checklist:
    - `APPLE_API_KEY`: contents of the downloaded `.p8`
    - `APPLE_API_KEY_ID`: Key ID
    - `APPLE_API_ISSUER`: Issuer ID
-10. Complete the Clerk Native API and AASA setup in [T3 Connect Clerk Setup](../internals/t3-connect.md#desktop-passkeys).
+10. Complete the Clerk Native API and AASA setup in [T3 Connect setup](./connect-setup.md#desktop-passkeys).
 11. Re-run a tag release and confirm macOS artifacts are signed/notarized and contain the expected
     `com.apple.developer.associated-domains` entitlement.
 
@@ -361,17 +395,19 @@ Checklist:
 
 ## 4) Ongoing release checklist
 
-1. Ensure `main` is green in CI.
-2. Bump app version as needed.
-3. Create release tag: `vX.Y.Z`.
-4. Push tag.
-5. Verify workflow steps:
+1. Pick the latest nightly and verify it: run the smoke test above against its artifacts and
+   check the nightly channel for regressions.
+2. Dispatch the Release workflow with `channel=stable`. Leave `version` empty unless the version
+   should differ from the one the nightly previewed.
+3. Confirm the `Resolve release commit` notice names the nightly tag and commit you verified. If a
+   newer nightly published in between, the run builds that one instead.
+4. Verify workflow steps:
    - preflight passes
    - release quality checks pass
    - all matrix builds pass
    - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files
-6. Smoke test downloaded artifacts.
+5. Smoke test downloaded artifacts.
 
 ## 5) Troubleshooting
 

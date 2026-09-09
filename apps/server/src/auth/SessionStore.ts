@@ -21,11 +21,13 @@ import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
+  resolveLegacySessionCookieName,
   resolveSessionCookieName,
   signPayload,
   timingSafeEqualBase64Url,
@@ -62,7 +64,7 @@ export type SessionCredentialChange =
       readonly sessionId: AuthSessionId;
     };
 
-export class MalformedSessionTokenError extends Schema.TaggedErrorClass<MalformedSessionTokenError>()(
+export class MalformedSessionTokenError extends Schema.TaggedError<MalformedSessionTokenError>()(
   "MalformedSessionTokenError",
   {},
 ) {
@@ -71,7 +73,7 @@ export class MalformedSessionTokenError extends Schema.TaggedErrorClass<Malforme
   }
 }
 
-export class InvalidSessionTokenSignatureError extends Schema.TaggedErrorClass<InvalidSessionTokenSignatureError>()(
+export class InvalidSessionTokenSignatureError extends Schema.TaggedError<InvalidSessionTokenSignatureError>()(
   "InvalidSessionTokenSignatureError",
   {},
 ) {
@@ -80,7 +82,7 @@ export class InvalidSessionTokenSignatureError extends Schema.TaggedErrorClass<I
   }
 }
 
-export class InvalidSessionTokenPayloadError extends Schema.TaggedErrorClass<InvalidSessionTokenPayloadError>()(
+export class InvalidSessionTokenPayloadError extends Schema.TaggedError<InvalidSessionTokenPayloadError>()(
   "InvalidSessionTokenPayloadError",
   {
     cause: Schema.Defect(),
@@ -91,7 +93,7 @@ export class InvalidSessionTokenPayloadError extends Schema.TaggedErrorClass<Inv
   }
 }
 
-export class SessionTokenExpiredError extends Schema.TaggedErrorClass<SessionTokenExpiredError>()(
+export class SessionTokenExpiredError extends Schema.TaggedError<SessionTokenExpiredError>()(
   "SessionTokenExpiredError",
   {
     sessionId: AuthSessionId,
@@ -104,7 +106,7 @@ export class SessionTokenExpiredError extends Schema.TaggedErrorClass<SessionTok
   }
 }
 
-export class UnknownSessionTokenError extends Schema.TaggedErrorClass<UnknownSessionTokenError>()(
+export class UnknownSessionTokenError extends Schema.TaggedError<UnknownSessionTokenError>()(
   "UnknownSessionTokenError",
   {
     sessionId: AuthSessionId,
@@ -115,7 +117,7 @@ export class UnknownSessionTokenError extends Schema.TaggedErrorClass<UnknownSes
   }
 }
 
-export class SessionTokenRevokedError extends Schema.TaggedErrorClass<SessionTokenRevokedError>()(
+export class SessionTokenRevokedError extends Schema.TaggedError<SessionTokenRevokedError>()(
   "SessionTokenRevokedError",
   {
     sessionId: AuthSessionId,
@@ -127,7 +129,7 @@ export class SessionTokenRevokedError extends Schema.TaggedErrorClass<SessionTok
   }
 }
 
-export class InvalidSessionExpirationClaimError extends Schema.TaggedErrorClass<InvalidSessionExpirationClaimError>()(
+export class InvalidSessionExpirationClaimError extends Schema.TaggedError<InvalidSessionExpirationClaimError>()(
   "InvalidSessionExpirationClaimError",
   {
     sessionId: AuthSessionId,
@@ -139,7 +141,7 @@ export class InvalidSessionExpirationClaimError extends Schema.TaggedErrorClass<
   }
 }
 
-export class MalformedWebSocketTokenError extends Schema.TaggedErrorClass<MalformedWebSocketTokenError>()(
+export class MalformedWebSocketTokenError extends Schema.TaggedError<MalformedWebSocketTokenError>()(
   "MalformedWebSocketTokenError",
   {},
 ) {
@@ -148,7 +150,7 @@ export class MalformedWebSocketTokenError extends Schema.TaggedErrorClass<Malfor
   }
 }
 
-export class InvalidWebSocketTokenSignatureError extends Schema.TaggedErrorClass<InvalidWebSocketTokenSignatureError>()(
+export class InvalidWebSocketTokenSignatureError extends Schema.TaggedError<InvalidWebSocketTokenSignatureError>()(
   "InvalidWebSocketTokenSignatureError",
   {},
 ) {
@@ -157,7 +159,7 @@ export class InvalidWebSocketTokenSignatureError extends Schema.TaggedErrorClass
   }
 }
 
-export class InvalidWebSocketTokenPayloadError extends Schema.TaggedErrorClass<InvalidWebSocketTokenPayloadError>()(
+export class InvalidWebSocketTokenPayloadError extends Schema.TaggedError<InvalidWebSocketTokenPayloadError>()(
   "InvalidWebSocketTokenPayloadError",
   {
     cause: Schema.Defect(),
@@ -168,7 +170,7 @@ export class InvalidWebSocketTokenPayloadError extends Schema.TaggedErrorClass<I
   }
 }
 
-export class WebSocketTokenExpiredError extends Schema.TaggedErrorClass<WebSocketTokenExpiredError>()(
+export class WebSocketTokenExpiredError extends Schema.TaggedError<WebSocketTokenExpiredError>()(
   "WebSocketTokenExpiredError",
   {
     sessionId: AuthSessionId,
@@ -181,7 +183,7 @@ export class WebSocketTokenExpiredError extends Schema.TaggedErrorClass<WebSocke
   }
 }
 
-export class UnknownWebSocketSessionError extends Schema.TaggedErrorClass<UnknownWebSocketSessionError>()(
+export class UnknownWebSocketSessionError extends Schema.TaggedError<UnknownWebSocketSessionError>()(
   "UnknownWebSocketSessionError",
   {
     sessionId: AuthSessionId,
@@ -192,7 +194,7 @@ export class UnknownWebSocketSessionError extends Schema.TaggedErrorClass<Unknow
   }
 }
 
-export class WebSocketSessionExpiredError extends Schema.TaggedErrorClass<WebSocketSessionExpiredError>()(
+export class WebSocketSessionExpiredError extends Schema.TaggedError<WebSocketSessionExpiredError>()(
   "WebSocketSessionExpiredError",
   {
     sessionId: AuthSessionId,
@@ -205,7 +207,7 @@ export class WebSocketSessionExpiredError extends Schema.TaggedErrorClass<WebSoc
   }
 }
 
-export class WebSocketSessionRevokedError extends Schema.TaggedErrorClass<WebSocketSessionRevokedError>()(
+export class WebSocketSessionRevokedError extends Schema.TaggedError<WebSocketSessionRevokedError>()(
   "WebSocketSessionRevokedError",
   {
     sessionId: AuthSessionId,
@@ -240,7 +242,7 @@ const sessionCredentialInternalErrorContext = {
   cause: Schema.Defect(),
 };
 
-export class SessionClaimsEncodingError extends Schema.TaggedErrorClass<SessionClaimsEncodingError>()(
+export class SessionClaimsEncodingError extends Schema.TaggedError<SessionClaimsEncodingError>()(
   "SessionClaimsEncodingError",
   {
     sessionId: AuthSessionId,
@@ -253,7 +255,7 @@ export class SessionClaimsEncodingError extends Schema.TaggedErrorClass<SessionC
   }
 }
 
-export class SessionCredentialIssueError extends Schema.TaggedErrorClass<SessionCredentialIssueError>()(
+export class SessionCredentialIssueError extends Schema.TaggedError<SessionCredentialIssueError>()(
   "SessionCredentialIssueError",
   {
     sessionId: Schema.optional(AuthSessionId),
@@ -265,7 +267,7 @@ export class SessionCredentialIssueError extends Schema.TaggedErrorClass<Session
   }
 }
 
-export class SessionCredentialVerificationError extends Schema.TaggedErrorClass<SessionCredentialVerificationError>()(
+export class SessionCredentialVerificationError extends Schema.TaggedError<SessionCredentialVerificationError>()(
   "SessionCredentialVerificationError",
   {
     sessionId: AuthSessionId,
@@ -277,7 +279,7 @@ export class SessionCredentialVerificationError extends Schema.TaggedErrorClass<
   }
 }
 
-export class WebSocketTokenIssueError extends Schema.TaggedErrorClass<WebSocketTokenIssueError>()(
+export class WebSocketTokenIssueError extends Schema.TaggedError<WebSocketTokenIssueError>()(
   "WebSocketTokenIssueError",
   {
     sessionId: AuthSessionId,
@@ -289,7 +291,7 @@ export class WebSocketTokenIssueError extends Schema.TaggedErrorClass<WebSocketT
   }
 }
 
-export class WebSocketTokenVerificationError extends Schema.TaggedErrorClass<WebSocketTokenVerificationError>()(
+export class WebSocketTokenVerificationError extends Schema.TaggedError<WebSocketTokenVerificationError>()(
   "WebSocketTokenVerificationError",
   {
     sessionId: AuthSessionId,
@@ -301,7 +303,7 @@ export class WebSocketTokenVerificationError extends Schema.TaggedErrorClass<Web
   }
 }
 
-export class ActiveSessionsListError extends Schema.TaggedErrorClass<ActiveSessionsListError>()(
+export class ActiveSessionsListError extends Schema.TaggedError<ActiveSessionsListError>()(
   "ActiveSessionsListError",
   {
     ...sessionCredentialInternalErrorContext,
@@ -312,7 +314,7 @@ export class ActiveSessionsListError extends Schema.TaggedErrorClass<ActiveSessi
   }
 }
 
-export class SessionRevocationError extends Schema.TaggedErrorClass<SessionRevocationError>()(
+export class SessionRevocationError extends Schema.TaggedError<SessionRevocationError>()(
   "SessionRevocationError",
   {
     sessionId: AuthSessionId,
@@ -324,7 +326,7 @@ export class SessionRevocationError extends Schema.TaggedErrorClass<SessionRevoc
   }
 }
 
-export class OtherSessionsRevocationError extends Schema.TaggedErrorClass<OtherSessionsRevocationError>()(
+export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessionsRevocationError>()(
   "OtherSessionsRevocationError",
   {
     currentSessionId: AuthSessionId,
@@ -347,19 +349,18 @@ export const SessionCredentialInternalError = Schema.Union([
   OtherSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
-export const isSessionCredentialInternalError = Schema.is(SessionCredentialInternalError);
 
 export const SessionCredentialError = Schema.Union([
   SessionCredentialInvalidError,
   SessionCredentialInternalError,
 ]);
 export type SessionCredentialError = typeof SessionCredentialError.Type;
-export const isSessionCredentialError = Schema.is(SessionCredentialError);
 
 export class SessionStore extends Context.Service<
   SessionStore,
   {
     readonly cookieName: string;
+    readonly legacyCookieName: string | undefined;
     readonly issue: (input?: {
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
@@ -367,6 +368,11 @@ export class SessionStore extends Context.Service<
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
+      /**
+       * Atomically revoke active sessions with the same subject and method
+       * before storing this session.
+       */
+      readonly replaceActiveForSubjectAndMethod?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
@@ -470,18 +476,22 @@ function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthCli
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const authSessions = yield* AuthSessions.AuthSessionRepository;
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
-  const connectedSessionsRef = yield* Ref.make(new Map<string, number>());
+  const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
-  const cookieName = resolveSessionCookieName({
+  const cookieInput = {
     mode: serverConfig.mode,
     port: serverConfig.port,
     host: serverConfig.host,
     instanceKey: serverConfig.stateDir,
+    environmentId: yield* serverEnvironment.getEnvironmentId,
     development: serverConfig.devUrl !== undefined,
-  });
+  } as const;
+  const cookieName = resolveSessionCookieName(cookieInput);
+  const legacyCookieName = resolveLegacySessionCookieName(cookieInput);
 
   const emitUpsert = (clientSession: AuthClientSession) =>
     PubSub.publish(changesPubSub, {
@@ -503,6 +513,11 @@ export const make = Effect.gen(function* () {
       }
 
       const connectedSessions = yield* Ref.get(connectedSessionsRef);
+      const connected = connectedSessions.has(row.value.sessionId);
+      const now = yield* DateTime.now;
+      if (!connected && row.value.expiresAt.epochMilliseconds <= now.epochMilliseconds) {
+        return Option.none<AuthClientSession>();
+      }
       return Option.some(
         toAuthClientSession({
           sessionId: row.value.sessionId,
@@ -513,7 +528,7 @@ export const make = Effect.gen(function* () {
           issuedAt: row.value.issuedAt,
           expiresAt: row.value.expiresAt,
           lastConnectedAt: row.value.lastConnectedAt,
-          connected: connectedSessions.has(row.value.sessionId),
+          connected,
         }),
       );
     });
@@ -587,7 +602,7 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
-        Option.isSome(session) ? emitUpsert(session.value) : Effect.void,
+        Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId),
       ),
       Effect.catchCause((cause) =>
         Effect.logError("Failed to publish disconnected-session auth update.").pipe(
@@ -640,24 +655,40 @@ export const make = Effect.gen(function* () {
       );
       const signature = signPayload(encodedPayload, signingSecret);
       const client = input?.client ?? createDefaultClientMetadata();
-      yield* authSessions
-        .create({
-          sessionId,
-          subject: claims.sub,
-          scopes: claims.scopes,
-          method: claims.method,
-          client: {
-            label: client.label ?? null,
-            ipAddress: client.ipAddress ?? null,
-            userAgent: client.userAgent ?? null,
-            deviceType: client.deviceType,
-            os: client.os ?? null,
-            browser: client.browser ?? null,
-          },
-          issuedAt,
-          expiresAt,
-        })
-        .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      const sessionRecord = {
+        sessionId,
+        subject: claims.sub,
+        scopes: claims.scopes,
+        method: claims.method,
+        client: {
+          label: client.label ?? null,
+          ipAddress: client.ipAddress ?? null,
+          userAgent: client.userAgent ?? null,
+          deviceType: client.deviceType,
+          os: client.os ?? null,
+          browser: client.browser ?? null,
+        },
+        issuedAt,
+        expiresAt,
+      } satisfies AuthSessions.CreateAuthSessionInput;
+      const replacedSessionIds = yield* (
+        input?.replaceActiveForSubjectAndMethod
+          ? authSessions.createReplacingActive({ session: sessionRecord, revokedAt: issuedAt })
+          : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
+      ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      if (replacedSessionIds.length > 0) {
+        yield* Ref.update(connectedSessionsRef, (current) => {
+          const next = new Map(current);
+          for (const replacedSessionId of replacedSessionIds) {
+            next.delete(replacedSessionId);
+          }
+          return next;
+        });
+        yield* Effect.forEach(replacedSessionIds, emitRemoved, {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      }
       yield* emitUpsert(
         toAuthClientSession({
           sessionId,
@@ -854,7 +885,10 @@ export const make = Effect.gen(function* () {
     function* () {
       const now = yield* DateTime.now;
       const connectedSessions = yield* Ref.get(connectedSessionsRef);
-      const rows = yield* authSessions.listActive({ now });
+      const rows = yield* authSessions.listActive({
+        now,
+        connectedSessionIds: Array.from(connectedSessions.keys()),
+      });
 
       return rows.map((row) =>
         toAuthClientSession({
@@ -930,6 +964,7 @@ export const make = Effect.gen(function* () {
 
   return SessionStore.of({
     cookieName,
+    legacyCookieName,
     issue,
     verify,
     issueWebSocketToken,

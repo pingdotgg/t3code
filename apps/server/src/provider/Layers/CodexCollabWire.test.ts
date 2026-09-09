@@ -119,6 +119,8 @@ describe("routeCodexChildNotification", () => {
       "turn/completed",
       "thread/status/changed",
       "thread/tokenUsage/updated",
+      "thread/settings/updated",
+      "model/rerouted",
       "item/started",
       "item/completed",
       "thread/closed",
@@ -159,6 +161,8 @@ describe("routeCodexChildNotification", () => {
       "turn/completed",
       "turn/plan/updated",
       "item/plan/delta",
+      "thread/settings/updated",
+      "model/rerouted",
     ]) {
       assert.notEqual(
         routeCodexChildNotification(method),

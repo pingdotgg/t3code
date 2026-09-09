@@ -11,6 +11,43 @@ import {
 } from "@t3tools/mobile-markdown-text/markdown";
 
 describe("nativeMarkdownTextRuns", () => {
+  it("links a path-shaped code span without changing the same path in prose", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          { type: "text", content: "/tmp/frame.png " },
+          { type: "code_inline", content: "/tmp/frame.png" },
+        ],
+      }),
+    ).toEqual([
+      { text: "/tmp/frame.png " },
+      { text: "frame.png", href: "/tmp/frame.png", fileIcon: "image" },
+    ]);
+  });
+
+  it("preserves the destination of a link with a code-formatted label", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "https://example.com/docs",
+            children: [{ type: "code_inline", content: "src/main.ts" }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: "src/main.ts",
+        code: true,
+        href: "https://example.com/docs",
+        externalHost: "example.com",
+      },
+    ]);
+  });
+
   it("preserves inline emphasis and code styles", () => {
     const node: MarkdownNode = {
       type: "paragraph",
@@ -184,6 +221,29 @@ describe("nativeMarkdownDocumentRuns", () => {
         role: "body",
         skillName: "ui",
         skillLabel: "UI",
+      },
+      { text: " for this.", role: "body" },
+    ]);
+  });
+
+  it("decorates known skill references that begin with a digit", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $2spec for this." }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "2spec", displayName: "2Spec" }])).toEqual([
+      { text: "Use ", role: "body" },
+      {
+        text: "$2spec",
+        role: "body",
+        skillName: "2spec",
+        skillLabel: "2Spec",
       },
       { text: " for this.", role: "body" },
     ]);
