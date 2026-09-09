@@ -5,12 +5,20 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { LayersIcon } from "lucide-react";
+import { CheckIcon, GitMergeIcon, LayersIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { Button, InlineButton } from "../ui/button";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Button } from "../ui/button";
+import {
+  Menu,
+  MenuPopup,
+  MenuTrigger,
+  MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuSeparator,
+} from "../ui/menu";
 import {
   Dialog,
   DialogPopup,
@@ -105,12 +113,8 @@ export function PullRequestStackMenu({
           isDraft: layer.isDraft ?? false,
         });
         return (
-          <InlineButton
+          <MenuItem
             key={layer.number}
-            className={cn(
-              "w-full justify-start gap-3 rounded-md p-2 text-left hover:bg-accent",
-              layer.number === reference.number && "bg-accent",
-            )}
             onClick={() => {
               setOpen(false);
               onSelect?.({ ...reference, number: layer.number });
@@ -125,65 +129,61 @@ export function PullRequestStackMenu({
                 #{layer.number} · {layer.headBranch} · {state.label}
               </span>
             </span>
-          </InlineButton>
+            {layer.number === reference.number ? (
+              <CheckIcon aria-hidden className="size-3.5" />
+            ) : null}
+          </MenuItem>
         );
       })}
-      <div className="px-3 py-2 font-mono text-xs text-muted-foreground">↳ {stack.base}</div>
+      <MenuGroupLabel>↳ {stack.base}</MenuGroupLabel>
     </div>
   );
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger
+      <Menu open={open} onOpenChange={setOpen}>
+        <MenuTrigger
           render={
             <Button
-              variant="outline"
+              variant="ghost"
               size="xs"
               aria-label={`Stack ${stack.number}, layer ${position} of ${stack.layers.length}`}
             />
           }
         >
           <LayersIcon aria-hidden className="size-3.5" /> {position}/{stack.layers.length}
-        </PopoverTrigger>
-        <PopoverPopup align="start" className="w-96 max-w-[calc(100vw-2rem)] p-2">
-          <div className="px-3 py-2 text-sm font-medium">Stack #{stack.number}</div>
-          {layers}
+        </MenuTrigger>
+        <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
+          <MenuGroup>
+            <MenuGroupLabel>Stack #{stack.number}</MenuGroupLabel>
+            {layers}
+          </MenuGroup>
           {canMerge || canRebase ? (
-            <div className="flex flex-wrap gap-2 border-t pt-2">
+            <>
+              <MenuSeparator />
               {canMerge ? (
-                <Button
-                  size="sm"
-                  disabled={mergeDisabled}
-                  onClick={() => {
-                    setOpen(false);
-                    setConfirmation("merge");
-                  }}
-                >
+                <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
+                  <GitMergeIcon aria-hidden />
                   Merge stack ({unmerged.length})
-                </Button>
+                </MenuItem>
               ) : null}
               {canRebase ? (
-                <Button
-                  size="sm"
-                  variant="outline"
+                <MenuItem
                   disabled={rebaseDisabled}
-                  onClick={() => {
-                    setOpen(false);
-                    setConfirmation("update-branch");
-                  }}
+                  onClick={() => setConfirmation("update-branch")}
                 >
+                  <RefreshCwIcon aria-hidden />
                   Rebase stack
-                </Button>
+                </MenuItem>
               ) : null}
               {hasClosed || unmerged.some((layer) => layer.isDraft) ? (
-                <p className="px-1 text-xs text-muted-foreground">
+                <p className="px-2 py-1 text-xs text-muted-foreground">
                   Every unmerged layer must be open and ready for review before merging.
                 </p>
               ) : null}
-            </div>
+            </>
           ) : null}
-        </PopoverPopup>
-      </Popover>
+        </MenuPopup>
+      </Menu>
       <Dialog
         open={confirmation !== null}
         onOpenChange={(value) => {

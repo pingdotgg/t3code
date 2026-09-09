@@ -1589,7 +1589,7 @@ export function PullRequestDetailPanel({
           {detail ? (
             <>
               {supportsStackActions && nativeStackQuery.error ? (
-                <Button variant="outline" size="xs" onClick={nativeStackQuery.refresh}>
+                <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
               ) : null}
@@ -1629,7 +1629,7 @@ export function PullRequestDetailPanel({
                     render={
                       <Button
                         size="xs"
-                        variant="outline"
+                        variant="ghost"
                         aria-label={
                           handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
                         }
@@ -1702,7 +1702,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
-                          variant="destructive-outline"
+                          variant="ghost"
                           disabled={handoff !== null}
                           onClick={startResolveConflicts}
                           aria-label={
@@ -1728,6 +1728,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
+                          variant="ghost"
                           disabled={actionPending}
                           onClick={() => void perform("ready")}
                           aria-label="Ready for review"
@@ -1750,6 +1751,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
+                          variant="ghost"
                           disabled={actionPending}
                           onClick={() =>
                             setConfirmation({ open: true, action: "enable-auto-merge" })
@@ -1801,6 +1803,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
+                          variant="ghost"
                           disabled={actionPending}
                           onClick={() => setConfirmation({ open: true, action: "merge" })}
                           aria-label={
