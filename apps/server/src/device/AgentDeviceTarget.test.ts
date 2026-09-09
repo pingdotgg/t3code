@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses.
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
@@ -20,7 +21,13 @@ describe("host-bound agent commands", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-target-" });
+      const temp = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-target-" });
+      const platform = yield* HostProcessPlatform;
+      const dir = path.join(
+        temp,
+        platform === "win32" ? "paths with spaces" : "quotes '\" $HOME `literal`",
+      );
+      yield* fs.makeDirectory(dir);
       const entryPath = path.join(dir, "cli.mjs");
       yield* fs.writeFileString(
         entryPath,
@@ -39,9 +46,9 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
         });
       const invoke = (file: string) =>
         exec(
-          process.execPath,
+          platform === "win32" ? process.execPath : path.join(shim, "agent-device"),
           [
-            path.join(shim, "agent-device-launcher.mjs"),
+            ...(platform === "win32" ? [path.join(shim, "agent-device-launcher.mjs")] : []),
             "snapshot",
             "--config",
             file,

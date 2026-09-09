@@ -765,7 +765,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         if (!ready)
           return yield* new DeviceHostUnavailableError({
             hostId: input.hostId,
-            reason: "Agent device access is disabled.",
+            reason:
+              "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
           });
         const configPath = yield* configureAgent(input.hostId, ready);
         return [

@@ -47,7 +47,10 @@ child.on("exit", code => { process.exitCode = code ?? 1; });
     const script = `@echo off\r\n"${node}" "${launcherPath}" %*\r\n`;
     yield* fs.writeFileString(path.join(shimDir, "agent-device.cmd"), script);
   } else {
-    const script = `#!/bin/sh\nexec "${node}" "${launcherPath}" "$@"\n`;
+    const command = [node, launcherPath]
+      .map((value) => "'" + value.replaceAll("'", "'\"'\"'") + "'")
+      .join(" ");
+    const script = `#!/bin/sh\nexec ${command} "$@"\n`;
     const shimPath = path.join(shimDir, "agent-device");
     yield* fs.writeFileString(shimPath, script);
     yield* fs.chmod(shimPath, 0o755);
