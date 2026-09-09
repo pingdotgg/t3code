@@ -1,10 +1,16 @@
 import { expect, it } from "@effect/vitest";
+import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
-import { runGitHubStackAction } from "./githubStackActions.ts";
+import { runGitHubStackAction as runStackAction } from "./githubStackActions.ts";
+
+const runGitHubStackAction = (
+  execute: GitHubCli.GitHubCli["Service"]["execute"],
+  input: Parameters<typeof runStackAction>[0],
+) => runStackAction(input).pipe(Effect.provide(Layer.mock(GitHubCli.GitHubCli)({ execute })));
 
 const stack = [
   {
@@ -108,7 +114,10 @@ it.effect("polls an accepted merge and reports a later rule rejection", () =>
     );
     yield* TestClock.adjust("1 second");
     const result = yield* Fiber.join(fiber);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "rejected" } });
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "GitHubStackMergeRejectedError" },
+    });
     expect(api.calls[2]).toContain("repos/acme/web/pulls/3/merge-async/operation");
   }),
 );
@@ -123,7 +132,7 @@ it.effect("refuses a changed stack before performing any mutation", () =>
         { number: 3, headSha: "ccc" },
       ],
     }).pipe(Effect.result);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "changed" } });
+    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitHubStackChangedError" } });
     expect(api.calls).toHaveLength(1);
   }),
 );
@@ -162,7 +171,7 @@ it.effect("does not update later layers after a rebase failure", () =>
     );
     expect(result).toMatchObject({
       _tag: "Failure",
-      failure: { reason: "rebase-failed", number: 2, completed: 0 },
+      failure: { _tag: "GitHubStackRebaseFailedError", number: 2, completed: 0 },
     });
   }),
 );
@@ -184,7 +193,10 @@ it.effect("refuses the entire rebase before mutation when a later fork denies wr
       ...input,
       action: "update-branch",
     }).pipe(Effect.result);
-    expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "permission" } });
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "GitHubStackPermissionError" },
+    });
     expect(api.calls).toHaveLength(2);
     expect(api.calls.every((args) => args[0] === "api")).toBe(true);
   }),
@@ -222,7 +234,7 @@ it.effect("bounds polling and reports a still-running merge without claiming suc
     yield* TestClock.adjust("6 minutes");
     expect(yield* Fiber.join(fiber)).toMatchObject({
       _tag: "Failure",
-      failure: { reason: "pending" },
+      failure: { _tag: "GitHubStackMergePendingError" },
     });
     expect(api.calls.length).toBeLessThan(40);
   }),
@@ -237,7 +249,7 @@ it.effect("rejects a push after preflight without rebasing the new revision", ()
     }).pipe(Effect.result);
     expect(result).toMatchObject({
       _tag: "Failure",
-      failure: { reason: "changed", number: 2, completed: 0 },
+      failure: { _tag: "GitHubStackChangedError", number: 2, completed: 0 },
     });
     expect(api.calls).toHaveLength(3);
   }),
@@ -269,7 +281,7 @@ it.effect("keeps earlier progress and stops after a later layer fails", () =>
     }).pipe(Effect.result);
     expect(result).toMatchObject({
       _tag: "Failure",
-      failure: { reason: "rebase-failed", number: 3, completed: 1 },
+      failure: { _tag: "GitHubStackRebaseFailedError", number: 3, completed: 1 },
     });
   }),
 );
@@ -283,7 +295,7 @@ it.effect("reports partial progress when a later head changes during the rebase"
     }).pipe(Effect.result);
     expect(result).toMatchObject({
       _tag: "Failure",
-      failure: { reason: "changed", number: 3, completed: 1 },
+      failure: { _tag: "GitHubStackChangedError", number: 3, completed: 1 },
     });
     if (result._tag === "Failure") {
       expect(result.failure.message).toContain("Earlier updates remain on GitHub");

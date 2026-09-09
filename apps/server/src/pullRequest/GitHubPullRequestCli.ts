@@ -2144,7 +2144,9 @@ export const make = Effect.gen(function* () {
 
     runPullRequestAction: (input) => {
       if (input.stackNumber !== undefined)
-        return runGitHubStackAction(github.execute, { ...input, stackNumber: input.stackNumber });
+        return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
+          Effect.provideService(GitHubCli.GitHubCli, github),
+        );
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
           Effect.flatMap((pullRequestId) =>
