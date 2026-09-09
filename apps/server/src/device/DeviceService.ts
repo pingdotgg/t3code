@@ -157,7 +157,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   configureAgent: (
     hostId: DeviceHostId,
     ready: DeviceHost.DeviceHostAgentReady,
-  ) => Effect.Effect<string, DeviceError> = () => Effect.succeed(""),
+  ) => Effect.Effect<string, DeviceError> = (hostId) =>
+    Effect.fail(
+      new DeviceHostUnavailableError({
+        hostId,
+        reason: "Agent configuration is unavailable in this device service.",
+      }),
+    ),
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
