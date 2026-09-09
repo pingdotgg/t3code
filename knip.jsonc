@@ -22,6 +22,7 @@
         "src/bin.ts!",
         "src/service-launcher.ts!",
         "scripts/cli.ts",
+        "scripts/evaluate-thread-titles.ts",
         "src/provider/testFixtures/*.mjs",
       ],
       // Native msgpack acceleration and the Vite+ web build prerequisite.

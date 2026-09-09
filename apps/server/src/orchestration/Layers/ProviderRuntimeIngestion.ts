@@ -1944,12 +1944,15 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {
-        if (canReplaceThreadTitle(thread.title)) {
+        if (thread.titleState?.source !== "manual" && canReplaceThreadTitle(thread.title)) {
           yield* orchestrationEngine.dispatch({
-            type: "thread.meta.update",
+            type: "thread.title.generate.complete",
             commandId: yield* providerCommandId(event, "thread-meta-update"),
             threadId: thread.id,
             title: event.payload.name,
+            expectedTitle: thread.title,
+            expectedVersion: thread.titleState?.version ?? null,
+            needsRefinement: false,
           });
         }
       }

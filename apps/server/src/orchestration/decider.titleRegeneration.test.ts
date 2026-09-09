@@ -69,4 +69,51 @@ it.layer(NodeServices.layer)("title regeneration decider", (it) => {
       }
     }),
   );
+
+  it.effect("rejects an initial result after a manual rename to the same text", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.title.generate.complete",
+          commandId: CommandId.make("generated"),
+          threadId: ThreadId.make("thread-1"),
+          expectedTitle: "Manual title",
+          expectedVersion: null,
+          title: "Automatic title",
+          needsRefinement: true,
+        },
+        readModel: {
+          ...readModel,
+          threads: readModel.threads.map((thread) => ({
+            ...thread,
+            titleState: {
+              source: "manual" as const,
+              version: CommandId.make("manual"),
+              needsRefinement: false,
+            },
+          })),
+        },
+      });
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.payload).toEqual({ threadId: ThreadId.make("thread-1"), updatedAt: UPDATED_AT });
+    }),
+  );
+
+  it.effect("records manual ownership even when the title text does not change", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.meta.update",
+          commandId: CommandId.make("manual-rename"),
+          threadId: ThreadId.make("thread-1"),
+          title: "Manual title",
+        },
+        readModel,
+      });
+      const event = Array.isArray(result) ? result[0] : result;
+      expect(event.payload).toMatchObject({
+        titleState: { source: "manual", version: "manual-rename", needsRefinement: false },
+      });
+    }),
+  );
 });

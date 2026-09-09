@@ -505,6 +505,7 @@ export function projectEvent(
             ...(payload.activeOrderKey !== undefined
               ? { activeOrderKey: payload.activeOrderKey }
               : {}),
+            ...(payload.titleState !== undefined ? { titleState: payload.titleState } : {}),
             ...(payload.titleRegeneration !== undefined
               ? { titleRegeneration: payload.titleRegeneration }
               : {}),
