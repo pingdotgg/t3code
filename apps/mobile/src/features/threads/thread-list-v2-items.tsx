@@ -361,6 +361,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   /** Provider drivers back to front: earlier owners first, current last.
       Empty when the environment's config has not resolved yet. */
   readonly providerDrivers: ReadonlyArray<string>;
+  /** Account-aware presentation for the current provider owner. */
+  readonly providerInstance: ThreadRowProviderInstance | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -872,14 +874,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
         {props.providerInstance ? (
-          <ProviderInstanceIcon
-            provider={props.providerInstance.driverKind}
-            size={14}
-            displayName={props.providerInstance.displayName}
-            accentColor={props.providerInstance.accentColor}
-            showBadge={props.providerInstance.showBadge}
-            surfaceColor={rowAppearance.providerIconSurfaceColor}
-          />
+          // Earlier owners peek out behind the current provider so a
+          // handed-off thread shows where it has been. The current owner
+          // keeps its account badge so same-driver instances stay distinct.
+          <View className="flex-row items-center">
+            {props.providerDrivers.slice(0, -1).map((driver, index) => (
+              <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
+                <ProviderIcon provider={driver} size={12} />
+              </View>
+            ))}
+            <ProviderInstanceIcon
+              provider={props.providerInstance.driverKind}
+              size={14}
+              displayName={props.providerInstance.displayName}
+              accentColor={props.providerInstance.accentColor}
+              showBadge={props.providerInstance.showBadge}
+              surfaceColor={rowAppearance.providerIconSurfaceColor}
+            />
+          </View>
         ) : null}
       </View>
     </>
