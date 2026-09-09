@@ -1,9 +1,19 @@
+import * as HttpServer from "effect/unstable/http/HttpServer";
+import {
+  RelayClientAuth,
+  RelayClientPrincipal,
+  type RelayClientDeviceRecord,
+} from "@t3tools/contracts/relay";
+import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
+import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as Devices from "../agentActivity/Devices.ts";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -29,6 +39,7 @@ import {
 import {
   RELAY_HTTP_ROUTER_CONFIG,
   RELAY_REQUEST_DEADLINE_MS,
+  clientApi,
   relayCors,
   relayDocsRedirectRoute,
   relayEnvironmentAuthLayer,
@@ -72,6 +83,99 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
   managedEndpointBaseDomain: undefined,
   managedEndpointNamespace: undefined,
 };
+
+describe("device listing compatibility", () => {
+  it.effect("keeps v1 iOS-only while v2 returns every platform for the same account", () => {
+    const iphone: RelayClientDeviceRecord = {
+      deviceId: "iphone",
+      label: "iPhone",
+      platform: "ios",
+      iosMajorVersion: 18,
+      appVersion: "1.0.0",
+      notifications: {
+        enabled: true,
+        notifyOnApproval: true,
+        notifyOnInput: true,
+        notifyOnCompletion: true,
+        notifyOnFailure: true,
+      },
+      liveActivities: { enabled: true },
+      updatedAt: "2026-09-09T00:00:00.000Z",
+    };
+    const android: RelayClientDeviceRecord = {
+      ...iphone,
+      deviceId: "android",
+      label: "Android",
+      platform: "android",
+      iosMajorVersion: null,
+      androidApiLevel: 36,
+    };
+    const handlers = clientApi.pipe(
+      HttpRouter.provideRequest(
+        Layer.mergeAll(
+          Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(RelayDb.RelayTransactions, {}),
+        ),
+      ),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
+          NodeCrypto.layer,
+          Layer.mock(RelayTokens.RelayTokens, { resolveDpopAccessTokenScopes: () => null }),
+          Layer.mock(EnvironmentLinker.EnvironmentLinker, {}),
+          Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+          Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+          Layer.mock(Devices.Devices, {
+            listForUser: ({ userId }) => {
+              expect(userId).toBe("user-1");
+              return Effect.succeed([iphone, android]);
+            },
+          }),
+        ),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(RelayClientAuth, {
+          clientBearer: (effect) =>
+            Effect.provideService(effect, RelayClientPrincipal, {
+              userId: "user-1",
+              token: "test-token",
+            }),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const app = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
+              Layer.provide(handlers),
+              Layer.provide(HttpServer.layerServices),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        (app) => Effect.promise(() => app.dispose()),
+      );
+      for (const [version, devices] of [
+        ["v1", [iphone]],
+        ["v2", [iphone, android]],
+      ] as const) {
+        const response = yield* Effect.promise(() =>
+          app.handler(
+            new Request(`https://relay.example.test/${version}/client/devices`, {
+              headers: { authorization: "Bearer test-token" },
+            }),
+          ),
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(yield* Effect.promise(() => response.json())).toEqual({ devices });
+      }
+    }).pipe(Effect.scoped);
+  });
+});
 
 describe("relay client authentication", () => {
   it.effect("preserves the existing Clerk session JWT path", () =>

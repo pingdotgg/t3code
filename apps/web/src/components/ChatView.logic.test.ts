@@ -1,4 +1,9 @@
 import {
+  recallCheckoutIsRepo,
+  rememberCheckoutIsRepo,
+  threadShellHasStarted,
+} from "./ChatView.logic";
+import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
   type ServerProvider,
@@ -1721,5 +1726,63 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
   it("leaves focus inside a dialog or popup alone", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "dialog" }))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "-popup" }))).toBe(false);
+  });
+});
+
+describe("checkout Git memory", () => {
+  it("answers from the last status seen for the same checkout", () => {
+    rememberCheckoutIsRepo(environmentId, "/repo/plain-folder", false);
+    expect(recallCheckoutIsRepo(environmentId, "/repo/plain-folder")).toBe(false);
+    rememberCheckoutIsRepo(environmentId, "/repo/plain-folder", true);
+    expect(recallCheckoutIsRepo(environmentId, "/repo/plain-folder")).toBe(true);
+  });
+
+  it("does not answer for a checkout it has not seen", () => {
+    expect(recallCheckoutIsRepo(environmentId, "/repo/never-opened")).toBeUndefined();
+    expect(recallCheckoutIsRepo(environmentId, null)).toBeUndefined();
+  });
+
+  it("keeps environments apart", () => {
+    rememberCheckoutIsRepo(environmentId, "/repo/shared-path", false);
+    expect(
+      recallCheckoutIsRepo(EnvironmentId.make("env-other"), "/repo/shared-path"),
+    ).toBeUndefined();
+  });
+
+  it("does not confuse an environment id containing the separator with a path", () => {
+    rememberCheckoutIsRepo(EnvironmentId.make("env"), "a:b", false);
+    expect(recallCheckoutIsRepo(EnvironmentId.make("env:a"), "b")).toBeUndefined();
+  });
+});
+
+describe("threadShellHasStarted", () => {
+  it("counts a thread that has a user message but no latest turn", () => {
+    expect(
+      threadShellHasStarted({ latestRun: null, latestUserMessageAt: now, runtime: null }),
+    ).toBe(true);
+  });
+
+  it("counts a thread with a live runtime and nothing else", () => {
+    expect(
+      threadShellHasStarted({
+        latestRun: null,
+        latestUserMessageAt: null,
+        runtime: {
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "starting",
+          providerName: "codex",
+          activeRunId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("does not count a thread that never sent anything", () => {
+    expect(
+      threadShellHasStarted({ latestRun: null, latestUserMessageAt: null, runtime: null }),
+    ).toBe(false);
+    expect(threadShellHasStarted(null)).toBe(false);
   });
 });

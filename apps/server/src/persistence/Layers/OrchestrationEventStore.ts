@@ -331,11 +331,9 @@ const makeEventStore = Effect.gen(function* () {
     if (normalizedLimit === 0) {
       return Stream.empty;
     }
-    const readPage = (
-      cursor: number,
-      remaining: number,
-    ): Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError> =>
-      Stream.fromEffect(
+    return Stream.paginate(
+      { cursor: sequenceExclusive, remaining: normalizedLimit },
+      ({ cursor, remaining }) =>
         readEventRowsFromSequence({
           sequenceExclusive: cursor,
           limit: Math.min(remaining, READ_PAGE_SIZE),
@@ -355,24 +353,18 @@ const makeEventStore = Effect.gen(function* () {
               ),
             ),
           ),
+          Effect.map((events) => {
+            const last = events.at(-1);
+            const nextRemaining = remaining - events.length;
+            return [
+              events,
+              last === undefined || nextRemaining <= 0
+                ? Option.none()
+                : Option.some({ cursor: last.sequence, remaining: nextRemaining }),
+            ] as const;
+          }),
         ),
-      ).pipe(
-        Stream.flatMap((events) => {
-          if (events.length === 0) {
-            return Stream.empty;
-          }
-          const nextRemaining = remaining - events.length;
-          if (nextRemaining <= 0) {
-            return Stream.fromIterable(events);
-          }
-          return Stream.concat(
-            Stream.fromIterable(events),
-            readPage(events[events.length - 1]!.sequence, nextRemaining),
-          );
-        }),
-      );
-
-    return readPage(sequenceExclusive, normalizedLimit);
+    );
   };
 
   const readApplicationRows = (input: {
@@ -592,28 +584,26 @@ const makeEventStore = Effect.gen(function* () {
     readonly afterSequence: number;
     readonly throughSequence: number;
   }): Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError> => {
-    const loop = (
-      afterSequence: number,
-    ): Stream.Stream<ApplicationStoredEvent, OrchestrationEventStoreError> =>
-      Stream.unwrap(
-        readApplicationEventPage({
-          afterSequence,
-          throughSequence: input.throughSequence,
-          limit: READ_PAGE_SIZE,
-        }).pipe(
-          Stream.runCollect,
-          Effect.map((chunk) => Array.from(chunk)),
-          Effect.map((events) => {
-            if (events.length === 0) return Stream.empty;
-            const current = Stream.fromIterable(events);
-            const last = events.at(-1)?.sequence ?? input.throughSequence;
-            return events.length < READ_PAGE_SIZE || last >= input.throughSequence
-              ? current
-              : Stream.concat(current, loop(last));
-          }),
-        ),
-      );
-    return loop(input.afterSequence);
+    return Stream.paginate(input.afterSequence, (afterSequence) =>
+      readApplicationEventPage({
+        afterSequence,
+        throughSequence: input.throughSequence,
+        limit: READ_PAGE_SIZE,
+      }).pipe(
+        Stream.runCollect,
+        Effect.map((events) => {
+          const last = events.at(-1);
+          return [
+            events,
+            last === undefined ||
+            events.length < READ_PAGE_SIZE ||
+            last.sequence >= input.throughSequence
+              ? Option.none()
+              : Option.some(last.sequence),
+          ] as const;
+        }),
+      ),
+    );
   };
 
   const streamProjectedApplicationEvents: OrchestrationEventStoreShape["streamProjectedApplicationEvents"] =

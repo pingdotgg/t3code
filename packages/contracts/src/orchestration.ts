@@ -23,6 +23,7 @@ import {
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderUserInputAnswers,
+  UserInputAttachments,
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
