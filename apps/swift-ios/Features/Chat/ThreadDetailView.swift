@@ -14,6 +14,7 @@ public struct ThreadDetailView: View {
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
     private let draftStore: FeatureComposerDraftStore
+    private let managesThreadPresentation: Bool
 
     @State private var draft = ""
     @State private var selection: FeatureSelection?
@@ -43,20 +44,22 @@ public struct ThreadDetailView: View {
         thread: FeatureThread,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
-        draftStore: FeatureComposerDraftStore = .shared
+        draftStore: FeatureComposerDraftStore = .shared,
+        managesThreadPresentation: Bool = true
     ) {
         self.model = model
         self.thread = thread
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
         self.draftStore = draftStore
+        self.managesThreadPresentation = managesThreadPresentation
     }
 
     public var body: some View {
         Group {
             if let detail {
                 timeline(detail)
-            } else if isLoading {
+            } else if isOpening {
                 FeatureThreadOpeningView()
             } else {
                 ContentUnavailableView {
@@ -81,9 +84,11 @@ public struct ThreadDetailView: View {
             }
         }
         .task(id: thread.id) {
+            guard managesThreadPresentation else { return }
             isLoading = true
-            _ = await model.detail(for: thread.id, force: true)
-            isLoading = false
+            await model.runThreadPresentation(id: thread.id) {
+                isLoading = false
+            }
         }
         .task(id: thread.id) {
             // A cached thread can already show its composer while the server
@@ -108,7 +113,7 @@ public struct ThreadDetailView: View {
         .onChange(of: threadConnectionState) { _, state in
             if state == .connected,
                case .failed = model.detailLoadStates[thread.id],
-               !isLoading {
+               !isOpening {
                 reloadThread()
             }
         }
@@ -118,7 +123,6 @@ public struct ThreadDetailView: View {
             }
         }
         .onDisappear {
-            model.releaseThread(thread.id)
             persistDraftBeforeLeaving()
         }
         .sheet(item: $toolSurface) { surface in
@@ -264,6 +268,12 @@ public struct ThreadDetailView: View {
         } message: {
             Text(linkedMediaPreviewError ?? "The file could not be opened.")
         }
+    }
+
+    private var isOpening: Bool {
+        if managesThreadPresentation { return isLoading }
+        if case .failed = model.detailLoadStates[thread.id] { return false }
+        return detail == nil || model.detailLoadStates[thread.id] == .loading
     }
 
     private var detail: FeatureThreadDetail? {
@@ -581,10 +591,8 @@ public struct ThreadDetailView: View {
     }
 
     private func reloadThread() {
-        isLoading = true
-        Task {
-            _ = await model.detail(for: thread.id, force: true, fresh: true)
-            isLoading = false
+        if model.refreshThreadPresentation(id: thread.id, onLoaded: { isLoading = false }) {
+            isLoading = true
         }
     }
 
@@ -597,7 +605,7 @@ public struct ThreadDetailView: View {
         ThreadRefreshPresentation.resolve(
             loadState: model.detailLoadStates[thread.id],
             connectionState: threadConnectionState,
-            isOpening: isLoading,
+            isOpening: isOpening,
             syncState: model.threadSyncStates[thread.id]
         )
     }
@@ -717,10 +725,12 @@ public struct ThreadDetailView: View {
                     isSending: isSending,
                     isWorking: detail.thread.state == .working || detail.thread.state == .queued
                         || isCompacting,
+                    stopPhase: model.stopPhase(threadID: thread.id),
+                    onRetryStop: { model.retryCancelTurn(threadID: thread.id) },
                     focused: $composerFocused,
                     onSend: send,
                     onStop: {
-                        Task { await model.cancelTurn(threadID: thread.id) }
+                        model.requestCancelTurn(threadID: thread.id)
                     },
                     pendingApprovals: detail.approvals,
                     pendingUserInputs: detail.userInputs,
@@ -814,12 +824,10 @@ public struct ThreadDetailView: View {
 
     private func timelineMessages(_ messages: [FeatureMessage]) -> [FeatureMessage] {
         guard !feedbackMessages.isEmpty else { return messages }
-        return (messages + feedbackMessages).sorted {
-            if $0.createdAt == $1.createdAt {
-                return $0.id < $1.id
-            }
-            return $0.createdAt < $1.createdAt
-        }
+        return (messages + feedbackMessages).enumerated().sorted {
+            $0.element.createdAt != $1.element.createdAt
+                ? $0.element.createdAt < $1.element.createdAt : $0.offset < $1.offset
+        }.map(\.element)
     }
 
     private var markdownImageContext: MarkdownImageContext? {
@@ -1440,6 +1448,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
         private var currentCodeSizeSteps = 0
+        private var currentLastMessageAt: Date?
         private var currentIsWorking = false
         private var currentIsCompacting = false
         private var currentActiveSubagentCount = 0
@@ -1473,6 +1482,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 if messageID == FeatureTranscriptCollectionView.workingIndicatorID {
                     cell.contentConfiguration = UIHostingConfiguration {
                         FeatureThreadWorkingIndicator(
+                            lastMessageAt: self?.currentLastMessageAt,
                             isCompacting: self?.currentIsCompacting == true,
                             activeSubagentCount: self?.currentActiveSubagentCount ?? 0,
                             backgroundWorkIsActive: self?.currentBackgroundWorkIsActive == true,
@@ -1549,7 +1559,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 || currentCodeSizeSteps != codeSizeSteps
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
-            let workingDetailChanged = currentIsCompacting != isCompacting
+            let lastMessageAt = FeatureMessageAge.lastMessageDate(in: messages)
+            let workingDetailChanged = currentLastMessageAt != lastMessageAt
+                || currentIsCompacting != isCompacting
                 || currentActiveSubagentCount != activeSubagentCount
                 || currentBackgroundWorkIsActive != backgroundWorkIsActive
                 || currentIsMonitoring != isMonitoring
@@ -1575,6 +1587,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
             currentCodeSizeSteps = codeSizeSteps
+            currentLastMessageAt = lastMessageAt
             currentIsWorking = isWorking
             currentIsCompacting = isCompacting
             currentActiveSubagentCount = activeSubagentCount
@@ -1943,6 +1956,7 @@ private struct FeatureLoadEarlierTurnsButton: View {
 }
 
 private struct FeatureThreadWorkingIndicator: View {
+    let lastMessageAt: Date?
     let isCompacting: Bool
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
@@ -1979,7 +1993,9 @@ private struct FeatureThreadWorkingIndicator: View {
                 Text(title)
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.statusRunning)
-                if let detail {
+                if let lastMessageAt {
+                    FeatureMessageAgeView(sentAt: lastMessageAt)
+                } else if let detail {
                     Text(detail)
                         .font(T3Typography.supporting)
                         .foregroundStyle(T3Colors.textTertiary)
@@ -1989,7 +2005,7 @@ private struct FeatureThreadWorkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(detail.map { "\(title). \($0)." } ?? "\(title).")
+
     }
 }
 
@@ -2554,28 +2570,36 @@ struct FeatureMessageView: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle")
                     .foregroundStyle(T3Colors.warning)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(message.text)
-                        .foregroundStyle(T3Colors.textPrimary)
-                        .textSelection(.enabled)
-                    Text(message.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                        .foregroundStyle(T3Colors.textSecondary)
-                }
+                Text(message.text)
+                    .foregroundStyle(T3Colors.textPrimary)
+                    .textSelection(.enabled)
+                Spacer(minLength: 8)
+                FeatureActivityTimestamp(date: message.createdAt)
             }
             .font(T3Typography.supporting)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         } else if message.toolName == "context-compaction" {
-            Label(message.text, systemImage: "arrow.down.right.and.arrow.up.left")
+            HStack(alignment: .top, spacing: 8) {
+                Label(message.text, systemImage: "arrow.down.right.and.arrow.up.left")
+                Spacer(minLength: 8)
+                FeatureActivityTimestamp(date: message.createdAt)
+            }
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 4)
+                .accessibilityElement(children: .combine)
         } else {
-            Text(message.text)
+            HStack(alignment: .top, spacing: 8) {
+                Text(message.text)
+                Spacer(minLength: 8)
+                FeatureActivityTimestamp(date: message.createdAt)
+            }
                 .font(T3Typography.supporting)
                 .foregroundStyle(T3Colors.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .center)
+                .accessibilityElement(children: .combine)
         }
     }
 
@@ -2587,6 +2611,19 @@ struct FeatureMessageView: View {
         return [message.text, attachmentSummary]
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+}
+
+private struct FeatureActivityTimestamp: View {
+    let date: Date
+
+    var body: some View {
+        Text(date, format: Date.FormatStyle(date: .numeric, time: .standard))
+            .font(T3Typography.supporting.monospacedDigit())
+            .foregroundStyle(T3Colors.textSecondary)
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(date.formatted(date: .complete, time: .standard))
     }
 }
 
@@ -2620,6 +2657,7 @@ private struct FeatureWorkLogView: View {
                     Spacer(minLength: 8)
                     Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                         .font(.caption.weight(.semibold))
+                    FeatureActivityTimestamp(date: message.createdAt)
                 }
                 .font(T3Typography.tool.weight(.medium))
                 .foregroundStyle(T3Colors.textSecondary)
