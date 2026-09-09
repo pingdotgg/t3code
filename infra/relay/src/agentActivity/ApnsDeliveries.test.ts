@@ -1862,3 +1862,113 @@ describe("live activity alert decisions", () => {
     ).toBeNull();
   });
 });
+
+describe("queued iOS alert policy", () => {
+  for (const scenario of ["enabled", "muted", "late"] as const) {
+    it.effect(`checks the current policy for a ${scenario} completion`, () => {
+      let sent = 0;
+      const completed = { ...state, phase: "completed" as const };
+      const prefs = JSON.parse(enabledPreferences);
+      if (scenario === "muted") prefs.notifyOnCompletion = false;
+      const payload = makeApnsDeliveryJobPayload({
+        kind: "push_notification",
+        userId: target.user_id,
+        deviceId: target.device_id,
+        token: "push",
+        aggregate: null,
+        notification: {
+          title: "Thread",
+          body: "Done: Project",
+          environmentId: "env",
+          threadId: "thread",
+          deepLink: "/",
+          phase: "completed",
+          updatedAt: completed.updatedAt,
+        },
+        createdAt: completed.updatedAt,
+        expiresAt: "1970-01-01T00:10:00.000Z",
+        jobId: `delivery-policy-${scenario}`,
+      });
+      const signed = signApnsDeliveryJob({ secret: config.apnsDeliveryJobSigningSecret, payload });
+      return Effect.gen(function* () {
+        if (scenario === "late") yield* TestClock.adjust("3 minutes");
+        const d = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* d.processSignedJob(signed);
+        expect(sent).toBe(scenario === "enabled" ? 1 : 0);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            attempts: [],
+            config: signingConfig,
+            currentTargets: [
+              { ...target, push_token: "push", preferences_json: JSON.stringify(prefs) },
+            ],
+            currentActivityStates: [completed],
+            execute: (request) =>
+              Effect.sync(() => {
+                sent++;
+                return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+              }),
+          }),
+        ),
+      );
+    });
+  }
+});
+
+describe("fast completion delivery", () => {
+  it.effect("keeps a completion alert when work finishes before running delivery", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const old = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          threadId: "old" as RelayAgentActivityState["threadId"],
+          phase: "completed" as const,
+        },
+      ],
+    };
+    const device = { ...target, last_aggregate_json: JSON.stringify(old) };
+    const done = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const }],
+    };
+    return Effect.gen(function* () {
+      const d = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* d.sendForTarget({ target: device, aggregate, nowMs: 0 });
+      yield* d.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+      expect(
+        queuedJobs.some((x) => x.payload.alert !== null && x.payload.alert !== undefined),
+      ).toBe(true);
+    }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs, currentTargets: [device] })));
+  });
+  it.effect("replays a newly visible completion without alerting", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const done = {
+      ...aggregate,
+      activeCount: 0,
+      activities: [{ ...aggregate.activities[0]!, phase: "completed" as const }],
+    };
+    const previous = {
+      ...aggregate,
+      activities: [
+        { ...aggregate.activities[0]!, threadId: "other" as RelayAgentActivityState["threadId"] },
+      ],
+    };
+    const device = { ...target, last_aggregate_json: JSON.stringify(previous) };
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      yield* deliveries.sendForTarget({
+        target: device,
+        aggregate: done,
+        nowMs: 0,
+        replay: true,
+      });
+      expect(queuedJobs).toHaveLength(1);
+      expect(queuedJobs[0]?.payload.alert).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
+  });
+});
