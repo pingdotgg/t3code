@@ -161,12 +161,11 @@ const vendorPrefix = (platform: DevicePlatform) =>
 
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
-  testHost: DeviceService["Service"]["testHost"] = () =>
+  testHost: DeviceService["Service"]["testHost"] = (host) =>
     Effect.fail(
-      new DeviceOperationError({
-        operation: "test host",
-        reason: "request_failed",
-        cause: new Error("SSH unavailable"),
+      new DeviceHostUnavailableError({
+        hostId: host.id,
+        reason: "SSH probing is unavailable in this device service.",
       }),
     ),
   configureAgent: (
