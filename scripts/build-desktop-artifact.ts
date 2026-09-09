@@ -59,6 +59,44 @@ const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 
+const CUA_DRIVER_RELEASE_VERSION = "0.24.0";
+const CUA_DRIVER_RELEASE_BASE_URL = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_DRIVER_RELEASE_VERSION}`;
+
+interface CuaDriverMacAsset {
+  readonly archiveName: string;
+  readonly executablePath: string;
+  readonly sha256: string;
+}
+
+const CUA_DRIVER_MAC_ASSETS: Record<typeof BuildArch.Type, CuaDriverMacAsset> = {
+  arm64: {
+    archiveName: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-arm64.tar.gz`,
+    executablePath: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-arm64/cua-driver`,
+    sha256: "fd0cf565db831ad34d44a3c2321439575e02a6ce3ca97d04f267db1da7883685",
+  },
+  x64: {
+    archiveName: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-x86_64.tar.gz`,
+    executablePath: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-x86_64/cua-driver`,
+    sha256: "66db9b244c12e0f416212ca3421afb7cda6b1b927fb6536943919bb7eff5e10b",
+  },
+  universal: {
+    archiveName: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-universal-binary.tar.gz`,
+    executablePath: "cua-driver",
+    sha256: "31790cb49baa206f6455fbc259f8f83ae27e86be908f5c8cac5ec2f8521f8382",
+  },
+};
+
+const CUA_DRIVER_PLATFORM_SHA256 = {
+  linux: {
+    arm64: "2c526bf14fb81a46db19d242ddd2e0be766bc1ce1082ed8a708ad235de74a28e",
+    x64: "b3b8ff52595feb111219aa0ac90e3b36618cc686aa8205aed4f3e7e1a67c7b64",
+  },
+  win: {
+    arm64: "d973df1cfa421ca7801015a2987bbe1526eef1ac167cd3f281b417bb282037e9",
+    x64: "cc22d7a44ad526f779f2df7e6da053dd898ef8e5014b1ecfc01728645f691be0",
+  },
+} as const;
+
 const WorkspaceConfig = Schema.Struct({
   catalog: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   overrides: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -150,6 +188,41 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
     archChoices: ["x64", "arm64"],
   },
 };
+
+export function resolveCuaDriverMacAsset(arch: typeof BuildArch.Type) {
+  if (serverPackageJson.dependencies["@trycua/cua-driver"] !== CUA_DRIVER_RELEASE_VERSION) {
+    throw new Error("Cua Driver release assets must be updated to match the SDK version.");
+  }
+  const asset = CUA_DRIVER_MAC_ASSETS[arch];
+  return {
+    ...asset,
+    url: `${CUA_DRIVER_RELEASE_BASE_URL}/${asset.archiveName}`,
+  };
+}
+
+export function resolveCuaDriverAsset(
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+) {
+  if (serverPackageJson.dependencies["@trycua/cua-driver"] !== CUA_DRIVER_RELEASE_VERSION) {
+    throw new Error("Cua Driver release assets must be updated to match the SDK version.");
+  }
+  if (platform === "mac") return resolveCuaDriverMacAsset(arch);
+  if (arch === "universal") {
+    throw new Error(`Cua Driver has no release asset for ${platform}/${arch}.`);
+  }
+
+  const os = platform === "win" ? "windows" : "linux";
+  const releaseArch = arch === "x64" ? "x86_64" : "arm64";
+  const extension = platform === "win" ? "zip" : "tar.gz";
+  const archiveName = `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-${os}-${releaseArch}-binary.${extension}`;
+  return {
+    archiveName,
+    executablePath: platform === "win" ? "cua-driver.exe" : "cua-driver",
+    sha256: CUA_DRIVER_PLATFORM_SHA256[platform][arch],
+    url: `${CUA_DRIVER_RELEASE_BASE_URL}/${archiveName}`,
+  };
+}
 
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
@@ -281,6 +354,19 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedError<Invalid
       inputLength: configuredPort.length,
       cause,
     });
+  }
+}
+
+export class CuaDriverChecksumMismatchError extends Schema.TaggedError<CuaDriverChecksumMismatchError>()(
+  "CuaDriverChecksumMismatchError",
+  {
+    archiveName: Schema.String,
+    expected: Schema.String,
+    actual: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Cua Driver checksum mismatch for ${this.archiveName}.`;
   }
 }
 
@@ -959,6 +1045,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  "!apps/desktop/prod-resources/cua-driver",
+  "!apps/desktop/prod-resources/cua-driver/**/*",
   "!apps/desktop/resources/browser-secret",
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
@@ -1089,7 +1177,13 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
 ] as const;
+export const CUA_DRIVER_EXTRA_RESOURCE = {
+  from: "apps/desktop/prod-resources/cua-driver",
+  to: "cua-driver",
+} as const;
+
 export const DESKTOP_EXTRA_RESOURCES = [
+  CUA_DRIVER_EXTRA_RESOURCE,
   {
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
@@ -2801,6 +2895,141 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   return buildConfig;
 });
 
+export class CuaDriverBundleMissingFileError extends Schema.TaggedError<CuaDriverBundleMissingFileError>()(
+  "CuaDriverBundleMissingFileError",
+  { filePath: Schema.String },
+) {
+  override get message(): string {
+    return `Cua Driver release bundle is missing required file: ${this.filePath}`;
+  }
+}
+
+export const stageCuaDriverBundle = Effect.fn("stageCuaDriverBundle")(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly extractDir: string;
+  readonly stageResourcesDir: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asset = resolveCuaDriverAsset(input.platform, input.arch);
+  const requiredFiles =
+    input.platform === "mac"
+      ? [asset.executablePath]
+      : input.platform === "win"
+        ? [
+            "cua-driver.exe",
+            "cua-driver-uia.exe",
+            "cua-cursor-theme.exe",
+            "cua_driver_sdk.dll",
+            "cua_driver_node_runtime.node",
+          ]
+        : [
+            "cua-driver",
+            "cua-cursor-theme",
+            "libcua_driver_sdk.so",
+            "cua_driver_node_runtime.node",
+            "wayland-helper/winrects@cua/extension.js",
+          ];
+  for (const member of requiredFiles) {
+    const filePath = path.join(input.extractDir, member);
+    if (!(yield* fs.exists(filePath)) || (yield* fs.stat(filePath)).type !== "File") {
+      return yield* new CuaDriverBundleMissingFileError({ filePath });
+    }
+  }
+
+  yield* fs.makeDirectory(input.stageResourcesDir, { recursive: true });
+  const destination = path.join(input.stageResourcesDir, "cua-driver");
+  if (input.platform === "mac") {
+    // osx-sign discovers this Mach-O alongside the other external resources.
+    yield* fs.copyFile(path.join(input.extractDir, asset.executablePath), destination);
+    yield* fs.chmod(destination, 0o755);
+  } else {
+    yield* fs.copy(input.extractDir, destination);
+    if (input.platform === "linux") {
+      yield* fs.chmod(path.join(destination, "cua-driver"), 0o755);
+      yield* fs.chmod(path.join(destination, "cua-cursor-theme"), 0o755);
+    }
+  }
+});
+
+export const stageCuaDriverExecutable = Effect.fn("stageCuaDriverExecutable")(function* (input: {
+  readonly platform: typeof BuildPlatform.Type;
+  readonly arch: typeof BuildArch.Type;
+  readonly repoRoot: string;
+  readonly stageRoot: string;
+  readonly stageResourcesDir: string;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const asset = resolveCuaDriverAsset(input.platform, input.arch);
+  const cacheDir = path.join(input.repoRoot, "node_modules/.cache/t3code/cua-driver");
+  const archivePath = path.join(cacheDir, asset.archiveName);
+  const extractDir = path.join(input.stageRoot, "cua-driver/extract");
+  yield* fs.makeDirectory(cacheDir, { recursive: true });
+  yield* fs.makeDirectory(extractDir, { recursive: true });
+
+  const checksum = (filePath: string) =>
+    fs
+      .readFile(filePath)
+      .pipe(
+        Effect.map((contents) => NodeCrypto.createHash("sha256").update(contents).digest("hex")),
+      );
+  if ((yield* fs.exists(archivePath)) && (yield* checksum(archivePath)) !== asset.sha256) {
+    yield* fs.remove(archivePath, { force: true });
+  }
+
+  if (!(yield* fs.exists(archivePath))) {
+    const temporaryArchivePath = `${archivePath}.${process.pid}.tmp`;
+    yield* Effect.gen(function* () {
+      yield* runCommand(
+        ChildProcess.make("curl", [
+          "--fail",
+          "--location",
+          "--silent",
+          "--show-error",
+          "--output",
+          temporaryArchivePath,
+          asset.url,
+        ]),
+        { label: `download ${asset.archiveName}`, verbose: input.verbose },
+      );
+      const actualChecksum = yield* checksum(temporaryArchivePath);
+      if (actualChecksum !== asset.sha256) {
+        return yield* new CuaDriverChecksumMismatchError({
+          archiveName: asset.archiveName,
+          expected: asset.sha256,
+          actual: actualChecksum,
+        });
+      }
+      yield* fs.rename(temporaryArchivePath, archivePath);
+    }).pipe(Effect.ensuring(fs.remove(temporaryArchivePath, { force: true }).pipe(Effect.ignore)));
+  }
+
+  const extractCommand =
+    input.platform === "win"
+      ? ChildProcess.make("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Expand-Archive -LiteralPath '${archivePath.replaceAll("'", "''")}' -DestinationPath '${extractDir.replaceAll("'", "''")}' -Force`,
+        ])
+      : ChildProcess.make("tar", ["-xzf", archivePath, "-C", extractDir]);
+  yield* runCommand(extractCommand, {
+    label: `extract ${asset.archiveName}`,
+    verbose: input.verbose,
+  });
+
+  yield* stageCuaDriverBundle({
+    platform: input.platform,
+    arch: input.arch,
+    extractDir,
+    stageResourcesDir: input.stageResourcesDir,
+  });
+  yield* Effect.log(`[desktop-artifact] Staged Cua Driver ${CUA_DRIVER_RELEASE_VERSION}.`);
+});
+
 const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(function* (
   platform: typeof BuildPlatform.Type,
   stageResourcesDir: string,
@@ -3688,6 +3917,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     stageResourcesDir,
     platform: options.platform,
     arch: options.arch,
+    verbose: options.verbose,
+  });
+
+  yield* stageCuaDriverExecutable({
+    platform: options.platform,
+    arch: options.arch,
+    repoRoot,
+    stageRoot,
+    stageResourcesDir,
     verbose: options.verbose,
   });
 

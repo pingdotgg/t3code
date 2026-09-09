@@ -397,6 +397,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow open drive preview tools sessions"],
   },
   {
+    id: "cua-computer-use",
+    title: "Cua computer use",
+    to: "/settings/projects",
+    searchTerms: [
+      "Codex Cua Driver computer machine host permissions accessibility screen capture",
+    ],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",

@@ -65,6 +65,27 @@ in the thread on web, desktop, or mobile. Some tools offer access for one reques
 the current session, or permanently. See [Permission modes](./permission-modes.md)
 for command and file approvals.
 
+## Let Codex use the host computer
+
+**Cua computer use** lets Codex control the machine running your T3 Code server
+through Cua Driver. It is off by default and separate from **Agent browser access**.
+
+Complete setup on the host machine using T3 Code desktop or web:
+
+1. Use the Cua Driver included with packaged T3 Code desktop. For a standalone
+   server, set `T3CODE_CUA_DRIVER_PATH` to the absolute path of your Cua Driver
+   executable before starting the server.
+2. Grant the required operating-system permissions on that host. Connecting from
+   another computer or phone does not grant permission to control the host.
+3. Open **Settings > Projects**, select the host machine, and enable
+   **Cua computer use** in its defaults. Start a new Codex session to use it.
+
+Once the host is configured, you can direct its Codex sessions from web, desktop,
+or mobile. The setting applies to the selected environment, with no per-project
+override. Disabling it revokes T3 Code's managed Cua access. It does not remove
+MCP servers you configured yourself. Other providers do not receive this managed
+integration.
+
 ## Codex says I hit a usage limit
 
 When Codex stops on a usage limit, the thread names the window that ran out and

@@ -31,6 +31,8 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@yuuang/",
   "@ff-labs/",
   "@clerk/electron-passkeys",
+  "@trycua/cua-driver",
+  "@ubjs/",
   "@msgpackr-extract/",
   "msgpackr-extract",
   "node-gyp-build",

@@ -15,6 +15,7 @@ import {
   buildTurnStartParams,
   describeMcpElicitation,
   hasConfiguredMcpServer,
+  hasConfiguredBrowserMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
@@ -551,6 +552,20 @@ describe("hasConfiguredMcpServer", () => {
     NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+  it("refreshes Cua tools without advertising T3 preview tools", () => {
+    const cua = ["-c", 'mcp_servers.cua-driver = { command = "driver" }'];
+    NodeAssert.equal(hasConfiguredMcpServer(cua), true);
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(cua), false);
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(undefined), false);
+    NodeAssert.equal(
+      hasConfiguredBrowserMcpServer([
+        ...cua,
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp"',
+      ]),
       true,
     );
   });
