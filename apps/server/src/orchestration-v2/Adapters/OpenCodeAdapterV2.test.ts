@@ -1041,6 +1041,9 @@ describe("OpenCodeAdapterV2", () => {
                   time: { created: 1, updated: 1 },
                 },
               }),
+              get: async (input: { sessionID: string }) => ({
+                data: { id: input.sessionID, time: { created: 1, updated: 1 } },
+              }),
               promptAsync: async () => ({ data: true }),
               messages: async () => ({ data: [] }),
               abort: async (input: { sessionID: string }, options: { signal: AbortSignal }) => {
@@ -1114,6 +1117,9 @@ describe("OpenCodeAdapterV2", () => {
                 id: "native-opencode-descendant-not-found",
                 time: { created: 1, updated: 1 },
               },
+            }),
+            get: async (input: { sessionID: string }) => ({
+              data: { id: input.sessionID, time: { created: 1, updated: 1 } },
             }),
             promptAsync: async () => ({ data: true }),
             messages: async () => ({ data: [] }),
