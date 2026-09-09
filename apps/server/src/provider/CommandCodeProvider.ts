@@ -19,6 +19,7 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -69,8 +70,9 @@ const runCommandCodeCli = (
   });
 
 /**
- * One-shot probe that never fails: a launch problem becomes a synthetic
- * `code: -1` result so callers branch on data, not on the error channel.
+ * One-shot probe that never fails: a launch problem, a nonzero exit, or a
+ * probe that stalls past the deadline becomes a synthetic `code: -1` result
+ * so callers branch on data, not on the error channel.
  */
 const probeCommandCodeCli = (
   binaryPath: string,
@@ -78,7 +80,17 @@ const probeCommandCodeCli = (
   env: NodeJS.ProcessEnv,
 ): Effect.Effect<CommandResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
   runCommandCodeCli(binaryPath, args, env).pipe(
-    Effect.map((result) => result),
+    Effect.timeoutOption("15 seconds"),
+    Effect.map((attempt) =>
+      Option.match(attempt, {
+        onNone: () => ({
+          stdout: "",
+          stderr: "Command Code probe timed out after 15 seconds.",
+          code: -1,
+        }),
+        onSome: (result) => result,
+      }),
+    ),
     Effect.catch((error) => Effect.succeed({ stdout: "", stderr: String(error), code: -1 })),
   );
 
@@ -126,7 +138,9 @@ export function checkCommandCodeProvider(input: CommandCodeStatusCheckInput) {
 
     const binaryPath = input.config.binaryPath || "command-code";
     const versionRun = yield* probeCommandCodeCli(binaryPath, COMMAND_CODE_VERSION_ARGS, input.env);
-    if (versionRun.code === -1) {
+    // Any nonzero exit (including the -1 sentinel) means the CLI did not
+    // answer cleanly; a wrapper that echoes a version then fails is not ready.
+    if (versionRun.code !== 0) {
       return notInstalledDraft({ enabled, checkedAt, binaryPath });
     }
 
@@ -154,7 +168,7 @@ export function checkCommandCodeProvider(input: CommandCodeStatusCheckInput) {
       COMMAND_CODE_LIST_MODELS_ARGS,
       input.env,
     );
-    if (modelsRun.code === -1) {
+    if (modelsRun.code !== 0) {
       return buildServerProvider({
         presentation: { displayName: "Command Code" },
         enabled,
