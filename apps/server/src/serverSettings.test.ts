@@ -6,6 +6,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
@@ -1180,6 +1181,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
     );
   }
+
+  // The secret path keys off `managementKey`, which every source kind carries,
+  // so a credit source must travel the same route as a hub without its own code.
+  it.effect("stores an OpenRouter key outside settings.json and restores it on edit", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sourceId = UsageLimitSourceId.make("openrouter");
+
+      const next = yield* serverSettings.updateSettings({
+        usageLimitSources: {
+          [sourceId]: { kind: "openrouter", managementKey: "sk-or-provisioning", enabled: true },
+        },
+      });
+      assert.equal(next.usageLimitSources[sourceId]?.kind, "openrouter");
+      assert.equal(next.usageLimitSources[sourceId]?.managementKey, "sk-or-provisioning");
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, "sk-or-provisioning");
+
+      // A client edits the label while echoing the redaction marker back; the
+      // stored key must survive rather than being overwritten with the marker.
+      const relabelled = yield* serverSettings.updateSettings({
+        usageLimitSources: {
+          [sourceId]: {
+            kind: "openrouter",
+            label: "Work account",
+            managementKey: "••••••",
+            enabled: true,
+          },
+        },
+      });
+      assert.equal(relabelled.usageLimitSources[sourceId]?.managementKey, "sk-or-provisioning");
+      assert.equal(relabelled.usageLimitSources[sourceId]?.label, "Work account");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {

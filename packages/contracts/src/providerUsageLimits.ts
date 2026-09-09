@@ -88,16 +88,41 @@ export const UsageLimitSourceAccount = Schema.Struct({
 export type UsageLimitSourceAccount = typeof UsageLimitSourceAccount.Type;
 
 /**
+ * Prepaid balance a source reports in dollars, as OpenRouter does. Distinct
+ * from `ServerProviderUsageWindow`: there is no rolling window to pool and no
+ * reset to count down to, only money left.
+ *
+ * `scope` says how much the configured key could see. A provisioning key reads
+ * the whole account (`purchasedUsd` and a true `remainingUsd`); an ordinary
+ * inference key only reads its own allowance, where `remainingUsd` exists only
+ * if that key carries a spend limit.
+ */
+export const UsageLimitSourceCredits = Schema.Struct({
+  scope: Schema.Literals(["account", "key"]),
+  usedUsd: Schema.Number,
+  remainingUsd: Schema.optional(Schema.Number),
+  purchasedUsd: Schema.optional(Schema.Number),
+  limitUsd: Schema.optional(Schema.Number),
+  isFreeTier: Schema.optional(Schema.Boolean),
+});
+export type UsageLimitSourceCredits = typeof UsageLimitSourceCredits.Type;
+
+/**
  * The published state of one configured `usageLimitSources` entry. A source
  * that could not be read keeps `error` beside an empty account list rather
  * than vanishing, so the user can see it is configured but failing.
+ *
+ * A source reports quota one way or the other: a hub fills `accounts`, a
+ * credit source fills `credits` and leaves `accounts` empty. Clients that
+ * treat an empty account list as a fault must check `credits` first.
  */
 export const UsageLimitSourceSnapshot = Schema.Struct({
   id: UsageLimitSourceId,
-  kind: Schema.Literal("cliproxy"),
+  kind: Schema.Literals(["cliproxy", "openrouter"]),
   label: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   accounts: ForwardCompatibleArray(UsageLimitSourceAccount),
+  credits: Schema.optional(UsageLimitSourceCredits),
   error: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;

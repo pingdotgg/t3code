@@ -5,7 +5,7 @@ import {
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
-  type UsageLimitSourceConfig,
+  type CliproxyUsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -116,7 +116,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
-    config: UsageLimitSourceConfig,
+    config: CliproxyUsageLimitSourceConfig,
     path: string,
     body?: unknown,
   ) {
@@ -140,13 +140,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return response;
   });
 
-  const authFiles = Effect.fn("CliproxyApi.authFiles")(function* (config: UsageLimitSourceConfig) {
+  const authFiles = Effect.fn("CliproxyApi.authFiles")(function* (
+    config: CliproxyUsageLimitSourceConfig,
+  ) {
     const response = yield* management(config, "auth-files");
     return (yield* decodeAuthFiles(response)).files;
   });
 
   const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
-    config: UsageLimitSourceConfig,
+    config: CliproxyUsageLimitSourceConfig,
     account: typeof AuthFile.Type,
     url: string,
     data?: unknown,
@@ -180,7 +182,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const credits = Effect.fn("CliproxyApi.credits")(function* (
-    config: UsageLimitSourceConfig,
+    config: CliproxyUsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
     const body = yield* apiCall(config, account, CREDIT_URL);
@@ -197,7 +199,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
-    config: UsageLimitSourceConfig,
+    config: CliproxyUsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -293,7 +295,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
-    config: UsageLimitSourceConfig,
+    config: CliproxyUsageLimitSourceConfig,
   ): Effect.fn.Return<ReadonlyArray<UsageLimitSourceAccount>, UsageLimitSourceError> {
     const accounts = yield* authFiles(config).pipe(
       Effect.mapError(
@@ -311,7 +313,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
-    config: UsageLimitSourceConfig,
+    config: CliproxyUsageLimitSourceConfig,
     accountId: string,
     creditId: string,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {

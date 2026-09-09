@@ -64,10 +64,20 @@ anything. The command is offered only for providers that appear under **Usage �
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Check your OpenRouter credit balance
+
+Open **Settings → Providers → Usage providers → Add source → OpenRouter** and enter an API key. The
+balance then appears under **Usage → Limits**, and refreshing Limits re-checks it.
+
+Which key you use decides what the balance covers. A provisioning key reads the whole account, so
+you see credits remaining against credits purchased. An ordinary API key only reads its own
+allowance: you see what that key has spent, and a remaining figure only if the key carries a spend
+limit. The key is stored on the environment you chose and never leaves it.
+
 ## Connect a CLIProxyAPI hub
 
-To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
-environment that will connect to the hub and enter its URL and management key.
+To see pooled accounts, open **Settings → Providers → Usage providers → Add source → CLIProxyAPI
+hub**. Choose the environment that will connect to the hub and enter its URL and management key.
 
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
 account and choose **Use reset** to redeem one. No hub plugin is required.

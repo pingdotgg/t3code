@@ -36,6 +36,7 @@ import * as Stream from "effect/Stream";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
+import { makeOpenRouterApi } from "./openrouterApi.ts";
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -53,6 +54,7 @@ export class UsageLimitSources extends Context.Service<
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
+  if (config.kind === "openrouter") return "OpenRouter";
   try {
     return new URL(config.url).host;
   } catch {
@@ -63,6 +65,7 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const openrouter = yield* makeOpenRouterApi;
   const settingsService = yield* ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
@@ -78,7 +81,22 @@ export const make = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
     if (config.managementKey.length === 0) {
-      return { ...base, accounts: [], error: "No management key configured." };
+      return {
+        ...base,
+        accounts: [],
+        error:
+          config.kind === "openrouter" ? "No API key configured." : "No management key configured.",
+      };
+    }
+    // A credit source reports money left rather than pooled accounts, so it
+    // fills `credits` and leaves `accounts` empty.
+    if (config.kind === "openrouter") {
+      const credits = yield* openrouter.readCredits(config).pipe(Effect.result);
+      if (credits._tag === "Failure") {
+        yield* Effect.logDebug("usage limit source read failed", { id, cause: credits.failure });
+        return { ...base, accounts: [], error: credits.failure.detail };
+      }
+      return { ...base, accounts: [], credits: credits.success };
     }
     const accounts = yield* api.readAccounts(config).pipe(Effect.result);
     if (accounts._tag === "Failure") {
@@ -127,6 +145,12 @@ export const make = Effect.gen(function* () {
       if (!config?.enabled || !config.managementKey) {
         return yield* new UsageLimitSourceError({
           detail: "The usage limit source is missing or disabled.",
+        });
+      }
+      // Only a hub banks redeemable reset credits; a credit balance has none.
+      if (config.kind !== "cliproxy") {
+        return yield* new UsageLimitSourceError({
+          detail: "This usage limit source has no reset credits.",
         });
       }
       const result = yield* api.consume(config, input.accountId, input.creditId);

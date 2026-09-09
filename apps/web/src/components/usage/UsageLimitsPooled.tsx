@@ -1,4 +1,5 @@
 import {
+  collectCreditBalances,
   collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
@@ -28,6 +29,7 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
+import { UsageCreditBalances } from "./UsageCreditBalances";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -542,14 +544,16 @@ export function UsageLimitsPooled({
   readonly now: number;
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const balances = collectCreditBalances(presentations);
   const notices = collectLimitNotices(presentations);
   return (
     <div className="flex flex-col gap-8">
-      {pools.length === 0 ? (
+      {pools.length === 0 && balances.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
+      <UsageCreditBalances balances={balances} />
       {pools.map((pool) => (
         <PoolSection key={pool.driver} pool={pool} now={now} />
       ))}

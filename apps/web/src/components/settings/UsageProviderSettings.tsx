@@ -13,7 +13,8 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { AddUsageLimitSourceDialog, type UsageLimitSourceKind } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
@@ -30,7 +31,7 @@ export function UsageProviderSettings({
   readonly readOnly: boolean;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<UsageLimitSourceKind | null>(null);
   const entries = Object.entries(sources);
 
   return (
@@ -39,10 +40,16 @@ export function UsageProviderSettings({
         {...searchableSetting("usage-providers")}
         headerAction={
           !readOnly ? (
-            <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
-              <PlusIcon className="size-3" aria-hidden />
-              Add hub
-            </Button>
+            <Menu>
+              <MenuTrigger render={<Button size="xs" variant="outline" />}>
+                <PlusIcon className="size-3" aria-hidden />
+                Add source
+              </MenuTrigger>
+              <MenuPopup align="end">
+                <MenuItem onClick={() => setAdding("cliproxy")}>CLIProxyAPI hub</MenuItem>
+                <MenuItem onClick={() => setAdding("openrouter")}>OpenRouter</MenuItem>
+              </MenuPopup>
+            </Menu>
           ) : null
         }
       >
@@ -50,21 +57,25 @@ export function UsageProviderSettings({
           <SettingsRow title="No usage providers configured." />
         ) : (
           entries.map(([id, source]) => {
-            const label = source.label?.trim() || source.url;
+            const isOpenRouter = source.kind === "openrouter";
+            const label = source.label?.trim() || (isOpenRouter ? "OpenRouter" : source.url);
+            const url = isOpenRouter ? null : source.url;
             return (
               <SettingsRow
                 key={id}
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
-                    {label !== source.url ? ` · ${source.url}` : ""}
+                    {isOpenRouter ? "OpenRouter credits" : "CLI Proxy"}
+                    {source.enabled ? "" : " · Disabled"}
+                    {url && label !== url ? ` · ${url}` : ""}
                   </span>
                 }
                 control={
                   !readOnly ? (
                     <RemoveUsageProviderButton
                       label={label}
+                      isOpenRouter={isOpenRouter}
                       onConfirm={() => updateSettings({ usageLimitSources: { [id]: null } })}
                     />
                   ) : null
@@ -74,10 +85,13 @@ export function UsageProviderSettings({
           })
         )}
       </SettingsSection>
-      {adding && !readOnly ? (
+      {adding !== null && !readOnly ? (
         <AddUsageLimitSourceDialog
           open
-          onOpenChange={setAdding}
+          onOpenChange={(next) => {
+            if (!next) setAdding(null);
+          }}
+          kind={adding}
           environmentId={environmentId}
           environmentLabel={environmentLabel}
         />
@@ -86,12 +100,14 @@ export function UsageProviderSettings({
   );
 }
 
-/** Removing a hub deletes its stored management key, so it requires confirmation. */
+/** Removing a source deletes its stored key, so it requires confirmation. */
 function RemoveUsageProviderButton({
   label,
+  isOpenRouter,
   onConfirm,
 }: {
   readonly label: string;
+  readonly isOpenRouter: boolean;
   readonly onConfirm: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -105,9 +121,9 @@ function RemoveUsageProviderButton({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              {isOpenRouter
+                ? "The API key is deleted from this server. The credit balance leaves the Limits view; your OpenRouter account is untouched. Add the key again to bring it back."
+                : "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -119,7 +135,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {isOpenRouter ? "Remove key" : "Remove hub"}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

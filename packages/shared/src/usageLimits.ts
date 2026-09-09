@@ -15,6 +15,7 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceCredits,
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
@@ -148,6 +149,65 @@ export function collectLimitSources(
 function accountKey(driver: ServerProvider["driver"], email: string | undefined): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
+}
+
+/** One source's prepaid balance, ready to render. */
+export interface CreditBalance {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  /** Groups balances under one provider heading, as pools group by driver. */
+  readonly kind: UsageLimitSourceSnapshot["kind"];
+  /** The source's own label, which the user may have renamed in settings. */
+  readonly label: string;
+  /** Set only when more than one environment reports a balance to tell apart. */
+  readonly environmentLabel: string | null;
+  readonly checkedAt: string;
+  readonly credits: UsageLimitSourceCredits;
+}
+
+/**
+ * Every source reporting a prepaid balance across the connected environments.
+ * Unlike quota windows there is nothing to pool: two keys are two balances, so
+ * each source keeps its own card. The environment is named only when more than
+ * one reports a balance, as the other collectors do.
+ */
+export function collectCreditBalances(
+  presentations: Parameters<typeof collectLimitSources>[0],
+): readonly CreditBalance[] {
+  const perEnvironment: Array<{
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string;
+    readonly sources: ReadonlyArray<UsageLimitSourceSnapshot>;
+  }> = [];
+  for (const [environmentId, presentation] of presentations) {
+    const sources = (presentation.serverConfig?.usageLimitSources ?? []).filter(
+      (source) => source.credits !== undefined,
+    );
+    if (sources.length === 0) continue;
+    perEnvironment.push({
+      environmentId,
+      environmentLabel: presentation.entry.target.label,
+      sources,
+    });
+  }
+  const labelEnvironment = perEnvironment.length > 1;
+  return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
+    sources.flatMap((source) =>
+      source.credits === undefined
+        ? []
+        : [
+            {
+              key: `${environmentId}:${source.id}`,
+              environmentId,
+              kind: source.kind,
+              label: source.label,
+              environmentLabel: labelEnvironment ? environmentLabel : null,
+              checkedAt: source.checkedAt,
+              credits: source.credits,
+            },
+          ],
+    ),
+  );
 }
 
 /**
@@ -334,7 +394,9 @@ export function collectLimitNotices(
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
+      } else if (source.accounts.length === 0 && source.credits === undefined) {
+        // A credit source reports a balance instead of accounts; an empty list
+        // is how it is meant to look, not a fault worth a line.
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
     }
@@ -568,6 +630,16 @@ export function isUsageLimitsCommand(prompt: string): boolean {
 }
 
 /**
+ * Whether a source's failure should count for every driver. A hub that failed
+ * to read keeps no accounts, so its error stands in for the accounts it would
+ * have reported. A credit source never reports accounts in the first place, so
+ * its failure says nothing about any driver.
+ */
+function coversEveryDriver(source: UsageLimitSourceSnapshot): boolean {
+  return source.kind === "cliproxy" && source.error !== undefined && source.accounts.length === 0;
+}
+
+/**
  * Whether Limits has anything to say about this driver. A source that failed to
  * read keeps no accounts, so its error counts for every driver rather than
  * disappearing until the next successful refresh.
@@ -581,8 +653,7 @@ export function hasProviderUsageLimits(
     providersWithLimits(providers).some((provider) => provider.driver === driver) ||
     sources.some(
       (source) =>
-        source.accounts.some((account) => account.driver === driver) ||
-        (source.error !== undefined && source.accounts.length === 0),
+        source.accounts.some((account) => account.driver === driver) || coversEveryDriver(source),
     )
   );
 }
@@ -599,7 +670,7 @@ export function sameUsageLimitCommandCoverage(
   const coverage = (sources: UsageLimitSourceSnapshots) =>
     new Set(
       sources.flatMap((source) =>
-        source.error !== undefined && source.accounts.length === 0
+        coversEveryDriver(source)
           ? ["*"]
           : source.accounts.map((account) => String(account.driver)),
       ),
@@ -733,9 +804,10 @@ export function collectProviderUsageLimits(
         limits: account.usageLimits,
       });
     }
-    // A source that failed to read has no accounts left to match on, so its
-    // error is reported to every provider rather than silently dropped.
-    if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
+    // A hub that failed to read has no accounts left to match on, so its error
+    // is reported to every provider rather than silently dropped. A credit
+    // source has no accounts by design and no bearing on this driver's quota.
+    if (source.error && (matching.length > 0 || coversEveryDriver(source))) {
       notices.push(`${source.label}: ${source.error}`);
     }
   }

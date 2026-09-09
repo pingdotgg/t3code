@@ -842,18 +842,43 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
 /**
- * A read-only quota source outside this environment's provider CLIs. The
- * only kind today is a CLIProxyAPI hub, whose management API reports the
- * windows of every pooled account. The key travels in settings for now, like
- * provider environment secrets; it is redacted before reaching a client.
+ * A CLIProxyAPI hub, whose management API reports the windows of every pooled
+ * account.
  */
-export const UsageLimitSourceConfig = Schema.Struct({
+export const CliproxyUsageLimitSourceConfig = Schema.Struct({
   kind: Schema.Literal("cliproxy"),
   label: Schema.optional(TrimmedNonEmptyString),
   url: TrimmedNonEmptyString,
   managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
+export type CliproxyUsageLimitSourceConfig = typeof CliproxyUsageLimitSourceConfig.Type;
+
+/**
+ * An OpenRouter account, which reports a credit balance rather than rolling
+ * windows. `managementKey` is OpenRouter's own term: a provisioning key sees
+ * the account balance, while an ordinary inference key only sees its own
+ * allowance. There is no URL to configure.
+ */
+export const OpenRouterUsageLimitSourceConfig = Schema.Struct({
+  kind: Schema.Literal("openrouter"),
+  label: Schema.optional(TrimmedNonEmptyString),
+  managementKey: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type OpenRouterUsageLimitSourceConfig = typeof OpenRouterUsageLimitSourceConfig.Type;
+
+/**
+ * A read-only quota source outside this environment's provider CLIs. Every
+ * kind carries `label`, `managementKey`, and `enabled`, so the secret store
+ * and the settings redaction path treat them all alike. The key travels in
+ * settings for now, like provider environment secrets; it is redacted before
+ * reaching a client.
+ */
+export const UsageLimitSourceConfig = Schema.Union([
+  CliproxyUsageLimitSourceConfig,
+  OpenRouterUsageLimitSourceConfig,
+]);
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
 export const ObservabilitySettings = Schema.Struct({

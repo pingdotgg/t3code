@@ -4,7 +4,9 @@ import {
   ProviderInstanceId,
   type ServerProvider,
   type UsageLimitSourceAccount,
+  type UsageLimitSourceCredits,
   UsageLimitSourceId,
+  type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -14,6 +16,7 @@ import {
   collectProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
+  collectCreditBalances,
   collectLimitAccounts,
   collectLimitNotices,
   collectLimitPools,
@@ -21,6 +24,7 @@ import {
   collectLimitsGroups,
   elapsedShare,
   formatResetsIn,
+  hasProviderUsageLimits,
   limitsNotice,
   paceOf,
   providersWithLimits,
@@ -1194,5 +1198,99 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("credit balances", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const credits = {
+    scope: "account",
+    usedUsd: 25.75,
+    purchasedUsd: 100.5,
+    remainingUsd: 74.75,
+  } as const satisfies UsageLimitSourceCredits;
+  const source: UsageLimitSourceSnapshot = {
+    id: UsageLimitSourceId.make("openrouter"),
+    kind: "openrouter",
+    label: "OpenRouter",
+    checkedAt,
+    accounts: [],
+    credits,
+  };
+  const failed: UsageLimitSourceSnapshot = {
+    id: source.id,
+    kind: "openrouter",
+    label: "OpenRouter",
+    checkedAt,
+    accounts: [],
+    error: "OpenRouter rejected the API key.",
+  };
+  const environment = (label: string, sources: readonly UsageLimitSourceSnapshot[]) => ({
+    entry: { target: { label } },
+    serverConfig: { providers: [], usageLimitSources: sources },
+  });
+
+  it("names the environment only when more than one reports a balance", () => {
+    const one = new Map([[EnvironmentId.make("env-a"), environment("Laptop", [source])]]);
+    expect(collectCreditBalances(one as never)).toEqual([
+      {
+        key: "env-a:openrouter",
+        environmentId: "env-a",
+        kind: "openrouter",
+        label: "OpenRouter",
+        environmentLabel: null,
+        checkedAt,
+        credits,
+      },
+    ]);
+
+    const two = new Map([
+      [EnvironmentId.make("env-a"), environment("Laptop", [source])],
+      [EnvironmentId.make("env-b"), environment("Desktop", [source])],
+    ]);
+    expect(collectCreditBalances(two as never).map((balance) => balance.environmentLabel)).toEqual([
+      "Laptop",
+      "Desktop",
+    ]);
+  });
+
+  it("leaves out a source that reports no balance", () => {
+    const hub: UsageLimitSourceSnapshot = {
+      id: UsageLimitSourceId.make("hub"),
+      kind: "cliproxy",
+      label: "hub",
+      checkedAt,
+      accounts: [],
+    };
+    const input = new Map([[EnvironmentId.make("env-a"), environment("Laptop", [hub])]]);
+    expect(collectCreditBalances(input as never)).toEqual([]);
+  });
+
+  // An empty account list is how a healthy credit source looks, so the notice
+  // meant for a silent hub must not fire for it.
+  it("does not call a healthy balance a source reporting nothing", () => {
+    const input = new Map([[EnvironmentId.make("env-a"), environment("Laptop", [source])]]);
+    expect(collectLimitNotices(input as never)).toEqual([]);
+  });
+
+  it("still reports a balance that could not be read", () => {
+    const input = new Map([[EnvironmentId.make("env-a"), environment("Laptop", [failed])]]);
+    expect(collectLimitNotices(input as never)).toEqual([
+      "OpenRouter: OpenRouter rejected the API key.",
+    ]);
+  });
+
+  // A hub failure stands in for the accounts it would have listed; a credit
+  // source has none, so its failure must not offer /usage-limits everywhere.
+  it("keeps a failed balance out of slash-command coverage", () => {
+    const codex = provider({ usageLimits: { checkedAt, windows: [window] } });
+
+    expect(hasProviderUsageLimits(ProviderDriverKind.make("claudeAgent"), [], [failed])).toBe(
+      false,
+    );
+    expect(sameUsageLimitCommandCoverage([source], [failed])).toBe(true);
+    expect(
+      withUsageLimitsCommands([codex], [failed])[0]?.slashCommands.map((command) => command.name),
+    ).toEqual(["usage-limits"]);
   });
 });
