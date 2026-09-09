@@ -12,6 +12,13 @@ becomes an attachment when inserting it would exceed the message limit. On a
 hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
 to keep a large paste editable in the composer instead.
 
+## Return to the latest message
+
+On web and desktop, scrolling up shows a button above the composer with the number
+of messages remaining below your view. A partially visible message counts until
+its end is visible. Tool activity and messages hidden inside collapsed turns do
+not count. Select the button to return to the end of the conversation.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can
