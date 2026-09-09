@@ -492,6 +492,36 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("preserves native screenshot resolution in agent snapshots", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      yield* manager.resize({
+        threadId: scope.thread.threadId,
+        tabId,
+        viewport: { _tag: "freeform", width: 1920, height: 1080 },
+      });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+
+      expect(snapshot.screenshot).toEqual({
+        mimeType: "image/png",
+        data: "ZnJhbWU=",
+        width: 3840,
+        height: 2160,
+      });
+      expect(contexts[0]!.sessions[0]!.send).toHaveBeenCalledWith("Page.captureScreenshot", {
+        format: "png",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("applies any client's viewport, appearance, and zoom to a headless tab", () =>
   Effect.scoped(
     Effect.gen(function* () {

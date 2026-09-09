@@ -15,10 +15,5 @@ export const previewBridge = desktopPreview
       ...desktopPreview,
       captureScreenshot: (tabId: string) =>
         captureBrowserScreenshot(tabId, () => desktopPreview.captureScreenshot(tabId)),
-      automation: {
-        ...desktopPreview.automation,
-        snapshot: (tabId: string) =>
-          captureBrowserScreenshot(tabId, () => desktopPreview.automation.snapshot(tabId)),
-      },
     }
   : null;

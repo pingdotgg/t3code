@@ -83,6 +83,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS, type RecordingInputOptions } from "./RecordingInput.ts";
+import { prepareNativeScreenshotSurface } from "./NativeScreenshotSurface.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -139,6 +140,7 @@ const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 const CAPTURE_PAGE_RETRY_ATTEMPTS = 3;
 const CAPTURE_PAGE_RETRY_DELAY_MS = 120;
 const CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS = 1_000;
+const CAPTURE_SURFACE_PREP_TIMEOUT_MS = 3_000;
 const PICTURE_IN_PICTURE_INITIAL_WIDTH = 480;
 const PICTURE_IN_PICTURE_INITIAL_HEIGHT = 320;
 const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
@@ -147,18 +149,6 @@ const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const requestRecordingCaptureExpression = (tabId: string): string =>
   `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
-const decodeScreenshotLayout = Schema.decodeUnknownSync(
-  Schema.Struct({
-    cssVisualViewport: Schema.Struct({
-      pageX: Schema.Number,
-      pageY: Schema.Number,
-      clientWidth: Schema.Number,
-      clientHeight: Schema.Number,
-      zoom: Schema.optional(Schema.Number),
-    }),
-  }),
-);
-const decodeScreenshot = Schema.decodeUnknownSync(Schema.Struct({ data: Schema.String }));
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   colorScheme: "light",
   radius: "0.625rem",
@@ -593,6 +583,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   >(new Map());
   const pictureInPictureAspectRatiosRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const pictureInPictureMutationSemaphore = yield* Semaphore.make(1);
+  const screenshotSurfaceSemaphore = yield* Semaphore.make(1);
   const closingTabIdsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
   // Tab recording uses `setDisplayMediaRequestHandler` because Electron's legacy
   // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
@@ -615,7 +606,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   const attemptPromise = <A>(
     errorContext: PreviewOperationContext,
-    evaluate: () => PromiseLike<A>,
+    evaluate: (signal: AbortSignal) => PromiseLike<A>,
   ) =>
     Effect.tryPromise({
       try: evaluate,
@@ -659,57 +650,28 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
   const captureScreenshotWithRetry = Effect.fn("PreviewManager.captureScreenshotWithRetry")(
     function* (errorContext: PreviewOperationContext, tabId: string, wc: Electron.WebContents) {
-      const control = yield* ensureControlSession(wc);
-      const requireCurrentGuest = Effect.gen(function* () {
-        const tabs = yield* SynchronizedRef.get(tabsRef);
-        if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
-          return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
-        }
-      });
-      const capture = Effect.gen(function* () {
-        // Check after the retry delay, and again before accepting its result.
-        yield* requireCurrentGuest;
-        const image = yield* Effect.tryPromise({
-          // An abort-signal parameter makes a stalled promise interruptible.
-          try: async (_signal) => {
-            const { cssVisualViewport: viewport } = decodeScreenshotLayout(
-              await control.debugger.sendCommand("Page.getLayoutMetrics"),
-            );
-            // Layout metrics use CSS pixels, while screenshot clips use DIP.
-            const zoom = viewport.zoom ?? 1;
-            // A fitted webview can extend past the host window. An explicit clip
-            // captures its whole viewport instead of the host's visible surface.
-            const { data } = decodeScreenshot(
-              await control.debugger.sendCommand("Page.captureScreenshot", {
-                format: "png",
-                captureBeyondViewport: true,
-                clip: {
-                  x: viewport.pageX * zoom,
-                  y: viewport.pageY * zoom,
-                  width: viewport.clientWidth * zoom,
-                  height: viewport.clientHeight * zoom,
-                  scale: 1,
-                },
-              }),
-            );
-            return nativeImage.createFromBuffer(Buffer.from(data, "base64"));
-          },
-          catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
-        }).pipe(
-          Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
-          Effect.catchTags({
-            TimeoutError: (cause) =>
-              Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
-          }),
-        );
-        yield* requireCurrentGuest;
-        return image;
-      });
-      return yield* capture.pipe(
-        Effect.retry({
-          times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
-          schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
-          while: isPreviewOperationError,
+      yield* ensureControlSession(wc);
+      return yield* screenshotSurfaceSemaphore.withPermit(
+        Effect.gen(function* () {
+          const surface = yield* attemptPromise(
+            {
+              ...errorContext,
+              operation: `${errorContext.operation}.prepareSurface`,
+            },
+            (signal) => prepareNativeScreenshotSurface(tabId, wc, signal),
+          ).pipe(
+            Effect.timeout(CAPTURE_SURFACE_PREP_TIMEOUT_MS),
+            Effect.catch((error) =>
+              Effect.logDebug("Native screenshot surface preparation failed.", {
+                error,
+                tabId,
+                webContentsId: wc.id,
+              }).pipe(Effect.as(null)),
+            ),
+          );
+          const capture = capturePageWithRetry(errorContext, tabId, wc);
+          if (!surface) return yield* capture;
+          return yield* capture.pipe(Effect.ensuring(Effect.promise(surface.restore)));
         }),
       );
     },

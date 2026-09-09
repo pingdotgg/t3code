@@ -24,7 +24,6 @@ import { BrowserControlInterrupted } from "./SessionControl.ts";
 
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
-const MAX_SCREENSHOT_WIDTH = 1280;
 const WAIT_POLL_MS = 100;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
@@ -184,7 +183,6 @@ export const snapshot = async (input: {
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
 }): Promise<PreviewAutomationSnapshot> => {
   const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
-  const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * input.renderScale));
   const state = refsFor(input.page);
   invalidateRefs(input.page);
   const generation = state.generation;
@@ -196,7 +194,7 @@ export const snapshot = async (input: {
       >
     >,
     input.page.ariaSnapshot({ mode: "ai", boxes: true, timeout: DEFAULT_TIMEOUT_MS }),
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
+    captureViewport(input.page, input.cdp, { format: "png", scale: 1 }),
   ]);
   if (state.generation !== generation) {
     throw new ServerBrowserOperationError(
@@ -220,8 +218,8 @@ export const snapshot = async (input: {
     screenshot: {
       mimeType: "image/png",
       data,
-      width: Math.round(viewport.width * input.renderScale * scale),
-      height: Math.round(viewport.height * input.renderScale * scale),
+      width: Math.round(viewport.width * input.renderScale),
+      height: Math.round(viewport.height * input.renderScale),
     },
   };
 };

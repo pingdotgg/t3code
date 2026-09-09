@@ -245,13 +245,6 @@ vi.mock("electron", () => ({
   },
   nativeImage: {
     createFromPath,
-    createFromBuffer: (data: Buffer) => ({
-      toPNG: () => data,
-      getSize: () => ({
-        width: data.length >= 24 ? data.readUInt32BE(16) : 1280,
-        height: data.length >= 24 ? data.readUInt32BE(20) : 720,
-      }),
-    }),
   },
   shell: {
     showItemInFolder,
