@@ -39,7 +39,9 @@ Auth responses keep `scopes` within the original wire vocabulary and include
 `permissions` for the exact grant. New clients use `permissions` when present,
 even if empty. Older servers omit it, so clients use legacy parent checks for
 features those servers already support. These client checks never change server
-authorization. Unknown response permissions are ignored; grant inputs stay strict.
+authorization. Permission errors likewise retain a legacy `requiredScope` and
+add the exact `requiredPermission`, so a denied RPC stays decodable by old clients.
+Unknown response permissions are ignored; grant inputs stay strict.
 
 Desktop restarts forget the previous local bearer token, so its reusable
 bootstrap grant replaces earlier sessions for the same subject and method.

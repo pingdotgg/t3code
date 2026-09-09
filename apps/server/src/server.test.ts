@@ -4375,7 +4375,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   if (!Schema.is(EnvironmentAuthorizationError)(error)) {
                     assert.fail(`Expected a diagnostics authorization error, got ${String(error)}`);
                   }
-                  assert.equal(error.requiredScope, "diagnostics:read");
+                  assert.equal(error.requiredPermission ?? error.requiredScope, "diagnostics:read");
                 }
               }
               if (scope === "orchestration:read") {
@@ -4435,7 +4435,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   assert.fail(`Expected an authorization error, got ${String(error)}`);
                 }
                 assert.equal(
-                  error.requiredScope,
+                  error.requiredPermission ?? error.requiredScope,
                   scope === "environment:maintain" ? "diagnostics:read" : "environment:maintain",
                 );
                 assert.equal(retries, 0);
@@ -4822,14 +4822,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   ? Deferred.succeed(snapshotReceived, undefined)
                   : Effect.void,
               ),
-              Stream.takeUntil((event) => event.type === "pairingLinkUpserted"),
+              Stream.takeUntil(
+                (event) =>
+                  event.type === "clientUpserted" &&
+                  event.payload.client.label === "Compatibility client",
+              ),
               Stream.runCollect,
               Effect.forkChild,
             );
             yield* Deferred.await(snapshotReceived);
             yield* Deferred.await(changesSubscribed);
             const liveLink = yield* createLink;
+            const paired = yield* exchangeAccessToken(liveLink.credential, {
+              scope: AuthStandardClientScopes.join(" "),
+              clientMetadata: { label: "Compatibility client" },
+            });
+            assert.equal(paired.response.status, 200);
             const events = yield* Fiber.join(eventsFiber);
+            for (const event of events) {
+              const records =
+                event.type === "snapshot"
+                  ? [...event.payload.pairingLinks, ...event.payload.clientSessions]
+                  : event.type === "pairingLinkUpserted" || event.type === "clientUpserted"
+                    ? [event.payload]
+                    : [];
+              for (const record of records)
+                yield* Schema.decodeUnknownEffect(legacyScopeResponse)(record);
+            }
+            const pairedEvent = events
+              .filter((event) => event.type === "clientUpserted")
+              .find((event) => event.payload.client.label === "Compatibility client");
+            assert.deepEqual(pairedEvent?.payload.permissions, AuthStandardClientScopes);
             const snapshot = events.find((event) => event.type === "snapshot");
             const update = events.find((event) => event.type === "pairingLinkUpserted");
             assert.isDefined(snapshot);
@@ -4842,10 +4865,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             assert.notInclude(frames.join(""), '"credential"');
             assert.notInclude(frames.join(""), initialLink.credential);
             assert.notInclude(frames.join(""), liveLink.credential);
-            const paired = yield* exchangeAccessToken(liveLink.credential, {
-              scope: AuthStandardClientScopes.join(" "),
-            });
-            assert.equal(paired.response.status, 200);
           }),
         (frame) => frames.push(frame),
       );
@@ -6067,7 +6086,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 for (const error of errors) {
                   assert.equal(error._tag, "EnvironmentAuthorizationError");
                   if (error._tag === "EnvironmentAuthorizationError") {
-                    assert.equal(error.requiredScope, AuthPreviewOperateScope);
+                    assert.equal(
+                      error.requiredPermission ?? error.requiredScope,
+                      AuthPreviewOperateScope,
+                    );
                   }
                 }
                 assert.equal(refreshes, 0);
@@ -6275,7 +6297,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   for (const error of errors) {
                     assert.equal(error._tag, "EnvironmentAuthorizationError");
                     if (error._tag === "EnvironmentAuthorizationError") {
-                      assert.equal(error.requiredScope, AuthSourceControlWriteScope);
+                      assert.equal(
+                        error.requiredPermission ?? error.requiredScope,
+                        AuthSourceControlWriteScope,
+                      );
                     }
                   }
                   assert.deepEqual(calls, []);
@@ -6376,7 +6401,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               const error = yield* prepare.pipe(Effect.flip);
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError") {
-                assert.equal(error.requiredScope, testCase.requiredScope);
+                assert.equal(
+                  error.requiredPermission ?? error.requiredScope,
+                  testCase.requiredScope,
+                );
               }
               assert.equal(preparations, 0);
             }
@@ -6480,7 +6508,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             for (const error of errors) {
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError")
-                assert.equal(error.requiredScope, "terminal:operate");
+                assert.equal(error.requiredPermission ?? error.requiredScope, "terminal:operate");
             }
           }),
         ),
@@ -6556,7 +6584,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             for (const error of errors) {
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError") {
-                assert.equal(error.requiredScope, "providers:manage");
+                assert.equal(error.requiredPermission ?? error.requiredScope, "providers:manage");
               }
             }
           }),
@@ -6690,7 +6718,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     const error = yield* request.pipe(Effect.flip);
                     expect(error).toMatchObject({
                       _tag: "EnvironmentAuthorizationError",
-                      requiredScope: missing,
+                      requiredPermission: missing,
                     });
                   }
                 });
@@ -7748,7 +7776,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }).pipe(Effect.flip);
               assert.equal(denied._tag, "EnvironmentAuthorizationError");
               if (denied._tag === "EnvironmentAuthorizationError")
-                assert.equal(denied.requiredScope, "filesystem:read");
+                assert.equal(denied.requiredPermission ?? denied.requiredScope, "filesystem:read");
             }
             const attachment = yield* client[WS_METHODS.assetsCreateUrl]({
               resource: {
@@ -7824,6 +7852,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.flip,
             );
             assert.equal(denied._tag, "EnvironmentAuthorizationError");
+            if (denied._tag === "EnvironmentAuthorizationError") {
+              yield* Schema.decodeUnknownEffect(legacyScopeResponse)({
+                scopes: [denied.requiredScope],
+              });
+              assert.equal(denied.requiredPermission, "terminal:read");
+            }
             // A denied subscription must not tear down the shared connection.
             yield* client[WS_METHODS.serverGetConfig]({});
           }),
