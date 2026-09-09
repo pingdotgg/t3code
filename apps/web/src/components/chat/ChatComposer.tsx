@@ -229,7 +229,7 @@ import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation
 import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton } from "./ComposerSpeechButton";
+import { ComposerSpeechButton, ComposerSpeechStatus, resolveSpeechPresentation } from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 
 
@@ -1860,6 +1860,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
+  const speechPresentation = resolveSpeechPresentation(speechInput.state, speechInput.progress);
   const voiceSendDisabledReason = speechInput.blocksSubmission
     ? "Finish or discard voice input before sending"
     : sendDisabledReason;
@@ -3546,7 +3547,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ComposerSpeechButton
                       state={speechInput.state}
                       progress={speechInput.progress}
-                      level={speechInput.level}
                       disabled={
                         isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
                       }
@@ -3555,6 +3555,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onCancel={() => void speechInput.cancel()}
                     />
                   ) : null}
+                  {speechPresentation.showsSend ? (
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
@@ -3613,6 +3614,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   />
+                  ) : null}
                 </div>
               </div>
             )}
