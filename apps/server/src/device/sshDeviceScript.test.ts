@@ -48,6 +48,7 @@ describe("remote helper lifecycle", () => {
         await NodeFSP.writeFile(
           hub,
           `import http from 'node:http'; import fs from 'node:fs';
+if(fs.existsSync('fail-start-once')) {fs.unlinkSync('fail-start-once');process.exit(1);}
 const args=process.argv.slice(2); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
         );
         await NodeFSP.writeFile(
@@ -76,6 +77,19 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
+        const template = NodePath.join(home, "hub-template");
+        await NodeFSP.cp(hubDir, template, { recursive: true });
+        await NodeFSP.rm(NodePath.join(hubDir, ".install-complete"));
+        const installLock = hubDir + ".lock";
+        await NodeFSP.mkdir(installLock);
+        await NodeFSP.utimes(installLock, 1, 1);
+        await NodeFSP.writeFile(
+          NodePath.join(bin, "npm"),
+          `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.cpSync(${JSON.stringify(template)},args[args.indexOf('--prefix')+1],{recursive:true});`,
+          { mode: 0o755 },
+        );
+        await NodeFSP.mkdir(NodePath.join(root, "hosts/one"), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(root, "hosts/one/fail-start-once"), "");
         try {
           const manual = await invoke("one", "start");
           expect(manual.daemonPort).toBeUndefined();

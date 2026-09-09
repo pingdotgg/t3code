@@ -19,6 +19,8 @@ export function DeviceHostsSettings(props: {
   const { state } = useDeviceState(props.environmentId);
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
   const [busy, setBusy] = useState(false);
+  const validPort = (port: number | undefined) =>
+    port === undefined || (Number.isInteger(port) && port >= 1 && port <= 65535);
   const [result, setResult] = useState<string | null>(null);
   const save = async (hosts: ReadonlyArray<SshDeviceHostConfig>) => {
     if (!props.environmentId) return;
@@ -184,7 +186,12 @@ export function DeviceHostsSettings(props: {
                   <Button
                     size="sm"
                     type="submit"
-                    disabled={busy || !editing.label.trim() || !editing.target.trim()}
+                    disabled={
+                      busy ||
+                      !editing.label.trim() ||
+                      !editing.target.trim() ||
+                      !validPort(editing.port)
+                    }
                   >
                     Save host
                   </Button>
@@ -192,7 +199,12 @@ export function DeviceHostsSettings(props: {
                     size="sm"
                     type="button"
                     variant="outline"
-                    disabled={busy || !editing.target.trim()}
+                    disabled={
+                      busy ||
+                      !editing.label.trim() ||
+                      !editing.target.trim() ||
+                      !validPort(editing.port)
+                    }
                     onClick={() => void testConnection(editing)}
                   >
                     Test connection

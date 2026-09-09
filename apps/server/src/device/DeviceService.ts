@@ -261,15 +261,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
           ),
         );
-      const { state } = yield* SynchronizedRef.get(stateRef);
-      if (state.hostStatuses[host.id]?.status !== "ready") {
-        yield* setHostStatus(host.id, { status: "ready" });
-      }
       if (hosts.get(host.id) !== host)
         return yield* new DeviceHostUnavailableError({
           hostId: host.id,
           reason: "Host configuration changed. Retry the operation.",
         });
+      const { state } = yield* SynchronizedRef.get(stateRef);
+      if (state.hostStatuses[host.id]?.status !== "ready") {
+        yield* setHostStatus(host.id, { status: "ready" });
+      }
       return { hostId: host.id, ...ready };
     },
     lifecycleLock.withPermit,
@@ -797,6 +797,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       ),
       agentTarget: (input) =>
         Effect.gen(function* () {
+          const host = yield* resolveHost(input.hostId);
           const ready = yield* agentReadinessIfSupported(input.hostId);
           if (!ready)
             return yield* new DeviceHostUnavailableError({
@@ -804,7 +805,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               reason:
                 "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
             });
-          const configPath = yield* configureAgent(input.hostId, ready);
+          const configPath = yield* lifecycleLock.withPermit(
+            Effect.gen(function* () {
+              if (hosts.get(host.id) !== host)
+                return yield* new DeviceHostUnavailableError({
+                  hostId: host.id,
+                  reason: "Host configuration changed. Retry the operation.",
+                });
+              return yield* configureAgent(input.hostId, ready);
+            }),
+          );
           return [
             "--config",
             configPath,
@@ -829,6 +839,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       sessionsForThread,
     }),
     setHostStatus,
+    withLifecycleLock: lifecycleLock.withPermit,
     refreshHosts: Effect.gen(function* () {
       const summaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
       const unchanged = (id: DeviceHostId) =>
@@ -891,9 +902,8 @@ export const make = Effect.gen(function* () {
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
   const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
-  const lock = yield* Semaphore.make(1);
   const reconcile = (next: ReadonlyArray<SshDeviceHostConfig>) =>
-    lock.withPermit(
+    service.withLifecycleLock(
       Effect.gen(function* () {
         for (const [id, previous] of configured) {
           if (

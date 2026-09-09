@@ -55,7 +55,17 @@ async function install(name, version, entry) {
     try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); break; } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       if (complete()) return file;
-      try { const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8')); if (pid > 0) process.kill(pid, 0); } catch (error) { if (error.code === 'ESRCH') { fs.rmSync(lock, { recursive: true, force: true }); continue; } }
+      try {
+        const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8'));
+        if (!Number.isSafeInteger(pid) || pid <= 0) throw Object.assign(Error('Invalid installer PID'), { code: 'INVALID_PID' });
+        process.kill(pid, 0);
+      } catch (error) {
+        // A new owner may be between mkdir and writing its PID. Reclaim incomplete locks only after a grace period.
+        const incomplete = error.code === 'ENOENT' || error.code === 'INVALID_PID';
+        let stale = false;
+        try { stale = Date.now() - fs.statSync(lock).mtimeMs > 30000; } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+        if (error.code === 'ESRCH' || (incomplete && stale)) { fs.rmSync(lock, { recursive: true, force: true }); continue; }
+      }
       if (Date.now() > deadline) throw Error('Tool installation is locked at ' + lock + '. Check the other installer before removing the lock.');
       await sleep(500);
     }
@@ -106,20 +116,29 @@ async function install(name, version, entry) {
   let hub = read(hubFile);
   if (!hub || hub.owner !== owner || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
-    const hubPort = await port();
-    const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-    const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
-      cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
-    });
-    await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
-    child.unref(); fs.closeSync(log);
-    hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry };
-    write(hubFile, hub);
-  }
-  const deadline = Date.now() + 30000;
-  while (!await healthy(hub.port, '/readyz')) {
-    if (Date.now() > deadline) throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log'));
-    await sleep(200);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const hubPort = await port();
+      const log = fs.openSync(path.join(state, 'hub.log'), 'a');
+      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
+        cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      });
+      try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
+      finally { fs.closeSync(log); }
+      child.unref();
+      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry };
+      write(hubFile, hub);
+      const deadline = Date.now() + 30000;
+      let listening = false;
+      while (child.exitCode === null && child.signalCode === null) {
+        if (await healthy(hub.port, '/readyz')) { listening = true; break; }
+        if (Date.now() > deadline) { stopHub(hub); throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log')); }
+        await sleep(200);
+      }
+      if (listening) break;
+      // Port reservation and binding happen in different processes. Retry an early exit with a fresh port.
+      fs.rmSync(hubFile, { force: true });
+      if (attempt === 4) throw Error('Device hub exited before becoming ready. See ' + path.join(state, 'hub.log'));
+    }
   }
   let agentResult = {};
   if (mode === 'agent-start') {

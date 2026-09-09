@@ -349,8 +349,9 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     summary: Effect.sync(() => summary),
     current: Effect.sync(() => ready),
     ensureReady,
-    ensureAgentReady: () =>
-      changeAgent(true).pipe(
+    ensureAgentReady: (onPhase) =>
+      onPhase("installing").pipe(
+        Effect.flatMap(() => changeAgent(true)),
         Effect.flatMap((value) =>
           value?.agentDevice
             ? Effect.succeed({ ...value, agentDevice: value.agentDevice })
