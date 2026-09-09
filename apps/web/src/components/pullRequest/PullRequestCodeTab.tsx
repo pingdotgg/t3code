@@ -420,7 +420,13 @@ function PullRequestCodeTab({
     enabled: viewedFilesStore !== undefined,
     paths: filePaths,
   });
-  const { setViewed, refresh: refreshFilesViewed } = filesViewed;
+  const {
+    setViewed,
+    refresh: refreshFilesViewed,
+    enabled: filesViewedEnabled,
+    isViewed: isFileViewed,
+    isStale: isFileViewedStale,
+  } = filesViewed;
   // The button goes around the host's cache, so everything the tab reads from it starts over:
   // the diff from its first page, and with it the ticks, which a push since the last read can
   // have marked as standing against an older version of the file.
@@ -464,7 +470,9 @@ function PullRequestCodeTab({
     return placed;
   }, [commit, detail.reviewThreads, files]);
 
-  const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
+  // Hashing what the annotations show is the costly part of an item's version, and none of it
+  // moves when a file is ticked or folded, so it is kept apart from the two that do.
+  const annotatedFiles = useMemo(
     () =>
       files.map((fileDiff) => {
         const fileKey = buildFileDiffRenderKey(fileDiff);
@@ -506,29 +514,20 @@ function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
-        // The header carries the reader's own tick, and the viewer redraws a file only when its
-        // version moves. Ticking a file that is already folded changes no fold, so without this
-        // the box on screen would keep saying the opposite of what the count says.
-        const viewedMark = filesViewed.enabled
-          ? `e${filesViewed.isViewed(path) ? "v" : ""}${filesViewed.isStale(path) ? "s" : ""}`
-          : "";
-
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
           lineNumber: group.line,
           metadata: { threads: group.threads, pending: group.pending, draft: group.draft },
         }));
         return {
-          id: fileKey,
-          type: "diff" as const,
+          fileKey,
+          path,
           fileDiff,
           annotations,
-          collapsed,
           // The viewer re-renders an item only when its version changes, so everything the
           // annotations show has to be part of it.
-          version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${viewedMark}:${annotations
+          annotationsVersion: fnv1a32(
+            annotations
               .map(
                 ({ side, lineNumber, metadata }) =>
                   `${side}:${lineNumber}:${metadata.draft ? "d" : ""}:${metadata.pending
@@ -553,19 +552,38 @@ function PullRequestCodeTab({
                     )
                     .join(",")}`,
               )
-              .join("|")}`,
+              .join("|"),
           ),
         };
       }),
+    [commit, detail.reviewThreads, draft, files, pendingComments, placedThreadIds],
+  );
+
+  const items = useMemo<CodeViewDiffItem<ReviewAnnotationGroup>[]>(
+    () =>
+      annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
+        const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
+        // The header carries the reader's own tick, and the viewer redraws a file only when its
+        // version moves. Ticking a file that is already folded changes no fold, so without this
+        // the box on screen would keep saying the opposite of what the count says.
+        const viewedMark = filesViewedEnabled
+          ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
+          : "";
+        return {
+          id: fileKey,
+          type: "diff" as const,
+          fileDiff,
+          annotations,
+          collapsed,
+          version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
+        };
+      }),
     [
-      commit,
-      detail.reviewThreads,
-      draft,
-      files,
-      filesViewed,
+      annotatedFiles,
+      filesViewedEnabled,
       foldOverride,
-      pendingComments,
-      placedThreadIds,
+      isFileViewed,
+      isFileViewedStale,
       toggledFiles,
     ],
   );
