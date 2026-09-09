@@ -37,6 +37,33 @@ function commandItem(
 }
 
 describe("turnItemToolActivityPresentation", () => {
+  it("shows the IDE diagnostics range without fetching output, and counts when available", () => {
+    const {
+      type: _type,
+      input: _input,
+      exitCode: _exitCode,
+      ...base
+    } = commandItem() as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "ide_diagnostics",
+      input: { file: "src/main.ts", startLine: 120, endLine: 124 },
+    };
+    expect(turnItemToolActivityPresentation(item)).toEqual({
+      summary: "IDE diagnostics",
+      detail: "src/main.ts:120-124",
+    });
+    for (const output of [
+      { structuredContent: { problemCount: 3 } },
+      { content: [{ type: "text", text: '{"problemCount":3}' }] },
+    ]) {
+      expect(turnItemToolActivityPresentation({ ...item, output })).toEqual({
+        summary: "IDE diagnostics",
+        detail: "src/main.ts:120-124 - 3 problems",
+      });
+    }
+  });
   it("keeps the command while its V2 item moves from running to failed", () => {
     expect(turnItemToolActivityPresentation(commandItem({ status: "running" }))).toEqual({
       summary: "Running command",

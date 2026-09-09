@@ -68,6 +68,42 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
         data: { input: { queries: item.patterns } },
       });
     case "dynamic_tool": {
+      if (
+        item.toolName
+          ?.split(/[./]|__/u)
+          .at(-1)
+          ?.toLowerCase() === "ide_diagnostics"
+      ) {
+        const input = asRecord(item.input);
+        const file = typeof input?.file === "string" ? input.file.trim() : undefined;
+        const startLine = typeof input?.startLine === "number" ? input.startLine : undefined;
+        const endLine = typeof input?.endLine === "number" ? input.endLine : undefined;
+        const location =
+          file && startLine !== undefined
+            ? `${file}:${startLine}${endLine !== undefined && endLine !== startLine ? `-${endLine}` : ""}`
+            : file;
+        const output = asRecord(item.output);
+        let diagnostics = asRecord(output?.structuredContent);
+        if (diagnostics === undefined && Array.isArray(output?.content)) {
+          for (const block of output.content) {
+            const text = asRecord(block)?.text;
+            if (typeof text !== "string") continue;
+            try {
+              diagnostics = asRecord(JSON.parse(text));
+            } catch {
+              continue;
+            }
+            if (diagnostics !== undefined) break;
+          }
+        }
+        const problemCount = diagnostics?.problemCount;
+        const problems =
+          typeof problemCount === "number"
+            ? `${problemCount.toLocaleString()} problem${problemCount === 1 ? "" : "s"}`
+            : undefined;
+        const detail = [location, problems].filter(Boolean).join(" - ");
+        return { summary: item.title?.trim() || "IDE diagnostics", ...(detail ? { detail } : {}) };
+      }
       const data = { toolName: item.toolName ?? undefined, input: item.input };
       if (classifyToolActivity({ data }) === "other" && item.viewedImagePath === undefined)
         return undefined;
