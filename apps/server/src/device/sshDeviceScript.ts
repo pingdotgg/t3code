@@ -43,18 +43,12 @@ const stopHub = hub => {
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const healthy = async (port, route) => { try { return (await fetch('http://127.0.0.1:' + port + route, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } };
 const port = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const value = server.address().port; server.close(() => resolve(value)); }); });
-async function install(name, version, entry) {
-  const dir = path.join(root, 'tools', name + '@' + version);
-  const file = path.join(dir, 'node_modules', name, entry);
-  const complete = () => fs.existsSync(file) && fs.existsSync(path.join(dir, '.install-complete')) && fs.readFileSync(path.join(dir, '.install-complete'), 'utf8').trim() === version;
-  if (complete()) return file;
-  fs.mkdirSync(path.dirname(dir), { recursive: true });
-  const lock = dir + '.lock';
+async function acquireLock(lock, complete = () => false) {
   const deadline = Date.now() + 600000;
   while (true) {
-    try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); break; } catch (error) {
+    try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); return true; } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      if (complete()) return file;
+      if (complete()) return false;
       try {
         const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8'));
         if (!Number.isSafeInteger(pid) || pid <= 0) throw Object.assign(Error('Invalid installer PID'), { code: 'INVALID_PID' });
@@ -66,10 +60,19 @@ async function install(name, version, entry) {
         try { stale = Date.now() - fs.statSync(lock).mtimeMs > 30000; } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
         if (error.code === 'ESRCH' || (incomplete && stale)) { fs.rmSync(lock, { recursive: true, force: true }); continue; }
       }
-      if (Date.now() > deadline) throw Error('Tool installation is locked at ' + lock + '. Check the other installer before removing the lock.');
+      if (Date.now() > deadline) throw Error('Device operation is locked at ' + lock + '. Check the other installer before removing the lock.');
       await sleep(500);
     }
   }
+}
+async function install(name, version, entry) {
+  const dir = path.join(root, 'tools', name + '@' + version);
+  const file = path.join(dir, 'node_modules', name, entry);
+  const complete = () => fs.existsSync(file) && fs.existsSync(path.join(dir, '.install-complete')) && fs.readFileSync(path.join(dir, '.install-complete'), 'utf8').trim() === version;
+  if (complete()) return file;
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  const lock = dir + '.lock';
+  if (!await acquireLock(lock, complete)) return file;
   let staging;
   try {
     if (complete()) return file;
@@ -98,6 +101,11 @@ async function install(name, version, entry) {
     if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
     console.log(JSON.stringify({ nodePath: process.execPath, platforms })); return;
   }
+  fs.mkdirSync(state, { recursive: true, mode: 0o700 });
+  // Serialize starts and stops for this environment/host owner, including agent startup.
+  const hostLock = path.join(state, 'runtime.lock');
+  await acquireLock(hostLock);
+  try {
   const hubFile = path.join(state, 'hub.json');
   const daemonFile = path.join(state, 'daemon.json');
   if (mode === 'stop' || mode === 'stop-agent') {
@@ -158,5 +166,6 @@ async function install(name, version, entry) {
   const optional = file => fs.existsSync(file) ? file : null;
   console.log(JSON.stringify({ nodePath: process.execPath, platforms, hubPort: hub.port, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
+  } finally { fs.rmSync(hostLock, { recursive: true, force: true }); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
 `;

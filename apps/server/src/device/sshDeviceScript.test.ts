@@ -62,11 +62,12 @@ else if(args[0]==='serve') { const server=http.createServer((req,res)=>res.end('
 else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
         );
+        let invocation = 0;
         const invoke = async (
           owner: string,
           mode: "start" | "agent-start" | "stop-agent" | "stop",
         ) => {
-          const file = NodePath.join(home, `${owner}-${mode}.cjs`);
+          const file = NodePath.join(home, `${owner}-${mode}-${invocation++}.cjs`);
           await NodeFSP.writeFile(
             file,
             `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
@@ -91,12 +92,21 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
         await NodeFSP.mkdir(NodePath.join(root, "hosts/one"), { recursive: true });
         await NodeFSP.writeFile(NodePath.join(root, "hosts/one/fail-start-once"), "");
         try {
-          const manual = await invoke("one", "start");
+          const [manual, concurrent] = await Promise.all([
+            invoke("one", "start"),
+            invoke("one", "start"),
+          ]);
+          expect(concurrent.hubPort).toBe(manual.hubPort);
           expect(manual.daemonPort).toBeUndefined();
           await expect(
             NodeFSP.stat(NodePath.join(root, "hosts/one/daemon.json")),
           ).rejects.toThrow();
-          const first = await invoke("one", "agent-start");
+          const [first, concurrentAgent] = await Promise.all([
+            invoke("one", "agent-start"),
+            invoke("one", "agent-start"),
+          ]);
+          expect(concurrentAgent.hubPort).toBe(first.hubPort);
+          expect(concurrentAgent.daemonPort).toBe(first.daemonPort);
           const second = await invoke("two", "agent-start");
           const reused = await invoke("one", "agent-start");
           expect(reused.hubPort).toBe(first.hubPort);
