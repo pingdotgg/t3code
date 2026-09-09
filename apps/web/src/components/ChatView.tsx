@@ -1592,6 +1592,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const releaseComposerDraftModelSelection = useComposerDraftStore(
+    (store) => store.releaseModelSelection,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -6873,6 +6876,11 @@ export default function ChatView(props: ChatViewProps) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    // Capture the exact pick this send carries. A same-value pick made while
+    // the send is in flight gets a new id and must survive the release below.
+    const sentModelSelectionId = useComposerDraftStore
+      .getState()
+      .getComposerDraft(composerDraftTarget)?.modelSelectionId;
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
       sendContextImages.some((image) => image.id === directAnnotation.image?.id);
@@ -7493,6 +7501,12 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        // The turn now runs on the model this send carried. Release only that
+        // pick so a newer selection, including a same-value re-pick, remains.
+        releaseComposerDraftModelSelection(
+          scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          sentModelSelectionId,
+        );
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -7900,6 +7914,9 @@ export default function ChatView(props: ChatViewProps) {
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
+      const sentModelSelectionId = useComposerDraftStore
+        .getState()
+        .getComposerDraft(composerDraftTarget)?.modelSelectionId;
 
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
@@ -7990,6 +8007,10 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (failure === null) {
+        releaseComposerDraftModelSelection(
+          scopeThreadRef(activeThread.environmentId, threadIdForSend),
+          sentModelSelectionId,
+        );
         clearUsageLimitsFor(routeThreadKey);
         acknowledgeActiveThreadWoke();
         sendInFlightRef.current = false;
@@ -8020,6 +8041,7 @@ export default function ChatView(props: ChatViewProps) {
       isServerThread,
       localCheckoutBranchMismatch,
       persistThreadSettingsForNextTurn,
+      releaseComposerDraftModelSelection,
       resetLocalDispatch,
       runtimeMode,
       scrollToEnd,
@@ -8030,6 +8052,7 @@ export default function ChatView(props: ChatViewProps) {
       composerRef,
       clearUsageLimitsFor,
       routeThreadKey,
+      composerDraftTarget,
     ],
   );
 
