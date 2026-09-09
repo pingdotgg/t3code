@@ -5,6 +5,7 @@ import * as Net from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -20,6 +21,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const home = yield* fs.makeTempDirectoryScoped();
     const modes: string[] = [];
     let forwards = 0;
+    let failForward = true;
     let rejectConfig = true;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
@@ -27,6 +29,15 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         const forwarding = command.args.includes("-N");
         let output = "";
         if (forwarding) {
+          if (failForward) {
+            failForward = false;
+            return yield* PlatformError.systemError({
+              _tag: "AlreadyExists",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "Port already bound",
+            });
+          }
           forwards++;
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
@@ -100,6 +111,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     );
     yield* host.ensureReady(() => Effect.void);
     expect(forwards).toBe(1);
+    expect(modes.filter((mode) => mode === "start")).toHaveLength(2);
     yield* host.platformAvailability("ios");
     expect((yield* host.summary).hubInstalled).toBe(true);
     const failed = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.result);

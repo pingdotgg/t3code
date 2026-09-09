@@ -163,7 +163,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
     );
 
-  const connect = Effect.fn("SshDeviceHost.connect")(function* (): Effect.fn.Return<
+  const connectOnce = Effect.fn("SshDeviceHost.connectOnce")(function* (): Effect.fn.Return<
     DeviceHost.DeviceHostReady & { agentDevice?: DeviceHost.DeviceHostAgentReady["agentDevice"] },
     DeviceHost.DeviceHostError
   > {
@@ -328,6 +328,22 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       }
     }).pipe(Effect.forkIn(parentScope));
     return next;
+  });
+
+  const connect = Effect.fn("SshDeviceHost.connect")(function* () {
+    for (let attempt = 0; ; attempt++) {
+      const result = yield* connectOnce().pipe(Effect.result);
+      if (result._tag === "Success") return result.success;
+      const failedScope = connectionScope;
+      connectionScope = null;
+      if (failedScope) yield* Scope.close(failedScope, Exit.void);
+      // SSH binds after the reservation is released, so a competing bind needs fresh ports.
+      if (
+        attempt >= 2 ||
+        !["forwarding ports", "waiting for SSH forward"].includes(result.failure.step)
+      )
+        return yield* result.failure;
+    }
   });
 
   const ensureReady: DeviceHost.DeviceHost["Service"]["ensureReady"] = (onPhase) =>

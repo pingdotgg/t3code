@@ -391,7 +391,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
       Effect.gen(function* () {
-        if (!(yield* readDeviceSettings).enabled || hosts.get(ready.hostId) !== host)
+        if (!(yield* readDeviceSettings).enabled || !host || hosts.get(ready.hostId) !== host)
           return (yield* SynchronizedRef.get(stateRef)).state;
         return yield* publish((state) => ({
           ...state,
