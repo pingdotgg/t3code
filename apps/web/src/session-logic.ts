@@ -292,7 +292,6 @@ export function hasActionableProposedPlan(plan: LatestProposedPlanState | null):
 }
 
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
-  "approval_request",
   "fork",
   "handoff",
   "run_interrupt_request",
@@ -347,6 +346,7 @@ function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["to
     case "subagent":
     case "thread_created":
     case "user_input_request":
+    case "approval_request":
       return "tool";
     default:
       return "info";
@@ -482,6 +482,13 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         label: title ?? item.toolName ?? "Tool call",
         toolTitle: title ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
+      };
+    case "approval_request":
+      return {
+        ...common,
+        label: title ?? "Approval requested",
+        detail: item.prompt ?? item.requestKind,
+        toolData: item,
       };
     case "user_input_request":
       return {
