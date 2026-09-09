@@ -94,8 +94,9 @@ function EmptyMobileClients() {
       <EmptyHeader>
         <EmptyTitle>No mobile clients</EmptyTitle>
         <EmptyDescription>
-          Sign in to T3 Code on your iPhone to register it for push notifications and Live
-          Activities.
+          Install T3 Code on your phone and sign in to T3 Connect with this account to register it
+          for push notifications and Live Activities. Pairing a phone directly to an environment
+          over your LAN or Tailscale does not register it here.
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
