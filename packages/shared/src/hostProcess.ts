@@ -24,6 +24,19 @@ export const HostProcessHostname = Context.Reference<string>(
   },
 );
 
+export const HostProcessUsername = Context.Reference<string | null>(
+  "@t3tools/shared/hostProcess/HostProcessUsername",
+  {
+    defaultValue: () => {
+      try {
+        return NodeOS.userInfo().username.trim() || null;
+      } catch {
+        return null;
+      }
+    },
+  },
+);
+
 export const HostProcessEnvironment = Context.Reference<NodeJS.ProcessEnv>(
   "@t3tools/shared/hostProcess/HostProcessEnvironment",
   {

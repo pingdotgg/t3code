@@ -4,9 +4,9 @@
  * deep link (local editor connects over SSH) instead of exec'ing an editor
  * on the environment host.
  *
- * Host precedence: a desktop-SSH environment's real `~/.ssh/config` alias
- * beats server-advertised names; among advertised names the tailnet MagicDNS
- * name beats mDNS `<hostname>.local` (server sends them in that order).
+ * Host precedence: a desktop-SSH environment's configured target beats
+ * server-advertised names; among advertised names the tailnet MagicDNS name
+ * beats mDNS `<hostname>.local` (server sends them in that order).
  */
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
@@ -27,6 +27,7 @@ import { useEnvironmentPresentation } from "~/state/presentation";
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
+  readonly username?: string;
 }
 
 export type RemoteOpenState =
@@ -58,8 +59,8 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  /** Real ssh alias for desktop-SSH environments; null elsewhere. */
-  readonly sshAlias: string | null;
+  /** Configured target for desktop-SSH environments; null elsewhere. */
+  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   /** Server-advertised hosts; undefined on servers that predate the feature. */
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   /** True when running inside the desktop app's renderer. */
@@ -86,8 +87,15 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  if (input.sshAlias !== null && input.sshAlias.length > 0) {
-    return { mode: "remote-links", host: { kind: "ssh-alias", host: input.sshAlias } };
+  if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
+    return {
+      mode: "remote-links",
+      host: {
+        kind: "ssh-alias",
+        host: input.sshTarget.alias,
+        ...(input.sshTarget.username === null ? {} : { username: input.sshTarget.username }),
+      },
+    };
   }
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
@@ -104,12 +112,14 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
       return UNRESOLVED_REMOTE_OPEN;
     }
     const profile = Option.getOrNull(presentation.entry.profile);
-    const sshAlias =
-      profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
+    const sshTarget =
+      profile !== null && profile._tag === "SshConnectionProfile"
+        ? { alias: profile.target.alias, username: profile.target.username }
+        : null;
     return {
       state: resolveRemoteOpenState({
         target: presentation.entry.target,
-        sshAlias,
+        sshTarget,
         remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
