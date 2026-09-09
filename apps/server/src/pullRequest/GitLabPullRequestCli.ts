@@ -290,7 +290,8 @@ export class GitLabPullRequestCli extends Context.Service<
      *
      * The head sha comes from the merge request's own diff refs, so the answer is the version a
      * reader is looking at rather than whatever the source branch has moved on to. A path the
-     * head does not have is left out.
+     * head does not have is answered as the empty revision, since the batch it was asked in was
+     * looked at; a batch GitLab did not answer for is left out instead.
      */
     readonly getFileRevisions: (input: {
       readonly cwd: string;
