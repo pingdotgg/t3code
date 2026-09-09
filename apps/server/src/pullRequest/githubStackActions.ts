@@ -179,6 +179,8 @@ const decodeRebaseResponse = Schema.decodeEffect(
   ),
 );
 
+const encodeNodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
 const decodeMergeResponse = Schema.decodeEffect(Schema.fromJsonString(MergeResponse));
 
 /** Remote-only updates: a stack rebase never switches or rewrites the environment's checkout. */
@@ -299,7 +301,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
             `query=query($owner:String!,$name:String!,$number:Int!,$sha:String!){${
               processed.length === 0
                 ? ""
-                : `processed:nodes(ids:${JSON.stringify(processed.map((head) => head.id))}){... on PullRequest{headRefOid}}`
+                : `processed:nodes(ids:${encodeNodeIds(processed.map((head) => head.id))}){... on PullRequest{headRefOid}}`
             } repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid baseRef{compare(headRef:$sha){behindBy}}}}}`,
           ],
         });
