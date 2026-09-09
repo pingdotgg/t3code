@@ -2751,7 +2751,7 @@ describe("v2 run and attempt history", () => {
       expect.objectContaining({ id: "provider-recovered" }),
     ]);
   });
-  it("keeps persistent cards after the Worked-for row when they arrive before commentary", () => {
+  it("hides subagents in folded turns when they arrive before commentary", () => {
     const timelineEntries = [
       {
         id: "user-entry",
@@ -2818,7 +2818,6 @@ describe("v2 run and attempt history", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
-      "subagent-card-entry",
       "assistant-final-entry",
     ]);
   });
@@ -3346,5 +3345,96 @@ describe("streaming v2 row projection", () => {
         status: "stale" as const,
       })),
     });
+  });
+});
+
+describe("linked timeline resources", () => {
+  const runId = RunId.make("resource-run");
+  const event = (id: string, type: "subagent" | "thread_created", eventRunId = runId) => ({
+    id,
+    kind: "event" as const,
+    createdAt: "2026-09-08T10:00:02Z",
+    projectedItem: { item: { id, type, runId: eventRunId } } as OrchestrationV2ProjectedTurnItem,
+  });
+  const common = { isWorking: false, turnDiffSummaries: [], supportsConversationRollback: false };
+
+  it("groups adjacent subagents without merging across a resource or run boundary", () => {
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [
+        event("a", "subagent"),
+        event("b", "subagent"),
+        event("c", "thread_created"),
+        event("d", "subagent"),
+        event("e", "subagent", RunId.make("other-run")),
+      ],
+      expandedRunIds: new Set([runId, RunId.make("other-run")]),
+    });
+    expect(rows.map((row) => row.id)).toEqual([
+      "turn-fold:resource-run",
+      "a",
+      "c",
+      "d",
+      "turn-fold:other-run",
+      "e",
+    ]);
+    expect(rows[1]).toMatchObject({ subagents: [{ item: { id: "a" } }, { item: { id: "b" } }] });
+  });
+
+  it("keeps created-chat summaries after the final answer and folds only their timeline rows", () => {
+    const timelineEntries = [
+      {
+        kind: "message" as const,
+        id: "intro",
+        createdAt: "2026-09-08T10:00:00Z",
+        message: {
+          id: MessageId.make("intro"),
+          role: "assistant" as const,
+          text: "Creating the chat",
+          runId,
+          streaming: false,
+          createdAt: "2026-09-08T10:00:00Z",
+          updatedAt: "2026-09-08T10:00:00Z",
+        },
+      },
+      event("created", "thread_created"),
+      {
+        kind: "message" as const,
+        id: "final",
+        createdAt: "2026-09-08T10:00:04Z",
+        message: {
+          id: MessageId.make("final"),
+          role: "assistant" as const,
+          text: "Chat is ready",
+          runId,
+          streaming: false,
+          createdAt: "2026-09-08T10:00:04Z",
+          updatedAt: "2026-09-08T10:00:04Z",
+        },
+      },
+    ];
+    const collapsed = deriveMessagesTimelineRows({ ...common, timelineEntries });
+    expect(collapsed.map((row) => row.id)).toEqual([
+      "turn-fold:resource-run",
+      "final",
+      "summary:created",
+      "assistant-meta:final",
+    ]);
+    expect(collapsed.find((row) => row.id === "summary:created")).toMatchObject({
+      resourceSummary: true,
+    });
+    const expanded = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries,
+      expandedRunIds: new Set([runId]),
+    });
+    expect(expanded.map((row) => row.id)).toEqual([
+      "turn-fold:resource-run",
+      "intro",
+      "created",
+      "final",
+      "summary:created",
+      "assistant-meta:final",
+    ]);
   });
 });

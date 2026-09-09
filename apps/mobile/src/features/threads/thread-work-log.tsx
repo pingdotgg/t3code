@@ -817,7 +817,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                   "min-w-0 flex-1 text-sm text-foreground-muted",
                   iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
                 )}
-                numberOfLines={isSystemNotice || expanded ? undefined : 1}
+                numberOfLines={expanded ? undefined : 1}
               >
                 {isSystemNotice ? row.summary : displayText}
               </Text>
