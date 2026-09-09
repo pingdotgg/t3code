@@ -90,15 +90,20 @@ it.effect("lists a nested-group fork's merge requests by source branch and names
     for (const call of calls) {
       expect(call.command).toBe("glab");
       expect(call.args).toEqual([
-        "mr",
-        "list",
-        "--source-branch",
-        branch,
-        "--all",
-        "--per-page",
-        "20",
-        "--output",
-        "json",
+        "api",
+        "--method",
+        "GET",
+        "projects/:fullpath/merge_requests",
+        "--raw-field",
+        `source_branch=${branch}`,
+        "--raw-field",
+        "state=all",
+        "--raw-field",
+        "per_page=20",
+        "--raw-field",
+        "order_by=updated_at",
+        "--raw-field",
+        "sort=desc",
       ]);
     }
   }),

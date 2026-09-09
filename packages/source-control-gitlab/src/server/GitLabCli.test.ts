@@ -34,7 +34,7 @@ layer("GitLabCli.layer", (it) => {
     ["closed", "closed"],
     ["merged", "merged"],
     ["all", "all"],
-  ] as const)("maps the %s state to the GitLab API %s state", (state, expectedState) =>
+  ] as const)("maps the %s state to the GitLab API %s state", ([state, expectedState]) =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
 
