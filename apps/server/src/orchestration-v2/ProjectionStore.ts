@@ -1,6 +1,8 @@
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
   OrchestrationV2AppThread,
+  OrchestrationV2PlanArtifact,
+  PlanId,
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProjectedTurnItem,
@@ -243,6 +245,10 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     providerTurnId: ProviderTurnId,
   ) => Effect.Effect<ProjectionPendingUserInputs, ProjectionStoreV2Error>;
+  readonly getPlan: (
+    threadId: ThreadId,
+    planId: PlanId,
+  ) => Effect.Effect<OrchestrationV2PlanArtifact | undefined, ProjectionStoreV2Error>;
   readonly getRuntimeRequest: (
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -3461,6 +3467,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getPlan: ProjectionStoreV2Shape["getPlan"] = (threadId, planId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const rows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_plans
+          WHERE thread_id = ${threadId} AND plan_id = ${planId}`;
+            return rows[0] === undefined
+              ? undefined
+              : yield* decodePlanPayload(rows[0].payload_json);
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
       sql
         .withTransaction(
@@ -4380,6 +4401,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointContext,
       getPendingNativeUserInputs,
       getRuntimeRequest,
+      getPlan,
       getProviderControlContext,
       getRecoveryThreadIds,
       getUnreadableThreadIds,
@@ -4513,6 +4535,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               (item) => item.type === "user_input_request" && requestIds.has(item.requestId),
             ),
           };
+        }),
+      getPlan: (threadId, planId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          return projection.plans.find((plan) => plan.id === planId);
         }),
       getRuntimeRequest: (threadId, requestId) =>
         Effect.gen(function* () {

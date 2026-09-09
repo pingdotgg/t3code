@@ -6,12 +6,14 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
+  PlanId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -23,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { EventSinkV2, layer as eventSinkLayer } from "./EventSink.ts";
@@ -97,6 +100,8 @@ function threadCreatedEvent(
       interactionMode: "default",
       branch: null,
       worktreePath: null,
+      branchPullRequest: null,
+      activeOrderKey: null,
       activeProviderThreadId: providerThreadId,
       lineage: {
         parentThreadId: null,
@@ -304,6 +309,98 @@ layer("ProviderEventIngestorV2", (it) => {
         ["provider-thread.updated"],
       );
       assert.equal(latestThreadSequence, 2);
+    }),
+  );
+
+  it.effect("carries plan-step durations through consecutive and restarted ingestion", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-09-07T00:00:00.000Z"));
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const planId = PlanId.make("plan:provider-event-duration");
+      const nodeId = NodeId.make("node:provider-event-duration");
+      type TodoListPlan = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
+      const plan = (steps: TodoListPlan["steps"]): TodoListPlan => ({
+        id: planId,
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId,
+        kind: "todo_list",
+        status: "active",
+        steps,
+      });
+      const ingest = (service: ProviderEventIngestorV2["Service"], steps: TodoListPlan["steps"]) =>
+        service.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "plan.updated", driver: CODEX_DRIVER, plan: plan(steps) },
+        });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      yield* ingest(ingestor, [
+        { id: "duplicate-a", text: "Verify", status: "running" },
+        { id: "duplicate-b", text: "Verify", status: "pending" },
+        { id: "fallback", text: "Report", status: "pending" },
+      ]);
+      yield* TestClock.adjust("3 seconds");
+      yield* ingest(ingestor, [
+        { id: "duplicate-a", text: "Verify", status: "completed" },
+        { id: "duplicate-b", text: "Verify", status: "pending" },
+        { id: "fallback", text: "Report", status: "pending" },
+      ]);
+
+      const restartedIngestor = yield* ProviderEventIngestorV2.pipe(
+        Effect.provide(
+          Layer.fresh(providerEventIngestorLayer).pipe(
+            Layer.provide(
+              Layer.succeed(ProjectionStoreV2, {
+                ...projectionStore,
+                getThreadProjection: () => Effect.die("Plan timing must not load thread history"),
+              }),
+            ),
+          ),
+        ),
+      );
+      yield* TestClock.adjust("4 seconds");
+      yield* ingest(restartedIngestor, [
+        { id: "duplicate-a", text: "Verify", status: "completed" },
+        { id: "duplicate-b", text: "Verify", status: "completed" },
+        { id: "fallback", text: "Report", status: "pending" },
+      ]);
+      yield* TestClock.adjust("5 seconds");
+      yield* ingest(restartedIngestor, [
+        { id: "duplicate-a", text: "Verify", status: "completed" },
+        { id: "duplicate-b", text: "Verify", status: "completed" },
+        { id: "fallback", text: "Report", status: "completed" },
+      ]);
+
+      const projection = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      const persisted = projection.plans.find(
+        (candidate): candidate is TodoListPlan =>
+          candidate.kind === "todo_list" && candidate.id === planId,
+      );
+      assert.deepEqual(
+        persisted?.steps.map(({ id, text, status, durationMs }) => ({
+          id,
+          text,
+          status,
+          durationMs,
+        })),
+        [
+          { id: "duplicate-a", text: "Verify", status: "completed", durationMs: 3_000 },
+          { id: "duplicate-b", text: "Verify", status: "completed", durationMs: 4_000 },
+          { id: "fallback", text: "Report", status: "completed", durationMs: 5_000 },
+        ],
+      );
     }),
   );
 

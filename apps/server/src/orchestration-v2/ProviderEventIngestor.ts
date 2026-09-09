@@ -3,6 +3,7 @@ import {
   CommandId,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderTurn,
   type ModelSelection,
@@ -129,6 +130,65 @@ function providerTurnAnalyticsProperties(input: {
   };
 }
 
+type TodoListPlan = Extract<OrchestrationV2PlanArtifact, { readonly kind: "todo_list" }>;
+
+function withPlanStepDurations(
+  plan: TodoListPlan,
+  previous: TodoListPlan | undefined,
+  occurredAt: DateTime.Utc,
+): TodoListPlan {
+  const occurredAtIso = DateTime.formatIso(occurredAt);
+  const occurredAtMs = DateTime.toEpochMillis(occurredAt);
+  const previousById = new Map(previous?.steps.map((step) => [step.id, step]));
+  const hasNewCompletion = plan.steps.some((step) => {
+    const prior = previousById.get(step.id);
+    return step.status === "completed" && prior?.status !== "completed";
+  });
+  let fallbackCompletionConsumed = false;
+
+  return {
+    ...plan,
+    steps: plan.steps.map((step) => {
+      const prior = previousById.get(step.id);
+      const baseStep = { id: step.id, text: step.text, status: step.status };
+      if (step.status === "completed") {
+        if (prior?.status === "completed") {
+          return {
+            ...baseStep,
+            ...(prior.durationMs === undefined ? {} : { durationMs: prior.durationMs }),
+          };
+        }
+        const durationAnchorAt =
+          prior?.status === "running" || !fallbackCompletionConsumed
+            ? prior?.durationAnchorAt
+            : occurredAtIso;
+        fallbackCompletionConsumed = true;
+        const anchorMs =
+          durationAnchorAt === undefined ? occurredAtMs : Date.parse(durationAnchorAt);
+        const durationMs = Number.isFinite(anchorMs) ? Math.max(0, occurredAtMs - anchorMs) : 0;
+        return {
+          ...baseStep,
+          ...(durationMs > 0 ? { durationMs } : {}),
+        };
+      }
+      if (step.status === "running") {
+        return {
+          ...baseStep,
+          durationAnchorAt:
+            prior?.status === "running" ? (prior.durationAnchorAt ?? occurredAtIso) : occurredAtIso,
+        };
+      }
+      return {
+        ...baseStep,
+        durationAnchorAt:
+          hasNewCompletion || prior?.status !== "pending"
+            ? occurredAtIso
+            : (prior.durationAnchorAt ?? occurredAtIso),
+      };
+    }),
+  };
+}
+
 export interface ProviderEventIngestInput {
   readonly providerSessionId: ProviderSessionId;
   readonly providerInstanceId: ProviderInstanceId;
@@ -202,6 +262,7 @@ export const layer: Layer.Layer<
         readonly threadId?: ThreadId;
         readonly runId?: RunId | null;
         readonly nodeId?: NodeId | null;
+        readonly occurredAt?: DateTime.Utc;
       },
     ) =>
       Effect.gen(function* () {
@@ -210,7 +271,7 @@ export const layer: Layer.Layer<
           threadId,
           providerSessionId: input.providerSessionId,
         });
-        const occurredAt = yield* DateTime.now;
+        const occurredAt = payloadInput.occurredAt ?? (yield* DateTime.now);
         return yield* decodeDomainEvent(
           compactUndefined({
             id: eventId,
@@ -365,16 +426,32 @@ export const layer: Layer.Layer<
                 nodeId: input.event.runtimeRequest.nodeId,
               }),
             ];
-          case "plan.updated":
+          case "plan.updated": {
+            const occurredAt = yield* DateTime.now;
+            const plan = input.event.plan;
+            const previous =
+              plan.kind === "todo_list"
+                ? yield* projections.getPlan(plan.threadId, plan.id)
+                : undefined;
+            const payload =
+              plan.kind === "todo_list"
+                ? withPlanStepDurations(
+                    plan,
+                    previous?.kind === "todo_list" ? previous : undefined,
+                    occurredAt,
+                  )
+                : plan;
             return [
               yield* makeDomainEvent(input, {
                 type: "plan.updated",
-                threadId: input.event.plan.threadId,
-                payload: input.event.plan,
-                runId: input.event.plan.runId,
-                nodeId: input.event.plan.nodeId,
+                threadId: plan.threadId,
+                payload,
+                runId: plan.runId,
+                nodeId: plan.nodeId,
+                occurredAt,
               }),
             ];
+          }
           case "turn.terminal":
             const dismissed = yield* dismissNativeUserInputs(input, input.event.providerTurnId);
             if (input.event.status !== "failed") {
