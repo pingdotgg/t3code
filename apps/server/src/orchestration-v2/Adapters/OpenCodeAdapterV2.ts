@@ -997,6 +997,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           settledNativeRequestIds.add(nativeRequestId);
         };
         const abortController = new AbortController();
+        let closing = false;
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
@@ -2645,8 +2646,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              if (abortController.signal.aborted || Exit.isSuccess(exit)) return;
-              const detail = openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
+              if (closing || abortController.signal.aborted) return;
+              const detail = Exit.isSuccess(exit)
+                ? "OpenCode event stream ended unexpectedly."
+                : openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
               yield* updateProviderSession("error", detail);
               for (const state of threads.values()) {
                 if (state.activeTurn !== null)
@@ -2709,6 +2712,13 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             ),
           );
         }
+
+        yield* Scope.addFinalizer(
+          scope,
+          Effect.sync(() => {
+            closing = true;
+          }),
+        );
 
         const registerThread = (
           nativeSession: OpenCodeSession,
