@@ -6,6 +6,32 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+## Diffs and diagrams
+
+On web and desktop, use a fenced `diff` or `patch` block to display additions and
+removals. Short snippets work without file headers:
+
+````markdown
+```diff
+-const retries = 1;
++const retries = 3;
+```
+````
+
+Use a `mermaid` fence to display a diagram:
+
+````markdown
+```mermaid
+flowchart LR
+  Draft --> Review --> Merge
+```
+````
+
+These previews work in sent messages and agent replies. You can switch between
+source and preview; copying a block preserves its original code. Diagrams appear
+after a reply finishes streaming. Invalid diagrams stay readable as source.
+Mobile displays these blocks as code.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can

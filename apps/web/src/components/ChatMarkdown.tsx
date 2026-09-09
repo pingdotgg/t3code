@@ -122,6 +122,8 @@ import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { MarkdownDiffBlock } from "./MarkdownDiffBlock";
+import { MarkdownMermaidBlock } from "./MarkdownMermaidBlock";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -521,6 +523,7 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
   const raw = match?.[1] ?? "text";
+  if (raw.toLowerCase() === "patch") return "diff";
   // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
   return raw === "gitignore" ? "ini" : raw;
 }
@@ -889,14 +892,17 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   children,
+  preview,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
   children: ReactNode;
+  preview?: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const [showSource, setShowSource] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
@@ -955,6 +961,18 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
+          {preview != null && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="chat-markdown-chrome-action"
+              aria-label={showSource ? "Show preview" : "Show source"}
+              onClick={() => setShowSource((value) => !value)}
+            >
+              {showSource ? "Preview" : "Source"}
+            </Button>
+          )}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -992,7 +1010,7 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {preview != null && !showSource ? preview : children}
     </div>
   );
 }
@@ -3094,6 +3112,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
+        preview={
+          language.toLowerCase() === "diff" || language.toLowerCase() === "patch" ? (
+            <MarkdownDiffBlock code={codeBlock.code} />
+          ) : language.toLowerCase() === "mermaid" && !isStreaming ? (
+            <MarkdownMermaidBlock code={codeBlock.code} theme={resolvedTheme} />
+          ) : undefined
+        }
       >
         <RenderErrorBoundary
           resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}

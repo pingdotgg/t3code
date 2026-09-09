@@ -1875,6 +1875,32 @@ code {
   background: transparent !important;
 }
 
+.chat-markdown-diff code {
+  display: block;
+  min-width: fit-content;
+}
+
+.chat-markdown-diff [data-diff-line] {
+  display: block;
+  min-height: 1lh;
+}
+
+.chat-markdown-diff [data-diff-line="added"] {
+  background: color-mix(in srgb, var(--color-green-500) 15%, transparent);
+  color: light-dark(var(--color-green-800), var(--color-green-300));
+}
+
+.chat-markdown-diff [data-diff-line="removed"] {
+  background: color-mix(in srgb, var(--color-red-500) 15%, transparent);
+  color: light-dark(var(--color-red-800), var(--color-red-300));
+}
+
+.chat-markdown-diff [data-diff-line="header"],
+.chat-markdown-diff [data-diff-line="hunk"] {
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
