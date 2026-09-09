@@ -119,6 +119,44 @@ describe("Channel", () => {
         assert.deepStrictEqual(resultChunked, [[1, 2, 3, 4], [5]])
       }))
 
+    it.effect("fromReadableStream", () =>
+      Effect.gen(function*() {
+        const result = yield* Channel.fromReadableStream({
+          evaluate: () =>
+            new ReadableStream<number>({
+              start(controller) {
+                controller.enqueue(1)
+                controller.enqueue(2)
+                controller.close()
+              }
+            }),
+          onError: (error) => error
+        }).pipe(Channel.runCollect)
+
+        assert.deepStrictEqual(result, [[1], [2]])
+      }))
+
+    it.effect("fromTransformStream - surfaces write-side errors through the read side", () =>
+      Effect.gen(function*() {
+        const error = new Error("write failed")
+        const channel = Channel.fromTransformStream<never, number, number, Error>({
+          evaluate: () =>
+            new TransformStream<number, number>({
+              transform() {
+                throw error
+              }
+            }),
+          onError: (cause) => cause as Error
+        })
+        const exit = yield* Channel.fromArray([[1] as [number]]).pipe(
+          Channel.pipeTo(channel),
+          Channel.runDrain,
+          Effect.exit
+        )
+
+        assertExitFailure(exit, Cause.fail(error))
+      }))
+
     it.effect("acquireRelease", () =>
       Effect.gen(function*() {
         const acquired = yield* Ref.make(false)
@@ -129,6 +167,43 @@ describe("Channel", () => {
         ).pipe(Channel.runDrain)
         assert.isTrue(yield* Ref.get(acquired))
         assert.isTrue(yield* Ref.get(released))
+      }))
+
+    it.effect("acquireUseRelease combines usage and release failures", () =>
+      Effect.gen(function*() {
+        const result = yield* Channel.acquireUseRelease(
+          Effect.void,
+          () => Channel.fail("usage failure"),
+          () => Effect.die("release failure")
+        ).pipe(Channel.runDrain, Effect.exit)
+        assert.deepStrictEqual(
+          result,
+          Exit.failCause(Cause.combine(Cause.fail("usage failure"), Cause.die("release failure")))
+        )
+      }))
+
+    it.effect("acquireUseRelease surfaces release failure after successful usage", () =>
+      Effect.gen(function*() {
+        const result = yield* Channel.acquireUseRelease(
+          Effect.void,
+          () => Channel.succeed(1),
+          () => Effect.die("release failure")
+        ).pipe(Channel.runDrain, Effect.exit)
+        assert.deepStrictEqual(result, Exit.die("release failure"))
+      }))
+  })
+
+  describe("destructors", () => {
+    it.effect("mkUint8Array", () =>
+      Effect.gen(function*() {
+        const bytes = yield* Channel.fromArray(
+          [
+            [new Uint8Array([1, 2])],
+            [new Uint8Array([3]), new Uint8Array([4, 5])]
+          ] as const
+        ).pipe(Channel.mkUint8Array)
+
+        assert.deepStrictEqual(bytes, new Uint8Array([1, 2, 3, 4, 5]))
       }))
   })
 

@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:DescribeNodegroup` is granted on the cluster's sub-resource ARNs.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.DescribeNodegroupHttp)`.
- * @binding
- * @section Inspecting Compute
- * @example Check a Node Group's Health
+ * ### Inspecting Compute
+ * **Example:** Check a Node Group's Health
  * ```typescript
  * // init
  * const describeNodegroup = yield* AWS.EKS.DescribeNodegroup(cluster);
@@ -21,6 +20,8 @@ import type { Cluster } from "./Cluster.ts";
  * const { nodegroup } = yield* describeNodegroup({ nodegroupName: "general" });
  * const issues = nodegroup?.health?.issues ?? [];
  * ```
+ *
+ * @binding
  */
 export interface DescribeNodegroup extends Binding.Service<
   DescribeNodegroup,

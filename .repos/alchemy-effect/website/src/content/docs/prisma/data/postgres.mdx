@@ -1,0 +1,98 @@
+---
+title: Postgres
+description: Prisma Postgres as Stack resources — projects, databases, branch attachment, and a zero-config local database under alchemy dev.
+---
+
+A `Prisma.Project` owns everything; a `Prisma.Postgres` database
+lives inside it. Declare both and alchemy converges them like any
+other resource.
+
+## Project
+
+```typescript
+import * as Prisma from "alchemy/Prisma";
+
+const project = yield* Prisma.Project("app", {
+  createDatabase: false,
+  region: "us-east-1",
+});
+```
+
+By default, creating a project also provisions a default Prisma
+Postgres database in the chosen region. Prisma Compute deployments
+under that project receive system-managed `DATABASE_URL` and
+`DATABASE_URL_POOLED` variables automatically. Pass
+`createDatabase: false` (as above) when you'd rather declare
+databases explicitly with their own lifecycle and connection outputs.
+
+:::caution[Projects own their data]
+Destroying a `Prisma.Project` deletes the project and its contained
+databases and apps. Use a durable state backend and review the destroy
+plan before removing a project from a Stack.
+:::
+
+## Database
+
+`Prisma.Postgres` and `Prisma.Database` are the same resource under
+two names — use whichever reads better. Standalone database resources
+cannot be the project's default database; let `Prisma.Project` own the
+default database when you need one:
+
+```typescript
+const postgres = yield* Prisma.Postgres("db", {
+  project,
+  region: "us-east-1",
+});
+```
+
+Omit `name` and alchemy generates a stable physical name, so an
+interrupted create recovers instead of duplicating the database.
+
+## Branches
+
+A `Prisma.Branch` groups databases under a git-style name, and a
+database attaches to one by `branchId` (or `branchGitName`):
+
+```typescript
+const branch = yield* Prisma.Branch("preview", { project });
+
+const previewDb = yield* Prisma.Postgres("preview-db", {
+  project,
+  branchId: branch.branchId,
+});
+```
+
+See [Branches](/prisma/data/branches) for preview-per-stage
+patterns and default-branch promotion.
+
+## Local dev
+
+Under `bun alchemy dev`, the database resolves to a local
+`@prisma/dev` Postgres instead of the cloud — same outputs, zero
+provisioning. The `dev` prop tunes it:
+
+```typescript
+const postgres = yield* Prisma.Postgres("db", {
+  project,
+  dev: {
+    // run migrations once the local server is ready, with
+    // DATABASE_URL pointing at it
+    migrate: "bun run db:setup",
+  },
+});
+```
+
+`persistenceMode: "stateless"` gives you a fresh database on every
+dev session; the default (`"stateful"`) keeps data across restarts.
+
+## Where next
+
+- [Connections](/prisma/data/connections) — credentials, connection
+  strings, and origins for Hyperdrive.
+- [Compute](/prisma/compute/apps) — deploy an app next to the database.
+
+Reference:
+
+- [Project API reference](/providers/prisma/project)
+- [Database API reference](/providers/prisma/database)
+- [Branch API reference](/providers/prisma/branch)

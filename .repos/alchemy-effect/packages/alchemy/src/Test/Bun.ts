@@ -129,7 +129,13 @@ export const make = <ROut = any>(options: MakeOptions<ROut>): TestApi => {
   // The scope is closed by `destroy(...)` (or never — the next test run
   // reclaims any leaked sidecar via the lock file).
   const sharedScope = Scope.makeUnsafe("sequential");
-  const runEff = <A>(eff: TestEffect<A>) => Core.run(eff, options, sharedScope);
+  // In dev mode, run local providers behind one file-scoped RPC sidecar
+  // (the `alchemy dev` topology). Lives in its own scope — NOT sharedScope,
+  // which `destroy(Stack)` closes mid-file in self-contained tests — and is
+  // closed by the fallback afterAll below.
+  const sidecar = Core.makeSidecarHandle(options);
+  const runEff = <A>(eff: TestEffect<A>) =>
+    Core.run(eff, options, sharedScope, sidecar);
 
   const test = ((name, eff, opts) => {
     bun.test(name, () => runEff(eff), opts);
@@ -157,6 +163,7 @@ export const make = <ROut = any>(options: MakeOptions<ROut>): TestApi => {
       Core.withProviders(fn(scratch), options, scratch.name),
       { ...options, state: scratch.state },
       sharedScope,
+      sidecar,
     );
   };
 
@@ -187,12 +194,25 @@ export const make = <ROut = any>(options: MakeOptions<ROut>): TestApi => {
     bun.beforeEach(() => runEff(eff), hookOptions);
   };
 
+  // bun:test stops running later `afterAll` hooks once one throws, which
+  // would skip the fallback cleanup hook below — leaking the shared scope
+  // and the sidecar for the rest of the process whenever a teardown
+  // assertion fails. Guard every user teardown: on failure, run the
+  // (idempotent) cleanup before rethrowing so the failure still fails the
+  // suite. (`closeAll` is initialized below; hooks only run after `make`
+  // returns.)
+  const guardTeardown = (eff: TestEffect<any>) => () =>
+    runEff(eff).catch(async (error) => {
+      await Effect.runPromise(closeAll);
+      throw error;
+    });
+
   const afterAll = ((eff, hookOptions) => {
-    bun.afterAll(() => runEff(eff), hookOptions ?? DEFAULT_HOOK_TIMEOUT);
+    bun.afterAll(guardTeardown(eff), hookOptions ?? DEFAULT_HOOK_TIMEOUT);
   }) as AfterAllFn;
   afterAll.skipIf = (predicate) => (eff, hookOptions) => {
     if (predicate) return;
-    bun.afterAll(() => runEff(eff), hookOptions ?? DEFAULT_HOOK_TIMEOUT);
+    bun.afterAll(guardTeardown(eff), hookOptions ?? DEFAULT_HOOK_TIMEOUT);
   };
 
   const afterEach: AfterEachFn = (eff, hookOptions) => {
@@ -210,11 +230,16 @@ export const make = <ROut = any>(options: MakeOptions<ROut>): TestApi => {
   // Fallback cleanup: if the user never calls `destroy(Stack)` (e.g.
   // `NO_DESTROY=1`), nothing else closes the shared scope and the sidecar
   // child process leaks past the test process. Register an `afterAll` that
-  // closes it. We defer registration to a microtask so it runs AFTER any
-  // user-registered `afterAll` (including `destroy(Stack)`); bun runs
-  // afterAll hooks in registration order.
+  // closes it (and the RPC sidecar, which lives in its own scope so that
+  // mid-file `destroy(Stack)` calls can't kill it for later tests). We defer
+  // registration to a microtask so it runs AFTER any user-registered
+  // `afterAll` (including `destroy(Stack)`); bun runs afterAll hooks in
+  // registration order.
+  const closeAll = sidecar
+    ? Effect.andThen(closeScope, sidecar.close)
+    : closeScope;
   queueMicrotask(() => {
-    bun.afterAll(() => Effect.runPromise(closeScope), DEFAULT_HOOK_TIMEOUT);
+    bun.afterAll(() => Effect.runPromise(closeAll), DEFAULT_HOOK_TIMEOUT);
   });
 
   return {

@@ -19,7 +19,7 @@ export class BackupSearchTestFunction extends Lambda.Function<Lambda.Function>()
 export default BackupSearchTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // The fixture search job scans S3 recovery points for a prefix that

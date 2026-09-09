@@ -187,6 +187,11 @@ const exercise = (
     yield* expectMissing(readBase, k1);
     expect((yield* headObject(readBase, k1)).exists).toBe(false);
 
+    // delete (missing key) — idempotent in BOTH implementations: the native
+    // binding resolves on a key that was never there, so the HTTP client must
+    // not surface R2's `NoSuchKey` either.
+    expect((yield* del(writeBase, `${prefix}never-written`)).status).toBe(200);
+
     // delete (batch) — write two, delete both in one call
     const k2 = `${prefix}k2`;
     const k3 = `${prefix}k3`;

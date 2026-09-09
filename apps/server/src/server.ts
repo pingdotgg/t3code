@@ -564,7 +564,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(httpCompressionLayer),
 );
 
-export const makeServerLayer = Layer.unwrap(
+const makeServerLayer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const activation = yield* Deferred.make<void>();

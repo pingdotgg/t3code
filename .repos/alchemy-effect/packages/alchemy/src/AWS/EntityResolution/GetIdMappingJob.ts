@@ -9,9 +9,8 @@ import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
  * Reads the status, metrics, and errors of an ID mapping job run of the
  * bound workflow. Provide the implementation with
  * `Effect.provide(AWS.EntityResolution.GetIdMappingJobHttp)`.
- * @binding
- * @section Running ID Mapping Jobs
- * @example Poll a Job's Status
+ * ### Running ID Mapping Jobs
+ * **Example:** Poll a Job's Status
  * ```typescript
  * // init — bind the operation to the workflow
  * const getIdMappingJob = yield* AWS.EntityResolution.GetIdMappingJob(workflow);
@@ -20,6 +19,8 @@ import type { IdMappingWorkflow } from "./IdMappingWorkflow.ts";
  * const job = yield* getIdMappingJob({ jobId });
  * console.log(job.status, job.metrics?.totalMappedRecords);
  * ```
+ *
+ * @binding
  */
 export interface GetIdMappingJob extends Binding.Service<
   GetIdMappingJob,
