@@ -1,5 +1,6 @@
 import {
   MessageId,
+  RuntimeRequestId,
   NodeId,
   PlanId,
   ProviderInstanceId,
@@ -1394,4 +1395,70 @@ describe("provider question values", () => {
       }),
     ).toEqual({ runtime: "second" });
   });
+});
+
+it("accepts ready attachment-only answers while preserving selected options", () => {
+  const question = {
+    id: "q",
+    header: "Spec",
+    question: "Provide a specification",
+    options: [{ label: "Yes", description: "Approve" }],
+    multiSelect: false,
+  };
+  expect(buildPendingUserInputAnswers([question], { q: { attachmentCount: 1 } })).toEqual({
+    q: "",
+  });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, selectedOptionValues: ["Yes"] },
+    }),
+  ).toEqual({ q: "Yes" });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...question, allowCustomAnswer: false }], {
+      q: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
+
+it("makes attachment-only question answers expandable in the mobile feed", () => {
+  const answer = {
+    requestId: RuntimeRequestId.make("question-request"),
+    answers: { q: "" },
+    questionTextById: { q: "Attach the specification" },
+    attachmentsByQuestionId: {
+      q: [
+        {
+          type: "file" as const,
+          id: "question-file",
+          name: "spec.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+        },
+      ],
+    },
+  };
+  const [group] = buildThreadFeed([
+    projected(
+      {
+        ...base("answer-history", "2026-09-08T00:00:00.000Z", 0),
+        type: "user_input_request",
+        requestId: answer.requestId,
+        questions: [],
+        questionAnswer: answer,
+      },
+      0,
+    ),
+  ]);
+  expect(group?.type).toBe("activity-group");
+  if (group?.type !== "activity-group") return;
+  expect(group.activities[0]).toMatchObject({
+    canExpand: true,
+    workEntry: { questionAnswer: answer },
+  });
+  expect(group.activities[0]?.getFullDetail()).toContain("spec.txt");
 });
