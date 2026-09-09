@@ -134,6 +134,7 @@ import {
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
 import {
   computeStableMessagesTimelineRows,
+  countTimelineMessagesBelow,
   deriveMessagesTimelineRowsWithState,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
@@ -344,6 +345,7 @@ interface MessagesTimelineProps {
    */
   liveFollowEnabled: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  onMessagesBelowChange?: (count: number) => void;
   /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
@@ -396,6 +398,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   liveFollowEnabled,
   onIsAtEndChange,
+  onMessagesBelowChange,
   onContentOverflowChange,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
@@ -573,6 +576,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     supportsConversationRollback,
   ]);
   const rows = useStableRows(rawRows);
+  const messageRowIndices = useMemo(
+    () => rows.flatMap((row, index) => (row.kind === "message" ? [index] : [])),
+    [rows],
+  );
+  const reportMessagesBelow = useCallback(() => {
+    onMessagesBelowChange?.(
+      countTimelineMessagesBelow(
+        messageRowIndices,
+        listRef.current?.getState?.(),
+        contentInsetEndAdjustment,
+      ),
+    );
+  }, [contentInsetEndAdjustment, listRef, messageRowIndices, onMessagesBelowChange]);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -637,12 +653,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, []);
   const reportContentOverflow = useCallback(() => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
+    if (contentOverflowFrameRef.current !== null) return;
     contentOverflowFrameRef.current = requestAnimationFrame(() => {
       contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
+      onContentOverflowChange?.(measureContentOverflow());
+      reportMessagesBelow();
     });
-  }, [measureContentOverflow, onContentOverflowChange]);
+  }, [measureContentOverflow, onContentOverflowChange, reportMessagesBelow]);
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
@@ -652,7 +669,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
-  }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
+    reportMessagesBelow();
+  }, [
+    cancelContentOverflowFrame,
+    measureContentOverflow,
+    onContentOverflowChange,
+    reportMessagesBelow,
+    rows.length,
+  ]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();

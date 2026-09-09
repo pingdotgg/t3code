@@ -164,6 +164,43 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
+/** Counts message rows with content below the unobscured viewport, including a partial row. */
+export function countTimelineMessagesBelow(
+  messageRowIndices: ReadonlyArray<number>,
+  state:
+    | {
+        readonly scroll?: number;
+        readonly scrollLength?: number;
+        readonly positionAtIndex?: (index: number) => number | undefined;
+        readonly sizeAtIndex?: (index: number) => number | undefined;
+      }
+    | undefined,
+  composerInset: number,
+): number {
+  if (state?.scroll === undefined || state.scrollLength === undefined) return 0;
+  const visibleBottom = state.scroll + state.scrollLength - Math.max(0, composerInset);
+  // Cached row positions are ordered, so only log(n) lookups are needed per scroll.
+  let low = 0;
+  let high = messageRowIndices.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const rowIndex = messageRowIndices[middle]!;
+    const top = state.positionAtIndex?.(rowIndex);
+    if (top === undefined || !Number.isFinite(top)) return 0;
+    // Offscreen rows can have an estimated position without a measured size.
+    // Their top alone is sufficient when the whole row is below the viewport.
+    const height = state.sizeAtIndex?.(rowIndex);
+    const bottom =
+      height !== undefined ? top + height : (state.positionAtIndex?.(rowIndex + 1) ?? top);
+    if (top > visibleBottom + 1 || bottom > visibleBottom + 1) {
+      high = middle;
+    } else {
+      low = middle + 1;
+    }
+  }
+  return messageRowIndices.length - low;
+}
+
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
