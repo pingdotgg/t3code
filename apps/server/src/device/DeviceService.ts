@@ -58,6 +58,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import * as ServerSettings from "../serverSettings.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
@@ -799,7 +800,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliContext = yield* Effect.context<Effect.Services<ReturnType<typeof ensureAgentDevice>>>();
+  const runner = yield* ProcessRunner.ProcessRunner;
   const service = yield* makeWithHosts(new Map([[localHost.id, localHost]]), (hostId, ready) => {
     const file = agentDeviceConfigPath(config.stateDir, hostId, path);
     return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
@@ -819,7 +820,9 @@ export const make = Effect.gen(function* () {
   return {
     ...service,
     agentCli: ensureAgentDevice(config.baseDir).pipe(
-      Effect.provide(cliContext),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.map((tool) => tool.entryPath),
       Effect.mapError(
         (error) =>
