@@ -140,6 +140,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       identified rollback readiness. Clients retain projection-based command
       shaping and validation when this is absent. */
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the worktree.list/changes/prune APIs and runs worktree
+      lifecycle cleanup. Same version-skew contract as threadSettlement:
+      clients hide worktree management for environments that lack this. */
+  worktreeManagement: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */

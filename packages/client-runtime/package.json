@@ -270,6 +270,10 @@
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
+    },
+    "./state/worktrees": {
+      "types": "./src/state/worktrees.ts",
+      "default": "./src/state/worktrees.ts"
     }
   },
   "scripts": {

@@ -916,6 +916,27 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+const MIN_WORKTREE_AUTO_PRUNE_AFTER_DAYS = 1;
+const MAX_WORKTREE_AUTO_PRUNE_AFTER_DAYS = 365;
+export const WorktreeAutoPruneAfterDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_WORKTREE_AUTO_PRUNE_AFTER_DAYS,
+    maximum: MAX_WORKTREE_AUTO_PRUNE_AFTER_DAYS,
+  }),
+);
+export type WorktreeAutoPruneAfterDays = typeof WorktreeAutoPruneAfterDays.Type;
+const DEFAULT_WORKTREE_AUTO_PRUNE_AFTER_DAYS: WorktreeAutoPruneAfterDays = 14;
+
+export const WorktreeSettings = Schema.Struct({
+  /** Remove safe-to-prune worktrees after this many inactive days; null disables it. */
+  autoPruneAfterDays: Schema.NullOr(WorktreeAutoPruneAfterDays).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKTREE_AUTO_PRUNE_AFTER_DAYS)),
+  ),
+  /** Allow the reaper to remove safe orphaned worktrees on its next sweep. */
+  deleteOrphanedImmediately: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type WorktreeSettings = typeof WorktreeSettings.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
@@ -1099,6 +1120,7 @@ export const ServerSettings = Schema.Struct({
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  worktrees: WorktreeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1298,6 +1320,12 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  worktrees: Schema.optionalKey(
+    Schema.Struct({
+      autoPruneAfterDays: Schema.optionalKey(Schema.NullOr(WorktreeAutoPruneAfterDays)),
+      deleteOrphanedImmediately: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

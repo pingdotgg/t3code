@@ -11,3 +11,11 @@ export const vcsCommandConcurrency: AtomCommandConcurrency<{
   mode: "serial",
   key: ({ environmentId, input }) => JSON.stringify([environmentId, input.cwd]),
 };
+
+export const worktreeCommandConcurrency: AtomCommandConcurrency<{
+  readonly environmentId: EnvironmentId;
+  readonly input: unknown;
+}> = {
+  mode: "serial",
+  key: ({ environmentId }) => environmentId,
+};

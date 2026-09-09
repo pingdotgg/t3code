@@ -18,6 +18,7 @@ import { ThreadManagementService } from "../ThreadManagementService.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
+import { layerNoop as worktreeRevivalTestLayer } from "../../vcs/WorktreeRevivalService.testkit.ts";
 import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackService.ts";
@@ -44,7 +45,6 @@ import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../P
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
-import { worktreeRepairDependenciesTestLayer } from "../ProviderTurnStartService.testkit.ts";
 import { layer as runExecutionServiceLayer } from "../RunExecutionService.ts";
 import { layer as runFinalizationServiceLayer } from "../RunFinalizationService.ts";
 import { ThreadTitleRegenerationService } from "../ThreadTitleRegenerationService.ts";
@@ -338,6 +338,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         Layer.mock(ProviderAuthService)({ tryHandlePromptCommand: () => Effect.succeed(false) }),
         runExecutionServiceProvided,
         runtimeLayer,
+        worktreeRevivalTestLayer,
       ),
     ),
   );
@@ -415,7 +416,6 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
   const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided).pipe(
-    Layer.provide(worktreeRepairDependenciesTestLayer),
     Layer.provide(NodeServices.layer),
   );
 
