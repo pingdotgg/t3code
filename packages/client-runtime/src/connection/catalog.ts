@@ -1,4 +1,9 @@
-import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@t3tools/contracts";
+import {
+  DesktopSshEnvironmentTargetSchema,
+  EnvironmentId,
+  PortSchema,
+  TailcatAddress,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -7,6 +12,7 @@ import {
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  TailcatConnectionTarget,
   type ConnectionTarget,
 } from "./model.ts";
 
@@ -33,7 +39,20 @@ export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfil
   },
 ) {}
 
-export const ConnectionProfile = Schema.Union([BearerConnectionProfile, SshConnectionProfile]);
+export class TailcatConnectionProfile extends Schema.TaggedClass<TailcatConnectionProfile>()(
+  "TailcatConnectionProfile",
+  {
+    ...ConnectionProfileBase,
+    address: TailcatAddress,
+    remotePort: PortSchema,
+  },
+) {}
+
+export const ConnectionProfile = Schema.Union([
+  BearerConnectionProfile,
+  SshConnectionProfile,
+  TailcatConnectionProfile,
+]);
 export type ConnectionProfile = typeof ConnectionProfile.Type;
 
 export interface ConnectionCatalogEntry {
@@ -82,10 +101,20 @@ export class SshConnectionRegistration extends Schema.TaggedClass<SshConnectionR
   },
 ) {}
 
+export class TailcatConnectionRegistration extends Schema.TaggedClass<TailcatConnectionRegistration>()(
+  "TailcatConnectionRegistration",
+  {
+    target: TailcatConnectionTarget,
+    profile: TailcatConnectionProfile,
+    credential: BearerConnectionCredential,
+  },
+) {}
+
 export const ConnectionRegistration = Schema.Union([
   RelayConnectionRegistration,
   BearerConnectionRegistration,
   SshConnectionRegistration,
+  TailcatConnectionRegistration,
 ]);
 export type ConnectionRegistration = typeof ConnectionRegistration.Type;
 
@@ -116,9 +145,23 @@ export function connectionRegistrationCatalogEntry(
       };
     case "BearerConnectionRegistration":
     case "SshConnectionRegistration":
+    case "TailcatConnectionRegistration":
       return {
         target: registration.target,
         profile: Option.some(registration.profile),
       };
+  }
+}
+
+/** Targets whose profile and credential live under a connection id. */
+export function connectionTargetConnectionId(target: ConnectionTarget): string | null {
+  switch (target._tag) {
+    case "PrimaryConnectionTarget":
+    case "RelayConnectionTarget":
+      return null;
+    case "BearerConnectionTarget":
+    case "SshConnectionTarget":
+    case "TailcatConnectionTarget":
+      return target.connectionId;
   }
 }

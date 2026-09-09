@@ -13,6 +13,13 @@ or relay-management authority. Creating another pairing link requires both
 [auth handlers](../../apps/server/src/auth/http.ts) enforce this at issuance;
 client labels and device metadata have no authorization role.
 
+The one client-supplied exchange parameter with an effect is
+`client_tailcat_node_key`. When the redeemed credential is a Tailcat connection
+code, the exchange records that key as a trusted Tailcat peer linked to the new
+session, so the device can still reach the listener after the pairing window
+closes. It grants no scopes and is ignored for every other credential. See
+[Tailcat](./tailcat.md).
+
 The access read model contains pairing metadata, never recoverable pairing
 secrets. Only the creation response returns the raw credential. Otherwise read
 access to the connections list would become a way to acquire another client's
@@ -36,6 +43,12 @@ Revocation and insertion share a [database
 transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
+
+Federation peers hold ordinary sessions whose only scope is the marker
+`federation:peer`, with the peer's environment ID as subject. The marker grants
+nothing on its own; the federation HTTP group checks the per-peer scopes each
+side granted at pairing. Treating the marker as a capability anywhere else would
+let a peer act as a client. See [federation](./federation.md).
 
 ## The environment is the filesystem boundary
 

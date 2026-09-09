@@ -33,6 +33,8 @@ apps/mobile/.showcase/
 artifacts/app-store/screenshots/
 .github/pr-assets/
 native/**/target/
+native/tailcat/dist/
+apps/desktop/prod-resources/tailcat/
 node_modules/
 .alchemy/
 *.log

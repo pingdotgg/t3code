@@ -45,3 +45,14 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Checkpoint          | A saved workspace state used for diffs and restore, stored as a hidden Git ref.                              |
 | Checkpoint baseline | The workspace state captured before the work being compared.                                                 |
 | Turn diff           | The workspace changes attributed to one turn.                                                                |
+
+## Remote transports
+
+| Term            | Meaning                                                                                                                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tailcat         | The bundled point-to-point tunnel CLI that exposes a server's loopback listener to trusted devices. A transport only; T3 auth runs unchanged inside it.                                                                          |
+| Connection code | A `t3c://tailcat/…` string a server issues so another device can add it as an environment. It carries the Tailcat address, the server port, and a single-use, five-minute pairing token, never a private key or reusable secret. |
+| Trusted peer    | A client Tailcat node key that redeemed a connection code. Trusted peers form the listener's allowlist; revoking one relocks the listener and revokes its linked sessions.                                                       |
+| Pairing window  | The interval during which a server's Tailcat listener accepts any node key: exactly while an unconsumed, unexpired connection code or peer code exists.                                                                          |
+| Federation peer | Another T3 environment paired for server-to-server work over Tailcat, with the scopes each side granted the other.                                                                                                               |
+| Peer code       | A `t3c://peer/…` string that starts federation pairing; same token semantics as a connection code, plus the issuing environment's identity and offered scopes.                                                                   |

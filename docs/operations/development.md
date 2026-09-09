@@ -103,6 +103,21 @@ DMGs default to the host architecture. Use `--arch` to choose another target and
 to retain packaging files for inspection. Run `vp run dist:desktop:artifact --help` for other
 options.
 
+### Tailcat runtime prerequisite
+
+Desktop artifacts and the published CLI bundle the Tailcat binary pinned in
+`native/tailcat/manifest.json`. Fetch it once per checkout before building:
+
+```sh
+node scripts/fetch-tailcat.ts                          # host platform, into native/tailcat/dist/<key>/
+node scripts/fetch-tailcat.ts --platform darwin-arm64  # macOS builds from the pinned source (needs Go)
+node scripts/fetch-tailcat.ts --verify                 # re-check staged binaries against the manifest
+```
+
+`dist:desktop:*` fails with a `TailcatDistError` naming this command when the binary is missing.
+Dev servers need it only for Tailcat remote access and also honor `T3CODE_TAILCAT_BINARY`. The
+pin-bump procedure is in [native/tailcat/README.md](../../native/tailcat/README.md).
+
 ### Linux AppImage prerequisites
 
 Build on Linux because the browser-secret helper links against the host's libsecret. Install

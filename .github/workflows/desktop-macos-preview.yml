@@ -67,6 +67,29 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Cache Tailcat runtime
+        id: tailcat_cache
+        uses: actions/cache@v6
+        with:
+          path: native/tailcat/dist/darwin-arm64
+          key: tailcat-darwin-arm64-${{ hashFiles('native/tailcat/manifest.json') }}
+
+      # No upstream macOS archive: compile the pinned tag with the manifest's Go.
+      - name: Resolve Tailcat Go version
+        if: steps.tailcat_cache.outputs.cache-hit != 'true'
+        id: tailcat_go
+        run: echo "version=$(node -p "require('./native/tailcat/manifest.json').source.goVersion")" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Go
+        if: steps.tailcat_cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ steps.tailcat_go.outputs.version }}
+          cache: false
+
+      - name: Fetch Tailcat runtime
+        run: node scripts/fetch-tailcat.ts --platform darwin-arm64 --build-from-source
+
       - id: version
         name: Set preview version and public configuration
         shell: bash

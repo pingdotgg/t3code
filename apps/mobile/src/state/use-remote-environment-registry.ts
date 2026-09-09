@@ -1,10 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  type ConnectionAttemptError,
+  ConnectionBlockedError,
+} from "@t3tools/client-runtime/connection";
+import type { ConnectionPersistenceError } from "@t3tools/client-runtime/platform";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 
+import { unsupportedPairingInputMessage } from "../features/connection/pairing";
 import { useConnectionController } from "../features/connection/useConnectionController";
 import { environmentPresentations } from "./presentation";
 import { useWorkspaceState } from "../state/workspace";
@@ -122,6 +128,16 @@ export function useRemoteConnections() {
     async (pairingUrl?: string) => {
       const nextPairingUrl = pairingUrl ?? connectionPairingUrl;
       setPendingConnectionError(null);
+      // Tailcat and peer codes are redeemed by the desktop app; say so instead
+      // of letting the pairing resolver report an invalid URL.
+      const guidance = unsupportedPairingInputMessage(nextPairingUrl);
+      if (guidance !== null) {
+        setPendingConnectionError(guidance);
+        return AsyncResult.failure<
+          EnvironmentId,
+          ConnectionAttemptError | ConnectionPersistenceError
+        >(Cause.fail(new ConnectionBlockedError({ reason: "configuration", detail: guidance })));
+      }
       const result = await controller.connectPairingUrl(nextPairingUrl);
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);

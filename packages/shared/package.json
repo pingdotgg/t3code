@@ -119,6 +119,10 @@
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"
     },
+    "./t3ConnectionCode": {
+      "types": "./src/t3ConnectionCode.ts",
+      "import": "./src/t3ConnectionCode.ts"
+    },
     "./relaySigning": {
       "types": "./src/relaySigning.ts",
       "import": "./src/relaySigning.ts"

@@ -230,14 +230,14 @@ const probeEnvironmentDescriptor = (
     return { _tag: "descriptor", descriptor } as const;
   }).pipe(Effect.catch((outcome) => Effect.succeed(outcome)));
 
-interface DiscoveredPairTarget {
+export interface DiscoveredPairTarget {
   readonly baseDir: string;
   readonly variant: PairStateVariant;
   readonly state: PersistedServerRuntimeState;
   readonly descriptor: ExecutionEnvironmentDescriptor;
 }
 
-const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
+export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
   explicitBaseDir: string | undefined,
 ) {
   const bases: Array<string> = [];
@@ -297,7 +297,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
  * choice pinned to where the runtime state was actually found, independent of
  * ambient environment variables.
  */
-const makePairServerConfig = Effect.fn(function* (input: {
+export const makePairServerConfig = Effect.fn(function* (input: {
   readonly target: DiscoveredPairTarget;
   readonly logLevel: ServerConfig.ServerConfig["Service"]["logLevel"];
 }) {
@@ -341,6 +341,8 @@ const makePairServerConfig = Effect.fn(function* (input: {
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
+    tailcatEnabled: undefined,
+    tailcatBinaryPath: undefined,
   });
 });
 

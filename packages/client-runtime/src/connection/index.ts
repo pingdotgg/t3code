@@ -10,6 +10,7 @@ export {
   ConnectionOnboarding,
   type PairingConnectionInput,
   type SshConnectionInput,
+  type TailcatConnectionInput,
 } from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";

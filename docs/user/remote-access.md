@@ -142,6 +142,17 @@ running is left alone.
 For Antigravity's Google callback on a remote host, see
 [remote sign-in](./providers-antigravity.md#sign-in-from-a-remote-device).
 
+## Tailcat tunnel
+
+Tailcat connects two machines directly through an encrypted tunnel when they are on
+different networks and you do not want a VPN or a tailnet. On the host, open **Settings →
+Connections**, turn on **Remote access via Tailcat** under **This environment**, and create a
+connection code; a command-line host can start with `npx t3 serve --tailcat` instead. On the
+other machine's desktop app, open **Settings → Connections → Add environment**, choose
+**Tailcat**, and paste the code. Each device is trusted individually and can be revoked from
+the same card. See [Tailcat remote access](./tailcat.md) for the full guide, including
+server-to-server federation.
+
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create

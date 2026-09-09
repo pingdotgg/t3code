@@ -11,12 +11,15 @@ import * as Effect from "effect/Effect";
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
+  parseTailcatBridgeError,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
   secondaryRegistrationsToRetainAfterTopologyRead,
   secondaryBearerExpiresAtEpochMs,
   secondaryBearerRefreshAtEpochMs,
+  TAILCAT_RUNTIME_INSTALL_HINT,
+  tailcatPreparationError,
 } from "./platform.ts";
 
 const TARGET: DesktopSshEnvironmentTarget = {
@@ -95,6 +98,61 @@ describe("desktop SSH pairing", () => {
       expect(calls).toEqual(["ensure", "descriptor"]);
     }),
   );
+});
+
+describe("desktop Tailcat pairing", () => {
+  const ipcError = (code: string, detail: string) =>
+    new Error(
+      `Error invoking remote method 'desktop:ensure-tailcat-environment': Error: [tailcat:${code}] ${detail}`,
+    );
+
+  it("reads the failure code and detail out of the IPC message", () => {
+    expect(parseTailcatBridgeError(ipcError("remote-unavailable", "No answer."))).toEqual({
+      code: "remote-unavailable",
+      detail: "No answer.",
+    });
+    expect(parseTailcatBridgeError(new Error("[tailcat:made-up] Odd."))).toEqual({
+      code: null,
+      detail: "Odd.",
+    });
+    expect(parseTailcatBridgeError(new Error(""))).toEqual({
+      code: null,
+      detail: "The Tailcat tunnel failed.",
+    });
+  });
+
+  it("blocks with an install hint when the runtime is missing or incompatible", () => {
+    for (const code of ["binary-missing", "binary-not-executable", "version-incompatible"]) {
+      const error = tailcatPreparationError(ipcError(code, "Runtime problem."));
+      expect(error._tag).toBe("ConnectionBlockedError");
+      expect(error.reason).toBe("unsupported");
+      expect(error.detail).toBe(`Runtime problem. ${TAILCAT_RUNTIME_INSTALL_HINT}`);
+    }
+  });
+
+  it("keeps retrying while the remote side is not trusted, offline, or slow", () => {
+    for (const code of ["remote-unavailable", "timeout", "process-exited", "unknown"]) {
+      const error = tailcatPreparationError(ipcError(code, "Not yet."));
+      expect(error._tag).toBe("ConnectionTransientError");
+      expect(error.reason).toBe("tailcat-unavailable");
+      expect(error.detail).toBe("Not yet.");
+    }
+    const unmarked = tailcatPreparationError(
+      new Error("The environment may be offline, or this device is not trusted yet."),
+    );
+    expect(unmarked._tag).toBe("ConnectionTransientError");
+    expect(unmarked.reason).toBe("tailcat-unavailable");
+    expect(unmarked.detail).toBe(
+      "The environment may be offline, or this device is not trusted yet.",
+    );
+  });
+
+  it("blocks on configuration problems that a retry cannot fix", () => {
+    const error = tailcatPreparationError(ipcError("address-invalid", "Bad address."));
+    expect(error._tag).toBe("ConnectionBlockedError");
+    expect(error.reason).toBe("configuration");
+    expect(error.detail).toBe("Bad address.");
+  });
 });
 
 describe("desktop-local bearer cache", () => {
