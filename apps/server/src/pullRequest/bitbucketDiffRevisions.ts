@@ -94,10 +94,19 @@ function quotedEnd(rest: string): number {
   return -1;
 }
 
-/** `a/x` and `b/x` on a `---` or `+++` line; `/dev/null` is the side that has no file. */
+/**
+ * `a/x` and `b/x` on a `---` or `+++` line; `/dev/null` is the side that has no file.
+ *
+ * Git ends these two lines with a tab when the name holds a space, so that a reader can tell where
+ * the name stops, and other producers of the format put a timestamp past that tab. A name holding a
+ * tab of its own arrives quoted, with that tab written as an escape, so the first literal tab is
+ * never part of what the file is called and everything from it on belongs to git.
+ */
 function sidePath(rest: string, prefix: string): string | null {
-  if (rest === "/dev/null") return null;
-  const path = unquotePath(rest);
+  const tab = rest.indexOf("\t");
+  const token = tab === -1 ? rest : rest.slice(0, tab);
+  if (token === "/dev/null") return null;
+  const path = unquotePath(token);
   return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 

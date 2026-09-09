@@ -206,6 +206,70 @@ describe("parseDiffFileRevisions", () => {
     assert.deepStrictEqual([...revisions], [["we\tird-\u{1f680}.ts", "bbbbbbb"]]);
   });
 
+  it("drops the tab git ends a name holding a space with", () => {
+    const revisions = parseDiffFileRevisions(
+      patchOf(
+        "diff --git a/with space.txt b/with space.txt",
+        "index 1111111..6178079 100644",
+        "--- a/with space.txt\t",
+        "+++ b/with space.txt\t",
+        "@@ -1 +1 @@",
+        "-a",
+        "+b",
+      ),
+    );
+
+    assert.deepStrictEqual([...revisions], [["with space.txt", "6178079"]]);
+  });
+
+  it("drops that tab from a quoted name too, where it lands past the closing quote", () => {
+    const revisions = parseDiffFileRevisions(
+      patchOf(
+        'diff --git "a/we ird\\tname.ts" "b/we ird\\tname.ts"',
+        "index 2222222..7777777 100644",
+        '--- "a/we ird\\tname.ts"\t',
+        '+++ "b/we ird\\tname.ts"\t',
+        "@@ -1 +1 @@",
+        "-a",
+        "+b",
+      ),
+    );
+
+    assert.deepStrictEqual([...revisions], [["we ird\tname.ts", "7777777"]]);
+  });
+
+  it("reads a deletion whose name holds a space, tab and all", () => {
+    const revisions = parseDiffFileRevisions(
+      patchOf(
+        "diff --git a/with space.txt b/with space.txt",
+        "deleted file mode 100644",
+        "index 3333333..0000000",
+        "--- a/with space.txt\t",
+        "+++ /dev/null",
+        "@@ -1 +0,0 @@",
+        "-a",
+      ),
+    );
+
+    assert.deepStrictEqual([...revisions], [["with space.txt", "0000000"]]);
+  });
+
+  it("drops the timestamp other producers of the format write past that tab", () => {
+    const revisions = parseDiffFileRevisions(
+      patchOf(
+        "diff --git a/stamped.ts b/stamped.ts",
+        "index 4444444..5555555 100644",
+        "--- a/stamped.ts\t2024-01-01 00:00:00.000000000 +0000",
+        "+++ b/stamped.ts\t2024-01-02 00:00:00.000000000 +0000",
+        "@@ -1 +1 @@",
+        "-a",
+        "+b",
+      ),
+    );
+
+    assert.deepStrictEqual([...revisions], [["stamped.ts", "5555555"]]);
+  });
+
   it("splits an unquoted header whose names hold a space, by the sides agreeing", () => {
     const revisions = parseDiffFileRevisions(
       patchOf("diff --git a/one two b/one two", "index ddddddd..eeeeeee 100644", "@@ -1 +1 @@"),
