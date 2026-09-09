@@ -1,3 +1,4 @@
+import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -3968,17 +3969,12 @@ export default function ChatView(props: ChatViewProps) {
     if (serverProjection === null) return;
     const run = serverProjection.runs.find((candidate) => candidate.id === editingQueuedRun.runId);
     if (run !== undefined && run.status === "queued") return;
-    const store = useComposerDraftStore.getState();
-    const editTarget = queuedEditDraftTargetFor(editingQueuedRun.runId);
-    const editDraft = store.getComposerDraft(editTarget);
-    const editIsDirty =
-      editDraft !== null &&
-      (editDraft.prompt !== editingQueuedRun.originalText || editDraft.images.length > 0);
-    if (
-      editIsDirty &&
-      !composerDraftHasUserContent(store.getComposerDraft(baseComposerDraftTarget))
-    ) {
-      store.moveComposerPromptAndImages(editTarget, baseComposerDraftTarget);
+    const recovery = recoverQueuedMessageEdit({
+      editTarget: queuedEditDraftTargetFor(editingQueuedRun.runId),
+      threadTarget: baseComposerDraftTarget,
+      originalText: editingQueuedRun.originalText,
+    });
+    if (recovery === "kept") {
       toastManager.add(
         stackedThreadToast({
           type: "info",
@@ -3986,17 +3982,14 @@ export default function ChatView(props: ChatViewProps) {
           description: "Your unsaved edit was kept in the composer.",
         }),
       );
-    } else {
-      store.clearComposerContent(editTarget);
-      if (editIsDirty) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "warning",
-            title: "Queued message is no longer queued",
-            description: "Your unsaved edit was discarded.",
-          }),
-        );
-      }
+    } else if (recovery === "discarded") {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Queued message is no longer queued",
+          description: "Your unsaved edit was discarded.",
+        }),
+      );
     }
     setEditingQueuedRun(null);
   }, [
@@ -7207,24 +7200,50 @@ export default function ChatView(props: ChatViewProps) {
       if (queuedEditSaveInFlightRef.current) return;
       const editText = promptForSend.trim();
       const newEditImages = [...composerImages];
+      const newEditFiles = [...composerFiles];
       if (
         editText.length === 0 &&
         editingQueuedRun.existingAttachments.length === 0 &&
-        newEditImages.length === 0
+        newEditImages.length === 0 &&
+        newEditFiles.length === 0
       ) {
         return;
       }
       queuedEditSaveInFlightRef.current = true;
       try {
-        const uploads = await Promise.all(
-          newEditImages.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
+        const uploads = await prepareQueuedEditAttachments({
+          existingAttachments: editingQueuedRun.existingAttachments,
+          images: newEditImages,
+          files: newEditFiles,
+          readImage: readFileAsDataUrl,
+          uploadFiles: async (files) => {
+            const validateFiles = () => {
+              const config =
+                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+              const reason = fileAttachmentCapabilityBlockReason({
+                files,
+                attachmentUploadsCapabilityKnown: config !== null,
+                supportsAttachmentUploads:
+                  config?.environment.capabilities.attachmentUploads === true,
+                maxFileAttachmentBytes:
+                  config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
+              });
+              if (reason !== null) throw new Error(reason);
+            };
+            validateFiles();
+            for (const file of files)
+              startAttachmentUpload({
+                environmentId,
+                image: file,
+                draftTarget: composerDraftTarget,
+              });
+            await awaitAttachmentUploads(files.map((file) => file.id));
+            validateFiles();
+            const uploaded = getUploadedAttachments({ environmentId, images: files });
+            if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
+            return uploaded;
+          },
+        });
         const result = await editQueuedRunCommand({
           environmentId: activeThread.environmentId,
           input: {
@@ -7233,7 +7252,7 @@ export default function ChatView(props: ChatViewProps) {
             text: editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
             edit: {
               messageId: editingQueuedRun.messageId,
-              attachments: [...editingQueuedRun.existingAttachments, ...uploads],
+              attachments: uploads,
             },
           },
         });
@@ -7247,6 +7266,11 @@ export default function ChatView(props: ChatViewProps) {
         composerRef.current?.resetCursorState();
         setEditingQueuedRun(null);
         scheduleComposerFocus();
+      } catch (error) {
+        setThreadError(
+          editingQueuedRun.threadId,
+          error instanceof Error ? error.message : "Could not save the edited queued message.",
+        );
       } finally {
         queuedEditSaveInFlightRef.current = false;
       }
