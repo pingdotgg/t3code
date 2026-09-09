@@ -9,6 +9,8 @@ import {
   classifyTaskAgentKind,
   EventId,
   isToolLifecycleItemType,
+  THINKING_ACTIVITY_KIND,
+  THINKING_ACTIVITY_SUMMARY,
   ThreadId,
   type ThreadTokenUsageSnapshot,
   TurnId,
@@ -55,6 +57,8 @@ import { canReplaceThreadTitle } from "../threadTitles.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
+const thinkingBufferKey = (threadId: ThreadId, turnId: TurnId | undefined) =>
+  turnId ? providerTurnKey(threadId, turnId) : `${threadId}:no-turn`;
 
 // Fallback when the in-memory description cache no longer has the task name
 // (server restart, session-exit sweep, TTL/capacity eviction): earlier
@@ -97,6 +101,12 @@ interface AssistantSegmentState {
   activeMessageId: MessageId | null;
 }
 
+interface BufferedThinking {
+  readonly text: string;
+  /** When the first buffered delta arrived: the thinking activity's timestamp. */
+  readonly firstCreatedAt: string;
+}
+
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
@@ -106,6 +116,12 @@ const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
 const TASK_DESCRIPTION_BY_TASK_CACHE_CAPACITY = 10_000;
 const TASK_DESCRIPTION_BY_TASK_TTL = Duration.minutes(120);
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+// One thinking activity holds at most this much text; longer buffers split
+// across several activities so a thinking-heavy turn (e.g. Gemini) cannot
+// stuff an unbounded blob into a single activity payload.
+const MAX_THINKING_CHARS_PER_ACTIVITY = 8_000;
+const BUFFERED_THINKING_TEXT_BY_TURN_CACHE_CAPACITY = 10_000;
+const BUFFERED_THINKING_TEXT_BY_TURN_TTL = Duration.minutes(120);
 const STRICT_PROVIDER_LIFECYCLE_GUARD = process.env.T3CODE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
 type TurnStartRequestedDomainEvent = Extract<
@@ -942,6 +958,17 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed({ text: "", createdAt: "" }),
   });
 
+  // Reasoning streams (`reasoning_text` / `reasoning_summary_text`) buffer
+  // here until a flush point (tool activity, approval pause, assistant
+  // completion, turn end) persists them as `thinking` activities. Without
+  // this, providers that narrate through their reasoning channel read as
+  // bare tool lists with only a final answer.
+  const bufferedThinkingTextByTurnKey = yield* Cache.make<string, BufferedThinking>({
+    capacity: BUFFERED_THINKING_TEXT_BY_TURN_CACHE_CAPACITY,
+    timeToLive: BUFFERED_THINKING_TEXT_BY_TURN_TTL,
+    lookup: () => Effect.succeed({ text: "", firstCreatedAt: "" }),
+  });
+
   // Task names arrive on task.started/task.progress but not on task.completed,
   // so remember them per task to title the completion activity.
   const taskDescriptionByTaskKey = yield* Cache.make<string, string>({
@@ -1133,6 +1160,83 @@ const make = Effect.gen(function* () {
 
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+
+  const appendBufferedThinkingText = (
+    threadId: ThreadId,
+    turnId: TurnId | undefined,
+    delta: string,
+    createdAt: string,
+  ) =>
+    Cache.getOption(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId)).pipe(
+      Effect.flatMap((existing) => {
+        const previous = Option.getOrElse(existing, () => ({ text: "", firstCreatedAt: "" }));
+        return Cache.set(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId), {
+          text: `${previous.text}${delta}`,
+          firstCreatedAt:
+            previous.firstCreatedAt.length > 0 ? previous.firstCreatedAt : createdAt,
+        });
+      }),
+    );
+
+  const takeBufferedThinkingText = (
+    threadId: ThreadId,
+    turnId: TurnId | undefined,
+  ): Effect.Effect<BufferedThinking> =>
+    Cache.getOption(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId)).pipe(
+      Effect.flatMap((existing) =>
+        Cache.invalidate(bufferedThinkingTextByTurnKey, thinkingBufferKey(threadId, turnId)).pipe(
+          Effect.as(
+            Option.getOrElse(existing, (): BufferedThinking => ({ text: "", firstCreatedAt: "" })),
+          ),
+        ),
+      ),
+    );
+
+  const splitThinkingText = (text: string): Array<string> => {
+    const chunks: Array<string> = [];
+    for (let index = 0; index < text.length; index += MAX_THINKING_CHARS_PER_ACTIVITY) {
+      chunks.push(text.slice(index, index + MAX_THINKING_CHARS_PER_ACTIVITY));
+    }
+    return chunks;
+  };
+
+  // Persists buffered reasoning as `thinking` activities, oldest chunk first,
+  // so the rows interleave with the tool calls the thinking explains. Consumes
+  // the buffer; a later flush for the same turn is a no-op until new deltas
+  // arrive. Long buffers split across several activities instead of dropping.
+  // Activities carry the first delta's timestamp so they sort before the tool
+  // rows that flushed them.
+  const flushBufferedThinkingForTurn = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    turnId?: TurnId;
+    createdAt: string;
+    commandTag: string;
+  }) =>
+    Effect.gen(function* () {
+      const buffered = yield* takeBufferedThinkingText(input.threadId, input.turnId);
+      if (!hasRenderableAssistantText(buffered.text)) {
+        return;
+      }
+      const chunks = splitThinkingText(buffered.text);
+      for (const [chunkIndex, chunk] of chunks.entries()) {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.activity.append",
+          commandId: yield* providerCommandId(input.event, `${input.commandTag}:${chunkIndex}`),
+          threadId: input.threadId,
+          activity: {
+            id: EventId.make(`${input.event.eventId}:thinking:${chunkIndex}`),
+            createdAt: buffered.firstCreatedAt,
+            tone: "info",
+            kind: THINKING_ACTIVITY_KIND,
+            summary: THINKING_ACTIVITY_SUMMARY,
+            payload: { detail: chunk },
+            turnId: input.turnId ?? null,
+          },
+          createdAt: input.createdAt,
+        });
+      }
+    });
 
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
@@ -1477,6 +1581,24 @@ const make = Effect.gen(function* () {
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
       if (event.type === "content.delta" && event.payload.streamKind !== "assistant_text") {
+        // Reasoning streams buffer into `thinking` activities (flushed at the
+        // points below). Every other non-assistant stream stays ignored: it
+        // carries tool output the timeline already shows through tool rows.
+        if (
+          (event.payload.streamKind === "reasoning_text" ||
+            event.payload.streamKind === "reasoning_summary_text") &&
+          event.payload.delta.length > 0
+        ) {
+          const thread = yield* resolveThreadRuntimeContext(event.threadId);
+          if (thread) {
+            yield* appendBufferedThinkingText(
+              thread.id,
+              toTurnId(event.turnId),
+              event.payload.delta,
+              event.createdAt,
+            );
+          }
+        }
         return;
       }
 
@@ -1702,6 +1824,14 @@ const make = Effect.gen(function* () {
           ? toTurnId(event.turnId)
           : undefined;
       if (pauseForUserTurnId) {
+        // Thinking precedes the approval pause it led to.
+        yield* flushBufferedThinkingForTurn({
+          event,
+          threadId: thread.id,
+          turnId: pauseForUserTurnId,
+          createdAt: now,
+          commandTag: "thinking-flush-on-request-opened",
+        });
         const hasProjectedMessage = yield* projectionThreadMessages.hasAssistantMessageForTurn({
           threadId: thread.id,
           turnId: pauseForUserTurnId,
@@ -1766,6 +1896,15 @@ const make = Effect.gen(function* () {
           : undefined;
 
       if (assistantCompletion) {
+        // Thinking that shares the completed segment renders above the bubble.
+        const completionTurnId = toTurnId(event.turnId);
+        yield* flushBufferedThinkingForTurn({
+          event,
+          threadId: thread.id,
+          ...(completionTurnId ? { turnId: completionTurnId } : {}),
+          createdAt: now,
+          commandTag: "thinking-flush-on-assistant-complete",
+        });
         const turnId = toTurnId(event.turnId);
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
@@ -1835,6 +1974,14 @@ const make = Effect.gen(function* () {
 
       if (isTerminalTurn) {
         const turnId = toTurnId(event.turnId);
+        // Trailing thinking renders above the turn's final bubble.
+        yield* flushBufferedThinkingForTurn({
+          event,
+          threadId: thread.id,
+          ...(turnId ? { turnId } : {}),
+          createdAt: now,
+          commandTag: "thinking-flush-on-turn-end",
+        });
         if (turnId) {
           const userInputActivities =
             yield* projectionThreadActivityRepository.listUserInputLifecycleByThreadId({
@@ -1911,6 +2058,14 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "session.exited") {
+        const exitedActiveTurnId = thread.session?.activeTurnId ?? undefined;
+        yield* flushBufferedThinkingForTurn({
+          event,
+          threadId: thread.id,
+          ...(exitedActiveTurnId ? { turnId: exitedActiveTurnId } : {}),
+          createdAt: now,
+          commandTag: "thinking-flush-on-session-exit",
+        });
         yield* clearTurnStateForSession(thread.id);
       }
 
@@ -2126,6 +2281,16 @@ const make = Effect.gen(function* () {
         }
       }
 
+      // Thinking buffered so far renders above this event's own rows
+      // (tool calls, task updates, ...), preserving the order the model
+      // produced them in.
+      yield* flushBufferedThinkingForTurn({
+        event,
+        threadId: thread.id,
+        ...(eventTurnId ? { turnId: eventTurnId } : {}),
+        createdAt: now,
+        commandTag: "thinking-flush-before-activities",
+      });
       const activities = runtimeEventToActivities(activityEvent, taskTitle);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(

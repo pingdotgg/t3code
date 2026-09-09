@@ -1120,6 +1120,56 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps thinking rows visible outside collapsed tool groups", () => {
+    const toolEntry = (id: string, createdAt: string) => ({
+      id,
+      kind: "work" as const,
+      createdAt,
+      entry: {
+        id,
+        createdAt,
+        label: "Ran command",
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        toolLifecycleStatus: "completed" as const,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        toolEntry("tool-before", "2026-01-01T00:00:01Z"),
+        {
+          id: "thinking-1",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "thinking-1",
+            createdAt: "2026-01-01T00:00:02Z",
+            label: "Thinking",
+            detail: "Checking the checklist first.",
+            tone: "info" as const,
+            sourceActivityKind: "thinking",
+          },
+        },
+        toolEntry("tool-after", "2026-01-01T00:00:03Z"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "tool-before",
+      "work-toggle:thinking-1",
+      "tool-after",
+    ]);
+    expect(rows[1]).toMatchObject({
+      kind: "work-toggle",
+      summary: "Thinking",
+      hiddenCount: 1,
+    });
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

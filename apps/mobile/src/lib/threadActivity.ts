@@ -4,7 +4,11 @@ import {
   requestKindFromRequestType,
   type PendingApproval,
 } from "@t3tools/client-runtime/pending-requests";
-import { UserInputAttachmentAnswerPayload, isToolLifecycleItemType } from "@t3tools/contracts";
+import {
+  THINKING_ACTIVITY_KIND,
+  UserInputAttachmentAnswerPayload,
+  isToolLifecycleItemType,
+} from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -1555,12 +1559,16 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     }
 
     const isCompaction = entry.activity.workEntry.sourceActivityKind === "context-compaction";
-    if (isCompaction || firstActivityEntry?.turnId !== entry.turnId) {
+    // Thinking rows stay visible outside collapsed tool groups (mirrors web):
+    // they break the run on both sides so a reasoning-narrated turn keeps its
+    // narrative without expanding dozens of tool calls.
+    const isThinking = entry.activity.workEntry.sourceActivityKind === THINKING_ACTIVITY_KIND;
+    if (isCompaction || isThinking || firstActivityEntry?.turnId !== entry.turnId) {
       flushGroup();
     }
     firstActivityEntry ??= entry;
     openGroupActivities.push(entry.activity);
-    if (isCompaction) {
+    if (isCompaction || isThinking) {
       flushGroup();
     }
   }

@@ -562,6 +562,20 @@ export const OrchestrationThreadActivityTone = Schema.Literals([
 ]);
 export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
 
+/**
+ * Activity kind for persisted model thinking/reasoning streams
+ * (`reasoning_text` / `reasoning_summary_text` content deltas). Providers that
+ * narrate through their reasoning channel (notably Gemini) would otherwise
+ * render as bare tool lists: ingestion buffers those streams and flushes them
+ * as `thinking` activities so every client can render them as collapsible
+ * rows interleaved with the tool calls they explain. Kind stays a plain
+ * string (like every other activity kind) so older readers keep decoding.
+ */
+export const THINKING_ACTIVITY_KIND = "thinking";
+
+/** Row label for thinking activities. Clients fall back to the summary. */
+export const THINKING_ACTIVITY_SUMMARY = "Thinking";
+
 export const OrchestrationThreadActivity = Schema.Struct({
   id: EventId,
   tone: OrchestrationThreadActivityTone,

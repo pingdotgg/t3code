@@ -497,6 +497,30 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("derives thinking entries with their full text as detail", () => {
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        id: "thinking-1",
+        kind: "thinking",
+        summary: "Thinking",
+        tone: "info",
+        turnId: "turn-1",
+        payload: { detail: "Checking the checklist first." },
+        sequence: 1,
+      }),
+    ]);
+
+    expect(entries).toMatchObject([
+      {
+        id: "thinking-1",
+        label: "Thinking",
+        detail: "Checking the checklist first.",
+        tone: "info",
+        sourceActivityKind: "thinking",
+      },
+    ]);
+  });
+
   it("omits routine setup updates before work starts and after later turn activity", () => {
     const setupActivities = [
       makeActivity({

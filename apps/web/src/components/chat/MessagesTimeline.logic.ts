@@ -20,6 +20,7 @@ import {
   formatDuration,
   inferCheckpointTurnCountByTurnId,
   isStreamingMessageTextUpdate,
+  isThinkingWorkEntry,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
@@ -1054,15 +1055,21 @@ export function deriveMessagesTimelineRows(input: {
         continue;
       }
       const groupedEntries = [timelineEntry.entry];
+      // Thinking rows stay visible outside collapsed tool groups: they break
+      // the run on both sides so a reasoning-narrated turn keeps its narrative
+      // without expanding dozens of tool calls.
+      const anchorIsThinking = isThinkingWorkEntry(timelineEntry.entry);
       let cursor = index + 1;
       while (cursor < input.timelineEntries.length) {
         const nextEntry = input.timelineEntries[cursor];
         if (
           !nextEntry ||
+          anchorIsThinking ||
           nextEntry.kind !== "work" ||
           nextEntry.entry.agentSpawn !== undefined ||
           nextEntry.entry.sourceActivityKind === "context-compaction" ||
           nextEntry.entry.tone === "error" ||
+          isThinkingWorkEntry(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           foldsByAnchorEntryId.has(nextEntry.id)

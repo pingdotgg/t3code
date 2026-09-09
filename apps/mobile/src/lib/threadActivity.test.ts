@@ -373,6 +373,49 @@ describe("buildThreadFeed", () => {
     expect(nextRows.some((row) => row.type === "activity-group")).toBe(true);
   });
 
+  it("keeps thinking activities in their own feed group between tool calls", () => {
+    const turnId = TurnId.make("turn-1");
+    const thread = makeThread({
+      id: ThreadId.make("feed-thinking"),
+      projectId: ProjectId.make("project-1"),
+      title: "Feed thinking",
+      messages: [],
+      activities: [
+        makeActivity({
+          id: EventId.make("tool-1"),
+          kind: "tool.completed",
+          summary: "Ran command",
+          tone: "tool",
+          createdAt: "2026-04-01T00:00:01.000Z",
+          turnId,
+          payload: { itemType: "command_execution", status: "completed" },
+        }),
+        makeActivity({
+          id: EventId.make("thinking-1"),
+          kind: "thinking",
+          summary: "Thinking",
+          tone: "info",
+          createdAt: "2026-04-01T00:00:02.000Z",
+          turnId,
+          payload: { detail: "Checking the checklist first." },
+        }),
+        makeActivity({
+          id: EventId.make("tool-2"),
+          kind: "tool.completed",
+          summary: "Ran command",
+          tone: "tool",
+          createdAt: "2026-04-01T00:00:03.000Z",
+          turnId,
+          payload: { itemType: "command_execution", status: "completed" },
+        }),
+      ],
+    });
+
+    const feed = buildThreadFeed(thread);
+    expect(feed.map((row) => row.id)).toEqual(["tool-1", "thinking-1", "tool-2"]);
+    expect(feed[1]).toMatchObject({ type: "activity-group" });
+  });
+
   it("regroups cached activities for message changes and pagination", () => {
     const messages = [2, 4].map((second) => ({
       id: MessageId.make(`message-${second}`),
