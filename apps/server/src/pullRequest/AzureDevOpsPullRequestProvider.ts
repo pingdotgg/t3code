@@ -8,8 +8,9 @@ import {
   formatAzureDevOpsDiffCursor,
   parseAzureDevOpsDiffCursor,
   MAX_DIFF_SLICE_BYTES,
+  MAX_DIFF_SLICE_EDITS,
   byteLength,
-  MAX_FILE_DIFF_MILLIS,
+  MAX_FILE_DIFF_EDITS,
   type AzureDevOpsFileTexts,
 } from "./azureDevOpsDiff.ts";
 import {
@@ -400,6 +401,7 @@ export const make = Effect.gen(function* () {
         const sections: string[] = [];
         let truncated = listed.truncated;
         let bytes = 0;
+        let edits = 0;
         let index = cursor?.fileIndex ?? 0;
         let full = false;
         while (!full && index < changes.length) {
@@ -424,19 +426,29 @@ export const make = Effect.gen(function* () {
             { concurrency: DIFF_FILE_CONCURRENCY },
           );
           for (const { change, texts } of read) {
+            // The diff is synchronous and the reads no longer stand between one file and the next
+            // to let anything else on the server run, so the thread is handed back here.
+            yield* Effect.yieldNow;
             const file =
               texts === null
                 ? azureDevOpsUnreadableFilePatch(change)
-                : azureDevOpsFilePatch({ change, texts, timeoutMillis: MAX_FILE_DIFF_MILLIS });
+                : azureDevOpsFilePatch({ change, texts });
             sections.push(file.section);
             bytes += byteLength(file.section);
+            edits += file.edits;
             truncated = truncated || file.truncated;
             index += 1;
             // A file whose diff was given up on spent the whole of what one file is allowed and
-            // has a header to show for it, so the byte budget would let a change full of them
-            // spend that over and over in the one request. What the batch read past the point the
-            // slice filled is left for the next one rather than carried into this answer.
-            if (bytes >= MAX_DIFF_SLICE_BYTES || file.abandoned) {
+            // has only a header to show for it, so the byte budget alone would let a change full
+            // of them spend that over and over in one request. Checked after the file is added
+            // rather than before it, so every slice carries at least one: a section heavier than
+            // the whole budget would otherwise never be added, and the read would answer the same
+            // slice forever without moving the cursor.
+            if (
+              bytes >= MAX_DIFF_SLICE_BYTES ||
+              edits + MAX_FILE_DIFF_EDITS > MAX_DIFF_SLICE_EDITS ||
+              file.abandoned
+            ) {
               full = true;
               break;
             }

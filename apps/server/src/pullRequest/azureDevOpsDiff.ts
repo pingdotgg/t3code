@@ -63,6 +63,12 @@ export interface AzureDevOpsFilePatch {
    * is meant to stop here rather than pay that again for each of the ones behind it.
    */
   readonly abandoned: boolean;
+  /**
+   * Lines the diff added or removed, which is the edit distance it had to search out and so what
+   * the file cost the thread it ran on. The caller reading a run of files spends a budget of these
+   * rather than of bytes: a file of short lines is cheap on the wire and dear to diff.
+   */
+  readonly edits: number;
 }
 
 /**
@@ -76,12 +82,39 @@ const MAX_FILE_BYTES = 512 * 1024;
 const PATCH_CONTEXT_LINES = 3;
 
 /**
- * How long one file may be diffed for. The line diff costs the product of the two sides, so a pair
- * of files under the size ceiling that share almost nothing can still hold the whole server for a
- * long time. Past this the file is listed without its hunks, which is what the size ceiling already
- * does and what the reader is already shown a sign of.
+ * How far apart one file's two sides may be before it is listed without its hunks. The line diff
+ * searches for the edit distance and costs about the square of it, so a pair of files under the
+ * size ceiling that share almost nothing would otherwise hold the whole server, and every websocket
+ * client with it, while it works out a patch of tens of thousands of lines nobody reads. Bounded in
+ * edits rather than in milliseconds so a change slices the same way on every machine.
+ *
+ * Measured at around 210ms for a pair at the size ceiling that shares no line at all, which is the
+ * longest this can hold the thread for one file.
  */
-export const MAX_FILE_DIFF_MILLIS = 2_000;
+export const MAX_FILE_DIFF_EDITS = 2_000;
+
+/**
+ * How many lines a file may be listed as wholly replaced by when its diff was given up on. The
+ * edit ceiling is a distance rather than a proportion, so a long file can exceed it having changed
+ * in one corner only, and calling that a whole replacement would be a wall of red and green hiding
+ * the part that moved. Four times the ceiling keeps the claim within reach of what is known to
+ * differ: measured against this repository's own history, no section it admits overstates the real
+ * change by more than about a factor of two.
+ */
+const MAX_FULL_REPLACEMENT_LINES = 4 * MAX_FILE_DIFF_EDITS;
+
+/**
+ * A backstop for a machine slower than the one the edit ceiling was measured on. Nothing within
+ * that ceiling comes near this on ordinary hardware, so it changes no patch; it is only here so
+ * the longest one file can hold the thread stays a number rather than a hope.
+ */
+const MAX_FILE_DIFF_MILLIS = 500;
+
+/**
+ * How much diff work one slice does before the rest is left for the next one, which bounds what a
+ * single request can cost the thread at this and one more file's worth.
+ */
+export const MAX_DIFF_SLICE_EDITS = 6_000;
 
 /**
  * How much patch one slice carries before the rest is left for the next one. Every file costs a
@@ -89,6 +122,17 @@ export const MAX_FILE_DIFF_MILLIS = 2_000;
  * hundred one-line changes are cheaper to finish than three long ones.
  */
 export const MAX_DIFF_SLICE_BYTES = 256 * 1024;
+
+/** Git's own note for a side whose last line has no newline after it. */
+const NO_NEWLINE_MARKER = "\\ No newline at end of file";
+
+/** A text's lines, without the empty one that a trailing newline leaves behind a split. */
+function contentLines(contents: string): ReadonlyArray<string> {
+  if (contents === "") return [];
+  const lines = contents.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
 
 /** A NUL byte is git's own test for it, and it survives Azure's JSON envelope intact. */
 function isBinary(contents: string): boolean {
@@ -130,6 +174,40 @@ function patchHeader(change: AzureDevOpsChangeEntry): string {
 }
 
 /**
+ * A file written out as wholly replaced: every old line gone, every new line arrived, in one hunk.
+ * Costs no search at all, around 45ns a line, so it is both the whole patch for a file that has
+ * only one side and a stand-in for one whose real diff was given up on.
+ */
+function replacementSection(header: string, texts: AzureDevOpsFileTexts): string {
+  const oldLines = contentLines(texts.oldContents);
+  const newLines = contentLines(texts.newContents);
+  const noNewline = (contents: string, lines: ReadonlyArray<string>) =>
+    lines.length > 0 && !contents.endsWith("\n") ? [NO_NEWLINE_MARKER] : [];
+  return [
+    header,
+    `@@ -${hunkRange(1, oldLines.length)} +${hunkRange(1, newLines.length)} @@`,
+    ...oldLines.map((line) => `-${line}`),
+    ...noNewline(texts.oldContents, oldLines),
+    ...newLines.map((line) => `+${line}`),
+    ...noNewline(texts.newContents, newLines),
+    "",
+  ].join("\n");
+}
+
+/**
+ * The same section, for a file that has two sides and so a real diff that this is only standing in
+ * for. Null where the claim would be too loose to make or too heavy to send, leaving the file
+ * listed without its hunks.
+ */
+function boundedReplacementSection(header: string, texts: AzureDevOpsFileTexts): string | null {
+  const lines = contentLines(texts.oldContents).length + contentLines(texts.newContents).length;
+  if (lines > MAX_FULL_REPLACEMENT_LINES) return null;
+  const section = replacementSection(header, texts);
+  // One file's worth of bytes, the same ceiling its two sides were each let through under.
+  return byteLength(section) > MAX_FILE_BYTES ? null : section;
+}
+
+/**
  * One file's section of a unified patch, built here because Azure has no route that carries one:
  * its diff routes name the files that changed and their blob ids, and the contents are a separate
  * read per side.
@@ -137,8 +215,6 @@ function patchHeader(change: AzureDevOpsChangeEntry): string {
 export function azureDevOpsFilePatch(input: {
   readonly change: AzureDevOpsChangeEntry;
   readonly texts: AzureDevOpsFileTexts;
-  /** How long this one file may be diffed for, at most what any file is allowed. */
-  readonly timeoutMillis?: number;
 }): AzureDevOpsFilePatch {
   const header = patchHeader(input.change);
   const { oldContents, newContents } = input.texts;
@@ -146,10 +222,26 @@ export function azureDevOpsFilePatch(input: {
   if (input.texts.binary || isBinary(oldContents) || isBinary(newContents)) {
     // Git's own wording for a file it will not spell out, which every diff viewer already reads.
     const binary = `Binary files a/${input.change.oldPath} and b/${input.change.path} differ`;
-    return { section: `${header}\n${binary}\n`, truncated: true, abandoned: false };
+    return { section: `${header}\n${binary}\n`, truncated: true, abandoned: false, edits: 0 };
   }
   if (byteLength(oldContents) > MAX_FILE_BYTES || byteLength(newContents) > MAX_FILE_BYTES) {
-    return { section: `${header}\n`, truncated: true, abandoned: false };
+    return { section: `${header}\n`, truncated: true, abandoned: false, edits: 0 };
+  }
+
+  // Nothing on one side is a creation or a deletion, where the whole file is the change and there
+  // is no edit distance to search out: writing both sides is the minimal patch, and it is linear
+  // rather than quadratic in the file's length. The edit ceiling has nothing to protect against
+  // here, and applying it would abandon a large new file after doing no work worth saving.
+  const created = oldContents === "" && newContents !== "";
+  const deleted = newContents === "" && oldContents !== "";
+  if (created || deleted) {
+    const lines = contentLines(created ? newContents : oldContents);
+    return {
+      section: replacementSection(header, input.texts),
+      truncated: false,
+      abandoned: false,
+      edits: lines.length,
+    };
   }
 
   const patch = structuredPatch(
@@ -161,25 +253,41 @@ export function azureDevOpsFilePatch(input: {
     undefined,
     {
       context: PATCH_CONTEXT_LINES,
-      timeout: Math.min(input.timeoutMillis ?? MAX_FILE_DIFF_MILLIS, MAX_FILE_DIFF_MILLIS),
+      maxEditLength: MAX_FILE_DIFF_EDITS,
+      timeout: MAX_FILE_DIFF_MILLIS,
     },
   );
-  // The bound is reported by giving nothing back, and a file whose diff was given up on is a file
-  // listed without its hunks rather than a file dropped from the change.
-  if (patch === undefined) return { section: `${header}\n`, truncated: true, abandoned: true };
+  // The bound is reported by giving nothing back. Such a file is listed as wholly replaced where
+  // that is close enough to the truth to say, and listed without its hunks otherwise, rather than
+  // dropped from the change. Either way it spent the whole of what one file is allowed to get here,
+  // which is what `edits` carries: writing the replacement out costs nothing on top.
+  if (patch === undefined) {
+    const replaced = boundedReplacementSection(header, input.texts);
+    return {
+      section: replaced ?? `${header}\n`,
+      truncated: true,
+      abandoned: true,
+      edits: MAX_FILE_DIFF_EDITS,
+    };
+  }
 
-  const hunks = patch.hunks.map((hunk) =>
-    [
+  let edits = 0;
+  const hunks = patch.hunks.map((hunk) => {
+    for (const line of hunk.lines) {
+      if (line.startsWith("+") || line.startsWith("-")) edits += 1;
+    }
+    return [
       `@@ -${hunkRange(hunk.oldStart, hunk.oldLines)} +${hunkRange(hunk.newStart, hunk.newLines)} @@`,
       ...hunk.lines,
-    ].join("\n"),
-  );
+    ].join("\n");
+  });
   // A pure rename has no hunks to give. It is still listed, because dropping it would take the
   // file out of the change altogether.
   return {
     section: hunks.length === 0 ? `${header}\n` : `${header}\n${hunks.join("\n")}\n`,
     truncated: false,
     abandoned: false,
+    edits,
   };
 }
 
@@ -191,5 +299,5 @@ export function azureDevOpsFilePatch(input: {
 export function azureDevOpsUnreadableFilePatch(
   change: AzureDevOpsChangeEntry,
 ): AzureDevOpsFilePatch {
-  return { section: `${patchHeader(change)}\n`, truncated: true, abandoned: false };
+  return { section: `${patchHeader(change)}\n`, truncated: true, abandoned: false, edits: 0 };
 }

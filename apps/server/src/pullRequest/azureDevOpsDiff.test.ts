@@ -3,7 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   azureDevOpsFilePatch,
   azureDevOpsUnreadableFilePatch,
+  byteLength,
   formatAzureDevOpsDiffCursor,
+  MAX_FILE_DIFF_EDITS,
   parseAzureDevOpsDiffCursor,
 } from "./azureDevOpsDiff.ts";
 import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
@@ -150,21 +152,144 @@ describe("azureDevOpsFilePatch", () => {
     );
   });
 
-  it("gives up on a file whose two sides are too far apart to diff in the time allowed", () => {
-    // The line diff costs the product of the two sides, so a pair under the size ceiling that
-    // shares nothing still runs long. Left to itself it would hold the server for as long as it
-    // took; here it is given a millisecond so the giving up is the thing being read.
-    const oldContents = Array.from({ length: 3_000 }, (_, line) => `old ${line}`).join("\n");
-    const newContents = Array.from({ length: 3_000 }, (_, line) => `new ${line}`).join("\n");
+  const lineRange = (count: number, prefix: string) =>
+    Array.from({ length: count }, (_, line) => `${prefix} ${line}`).join("\n");
+
+  it("lists a file too far apart to diff as wholly replaced", () => {
+    // Sharing no line at all costs one edit per line on each side, so this pair is twice the
+    // ceiling apart. Left to itself the search costs about the square of that and would hold the
+    // whole server, every websocket client with it, while it worked out a patch nobody reads. What
+    // the two sides are is known without any search, so the reader gets them.
+    const lines = (prefix: string) =>
+      Array.from({ length: MAX_FILE_DIFF_EDITS }, (_, line) => `${prefix} ${line}`).join("\n");
     const patch = azureDevOpsFilePatch({
       change: change({ path: "generated.ts", oldPath: "generated.ts" }),
-      texts: texts(oldContents, newContents),
-      timeoutMillis: 1,
+      texts: texts(`${lines("old")}\n`, `${lines("new")}\n`),
     });
 
     expect(patch.truncated).toBe(true);
-    // And it says so, because the reader of a run of files is meant to stop rather than spend
-    // that time again on each of the ones behind it.
+    // And it says the search was given up on, because the reader of a run of files is meant to
+    // stop rather than spend that work again on each of the ones behind it.
+    expect(patch.abandoned).toBe(true);
+    expect(patch.section).toContain(`@@ -1,${MAX_FILE_DIFF_EDITS} +1,${MAX_FILE_DIFF_EDITS} @@`);
+    expect(patch.section.match(/^-old /gmu)).toHaveLength(MAX_FILE_DIFF_EDITS);
+    expect(patch.section.match(/^\+new /gmu)).toHaveLength(MAX_FILE_DIFF_EDITS);
+  });
+
+  it("writes out a wholly new file however many lines it has", () => {
+    // Nothing on the old side means there was no edit distance to search out, so this is the
+    // minimal patch and not a stand-in for one. Fifteen thousand lines of thirty bytes is the
+    // shape this used to lose: inside the byte ceiling that gates every file, and well past every
+    // bound a two-sided file answers to, none of which is protecting against anything here.
+    const contents = `${Array.from({ length: 15_000 }, () => "x".repeat(29)).join("\n")}\n`;
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "DEMO.md", oldPath: "DEMO.md", changeKind: "new" }),
+      texts: texts("", contents),
+    });
+
+    expect(byteLength(contents)).toBeLessThan(512 * 1024);
+    expect(patch.truncated).toBe(false);
+    expect(patch.abandoned).toBe(false);
+    expect(patch.edits).toBe(15_000);
+    expect(patch.section).toContain("@@ -0,0 +1,15000 @@");
+    // Only the `+++` of the header on top of the file's own lines, so nothing was dropped out of
+    // the middle.
+    expect(patch.section.match(/^\+/gmu)).toHaveLength(15_001);
+  });
+
+  it("writes out a wholly new file whose patch weighs more than one file is let through at", () => {
+    // Every line carries a prefix, so a side of very short lines answers with up to twice its own
+    // bytes. A two-sided file declines to be written out at that size, because there was a real
+    // diff it was only standing in for. A creation has no smaller true patch to fall back to, and
+    // the byte ceiling on each side is what bounds it instead.
+    const contents = `${Array.from({ length: 200_000 }, () => "x").join("\n")}\n`;
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "bundle.min.js", oldPath: "bundle.min.js", changeKind: "new" }),
+      texts: texts("", contents),
+    });
+
+    expect(byteLength(contents)).toBeLessThan(512 * 1024);
+    expect(byteLength(patch.section)).toBeGreaterThan(512 * 1024);
+    expect(patch.truncated).toBe(false);
+    expect(patch.edits).toBe(200_000);
+    expect(patch.section).toContain("@@ -0,0 +1,200000 @@");
+  });
+
+  it("writes out a wholly deleted file however many lines it had", () => {
+    const contents = `${lineRange(20_000, "line")}\n`;
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "OLD.md", oldPath: "OLD.md", changeKind: "deleted" }),
+      texts: texts(contents, ""),
+    });
+
+    expect(patch.truncated).toBe(false);
+    expect(patch.abandoned).toBe(false);
+    expect(patch.edits).toBe(20_000);
+    expect(patch.section).toContain("@@ -1,20000 +0,0 @@");
+    expect(patch.section.match(/^-line /gmu)).toHaveLength(20_000);
+    expect(patch.section.match(/^-/gmu)).toHaveLength(20_001);
+  });
+
+  it("gives an empty new file no hunk to read", () => {
+    // A file with nothing on either side has no lines to claim were replaced, and git writes it
+    // as a header alone.
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "EMPTY.md", oldPath: "EMPTY.md", changeKind: "new" }),
+      texts: texts("", ""),
+    });
+
+    expect(patch.edits).toBe(0);
+    expect(patch.section).not.toContain("@@");
+  });
+
+  it("marks a replaced side that does not end in a newline", () => {
+    const lines = (prefix: string) =>
+      Array.from({ length: MAX_FILE_DIFF_EDITS }, (_, line) => `${prefix} ${line}`).join("\n");
+    const patch = azureDevOpsFilePatch({
+      change: change(),
+      texts: texts(`${lines("old")}\n`, lines("new")),
+    });
+
+    expect(patch.abandoned).toBe(true);
+    expect(patch.section.match(/^\\ No newline at end of file$/gmu)).toHaveLength(1);
+    expect(patch.section).toContain(
+      `+new ${MAX_FILE_DIFF_EDITS - 1}\n\\ No newline at end of file\n`,
+    );
+  });
+
+  it("keeps a file too long to call wholly replaced listed without its hunks", () => {
+    // Past a few thousand lines, being further apart than the ceiling no longer means the sides
+    // share little: the file may have changed in one corner, and calling it wholly replaced would
+    // bury that corner in a wall of red and green.
+    const lines = (prefix: string) =>
+      Array.from({ length: 5_000 }, (_, line) => `${prefix} ${line}`).join("\n");
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "generated.ts", oldPath: "generated.ts" }),
+      texts: texts(`${lines("old")}\n`, `${lines("new")}\n`),
+    });
+
+    expect(patch.abandoned).toBe(true);
+    expect(patch.section).toBe(
+      [
+        "diff --git a/generated.ts b/generated.ts",
+        "--- a/generated.ts",
+        "+++ b/generated.ts",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a replacement heavier than one file's bytes listed without its hunks", () => {
+    // Few enough lines to be worth calling wholly replaced, and long enough lines that saying so
+    // would answer with twice what either side was let through at.
+    const wide = "z".repeat(200);
+    const lines = (prefix: string) =>
+      Array.from({ length: 2_000 }, (_, line) => `${prefix} ${line} ${wide}`).join("\n");
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "generated.ts", oldPath: "generated.ts" }),
+      texts: texts(`${lines("old")}\n`, `${lines("new")}\n`),
+    });
+
     expect(patch.abandoned).toBe(true);
     expect(patch.section).toBe(
       [
@@ -183,6 +308,27 @@ describe("azureDevOpsFilePatch", () => {
     });
 
     expect(patch.abandoned).toBe(false);
+  });
+
+  it("counts what the diff worked out, which is what the file cost to diff", () => {
+    // The caller spends a budget of these across a slice, so they have to be the edits the search
+    // actually made: one line replaced is a removal and an addition, and the three lines of
+    // context around them cost nothing.
+    const patch = azureDevOpsFilePatch({
+      change: change(),
+      texts: texts("one\ntwo\nthree\nfour\n", "one\ntwo again\nthree\nfour\n"),
+    });
+
+    expect(patch.edits).toBe(2);
+  });
+
+  it("counts nothing for a file it never diffed", () => {
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "logo.png", oldPath: "logo.png" }),
+      texts: texts("PNG\u0000old", "PNG\u0000new"),
+    });
+
+    expect(patch.edits).toBe(0);
   });
 
   it("marks a file that does not end in a newline, as git does", () => {

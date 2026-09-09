@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import { make } from "./AzureDevOpsPullRequestProvider.ts";
-import { MAX_DIFF_SLICE_BYTES } from "./azureDevOpsDiff.ts";
+import { MAX_DIFF_SLICE_BYTES, MAX_FILE_DIFF_EDITS } from "./azureDevOpsDiff.ts";
 import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
 
 const ITERATION = { id: 3, headCommit: "head", mergeBaseCommit: "base" };
@@ -39,7 +39,8 @@ function change(
 /**
  * A file whose two sides share no line, so its patch is `lines` removals and `lines` additions of
  * `width` characters each: the diff work and the patch bytes one file costs are both dialled from
- * here, and they are what a slice is bounded by.
+ * here, and they are what a slice is bounded by. Each line carries its own number and a prefix
+ * as well, so `width` is a floor on how long a line is rather than its byte count.
  */
 function side(prefix: string, lines: number, width: number): string {
   const pad = "z".repeat(width);
@@ -187,6 +188,20 @@ describe("what one diff slice spends", () => {
       expect(patchedPaths(read.slice.patch)).toEqual(["a.ts", "b.ts"]);
       expect(read.slice.nextCursor).toBe(`${ITERATION.id}:2`);
       expect(new Set(read.reads)).toEqual(new Set(["a.ts", "b.ts", "c.ts", "d.ts"]));
+    }),
+  );
+
+  it.effect("stops once the diff work one request may do is spent", () =>
+    Effect.gen(function* () {
+      // Short lines are cheap on the wire and dear to diff, so the byte ceiling alone would let
+      // one request hold the thread through a dozen of them. Each of these is half of what one
+      // file is allowed, and the slice ends while there is still room for another.
+      const paths = Array.from({ length: 12 }, (_, file) => `file-${file}.ts`);
+      const read = yield* readSlice({ paths, lines: MAX_FILE_DIFF_EDITS / 4, width: 1 });
+
+      expect(read.slice.patch.length).toBeLessThan(MAX_DIFF_SLICE_BYTES);
+      expect(patchedPaths(read.slice.patch)).toEqual(paths.slice(0, 5));
+      expect(read.slice.nextCursor).toBe(`${ITERATION.id}:5`);
     }),
   );
 
