@@ -31,7 +31,6 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/LegacyV1ThreadImporter.ts";
-import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
@@ -379,41 +378,24 @@ export const startEffectWorkerWithRelay = Effect.fn(
 
 export function runOrderedV2StartupPhases<
   Import,
-  Verification extends { readonly valid: boolean },
-  RebuildVerification extends { readonly valid: boolean },
   Recovery,
   Bootstrap,
   ImportError,
-  VerifyError,
-  RebuildError,
   RecoveryError,
   WorkerError,
   BootstrapError,
   ImportContext,
-  VerifyContext,
-  RebuildContext,
   RecoveryContext,
   WorkerContext,
   BootstrapContext,
 >(input: {
   readonly importLegacyShells: Effect.Effect<Import, ImportError, ImportContext>;
-  readonly verify: Effect.Effect<Verification, VerifyError, VerifyContext>;
-  readonly rebuild: Effect.Effect<RebuildVerification, RebuildError, RebuildContext>;
   readonly recover: Effect.Effect<Recovery, RecoveryError, RecoveryContext>;
   readonly startEffectWorker: Effect.Effect<void, WorkerError, WorkerContext>;
   readonly autoBootstrap: Effect.Effect<Bootstrap, BootstrapError, BootstrapContext>;
 }) {
   return Effect.gen(function* () {
     yield* input.importLegacyShells;
-    const verification = yield* input.verify;
-    if (!verification.valid) {
-      const rebuilt = yield* input.rebuild;
-      if (!rebuilt.valid) {
-        return yield* Effect.die(
-          new Error("V2 orchestration projection rebuild did not produce a valid projection."),
-        );
-      }
-    }
     const recovery = yield* input.recover;
     yield* input.startEffectWorker;
     const bootstrap = yield* input.autoBootstrap;
@@ -425,7 +407,6 @@ export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     const keybindings = yield* Keybindings.Keybindings;
-    const projectionMaintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const legacyV1ThreadImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
     const providerRuntimeRecovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -523,30 +504,6 @@ export const make = (options?: StartupOptions) =>
             ),
           ),
         ),
-        verify: runStartupPhase(
-          "orchestration-v2.projections.verify",
-          projectionMaintenance.verify.pipe(
-            Effect.tap((verification) =>
-              verification.valid
-                ? Effect.void
-                : Effect.logWarning(
-                    "V2 orchestration projection metadata or structure is invalid; rebuilding",
-                    {
-                      expectedSequence: verification.expectedSequence,
-                      projectionSequence: verification.projectionSequence,
-                      schemaVersion: verification.schemaVersion,
-                      missingThreadCount: verification.missingThreadIds.length,
-                      unexpectedThreadCount: verification.unexpectedThreadIds.length,
-                      unreadableThreadCount: verification.unreadableThreadIds.length,
-                    },
-                  ),
-            ),
-          ),
-        ),
-        rebuild: runStartupPhase(
-          "orchestration-v2.projections.rebuild",
-          projectionMaintenance.rebuild,
-        ),
         recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
         startEffectWorker: runStartupPhase(
           "orchestration-v2.effect-worker.start",
@@ -598,30 +555,6 @@ export const make = (options?: StartupOptions) =>
             )
           : importPendingTranscripts
       ).pipe(forkParked);
-
-      // Off the startup path: the first run after an upgrade deletes the whole
-      // superseded-event and legacy-v1 backlog (potentially millions of rows,
-      // paced in small batches), and nothing at boot depends on it.
-      yield* projectionMaintenance.compactEventStore.pipe(
-        Effect.tap((summary) =>
-          summary.deletedEventCount === 0 && summary.deletedReceiptCount === 0
-            ? Effect.void
-            : Effect.logInfo("Compacted orchestration event store", summary),
-        ),
-        Effect.tap((summary) =>
-          // Freed pages are reused, so the file stops growing regardless; only
-          // an offline VACUUM shrinks it, which is not safe to run on the
-          // synchronous sqlite connection while serving.
-          summary.reclaimableBytes >= 512 * 1024 * 1024
-            ? Effect.logInfo(
-                "state.sqlite has substantial reclaimable free space; an offline VACUUM would shrink the file",
-                { reclaimableBytes: summary.reclaimableBytes },
-              )
-            : Effect.void,
-        ),
-        Effect.catch((cause) => Effect.logWarning("Unable to compact the event store", { cause })),
-        forkParked,
-      );
 
       yield* forkParked(
         Effect.gen(function* () {

@@ -52,7 +52,7 @@ it("uses the thread provider for stale background work without provider threads"
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {

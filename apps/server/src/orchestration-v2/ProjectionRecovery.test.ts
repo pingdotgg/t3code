@@ -26,6 +26,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
+import { restartContinuationRun } from "./RestartContinuation.ts";
 
 const TestLayer = Layer.mergeAll(projectionStoreLayer, effectOutboxLayer).pipe(
   Layer.provideMerge(SqlitePersistenceMemory),
@@ -125,8 +126,9 @@ it.effect("selects unfinished recovery work without reading settled thread histo
     const archived = yield* createThread("archived", { archivedAt: now });
     const deleted = yield* createThread("deleted", { deletedAt: now });
     const blocked = yield* createThread("blocked");
+    yield* createRun(queued, "completed");
     for (const threadId of [queued, archived, deleted, blocked]) {
-      yield* createRun(threadId, "queued");
+      yield* createRun(threadId, "queued", threadId === queued ? { ordinal: 2 } : {});
     }
     yield* createRun(blocked, "waiting", { ordinal: 2 });
     const background = yield* createThread("background");
@@ -199,6 +201,10 @@ it.effect("selects unfinished recovery work without reading settled thread histo
       UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
       WHERE thread_id = ${ThreadId.make("thread:recovery:settled-599")}
     `;
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs SET payload_json = '{broken'
+      WHERE thread_id = ${queued} AND ordinal = 1
+    `;
     assert.deepEqual(yield* projections.getRecoveryThreadIds("queued-runs"), [queued]);
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
@@ -206,7 +212,13 @@ it.effect("selects unfinished recovery work without reading settled thread histo
     );
     assert.deepEqual(yield* projections.getRecoveryThreadIds("delegated-completions"), [delivery]);
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
+    const recoveryState = yield* projections.getRuntimeRecoveryProjection(queued);
+    assert.deepEqual(
+      recoveryState.runs.map((run) => run.id),
+      [RunId.make(`run:${queued}:2`)],
+    );
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), [
+      queued,
       ThreadId.make("thread:recovery:settled-599"),
     ]);
   }).pipe(Effect.provide(TestLayer)),
@@ -330,10 +342,69 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
         pendingBackgroundTasks: [{ taskId: "background", description: "Still running" }],
       },
     });
+    const prepared = yield* createThread("prepared-continuation");
+    const preparedSessionId = ProviderSessionId.make("session:recovery:prepared");
+    const preparedProviderThreadId = ProviderThreadId.make("provider-thread:recovery:prepared");
+    yield* projections.apply({
+      id: EventId.make("event:recovery:prepared-session"),
+      type: "provider-session.attached",
+      threadId: prepared,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: preparedSessionId,
+        driver,
+        providerInstanceId,
+        status: "stopped",
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:recovery:prepared-thread"),
+      type: "provider-thread.updated",
+      threadId: prepared,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: preparedProviderThreadId,
+        appThreadId: prepared,
+        ownerNodeId: null,
+        driver,
+        providerInstanceId,
+        providerSessionId: preparedSessionId,
+        nativeThreadRef: { driver, nativeId: "native:prepared", strength: "strong" },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        pendingBackgroundTasks: [],
+      },
+    });
+    const preparedRunId = yield* createRun(prepared, "starting", {
+      providerThreadId: preparedProviderThreadId,
+      restartContinuationOfRunId: RunId.make("run:recovery:source"),
+    });
     assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("runtime")),
-      new Set([first, second, roster]),
+      new Set([first, second, roster, prepared]),
     );
+    const preparedState = yield* projections.getRuntimeRecoveryProjection(prepared);
+    assert.deepEqual(
+      preparedState.providerSessions.map((session) => session.id),
+      [preparedSessionId],
+    );
+    assert.equal(restartContinuationRun(preparedState)?.id, preparedRunId);
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
     const sql = yield* SqlClient.SqlClient;
     yield* sql`

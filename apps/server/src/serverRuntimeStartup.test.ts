@@ -18,47 +18,23 @@ it("uses the canonical Codex model for auto-bootstrap", () => {
   });
 });
 
-it.effect("runs projection repair, recovery, worker startup, and bootstrap in order", () =>
+it.effect("starts without scanning or rebuilding projection history", () =>
   Effect.gen(function* () {
     const calls = yield* Ref.make<ReadonlyArray<string>>([]);
     const record = (label: string) => Ref.update(calls, (current) => [...current, label]);
 
     const result = yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
       importLegacyShells: record("import"),
-      verify: record("verify").pipe(Effect.as({ valid: false })),
-      rebuild: record("rebuild").pipe(Effect.as({ valid: true })),
       recover: record("recover").pipe(Effect.as({ closedRequests: 2 })),
       startEffectWorker: record("worker"),
       autoBootstrap: record("bootstrap").pipe(Effect.as({ projectId: "project-1" })),
     });
 
-    assert.deepEqual(yield* Ref.get(calls), [
-      "import",
-      "verify",
-      "rebuild",
-      "recover",
-      "worker",
-      "bootstrap",
-    ]);
+    assert.deepEqual(yield* Ref.get(calls), ["import", "recover", "worker", "bootstrap"]);
     assert.deepEqual(result, {
       recovery: { closedRequests: 2 },
       bootstrap: { projectId: "project-1" },
     });
-  }),
-);
-
-it.effect("does not rebuild valid projections", () =>
-  Effect.gen(function* () {
-    const rebuilt = yield* Ref.make(false);
-    yield* ServerRuntimeStartup.runOrderedV2StartupPhases({
-      importLegacyShells: Effect.void,
-      verify: Effect.succeed({ valid: true }),
-      rebuild: Ref.set(rebuilt, true).pipe(Effect.as({ valid: true })),
-      recover: Effect.void,
-      startEffectWorker: Effect.void,
-      autoBootstrap: Effect.void,
-    });
-    assert.isFalse(yield* Ref.get(rebuilt));
   }),
 );
 

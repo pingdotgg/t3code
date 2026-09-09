@@ -86,6 +86,37 @@ describe("resolveThreadProviderInstance", () => {
     ).toBe("Codex Personal");
   });
 
+  it("uses the current runtime owner after a provider handoff", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const serverConfigs = new Map<EnvironmentId, ServerConfig>([
+      [
+        environmentId,
+        makeConfig([
+          { instanceId: "claudeAgent", driver: "claudeAgent" },
+          { instanceId: "codex", driver: "codex", displayName: "Codex" },
+          { instanceId: "codex_work", driver: "codex", displayName: "Codex" },
+        ]),
+      ],
+    ]);
+    const thread = {
+      ...makeThread(environmentId, "claudeAgent"),
+      runtime: {
+        status: "running" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex_work"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: "2026-06-01T00:01:00.000Z",
+      },
+    };
+
+    expect(resolveThreadProviderInstance(serverConfigs, thread)).toMatchObject({
+      driverKind: "codex",
+      displayName: "Codex Work",
+      showBadge: true,
+    });
+  });
+
   it("hides the badge for a single instance with no accent color", () => {
     const environmentId = EnvironmentId.make("environment-a");
     const serverConfigs = new Map<EnvironmentId, ServerConfig>([

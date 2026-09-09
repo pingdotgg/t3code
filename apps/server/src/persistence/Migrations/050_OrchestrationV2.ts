@@ -1,8 +1,22 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-// Base schema for the orchestration V2 event log and projections.
-export default Effect.gen(function* () {
+import ApplicationEventSequenceIndexes from "./OrchestrationV2/ApplicationEventSequenceIndexes.ts";
+import ApplicationEventSource from "./OrchestrationV2/ApplicationEventSource.ts";
+import OrchestrationV2EffectCancellation from "./OrchestrationV2/EffectCancellation.ts";
+import OrchestrationV2Foundation from "./OrchestrationV2/Foundation.ts";
+import LegacyV1ImportState from "./OrchestrationV2/LegacyV1ImportState.ts";
+import OrchestrationV2ProviderSessionBindings from "./OrchestrationV2/ProviderSessionBindings.ts";
+import OrchestrationV2RecoveryIndexes from "./OrchestrationV2/RecoveryIndexes.ts";
+import ScheduledTasks from "./OrchestrationV2/ScheduledTasks.ts";
+import OrchestrationV2ShellIndexes from "./OrchestrationV2/ShellIndexes.ts";
+import OrchestrationV2Subagents from "./OrchestrationV2/Subagents.ts";
+import OrchestrationV2ThreadLaunchWorkflows from "./OrchestrationV2/ThreadLaunchWorkflows.ts";
+
+// Base schema for the orchestration V2 event log and projections. The setup
+// steps below were developed separately while V2 was private, but released
+// databases run and record them as one migration from schema 49.
+const OrchestrationV2Base = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
@@ -300,4 +314,19 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_source_thread_idx ON orchestration_v2_projection_context_transfers(source_thread_id)`;
   yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_target_thread_idx ON orchestration_v2_projection_context_transfers(target_thread_id, status)`;
   yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_target_run_idx ON orchestration_v2_projection_context_transfers(target_run_id)`;
+});
+
+export default Effect.gen(function* () {
+  yield* OrchestrationV2Base;
+  yield* OrchestrationV2Subagents;
+  yield* OrchestrationV2Foundation;
+  yield* OrchestrationV2ProviderSessionBindings;
+  yield* OrchestrationV2ThreadLaunchWorkflows;
+  yield* ApplicationEventSource;
+  yield* OrchestrationV2EffectCancellation;
+  yield* ScheduledTasks;
+  yield* LegacyV1ImportState;
+  yield* ApplicationEventSequenceIndexes;
+  yield* OrchestrationV2RecoveryIndexes;
+  yield* OrchestrationV2ShellIndexes;
 });

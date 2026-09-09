@@ -2,17 +2,20 @@ import {
   CommandId,
   MessageId,
   type OrchestrationV2Run,
-  type OrchestrationV2ThreadProjection,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import { ServerSettingsService } from "../serverSettings.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 
 export function restartContinuationRun(
-  projection: OrchestrationV2ThreadProjection,
+  projection: Pick<
+    ProjectionRuntimeRecoveryState,
+    "thread" | "runs" | "providerThreads" | "providerSessions" | "providerTurns"
+  >,
 ): OrchestrationV2Run | undefined {
   if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(

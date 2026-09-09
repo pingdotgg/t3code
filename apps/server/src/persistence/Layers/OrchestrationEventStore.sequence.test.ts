@@ -209,11 +209,11 @@ it.effect(
     }).pipe(Effect.provide(Layer.fresh(eventStoreLayer))),
 );
 
-it.effect("upgrades populated history to indexed high-water lookups without OR scans", () =>
+it.effect("uses indexed high-water lookups for populated history without OR scans", () =>
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 58 });
+    yield* runMigrations();
     yield* sql`
       WITH RECURSIVE history(n) AS (
         SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000
@@ -228,8 +228,6 @@ it.effect("upgrades populated history to indexed high-water lookups without OR s
         CASE WHEN n % 3 = 0 THEN 1 ELSE 2 END
       FROM history
     `;
-    yield* runMigrations({ toMigrationInclusive: 59 });
-
     const statements: Array<string> = [];
     const tracer = Tracer.make({
       span(options) {

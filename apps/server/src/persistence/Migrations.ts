@@ -63,17 +63,6 @@ import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
 import Migration0048 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts";
 import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0050 from "./Migrations/050_OrchestrationV2.ts";
-import Migration0051 from "./Migrations/051_OrchestrationV2Subagents.ts";
-import Migration0052 from "./Migrations/052_OrchestrationV2Foundation.ts";
-import Migration0053 from "./Migrations/053_OrchestrationV2ProviderSessionBindings.ts";
-import Migration0054 from "./Migrations/054_OrchestrationV2ThreadLaunchWorkflows.ts";
-import Migration0055 from "./Migrations/055_ApplicationEventSource.ts";
-import Migration0056 from "./Migrations/056_OrchestrationV2EffectCancellation.ts";
-import Migration0057 from "./Migrations/057_ScheduledTasks.ts";
-import Migration0058 from "./Migrations/058_LegacyV1ImportState.ts";
-import Migration0059 from "./Migrations/059_ApplicationEventSequenceIndexes.ts";
-import Migration0060 from "./Migrations/060_OrchestrationV2RecoveryIndexes.ts";
-import Migration0061 from "./Migrations/061_OrchestrationV2ShellIndexes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -136,17 +125,6 @@ export const migrationEntries = [
   [48, "ProjectionThreadBranchPullRequest", Migration0048],
   [49, "ProjectionThreadsActiveOrderKey", Migration0049],
   [50, "OrchestrationV2", Migration0050],
-  [51, "OrchestrationV2Subagents", Migration0051],
-  [52, "OrchestrationV2Foundation", Migration0052],
-  [53, "OrchestrationV2ProviderSessionBindings", Migration0053],
-  [54, "OrchestrationV2ThreadLaunchWorkflows", Migration0054],
-  [55, "ApplicationEventSource", Migration0055],
-  [56, "OrchestrationV2EffectCancellation", Migration0056],
-  [57, "ScheduledTasks", Migration0057],
-  [58, "LegacyV1ImportState", Migration0058],
-  [59, "ApplicationEventSequenceIndexes", Migration0059],
-  [60, "OrchestrationV2RecoveryIndexes", Migration0060],
-  [61, "OrchestrationV2ShellIndexes", Migration0061],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -26,7 +26,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-it.effect("drains durable effects before reporting recovery complete", () =>
+it.effect("leaves durable effects for the worker after runtime reconciliation", () =>
   Effect.gen(function* () {
     const runs = yield* Ref.make(0);
     const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -59,8 +59,8 @@ it.effect("drains durable effects before reporting recovery complete", () =>
       closedRequests: 0,
       retiredEffects: 0,
       requeuedEffects: 0,
-      executedEffects: 2,
     });
+    assert.equal(yield* Ref.get(runs), 0);
   }),
 );
 
@@ -95,7 +95,7 @@ it.effect("expires orphaned runtime requests before command readiness", () => {
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({ commitCommand: committed }),
         IdAllocator.layer,
@@ -147,7 +147,7 @@ it.effect("preserves async questions across startup and shutdown", () => {
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({ commitCommand }),
         IdAllocator.layer,
@@ -195,7 +195,7 @@ it.effect("uses the same reconciliation path to cancel runtime requests during s
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
@@ -278,7 +278,7 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getThreadProjection: () => Effect.succeed(projection),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {
@@ -367,7 +367,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
@@ -442,7 +442,7 @@ it.effect("cancels accepted queued work instead of replaying it after restart", 
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getThreadProjection: () => Effect.succeed(projection),
+          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           commitCommand: (input) => {
@@ -554,7 +554,7 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getThreadProjection: () => Effect.succeed(projection),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {
@@ -739,7 +739,7 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getThreadProjection: () => Effect.succeed(projection),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {
@@ -896,7 +896,7 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getThreadProjection: () => Effect.succeed(projection),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {
@@ -1026,7 +1026,7 @@ it.effect(
         Layer.mergeAll(
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getThreadProjection: () => Effect.succeed(projection),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             commitCommand: (input) => {

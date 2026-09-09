@@ -907,6 +907,7 @@ function ThreadNavigationSidebarPane(
                 thread,
                 serverConfigs.get(thread.environmentId)?.providers,
               )}
+              providerInstance={resolveThreadProviderInstance(serverConfigs, thread)}
               environmentLabel={
                 Object.keys(savedConnectionsById).length > 1
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
