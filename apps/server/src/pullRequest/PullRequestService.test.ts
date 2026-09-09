@@ -4779,6 +4779,88 @@ it.effect("keeps environment marks apart from another change request's", () =>
   }),
 );
 
+/** The environment-backed fixture with its own answer to who the reader is. */
+const environmentViewedServiceWithViewer = (
+  revisions: Map<string, string>,
+  getViewer: PullRequestProviderApi["getViewer"],
+) =>
+  makeService({
+    projects: [
+      project({
+        id: "p1",
+        title: "on gitlab",
+        workspaceRoot: "/a",
+        repository: "group/project",
+        provider: "gitlab",
+      }),
+    ],
+    providers: [{ ...environmentViewedProvider(revisions, []), getViewer }],
+  });
+
+it.effect("keeps one reader's marks on a host that names nobody", () =>
+  Effect.gen(function* () {
+    const service = yield* environmentViewedServiceWithViewer(
+      new Map([["src/a.ts", "blob-a"]]),
+      () => Effect.succeed(""),
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+it.effect("refuses the marks when the host could not be asked who is reading", () =>
+  Effect.gen(function* () {
+    let answering = true;
+    const service = yield* environmentViewedServiceWithViewer(
+      new Map([["src/a.ts", "blob-a"]]),
+      () =>
+        answering
+          ? Effect.succeed("bilal")
+          : Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "getViewer",
+                reason: "failed",
+                detail: "glab exited with status 1",
+              }),
+            ),
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // Who is signed in is held for ten minutes, so the lookup has to come round again before a
+    // failing CLI can reach the read at all.
+    answering = false;
+    yield* TestClock.adjust("11 minutes");
+
+    // Answering these from the unnamed reader's rows would show the reader none of their own
+    // ticks, and file the next press where the recovered CLI will never look for it again.
+    const read = yield* Effect.flip(service.filesViewed(GITLAB_REFERENCE));
+    const write = yield* Effect.flip(
+      service.setFilesViewed({
+        ...GITLAB_REFERENCE,
+        files: [{ path: "src/b.ts", viewed: true }],
+      }),
+    );
+    assert.strictEqual(read._tag, "PullRequestOperationError");
+    assert.strictEqual(write._tag, "PullRequestOperationError");
+
+    answering = true;
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
 it.effect("refuses to track viewed files on a host that does not", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

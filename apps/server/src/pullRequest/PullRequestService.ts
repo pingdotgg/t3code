@@ -1480,9 +1480,8 @@ export const make = Effect.gen(function* () {
 
   /**
    * Which change request's marks, and whose. The host is part of it because the same
-   * `owner/repo` exists on more than one install, and the reader is part of it for the reason
-   * a host's own record is per-account. A host that will not say who is reading leaves it
-   * empty, which is one reader rather than none.
+   * `owner/repo` exists on more than one install, and the reader is part of it for the reason a
+   * host's own record is per-account. A host that names no reader is one reader, not none.
    */
   const filesViewedScope = (project: SupportedProject, number: number, viewer: string | null) => ({
     provider: project.api.kind,
@@ -1498,6 +1497,25 @@ export const make = Effect.gen(function* () {
       detail: "This environment could not reach its record of which files you have seen.",
       cause,
     });
+
+  /**
+   * Who the host says the reader is, for the paths whose rows are keyed by it. A lookup that
+   * failed is refused rather than answered as the unnamed reader: a rate-limited or momentarily
+   * signed-out CLI would otherwise hide every tick this reader has made and file the next press
+   * under rows that are orphaned once it recovers.
+   */
+  const requiredViewerOf = (
+    project: SupportedProject,
+    operation: string,
+  ): Effect.Effect<string | null, PullRequestError> =>
+    resolveViewers([project], new Map()).pipe(
+      Effect.flatMap(([resolved]) => {
+        const error = resolved?.error ?? null;
+        return error === null
+          ? Effect.succeed(resolved?.viewer ?? null)
+          : Effect.fail(toPullRequestError(operation)(error));
+      }),
+    );
 
   /**
    * What the head has of the files a reader has marked, held between reads. A host says the empty
@@ -1658,7 +1676,7 @@ export const make = Effect.gen(function* () {
     number: number,
   ): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> =>
     Effect.gen(function* () {
-      const viewer = yield* viewerOf(project);
+      const viewer = yield* requiredViewerOf(project, "filesViewed");
       const marks = yield* filesViewedStore
         .list(filesViewedScope(project, number, viewer))
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
@@ -1752,7 +1770,7 @@ export const make = Effect.gen(function* () {
     input: PullRequestSetFilesViewedInput,
   ): Effect.Effect<void, PullRequestError> =>
     Effect.gen(function* () {
-      const viewer = yield* viewerOf(project);
+      const viewer = yield* requiredViewerOf(project, "setFilesViewed");
       // Only the files being cleared need a revision. An unticked one is about to lose its row,
       // and what the head has of it changes nothing about deleting it.
       const cleared = input.files.filter((file) => file.viewed).map((file) => file.path);
