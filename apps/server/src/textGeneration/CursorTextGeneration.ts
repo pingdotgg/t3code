@@ -1,3 +1,6 @@
+import * as NodeOS from "node:os";
+import * as FileSystem from "effect/FileSystem";
+
 import { Agent, type AgentOptions, type RunResult } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -46,10 +49,11 @@ function emptyCursorSdkResultDetail(result: RunResult): string {
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
  */
-export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
+export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-) => {
+) {
+  const fs = yield* FileSystem.FileSystem;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -74,40 +78,72 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
-    cwd,
     prompt,
     outputSchemaJson,
     modelSelection,
   }: {
     operation: CursorTextGenerationOperation;
-    cwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const apiKey = yield* resolveCursorApiKey(operation);
+      // The SDK loads sandbox.json independently of settingSources and lets it
+      // expand the writable paths. Its public API cannot override that policy.
+      if (yield* fs.exists(`${NodeOS.homedir()}/.cursor/sandbox.json`)) {
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "Cursor text generation cannot enforce workspace isolation with a custom ~/.cursor/sandbox.json. Use another text-generation provider.",
+        });
+      }
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-text-" });
       const agentOptions = {
         apiKey,
-        mode: "agent",
+        mode: "plan",
         model: cursorSdkModelSelection(modelSelection),
         local: {
           cwd,
           autoReview: false,
-          sandboxOptions: { enabled: false },
+          sandboxOptions: { enabled: true },
+          settingSources: [],
           enableAgentRetries: true,
         },
       } satisfies AgentOptions;
 
-      const promptResult = yield* Effect.tryPromise({
-        try: () => Agent.prompt(prompt, agentOptions),
-        catch: (cause) =>
-          new TextGenerationError({
-            operation,
-            detail: "Cursor SDK request failed.",
-            cause,
+      const request = Effect.gen(function* () {
+        const agent = yield* Effect.acquireRelease(
+          Effect.tryPromise((signal) =>
+            Agent.create(agentOptions).then((agent) => {
+              if (signal.aborted) agent.close();
+              return agent;
+            }),
+          ),
+          (agent) =>
+            Effect.tryPromise(() => agent[Symbol.asyncDispose]()).pipe(
+              Effect.timeout("5 seconds"),
+              Effect.ignore({ log: true }),
+            ),
+          { interruptible: true },
+        );
+        const run = yield* Effect.tryPromise((signal) =>
+          agent.send(prompt).then((run) => {
+            if (signal.aborted) void run.cancel().catch(() => undefined);
+            return run;
           }),
-      }).pipe(
+        );
+        yield* Effect.addFinalizer(() =>
+          run.status === "running"
+            ? Effect.tryPromise(() => run.cancel()).pipe(
+                Effect.timeout("5 seconds"),
+                Effect.ignore({ log: true }),
+              )
+            : Effect.void,
+        );
+        return yield* Effect.tryPromise(() => run.wait());
+      }).pipe(Effect.scoped);
+      const promptResult = yield* request.pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
@@ -145,6 +181,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
         }),
       );
     }).pipe(
+      Effect.scoped,
       Effect.mapError((cause) =>
         isTextGenerationError(cause)
           ? cause
@@ -168,7 +205,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generateCommitMessage",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -197,7 +233,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generatePrContent",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -218,7 +253,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generateBranchName",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -240,7 +274,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generateThreadTitle",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -252,10 +285,10 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
-  return Effect.succeed({
+  return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-  } satisfies TextGeneration.TextGeneration["Service"]);
+  } satisfies TextGeneration.TextGeneration["Service"];
 });
