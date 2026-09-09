@@ -56,12 +56,6 @@ const commandArgs = (script: string) => [
   "-c",
   quoteRemoteArg(remoteDeviceEnvironment + script),
 ];
-const failure = (config: SshDeviceHostConfig, step: string) => (cause: unknown) =>
-  new DeviceHostError({
-    hostId: config.id,
-    step,
-    cause,
-  });
 const bootstrap = (
   config: SshDeviceHostConfig,
   owner: string,
@@ -74,12 +68,16 @@ const bootstrap = (
     ),
     stdin: remoteDeviceScript(owner, mode),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,
-  }).pipe(Effect.mapError(failure(config, mode)));
+  }).pipe(
+    Effect.mapError((cause) => new DeviceHostError({ hostId: config.id, step: mode, cause })),
+  );
 
 export const probe = Effect.fn("SshDeviceHost.probe")(function* (config: SshDeviceHostConfig) {
   const result = yield* bootstrap(config, "probe", "probe");
   const value = yield* decodeProbe(result.stdout.trim()).pipe(
-    Effect.mapError(failure(config, "reading probe result")),
+    Effect.mapError(
+      (cause) => new DeviceHostError({ hostId: config.id, step: "reading probe result", cause }),
+    ),
   );
   return {
     id: config.id,
@@ -170,7 +168,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     const result = yield* provide(bootstrap(config, owner, wantsAgent ? "agent-start" : "start"));
     yield* onStatus("starting");
     const remote = yield* decodeStarted(result.stdout.trim()).pipe(
-      Effect.mapError(failure(config, "reading host endpoints")),
+      Effect.mapError(
+        (cause) =>
+          new DeviceHostError({ hostId: config.id, step: "reading host endpoints", cause }),
+      ),
     );
     summary = {
       ...summary,
@@ -180,10 +181,19 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     };
     const hubPort = yield* net
       .reserveLoopbackPort("127.0.0.1")
-      .pipe(Effect.mapError(failure(config, "reserving hub port")));
+      .pipe(
+        Effect.mapError(
+          (cause) => new DeviceHostError({ hostId: config.id, step: "reserving hub port", cause }),
+        ),
+      );
     const daemonPort = yield* net
       .reserveLoopbackPort("127.0.0.1")
-      .pipe(Effect.mapError(failure(config, "reserving daemon port")));
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new DeviceHostError({ hostId: config.id, step: "reserving daemon port", cause }),
+        ),
+      );
     const scope = yield* Scope.make();
     connectionScope = scope;
     const child = yield* spawner
@@ -212,7 +222,9 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       )
       .pipe(
         Effect.provideService(Scope.Scope, scope),
-        Effect.mapError(failure(config, "forwarding ports")),
+        Effect.mapError(
+          (cause) => new DeviceHostError({ hostId: config.id, step: "forwarding ports", cause }),
+        ),
       );
     let stderr = "";
     yield* child.stderr.pipe(
@@ -250,10 +262,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         path: route!,
         timeoutMs: 15000,
         makeError: () =>
-          failure(
-            config,
-            "waiting for SSH forward",
-          )(stderr || "Forwarded endpoint did not answer."),
+          new DeviceHostError({
+            hostId: config.id,
+            step: "waiting for SSH forward",
+            cause: new Error(stderr || "Forwarded endpoint did not answer."),
+          }),
       }).pipe(Effect.provideService(HttpClient.HttpClient, http));
     }
     if (next.agentDevice) yield* onReady({ ...next, agentDevice: next.agentDevice });
@@ -355,7 +368,13 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         Effect.flatMap((value) =>
           value?.agentDevice
             ? Effect.succeed({ ...value, agentDevice: value.agentDevice })
-            : Effect.fail(failure(config, "starting agent tools")("Daemon endpoint missing")),
+            : Effect.fail(
+                new DeviceHostError({
+                  hostId: config.id,
+                  step: "starting agent tools",
+                  cause: new Error("Daemon endpoint missing"),
+                }),
+              ),
         ),
       ),
     stopAgent: changeAgent(false).pipe(Effect.asVoid, Effect.ignore),
