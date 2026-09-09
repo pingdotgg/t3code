@@ -110,20 +110,6 @@ export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERRO
 }> {
   static readonly is = (u: unknown): u is OpenCodeRuntimeError =>
     P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
-
-  static sessionRequestTimeout(input: {
-    readonly operation: string;
-    readonly sessionId: string;
-    readonly timeoutMs: number;
-  }): OpenCodeRuntimeError {
-    return new OpenCodeRuntimeError({
-      operation: input.operation,
-      category: "timeout",
-      sessionId: input.sessionId,
-      timeoutMs: input.timeoutMs,
-      detail: `OpenCode ${input.operation} did not complete for session ${input.sessionId} within ${input.timeoutMs / 1_000} seconds.`,
-    });
-  }
 }
 
 function openCodeHttpStatus(cause: unknown): number | undefined {

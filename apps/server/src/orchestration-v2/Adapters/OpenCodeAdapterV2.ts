@@ -1009,10 +1009,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   duration: "5 seconds",
                   orElse: () =>
                     Effect.fail(
-                      OpenCodeRuntimeError.sessionRequestTimeout({
+                      new OpenCodeRuntimeError({
                         operation,
+                        category: "timeout",
                         sessionId,
                         timeoutMs: 5_000,
+                        detail: `OpenCode ${operation} did not complete for session ${sessionId} within 5 seconds.`,
                       }),
                     ),
                 }),
@@ -3233,7 +3235,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               // Child agents run in their own sessions and outlive a root
               // abort (#9005). Stop must wait for the full known tree and
               // surface a traversal or abort failure to its caller.
-              yield* abortOpenCodeDescendants(sessionId).pipe(Effect.timeout("15 seconds"));
+              yield* abortOpenCodeDescendants(sessionId);
             }).pipe(
               Effect.mapError(
                 (cause) =>

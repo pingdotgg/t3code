@@ -1096,6 +1096,63 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("finishes deep descendant cleanup when each request stays within its deadline", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const requests = yield* Queue.unbounded<ReturnType<typeof promiseGate<void>>>();
+      const abortCalls: Array<string> = [];
+      let cleanupReady = false;
+      const waitForRequest = async () => {
+        if (cleanupReady) return;
+        const gate = promiseGate<void>();
+        Queue.offerUnsafe(requests, gate);
+        await gate.promise;
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness("deep-stop", "deep-0", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: "deep-0", time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: "deep-0", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          messages: async () => ({ data: [] }),
+          abort: async (input: { sessionID: string }) => {
+            abortCalls.push(input.sessionID);
+            if (input.sessionID !== "deep-0") await waitForRequest();
+            return { data: true };
+          },
+          children: async (input: { sessionID: string }) => {
+            await waitForRequest();
+            const depth = Number(input.sessionID.slice(5));
+            return { data: depth < 4 ? [{ id: `deep-${depth + 1}` }] : [] };
+          },
+        },
+      });
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: snapshot.providerTurns.at(-1)!.id,
+        })
+        .pipe(Effect.forkScoped);
+      for (let index = 0; index < 9; index += 1) {
+        const request = yield* Queue.take(requests);
+        yield* TestClock.adjust("4 seconds");
+        request.resolve();
+      }
+      yield* Fiber.join(stopping);
+      assert.deepEqual(abortCalls, ["deep-0", "deep-1", "deep-2", "deep-3", "deep-4"]);
+      cleanupReady = true;
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("treats a missing descendant session as already stopped", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
