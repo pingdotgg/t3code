@@ -38,7 +38,10 @@ export class ProviderSwitchPlanError extends Schema.TaggedError<ProviderSwitchPl
 
 export interface ProviderSwitchServiceV2Shape {
   readonly plan: (input: {
-    readonly projection: OrchestrationV2ThreadProjection;
+    readonly projection: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "providerSessions" | "providerThreads"
+    >;
     readonly targetModelSelection: ModelSelection;
   }) => Effect.Effect<ProviderSwitchPlanV2, ProviderSwitchPlanError>;
 }
