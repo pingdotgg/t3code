@@ -55,7 +55,7 @@ class OpenRouterRequestError extends Data.TaggedError("OpenRouterRequestError")<
 export const makeOpenRouterApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
 
-  const request = Effect.fn("OpenRouterApi.request")(function* (
+  const exchange = Effect.fn("OpenRouterApi.request")(function* (
     config: OpenRouterUsageLimitSourceConfig,
     path: string,
   ) {
@@ -66,7 +66,6 @@ export const makeOpenRouterApi = Effect.gen(function* () {
         ),
       )
       .pipe(
-        Effect.timeout("15 seconds"),
         Effect.mapError(
           () => new OpenRouterRequestError({ detail: "Could not reach OpenRouter." }),
         ),
@@ -86,6 +85,24 @@ export const makeOpenRouterApi = Effect.gen(function* () {
       ),
     );
   });
+
+  /**
+   * One deadline over the whole exchange, as the hub client has. Bounding only
+   * the header read leaves a response that stalls mid-body hanging forever, and
+   * `UsageLimitSources` reads sources while holding its refresh lock: every
+   * later refresh and reset-credit redemption would queue behind it.
+   */
+  const request = (config: OpenRouterUsageLimitSourceConfig, path: string) =>
+    exchange(config, path).pipe(
+      Effect.timeout("15 seconds"),
+      // Only the timeout is remapped. Flattening every failure here would lose
+      // the 403 that sends `readCredits` to the `/key` fallback.
+      Effect.mapError((error) =>
+        error instanceof OpenRouterRequestError
+          ? error
+          : new OpenRouterRequestError({ detail: "Could not reach OpenRouter." }),
+      ),
+    );
 
   /** Account-wide balance. Only a provisioning key gets past OpenRouter's 403 here. */
   const readAccountCredits = Effect.fn("OpenRouterApi.readAccountCredits")(function* (

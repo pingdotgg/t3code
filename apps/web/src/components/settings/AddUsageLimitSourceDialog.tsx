@@ -21,6 +21,9 @@ export type UsageLimitSourceKind = "cliproxy" | "openrouter";
  * Stable per hub and readable in settings.json. Dots and dashes in the host
  * are kept so `foo-bar.com` and `foo.bar.com` do not collide; anything else
  * (a port's colon, a path) is folded to a dash.
+ *
+ * Two hubs on one URL are the same hub, so re-adding it deliberately updates
+ * the existing entry rather than making a second one.
  */
 function sourceIdFromUrl(url: string): UsageLimitSourceId {
   let host = url;
@@ -40,13 +43,20 @@ function slug(value: string): string {
 }
 
 /**
- * An OpenRouter account has no URL to key an id off, so the label does it. A
- * second unlabelled account would collide with the first, which is the honest
- * outcome: one key per id, edited in place.
+ * An OpenRouter account has no URL to key an id off, so the label does it —
+ * but two accounts may share a label, or have none, and `Work` and `work!`
+ * normalize alike. Unlike a hub URL, a repeated label names a *different*
+ * account, and settings merge by id, so reusing one would silently replace the
+ * first account's config and its stored key. Suffix until the id is free;
+ * sources already saved keep the id they were saved under.
  */
-function openRouterSourceId(label: string): UsageLimitSourceId {
+export function openRouterSourceId(label: string, taken: ReadonlySet<string>): UsageLimitSourceId {
   const suffix = slug(label);
-  return UsageLimitSourceId.make(suffix ? `openrouter-${suffix}` : "openrouter");
+  const base = suffix ? `openrouter-${suffix}` : "openrouter";
+  if (!taken.has(base)) return UsageLimitSourceId.make(base);
+  let index = 2;
+  while (taken.has(`${base}-${index}`)) index += 1;
+  return UsageLimitSourceId.make(`${base}-${index}`);
 }
 
 /**
@@ -60,12 +70,15 @@ export function AddUsageLimitSourceDialog({
   environmentId,
   environmentLabel,
   kind,
+  existingIds,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly kind: UsageLimitSourceKind;
+  /** Ids already configured on this environment, so a new source cannot take one. */
+  readonly existingIds: ReadonlySet<string>;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
@@ -101,7 +114,9 @@ export function AddUsageLimitSourceDialog({
     // The patch names only this entry; the server merges it into its map.
     updateSettings({
       usageLimitSources: {
-        [isOpenRouter ? openRouterSourceId(trimmedLabel) : sourceIdFromUrl(trimmedUrl)]: entry,
+        [isOpenRouter
+          ? openRouterSourceId(trimmedLabel, existingIds)
+          : sourceIdFromUrl(trimmedUrl)]: entry,
       },
     });
     reset();

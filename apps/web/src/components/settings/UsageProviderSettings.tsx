@@ -92,6 +92,7 @@ export function UsageProviderSettings({
             if (!next) setAdding(null);
           }}
           kind={adding}
+          existingIds={new Set(entries.map(([id]) => id))}
           environmentId={environmentId}
           environmentLabel={environmentLabel}
         />

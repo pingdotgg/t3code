@@ -1,5 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { makeOpenRouterApi } from "./openrouterApi.ts";
@@ -10,8 +13,12 @@ const config = {
   enabled: true,
 } as const;
 
+/** Headers arrive, the body never does: the shape that used to hang forever. */
+const STALLED_BODY = Symbol("stalled-body");
+type Reply = { status: number; body: unknown } | typeof STALLED_BODY;
+
 /** One canned reply per endpoint path, plus the paths actually requested. */
-function fixture(replies: Record<string, { status: number; body: unknown }>) {
+function fixture(replies: Record<string, Reply>) {
   const paths: string[] = [];
   const http = HttpClient.make((request) =>
     Effect.sync(() => {
@@ -19,6 +26,12 @@ function fixture(replies: Record<string, { status: number; body: unknown }>) {
       const path = new URL(request.url).pathname;
       paths.push(path);
       const reply = replies[path] ?? { status: 404, body: {} };
+      if (reply === STALLED_BODY) {
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(new ReadableStream({ start() {} }), { status: 200 }),
+        );
+      }
       return HttpClientResponse.fromWeb(
         request,
         Response.json(reply.body, { status: reply.status }),
@@ -121,6 +134,25 @@ describe("OpenRouter credit reads", () => {
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
         expect(result.failure.detail).toBe("OpenRouter returned an unexpected balance.");
+      }
+    }),
+  );
+
+  // The read runs while UsageLimitSources holds its refresh lock, so a body
+  // that never completes would starve every later refresh and redemption.
+  it.effect("gives up on a response whose body never arrives", () =>
+    Effect.gen(function* () {
+      const test = fixture({ "/api/v1/credits": STALLED_BODY });
+      const api = yield* test.api;
+      const fiber = yield* api.readCredits(config).pipe(Effect.result, Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(16));
+      const result = yield* Fiber.join(fiber);
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.detail).toBe("Could not reach OpenRouter.");
       }
     }),
   );
