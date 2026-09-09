@@ -316,17 +316,22 @@ const OrchestrationV2Base = Effect.gen(function* () {
   yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_target_run_idx ON orchestration_v2_projection_context_transfers(target_run_id)`;
 });
 
+// Historical prerelease ledgers recorded these steps separately.
+export const orchestrationV2MigrationSteps = [
+  ["OrchestrationV2", OrchestrationV2Base],
+  ["OrchestrationV2Subagents", OrchestrationV2Subagents],
+  ["OrchestrationV2Foundation", OrchestrationV2Foundation],
+  ["OrchestrationV2ProviderSessionBindings", OrchestrationV2ProviderSessionBindings],
+  ["OrchestrationV2ThreadLaunchWorkflows", OrchestrationV2ThreadLaunchWorkflows],
+  ["ApplicationEventSource", ApplicationEventSource],
+  ["OrchestrationV2EffectCancellation", OrchestrationV2EffectCancellation],
+  ["ScheduledTasks", ScheduledTasks],
+  ["LegacyV1ImportState", LegacyV1ImportState],
+  ["ApplicationEventSequenceIndexes", ApplicationEventSequenceIndexes],
+  ["OrchestrationV2RecoveryIndexes", OrchestrationV2RecoveryIndexes],
+  ["OrchestrationV2ShellIndexes", OrchestrationV2ShellIndexes],
+] as const;
+
 export default Effect.gen(function* () {
-  yield* OrchestrationV2Base;
-  yield* OrchestrationV2Subagents;
-  yield* OrchestrationV2Foundation;
-  yield* OrchestrationV2ProviderSessionBindings;
-  yield* OrchestrationV2ThreadLaunchWorkflows;
-  yield* ApplicationEventSource;
-  yield* OrchestrationV2EffectCancellation;
-  yield* ScheduledTasks;
-  yield* LegacyV1ImportState;
-  yield* ApplicationEventSequenceIndexes;
-  yield* OrchestrationV2RecoveryIndexes;
-  yield* OrchestrationV2ShellIndexes;
+  for (const [, migration] of orchestrationV2MigrationSteps) yield* migration;
 });

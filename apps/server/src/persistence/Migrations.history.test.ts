@@ -3,16 +3,17 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { migrationEntries, migrationManifest, runMigrations } from "./Migrations.ts";
+import { orchestrationV2MigrationSteps } from "./Migrations/050_OrchestrationV2.ts";
+import { migrationManifest, runMigrations } from "./Migrations.ts";
 
 const seedHistorical = Effect.fn("seedHistorical")(function* (base: number, count: number) {
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations({ toMigrationInclusive: base });
-  for (const [id, name, migration] of migrationEntries.filter(
-    ([id]) => id >= 50 && id < 50 + count,
-  )) {
+  for (const [index, [name, migration]] of orchestrationV2MigrationSteps
+    .slice(0, count)
+    .entries()) {
     yield* migration;
-    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${base + 1 + id - 50}, ${name})`;
+    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${base + 1 + index}, ${name})`;
   }
 });
 
@@ -24,6 +25,9 @@ for (const [base, count] of [
   [44, 5],
   [47, 9],
   [47, 11],
+  [49, 1],
+  [49, 11],
+  [49, 12],
 ] as const) {
   it.effect(`upgrades historical V2 ${base + 1}–${base + count} without replaying its DDL`, () =>
     Effect.gen(function* () {
@@ -121,6 +125,25 @@ it.effect("rejects a historical migration ceiling below the required main schema
     assert.deepStrictEqual(
       yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
       before,
+    );
+  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+);
+
+it.effect("preserves a partial historical V2 schema through the main-only ceiling", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedHistorical(43, 1);
+    yield* runMigrations({ toMigrationInclusive: 49 });
+    assert.deepStrictEqual(
+      yield* sql`SELECT name FROM effect_sql_migrations WHERE migration_id = 50`,
+      [{ name: "OrchestrationV2" }],
+    );
+    yield* runMigrations();
+    assert.deepStrictEqual(yield* runMigrations(), []);
+    assert.equal(
+      (yield* sql`SELECT name FROM sqlite_master WHERE name = 'orchestration_v2_projection_messages_latest_user_idx'`)
+        .length,
+      1,
     );
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
 );

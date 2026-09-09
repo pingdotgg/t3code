@@ -62,7 +62,7 @@ import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.
 import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
 import Migration0048 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts";
 import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
-import Migration0050 from "./Migrations/050_OrchestrationV2.ts";
+import Migration0050, { orchestrationV2MigrationSteps } from "./Migrations/050_OrchestrationV2.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -159,14 +159,24 @@ const reconcileHistoricalV2 = Effect.fn("reconcileHistoricalV2")(function* (
     SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
   `;
   const firstV2 = rows.find(({ name }) => name === "OrchestrationV2");
-  if (!firstV2 || firstV2.migration_id === 50) return [];
+  if (!firstV2) return [];
+  // A completed consolidated migration has the final shell index but no
+  // separately recorded Subagents step. Leave it and future migrations alone.
+  if (firstV2.migration_id === 50 && rows[50]?.name !== "OrchestrationV2Subagents") {
+    const complete = yield* sql`SELECT 1 FROM sqlite_master WHERE type = 'index'
+      AND name = 'orchestration_v2_projection_messages_latest_user_idx'`;
+    if (complete.length > 0) return [];
+  }
 
   const base = firstV2.migration_id - 1;
   const valid =
-    (base === 43 || base === 44 || base === 47) &&
+    (base === 43 || base === 44 || base === 47 || base === 49) &&
     rows.every((row, index) => {
-      const entry = migrationEntries[index < base ? index : index + 49 - base];
-      return row.migration_id === index + 1 && entry?.[1] === row.name;
+      const name =
+        index < base
+          ? migrationEntries[index]?.[1]
+          : orchestrationV2MigrationSteps[index - base]?.[0];
+      return row.migration_id === index + 1 && name === row.name;
     });
   if (!valid) {
     return yield* new Migrator.MigrationError({
@@ -201,6 +211,23 @@ const reconcileHistoricalV2 = Effect.fn("reconcileHistoricalV2")(function* (
     yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
     executed.push([id, name]);
   }
+  if (toMigrationInclusive === 49) return executed;
+
+  for (const [name, migration] of orchestrationV2MigrationSteps.slice(rows.length - base)) {
+    yield* migration.pipe(
+      Effect.mapError(
+        (cause: unknown) =>
+          new Migrator.MigrationError({
+            kind: "Failed",
+            message: `Historical V2 step "${name}" failed during consolidation`,
+            cause,
+          }),
+      ),
+    );
+  }
+  // The first row now occupies 50 and retains its original timestamp.
+  yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id > 50`;
+  executed.push([50, "OrchestrationV2"]);
   return executed;
 });
 
