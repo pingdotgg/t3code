@@ -126,7 +126,7 @@ export function GlassSurface({
       <View
         pointerEvents="none"
         className="absolute inset-0 bg-card"
-        style={{ backgroundColor, opacity: supportsBlur ? 0.25 : 1 }}
+        style={{ backgroundColor, opacity: supportsBlur ? (isDarkMode ? 0.25 : 0.55) : 1 }}
       />
       {children}
     </View>
