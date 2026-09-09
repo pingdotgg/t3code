@@ -1,43 +1,37 @@
-# `effect` Core Package
+# effect
 
-The `effect` package is the heart of the Effect framework, providing robust primitives for managing side effects, ensuring type safety, and supporting concurrency in your TypeScript applications.
+Effect is a library for building robust, maintainable, type-safe, and production grade applications in TypeScript.
+
+The `effect` package is the core of the framework. It provides primitives for managing side effects, errors, concurrency, resources, and structured data, alongside a rich standard library.
+
+## Installation
+
+```sh
+npm install effect@rc
+```
 
 ## Requirements
 
-- **TypeScript 5.9 or Newer:**
-  Ensure you are using a compatible TypeScript version.
-
-- **Strict Type-Checking:**
-  The `strict` flag must be enabled in your `tsconfig.json`. For example:
+- **TypeScript 5.9 or newer.** TypeScript 7 is recommended for the best performance and compatibility with [Effect's TypeScript tooling](https://github.com/Effect-TS/tsgo#installation).
+- **Node.js 18 or newer** when running Effect on Node.js.
+- **Strict type-checking:** the `strict` flag must be enabled in your `tsconfig.json`:
 
   ```json
   {
     "compilerOptions": {
       "strict": true
-      // ...other options
     }
   }
   ```
 
-## Installation
-
-Install the core package using your preferred package manager. For example, with npm:
-
-```bash
-npm install effect
-```
-
 ## Documentation
 
-- **Website:**
-  For detailed information and usage examples, visit the [Effect website](https://www.effect.website/).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/effect)
 
-- **API Reference:**
-  For a complete API reference of the core package `effect`, see the [Effect API documentation](https://effect-ts.github.io/effect/).
+## Overview
 
-## Overview of Effect Modules
-
-The `effect` package provides a collection of modules designed for functional programming in TypeScript. Below is a brief overview of the core modules:
+The `effect` package is a collection of modules. Some of the core ones:
 
 | Module   | Description                                                                                                                |
 | -------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -49,3 +43,5 @@ The `effect` package provides a collection of modules designed for functional pr
 | Schedule | A module for defining retry and repeat policies with composable schedules.                                                 |
 | Scope    | Manages the lifecycle of resources, ensuring proper acquisition and release.                                               |
 | Schema   | A powerful library for defining, validating, and transforming structured data with type-safe encoding and decoding.        |
+
+In v4, functionality that previously lived in separate packages ships inside `effect` under the `effect/unstable/*` namespaces, including `http`, `httpapi`, `rpc`, `cluster`, `workflow`, `cli`, `ai`, `sql`, and `reactivity`.

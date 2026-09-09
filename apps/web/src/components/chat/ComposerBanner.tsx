@@ -56,7 +56,11 @@ function Surface({
           : "[--chat-composer-attachment-overlap:0px] before:rounded-[1rem]",
         "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
         "before:bg-[color-mix(in_srgb,var(--chat-composer-attached-surface)_var(--glass-opacity),transparent)] before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint))] before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
-        "before:mask-[linear-gradient(to_top,transparent_0_var(--chat-composer-attachment-overlap),black_var(--chat-composer-attachment-overlap))] before:shadow-[0_12px_28px_-18px_rgb(0_0_0/40%)] dark:before:shadow-[0_14px_32px_-18px_rgb(0_0_0/75%)]",
+        // The mask cut-off bleeds one pixel past the seam: Chromium drops the last
+        // device-pixel row of a filtered backdrop when the cut-off lands off the
+        // device-pixel grid, and the composer's surface starts exactly there. The
+        // composer's own glass covers the extra row, so the overlap never shows.
+        "before:mask-[linear-gradient(to_top,transparent_0_calc(var(--chat-composer-attachment-overlap)-1px),black_calc(var(--chat-composer-attachment-overlap)-1px))] before:shadow-[0_12px_28px_-18px_rgb(0_0_0/40%)] dark:before:shadow-[0_14px_32px_-18px_rgb(0_0_0/75%)]",
         "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-[linear-gradient(var(--chat-composer-attached-tint),var(--chat-composer-attached-tint)),linear-gradient(to_top,transparent_0_var(--chat-composer-attachment-overlap),rgb(0_0_0/18%)_var(--chat-composer-attachment-overlap),transparent_calc(var(--chat-composer-attachment-overlap)+10px))]",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-attached-surface)",
         className,
@@ -178,7 +182,7 @@ function Row({
   layout = "inline",
   ...props
 }: useRender.ComponentProps<"div"> & {
-  layout?: "inline" | "wrap-actions";
+  layout?: "inline" | "wrap-actions" | "wrap-actions-narrow";
 }) {
   const rowProps = {
     className: cn(
@@ -187,6 +191,8 @@ function Row({
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-[0.5rem] [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
       layout === "wrap-actions" &&
         "@max-[400px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
+      layout === "wrap-actions-narrow" &&
+        "@max-[320px]:*:data-[slot=composer-banner-content]:min-h-(--composer-banner-icon-column)",
       className,
     ),
     "data-composer-banner-row": "true",
@@ -247,6 +253,7 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
       className={cn(
         "col-start-3 row-start-1 flex flex-wrap items-center justify-end gap-1",
         "@max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[400px]:group-data-[composer-banner-layout=wrap-actions]/banner-row:has-[>:nth-child(2)]:justify-start",
+        "@max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:col-start-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:col-end-4 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:row-start-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:-ms-2 @max-[320px]:group-data-[composer-banner-layout=wrap-actions-narrow]/banner-row:has-[>:nth-child(2)]:justify-start",
         className,
       )}
       {...props}

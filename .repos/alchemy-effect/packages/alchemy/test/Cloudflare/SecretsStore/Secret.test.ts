@@ -44,3 +44,30 @@ test.provider("list enumerates the deployed secret across stores", (stack) =>
     yield* stack.destroy();
   }).pipe(logLevel),
 );
+
+// #995: an interrupted first deploy can persist `creating` props whose parent
+// Outputs were stripped to holes, so `olds.store` survives as `{}`. `read`
+// must treat an unresolved parent reference like a missing one (return
+// `undefined` → plan falls through to the create path) instead of handing
+// `storeId: undefined` to the API and crashing every later plan with a
+// SchemaError defect.
+test.provider(
+  "read treats an unresolved parent store reference as missing",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* Provider.findProvider(
+        Cloudflare.SecretsStore.Secret,
+      );
+      const attr = yield* provider.read!({
+        id: "OrphanSecret",
+        fqn: "OrphanSecret",
+        instanceId: "orphan-instance",
+        olds: {
+          store: {} as never,
+          value: Redacted.make("sk-orphan"),
+        },
+        output: undefined,
+      });
+      expect(attr).toBeUndefined();
+    }).pipe(logLevel),
+);

@@ -15,6 +15,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
+  type ThreadLinkedPullRequest,
   type TurnId,
 } from "@t3tools/contracts";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -86,11 +87,68 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+export function shouldRenderPreviewMiniPlayer(
+  miniPlayerTabId: string | null,
+  renderedRightPanelSurface: RightPanelSurface | null,
+): boolean {
+  return (
+    miniPlayerTabId !== null &&
+    !(
+      renderedRightPanelSurface?.kind === "preview" &&
+      renderedRightPanelSurface.resourceId === miniPlayerTabId
+    )
+  );
+}
+
 export function shouldOpenProactivePullRequest(
   previousTargetKey: string | null | undefined,
   targetKey: string | null,
 ): boolean {
-  return previousTargetKey !== undefined && targetKey !== null && targetKey !== previousTargetKey;
+  return targetKey !== null && targetKey !== previousTargetKey;
+}
+
+interface ProactivePanelObservation {
+  threadKey: string;
+  runningTurnId: TurnId | null | undefined;
+  targetKey: string | null | undefined;
+  userActionTurnId: TurnId | null;
+  userActionRevision: number;
+}
+
+/** Capture user intent before loading or metadata writes can defer panel activation. */
+export function observeProactivePanelUserChoice(
+  previous: ProactivePanelObservation | null,
+  input: { threadKey: string; runningTurnId: TurnId | null; userActionRevision: number },
+): ProactivePanelObservation {
+  const sameThread = previous?.threadKey === input.threadKey;
+  const newTurn =
+    sameThread && input.runningTurnId !== null && input.runningTurnId !== previous.userActionTurnId;
+  return {
+    threadKey: input.threadKey,
+    runningTurnId: sameThread ? previous.runningTurnId : undefined,
+    targetKey: sameThread ? previous.targetKey : undefined,
+    userActionTurnId: input.runningTurnId ?? (sameThread ? previous.userActionTurnId : null),
+    userActionRevision:
+      !sameThread || newTurn ? input.userActionRevision : previous.userActionRevision,
+  };
+}
+
+/** Follow a changed server link only when the panel still shows the previous linked PR. */
+export function shouldRetargetThreadPullRequestPanel(
+  previous: ThreadLinkedPullRequest | null,
+  current: ThreadLinkedPullRequest | null,
+  surface: RightPanelSurface | null,
+): boolean {
+  if (previous === null || current === null || surface?.kind !== "pull-request") return false;
+  const previousRepository = previous.repository.toLowerCase();
+  return (
+    (previous.projectId !== current.projectId ||
+      previousRepository !== current.repository.toLowerCase() ||
+      previous.number !== current.number) &&
+    surface.projectId === previous.projectId &&
+    surface.repository.toLowerCase() === previousRepository &&
+    surface.number === previous.number
+  );
 }
 
 export function shouldOpenProactiveTurnDiff(input: {
@@ -100,12 +158,28 @@ export function shouldOpenProactiveTurnDiff(input: {
   turnCompleted: boolean;
 }): boolean {
   return (
-    input.previousRunningTurnId !== undefined &&
-    input.previousRunningTurnId !== null &&
     input.runningTurnId === null &&
     input.turnCompleted &&
-    input.settledTurnId === input.previousRunningTurnId
+    input.settledTurnId !== null &&
+    (input.previousRunningTurnId === undefined ||
+      input.settledTurnId === input.previousRunningTurnId)
   );
+}
+
+export function resolveProactiveTurnDiffAction(input: {
+  checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
+  isGitRepo: boolean | undefined;
+}): "defer" | "ignore" | "open" {
+  if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
+  if (input.isGitRepo === undefined) return "defer";
+  if (
+    !input.isGitRepo ||
+    input.checkpoint.status !== "ready" ||
+    input.checkpoint.files.length === 0
+  ) {
+    return "ignore";
+  }
+  return "open";
 }
 
 export function codexArtifactTemplatePromptToAppend(
@@ -408,14 +482,17 @@ export function getAntigravitySendBlockReason(
   if (!provider.installed) {
     return "Install Antigravity in provider settings before sending.";
   }
-  if (provider.auth.status !== "authenticated") {
+  if (provider.auth.status === "unauthenticated") {
     return "Sign in to Antigravity in provider settings before sending.";
-  }
-  if (provider.models.length === 0) {
-    return "Refresh Antigravity models in provider settings before sending.";
   }
   const slug = model.trim();
   if (slug.length === 0) return "Choose an Antigravity model before sending.";
+  // A restart clears the account status and catalog. Session startup checks
+  // saved credentials and validates the model before sending the prompt.
+  if (provider.auth.status === "unknown") return null;
+  if (provider.models.length === 0) {
+    return "Refresh Antigravity models in provider settings before sending.";
+  }
   // A saved model that left the catalog is kept in the picker as unavailable
   // so the user sees what the thread used. The server rejects it at turn
   // start, so block here unless the provider is in an error state, where a
@@ -430,44 +507,14 @@ export function getAntigravitySendBlockReason(
   return null;
 }
 
-export function buildRevertTurnCountByUserMessageId(input: {
-  supportsConversationRollback: boolean;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
-  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
-}) {
-  const byUserMessageId = new Map<MessageId, number>();
-  if (!input.supportsConversationRollback) {
-    return byUserMessageId;
+export function buildRunningThreadTurnInterruptInput(
+  thread: Pick<Thread, "id" | "session"> | null | undefined,
+  phase: SessionPhase,
+): { threadId: ThreadId; turnId?: TurnId } | null {
+  if (phase !== "running" || thread?.session?.status !== "running") {
+    return null;
   }
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
-    const entry = input.timelineEntries[index];
-    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-      continue;
-    }
-
-    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
-      const nextEntry = input.timelineEntries[nextIndex];
-      if (!nextEntry || nextEntry.kind !== "message") {
-        continue;
-      }
-      if (nextEntry.message.role === "user") {
-        break;
-      }
-      const summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-      if (!summary) {
-        continue;
-      }
-      const turnCount =
-        summary.checkpointTurnCount ?? input.inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (typeof turnCount !== "number") {
-        break;
-      }
-      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-      break;
-    }
-  }
-  return byUserMessageId;
+  return buildThreadTurnInterruptInput(thread);
 }
 
 export function reconcileMountedTerminalThreadIds(input: {
@@ -747,28 +794,62 @@ export function isBranchMismatchDismissedForSession(key: string | null): boolean
   return key !== null && sessionDismissedBranchMismatchKeys.has(key);
 }
 
+// Git status for a checkout arrives after the composer paints, and the branch
+// strip mounts on the assumption that a project is a Git repo. Without a
+// memory, a non-Git project would mount the strip and drop it on every visit.
+// Keyed by environment and checkout for the session; never persisted.
+const sessionCheckoutIsRepo = new Map<string, boolean>();
+
+function checkoutIsRepoKey(environmentId: EnvironmentId, cwd: string): string {
+  return JSON.stringify([environmentId, cwd]);
+}
+
+export function rememberCheckoutIsRepo(
+  environmentId: EnvironmentId,
+  cwd: string,
+  isRepo: boolean,
+): void {
+  sessionCheckoutIsRepo.set(checkoutIsRepoKey(environmentId, cwd), isRepo);
+}
+
+export function recallCheckoutIsRepo(
+  environmentId: EnvironmentId,
+  cwd: string | null,
+): boolean | undefined {
+  return cwd === null
+    ? undefined
+    : sessionCheckoutIsRepo.get(checkoutIsRepoKey(environmentId, cwd));
+}
+
 export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
   );
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
+/**
+ * Whether a thread ran at least one turn, judged from its shell alone.
+ *
+ * `threadHasStarted` needs the detail: a thread whose latest turn was cleared
+ * still has messages, and the loading shell carries none. The shell records
+ * when the last user message landed, which every started thread has.
+ */
+export function threadShellHasStarted(
+  shell: Pick<ThreadShell, "latestTurn" | "latestUserMessageAt" | "session"> | null | undefined,
+): boolean {
+  return Boolean(
+    shell &&
+    (shell.latestTurn !== null || shell.latestUserMessageAt !== null || shell.session !== null),
+  );
+}
+
+// Imported history has no session until its first prompt. Resolve its instance
+// through the environment's provider catalog before locking to a driver.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
 }): ProviderDriverKind | null {
   if (!threadHasStarted(input.thread)) {
     return null;
@@ -777,14 +858,18 @@ export function deriveLockedProvider(input: {
   if (sessionProvider && isProviderDriverKind(sessionProvider)) {
     return sessionProvider;
   }
+  // Preserve the existing lock while an instance is missing from the catalog;
+  // a started thread must not silently fall back to a different driver.
+  const threadProvider =
+    input.providers.find((provider) => provider.instanceId === input.threadProvider)?.driver ??
+    input.threadProvider;
+  const selectedProvider =
+    input.providers.find((provider) => provider.instanceId === input.selectedProvider)?.driver ??
+    input.selectedProvider;
   const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
+    threadProvider && isProviderDriverKind(threadProvider) ? threadProvider : null;
   const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
+    selectedProvider && isProviderDriverKind(selectedProvider) ? selectedProvider : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
 }
 
@@ -882,6 +967,24 @@ export interface LocalDispatchSnapshot {
   latestTurnCompletedAt: string | null;
   sessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionUpdatedAt: string | null;
+  latestTurnStartFailureId: string | null;
+}
+
+export function latestTurnStartFailureId(
+  activeThread: Thread | undefined,
+  latestUserMessageId: ChatMessage["id"] | null,
+): string | null {
+  if (latestUserMessageId === null) return null;
+  return (
+    activeThread?.activities.findLast((activity) => {
+      if (activity.kind !== "provider.turn.start.failed") return false;
+      const payload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as { readonly requestId?: unknown })
+          : null;
+      return payload?.requestId === latestUserMessageId;
+    })?.id ?? null
+  );
 }
 
 export function createLocalDispatchSnapshot(
@@ -905,6 +1008,7 @@ export function createLocalDispatchSnapshot(
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
     sessionStatus: session?.status ?? null,
     sessionUpdatedAt: session?.updatedAt ?? null,
+    latestTurnStartFailureId: latestTurnStartFailureId(activeThread, latestUserMessage?.id ?? null),
   };
 }
 
@@ -916,12 +1020,20 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   session: Thread["session"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
+  latestTurnStartFailureId?: string | null;
   threadError: string | null | undefined;
 }): boolean {
   if (!input.localDispatch) {
     return false;
   }
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
+    return true;
+  }
+  if (
+    input.latestTurnStartFailureId !== undefined &&
+    input.latestTurnStartFailureId !== null &&
+    input.latestTurnStartFailureId !== input.localDispatch.latestTurnStartFailureId
+  ) {
     return true;
   }
   if (input.phase === "connecting") {
@@ -966,5 +1078,31 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     latestTurnChanged ||
     input.localDispatch.sessionStatus !== (session?.status ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
+  );
+}
+
+// Returning to the window should land the caret in the composer, so the reader can type right
+// away. The exceptions are places where focus is deliberate: another text field, a terminal in
+// the drawer or the right panel, or an open dialog or popup. A focused button outside those is
+// not one of them, so it yields to the composer.
+export function shouldRefocusComposerOnWindowFocus(
+  activeElement:
+    | (Pick<Element, "tagName" | "closest" | "getAttribute"> & { isContentEditable?: boolean })
+    | null,
+): boolean {
+  if (activeElement === null || activeElement.tagName === "BODY") return true;
+  if (
+    activeElement.tagName === "INPUT" ||
+    activeElement.tagName === "TEXTAREA" ||
+    activeElement.tagName === "SELECT" ||
+    activeElement.isContentEditable === true ||
+    activeElement.getAttribute("role") === "textbox"
+  ) {
+    return false;
+  }
+  return (
+    activeElement.closest(
+      '[role="dialog"], [role="alertdialog"], [data-slot$="-popup"], [data-terminal-owner]',
+    ) === null
   );
 }

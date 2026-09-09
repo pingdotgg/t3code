@@ -37,8 +37,8 @@ import {
   resolvePullRequestPrimaryControl,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
+  resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
-  describePullRequestState,
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
@@ -85,6 +85,21 @@ const TIMELINE_SOURCE: Pick<
   mergedAt: null,
   closedAt: null,
 };
+
+describe("pull request merge method", () => {
+  it("uses the current choice, then the project default, then the last choice", () => {
+    expect(
+      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], null, "squash", "rebase"),
+    ).toBe("squash");
+    expect(
+      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], "rebase", "squash", "merge"),
+    ).toBe("rebase");
+    expect(resolvePullRequestMergeMethod(["merge", "rebase"], null, "squash", "rebase")).toBe(
+      "rebase",
+    );
+    expect(resolvePullRequestMergeMethod(["squash"], null, "merge", "rebase")).toBe("squash");
+  });
+});
 
 describe("pull request activity refresh", () => {
   const first = {
@@ -196,15 +211,6 @@ describe("pull request primary control", () => {
       "resolve",
     );
     expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
-  });
-});
-
-describe("pull request state description", () => {
-  it("keeps draft and conflicts orthogonal to the terminal states", () => {
-    expect(describePullRequestState("open", true)).toBe("Draft");
-    expect(describePullRequestState("open", false)).toBe("Ready for review");
-    expect(describePullRequestState("merged", true)).toBe("Merged");
-    expect(describePullRequestState("closed", false)).toBe("Closed");
   });
 });
 

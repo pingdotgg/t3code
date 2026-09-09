@@ -101,9 +101,8 @@ export interface ResponseHeadersPolicy extends Resource<
  * X-Content-Type-Options, Referrer-Policy, etc.), Server-Timing, custom
  * headers and explicit header removal. They are referenced by ID on a
  * Distribution's default behavior or per-path cache behaviors.
- * @resource
- * @section Creating Response Headers Policies
- * @example Standard security + CORS
+ * ### Creating Response Headers Policies
+ * **Example:** Standard security + CORS
  * ```typescript
  * const responseHeadersPolicy = yield* ResponseHeadersPolicy("AppResponseHeaders", {
  *   comment: "Default app security + CORS",
@@ -127,6 +126,8 @@ export interface ResponseHeadersPolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const ResponseHeadersPolicy = Resource<ResponseHeadersPolicy>(
   "AWS.CloudFront.ResponseHeadersPolicy",

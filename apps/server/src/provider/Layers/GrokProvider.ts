@@ -1,4 +1,5 @@
 import {
+  type CustomModelSetting,
   type GrokSettings,
   type ModelCapabilities,
   type ServerProvider,
@@ -21,6 +22,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -103,7 +105,7 @@ export function buildInitialGrokProviderSnapshot(
 }
 
 function grokModelsFromSettings(
-  customModels: ReadonlyArray<string> | undefined,
+  customModels: ReadonlyArray<CustomModelSetting> | undefined,
   builtInModels: ReadonlyArray<ServerProviderModel> = GROK_BUILT_IN_MODELS,
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(builtInModels, customModels ?? [], EMPTY_CAPABILITIES);
@@ -499,6 +501,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     checkedAt,
     models,
     skills,
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version,

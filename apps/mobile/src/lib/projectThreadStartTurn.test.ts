@@ -6,14 +6,12 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProjectThreadStartTurnInput,
   deriveThreadTitleFromPrompt,
 } from "./projectThreadStartTurn";
-
-vi.mock("./composerImages", () => ({ toUploadChatImageAttachments: () => [] }));
 
 describe("project thread title", () => {
   it("keeps ordinary titles and the empty-prompt fallback", () => {
@@ -52,7 +50,7 @@ describe("project thread title", () => {
       messageId: "message",
       createdAt: "2026-09-01T00:00:00Z",
       text,
-      attachments: [],
+      uploadedAttachments: [],
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -67,4 +65,39 @@ describe("project thread title", () => {
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
     expect(input.message.text).toBe(text);
   });
+});
+
+describe("new thread on an existing branch", () => {
+  it.each([null, "/worktrees/existing"])(
+    "reuses the selected workspace %s without preparing a new worktree",
+    (worktreePath) => {
+      const input = buildProjectThreadStartTurnInput({
+        projectId: ProjectId.make("project"),
+        projectCwd: "/workspace",
+        threadId: "new-thread",
+        commandId: "command",
+        messageId: "message",
+        createdAt: "2026-09-06T00:00:00Z",
+        text: "Start fresh",
+        uploadedAttachments: [],
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceMode: "local",
+        branch: "feature/existing",
+        worktreePath,
+        startFromOrigin: false,
+        worktreeBranchName: "unused",
+      });
+
+      expect(input.bootstrap.createThread).toMatchObject({
+        projectId: "project",
+        branch: "feature/existing",
+        worktreePath,
+      });
+      expect(input.bootstrap).not.toHaveProperty("prepareWorktree");
+      expect(input.bootstrap).not.toHaveProperty("runSetupScript");
+      expect(input.threadId).toBe("new-thread");
+    },
+  );
 });

@@ -50,8 +50,8 @@ export interface NotificationChannel extends Resource<
  * replaces the channel, while filter changes are converged in place by
  * removing and re-adding the channel (the channel `id` attribute changes).
  *
- * @section Creating a Notification Channel
- * @example Notify an SNS topic about all insights
+ * ### Creating a Notification Channel
+ * **Example:** Notify an SNS topic about all insights
  * ```typescript
  * const topic = yield* SNS.Topic("Alerts", {});
  *
@@ -60,7 +60,7 @@ export interface NotificationChannel extends Resource<
  * });
  * ```
  *
- * @example Filter to high-severity new insights
+ * **Example:** Filter to high-severity new insights
  * ```typescript
  * const channel = yield* DevOpsGuru.NotificationChannel("Channel", {
  *   topicArn: topic.topicArn,
@@ -68,6 +68,7 @@ export interface NotificationChannel extends Resource<
  *   messageTypes: ["NEW_INSIGHT", "SEVERITY_UPGRADED"],
  * });
  * ```
+ *
  * @resource
  */
 export const NotificationChannel = Resource<NotificationChannel>(

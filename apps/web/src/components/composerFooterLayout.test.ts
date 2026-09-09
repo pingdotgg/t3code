@@ -4,7 +4,10 @@ import { resolveContextStripLabelsCompact } from "./BranchToolbar.logic";
 import {
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
+  COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
+  resolveComposerTimelineInset,
+  resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
   shouldAnimateComposerRestingTransition,
@@ -74,16 +77,46 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
   });
 });
 
+describe("resolveComposerTimelineInset", () => {
+  it("follows the expanded overlay height", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 160, overlayHeight: 140, isResting: false }),
+    ).toBe(140);
+  });
+
+  it("keeps a larger expanded reservation while resting", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 200, overlayHeight: 60, isResting: true }),
+    ).toBe(200);
+  });
+
+  it("reserves the empty expansion when no larger height is known", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
+    ).toBe(60 + COMPOSER_RESTING_EXPANSION_MIN_PX);
+  });
+});
+
 describe("shouldUseRestingComposerLayout", () => {
   const resting = {
     isExistingThread: true,
     isMobileViewport: false,
-    isFocused: false,
+    isScrollCollapsed: true,
     hasExpandedChrome: false,
+    hasMultilinePrompt: false,
+    timelineOverflows: true,
   };
 
-  it("uses the resting layout for an unfocused desktop composer", () => {
+  it("uses the resting layout after a timeline scroll", () => {
     expect(shouldUseRestingComposerLayout(resting)).toBe(true);
+  });
+
+  it("keeps the composer expanded until the timeline is scrolled", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, isScrollCollapsed: false })).toBe(false);
+  });
+
+  it("keeps the composer expanded while the timeline fits above it", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, timelineOverflows: false })).toBe(false);
   });
 
   it("keeps new-thread composers expanded", () => {
@@ -94,13 +127,22 @@ describe("shouldUseRestingComposerLayout", () => {
     expect(shouldUseRestingComposerLayout({ ...resting, isMobileViewport: true })).toBe(false);
   });
 
-  it("expands when focus is anywhere in the composer", () => {
-    expect(shouldUseRestingComposerLayout({ ...resting, isFocused: true })).toBe(false);
-  });
-
   it("keeps drawers and composer-owned menus expanded", () => {
     expect(shouldUseRestingComposerLayout({ ...resting, hasExpandedChrome: true })).toBe(false);
   });
+
+  it.each([false, true])(
+    "keeps multiline drafts expanded when scroll collapsed is %s",
+    (isScrollCollapsed) => {
+      expect(
+        shouldUseRestingComposerLayout({
+          ...resting,
+          hasMultilinePrompt: true,
+          isScrollCollapsed,
+        }),
+      ).toBe(false);
+    },
+  );
 });
 
 describe("shouldAnimateComposerRestingTransition", () => {
@@ -275,5 +317,135 @@ describe("context strip labels and resting composer controls", () => {
     expect(
       resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(false) }),
     ).toEqual({ hiddenCount: 2, visible: true });
+  });
+});
+
+describe("resolveRestingComposerControlsLayout hysteresis", () => {
+  // Same cluster as above: picker 140 natural / 96 minimum plus a 9px
+  // separator, traits 60, mode 140, overflow 24, gap 4.
+  const base = {
+    gap: 4,
+    naturalFixedWidth: 149,
+    minimumFixedWidth: 105,
+    blockWidths: [60, 140],
+    overflowWidth: 24,
+  };
+
+  it("keeps a block in overflow when re-showing it would leave no slack", () => {
+    // 149 + 60 + 140 + 4 * 2 = 357 fills the host exactly.
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 357,
+        previous: { hiddenCount: 1, visible: true },
+      }),
+    ).toEqual({ hiddenCount: 1, visible: true });
+  });
+
+  it("re-shows a block once the host clears the slack margin", () => {
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 358,
+        previous: { hiddenCount: 1, visible: true },
+      }),
+    ).toEqual({ hiddenCount: 0, visible: true });
+  });
+
+  it("restores the blocks that fit when the full cluster has no slack", () => {
+    const partlyRestored = resolveRestingComposerControlsLayout({
+      ...base,
+      hostWidth: 357,
+      previous: { hiddenCount: 2, visible: true },
+    });
+    expect(partlyRestored).toEqual({ hiddenCount: 1, visible: true });
+    expect(
+      resolveRestingComposerControlsLayout({ ...base, hostWidth: 357, previous: partlyRestored }),
+    ).toEqual(partlyRestored);
+    expect(
+      resolveRestingComposerControlsLayout({ ...base, hostWidth: 358, previous: partlyRestored }),
+    ).toEqual({ hiddenCount: 0, visible: true });
+  });
+
+  it("requires slack before partially restoring a cluster", () => {
+    // One inline block, the picker, and overflow need 149 + 60 + 24 + 8 = 241px.
+    const previous = { hiddenCount: 2, visible: true };
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 241, previous })).toEqual(
+      previous,
+    );
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 242, previous })).toEqual({
+      hiddenCount: 1,
+      visible: true,
+    });
+  });
+
+  it("still resolves from scratch when there is no previous layout", () => {
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 357 })).toEqual({
+      hiddenCount: 0,
+      visible: true,
+    });
+  });
+
+  it("settles when the measured picker width jitters below a pixel", () => {
+    // Regression guard for React error #185 ("Maximum update depth
+    // exceeded"). The composer re-measures on every render, so the picker's
+    // recovered natural width can land a fraction of a pixel apart between
+    // renders. Without hysteresis that flips hiddenCount forever.
+    let layout = { hiddenCount: 0, visible: true };
+    const settled: string[] = [];
+    for (let index = 0; index < 10; index += 1) {
+      layout = resolveRestingComposerControlsLayout({
+        ...base,
+        // The picker's recovered natural width lands a half pixel apart
+        // between renders.
+        naturalFixedWidth: index % 2 === 0 ? 149 : 149.5,
+        hostWidth: 357,
+        previous: layout,
+      });
+      if (index >= 2) settled.push(`${layout.hiddenCount}:${layout.visible}`);
+    }
+    expect(new Set(settled).size).toBe(1);
+  });
+
+  it("keeps the cluster hidden until its minimum width clears the slack", () => {
+    // 105 + 24 + 4 = 133 is the exact minimum for the hidden cluster.
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 133,
+        previous: { hiddenCount: 2, visible: false },
+      }),
+    ).toEqual({ hiddenCount: 2, visible: false });
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        hostWidth: 134,
+        previous: { hiddenCount: 2, visible: false },
+      }),
+    ).toEqual({ hiddenCount: 2, visible: true });
+  });
+});
+
+describe("resolveScrollToEndClearance", () => {
+  it("removes the side tab gap in both composer states while clearing overlapping attachments", () => {
+    for (const overlayHeight of [120, 214]) {
+      const layout = {
+        overlayHeight,
+        mainSurfaceTop: 534,
+        button: { left: 340, right: 460 },
+        attachments: [{ top: 500, left: 600, right: 700 }],
+      };
+      expect(resolveScrollToEndClearance(layout)).toBe(overlayHeight - 34);
+      expect(resolveScrollToEndClearance({ ...layout, attachments: [] })).toBe(overlayHeight);
+      expect(
+        resolveScrollToEndClearance({
+          ...layout,
+          attachments: [...layout.attachments, { top: 500, left: 100, right: 700 }],
+        }),
+      ).toBe(overlayHeight);
+      expect(resolveScrollToEndClearance({ ...layout, button: { left: 590, right: 710 } })).toBe(
+        overlayHeight,
+      );
+    }
   });
 });

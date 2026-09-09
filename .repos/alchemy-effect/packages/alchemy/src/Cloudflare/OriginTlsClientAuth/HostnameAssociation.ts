@@ -90,16 +90,13 @@ export type HostnameAssociation = Resource<
  * separate instances for different hostnames are safe to deploy
  * concurrently. On destroy the association is voided (`enabled: null`),
  * which restores the hostname to zone-level AOP behavior.
- * @resource
- * @product Origin TLS Client Auth
- * @category SSL/TLS & Certificates
- * @section Enabling AOP for a hostname
- * @example Associate a hostname with a client certificate
+ * ### Enabling AOP for a hostname
+ * **Example:** Associate a hostname with a client certificate
  * ```typescript
  * const cert = yield* Cloudflare.OriginTlsClientAuth.HostnameCertificate("AopHostCert", {
  *   zoneId: zone.zoneId,
  *   certificate: clientCertPem,
- *   privateKey: alchemy.secret.env.AOP_CLIENT_KEY,
+ *   privateKey: yield* Config.redacted("AOP_CLIENT_KEY"),
  * });
  *
  * yield* Cloudflare.OriginTlsClientAuth.HostnameAssociation("AopHost", {
@@ -110,7 +107,7 @@ export type HostnameAssociation = Resource<
  * });
  * ```
  *
- * @example Keep the certificate pinned but disable enforcement
+ * **Example:** Keep the certificate pinned but disable enforcement
  * ```typescript
  * yield* Cloudflare.OriginTlsClientAuth.HostnameAssociation("AopHost", {
  *   zoneId: zone.zoneId,
@@ -121,6 +118,10 @@ export type HostnameAssociation = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/set-up/per-hostname/
+ *
+ * @resource
+ * @product Origin TLS Client Auth
+ * @category SSL/TLS & Certificates
  */
 export const HostnameAssociation = Resource<HostnameAssociation>(TypeId);
 

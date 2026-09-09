@@ -218,14 +218,6 @@ const withPackagedWslHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
-  it("accepts only normalized SHA-256 archive identities", () => {
-    assert.equal(
-      DesktopBackendConfiguration.parseWslRuntimeArchiveHash(`  ${"A".repeat(64)}\n`),
-      "a".repeat(64),
-    );
-    assert.isNull(DesktopBackendConfiguration.parseWslRuntimeArchiveHash("abc123"));
-  });
-
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {

@@ -15,9 +15,8 @@ export interface BatchDeleteMemoryRecordsRequest extends Omit<
  * AgentCore data-plane API against it. Provide `AgentCore.BatchDeleteMemoryRecordsHttp`
  * on the Function effect to implement the binding.
  *
- * @binding
- * @section Deleting Memory Records
- * @example Delete Records in Bulk
+ * ### Deleting Memory Records
+ * **Example:** Delete Records in Bulk
  * ```typescript
  * // init
  * const batchDeleteMemoryRecords = yield* AgentCore.BatchDeleteMemoryRecords(memory);
@@ -34,6 +33,8 @@ export interface BatchDeleteMemoryRecordsRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface BatchDeleteMemoryRecords extends Binding.Service<
   BatchDeleteMemoryRecords,

@@ -12,9 +12,8 @@ export interface ListPoliciesRequest extends fms.ListPoliciesRequest {}
  *
  * Returns the `PolicySummary` list for the Firewall Manager policies in the administrator's account. Provide the
  * implementation with `Effect.provide(AWS.FMS.ListPoliciesHttp)`.
- * @binding
- * @section Reading Policies
- * @example List Policies
+ * ### Reading Policies
+ * **Example:** List Policies
  * ```typescript
  * // init — account-level binding takes no resource
  * const listPolicies = yield* AWS.FMS.ListPolicies();
@@ -23,6 +22,8 @@ export interface ListPoliciesRequest extends fms.ListPoliciesRequest {}
  * const result = yield* listPolicies();
  * console.log(result.PolicyList?.length);
  * ```
+ *
+ * @binding
  */
 export interface ListPolicies extends Binding.Service<
   ListPolicies,

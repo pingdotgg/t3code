@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.DescribeComplianceByConfigRuleHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Reading Compliance
- * @example Check Rule Compliance
+ * ### Reading Compliance
+ * **Example:** Check Rule Compliance
  * ```typescript
  * // init — grants config:DescribeComplianceByConfigRule
  * const describeComplianceByConfigRule = yield* AWS.Config.DescribeComplianceByConfigRule();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   console.log(rule.ConfigRuleName, rule.Compliance?.ComplianceType);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeComplianceByConfigRule extends Binding.Service<
   DescribeComplianceByConfigRule,

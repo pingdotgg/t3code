@@ -94,7 +94,7 @@ export const make = <A, E, R>(options: {
   })
 
 const getState = <A, E>(self: RcRefImpl<A, E>) =>
-  Effect.uninterruptibleMask((restore) => {
+  Effect.uninterruptibleMask(function loop(restore): Effect.Effect<State.Acquired<A>, E> {
     switch (self.state._tag) {
       case "Closed": {
         return Effect.interrupt
@@ -107,22 +107,30 @@ const getState = <A, E>(self: RcRefImpl<A, E>) =>
       }
       case "Empty": {
         const scope = Scope.makeUnsafe()
-        return self.semaphore.withPermits(1)(
-          restore(Effect.provideContext(
-            self.acquire as Effect.Effect<A, E>,
-            Context.add(self.context, Scope.Scope, scope)
-          )).pipe(Effect.map((value) => {
-            const state: State.Acquired<A> = {
-              _tag: "Acquired",
-              value,
-              scope,
-              fiber: undefined,
-              refCount: 1,
-              invalidated: false
+        return self.semaphore.withPermit(
+          Effect.suspend(() => {
+            if (self.state._tag !== "Empty") {
+              return loop(restore)
             }
-            self.state = state
-            return state
-          }))
+            return restore(Effect.provideContext(
+              self.acquire as Effect.Effect<A, E>,
+              Context.add(self.context, Scope.Scope, scope)
+            )).pipe(
+              Effect.map((value) => {
+                const state: State.Acquired<A> = {
+                  _tag: "Acquired",
+                  value,
+                  scope,
+                  fiber: undefined,
+                  refCount: 1,
+                  invalidated: false
+                }
+                self.state = state
+                return state
+              }),
+              Effect.onExit((exit) => Exit.isFailure(exit) ? Scope.close(scope, exit) : Effect.void)
+            )
+          })
         )
       }
     }

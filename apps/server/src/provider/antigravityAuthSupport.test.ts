@@ -15,8 +15,10 @@ import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
+  ANTIGRAVITY_AUTH_BROWSER_MARKER,
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   ANTIGRAVITY_PERSONAL_AUTH,
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
@@ -26,6 +28,7 @@ import {
   antigravityProfileSettings,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
+  makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
@@ -388,6 +391,102 @@ describe("Antigravity stdout compatibility", () => {
   );
 });
 
+describe("Antigravity stderr compatibility", () => {
+  it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
+    Effect.gen(function* () {
+      const urls: string[] = [];
+      const line = `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\r\n`;
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      });
+      yield* handleStderr(`native log\n${line.slice(0, 40)}`);
+      yield* handleStderr(line.slice(40, 90));
+      yield* handleStderr(`${line.slice(90)}another native log\n`);
+      expect(urls).toEqual([authorizationUrl]);
+    }),
+  );
+
+  it.effect("rejects interactive sign-in during normal work", () =>
+    Effect.gen(function* () {
+      const handleStderr = makeAntigravityStderrHandler();
+      const error = yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`,
+      ).pipe(Effect.flip);
+      expect(isAntigravitySignInRequiredError(error)).toBe(true);
+    }),
+  );
+
+  it.effect("preserves failures from the sign-in flow owner", () =>
+    Effect.gen(function* () {
+      const failure = new AcpErrors.AcpTransportError({
+        detail: "The sign-in flow stopped.",
+        cause: undefined,
+      });
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: () => Effect.fail(failure),
+      });
+      const error = yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`,
+      ).pipe(Effect.flip);
+      expect(error).toBe(failure);
+    }),
+  );
+
+  it.effect("forwards an accepted browser-helper URL larger than 8 KiB", () =>
+    Effect.gen(function* () {
+      const urls: string[] = [];
+      const longAuthorizationUrl = `${authorizationUrl}&scope=${"a".repeat(9_000)}`;
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      });
+
+      expect(longAuthorizationUrl.length).toBeGreaterThan(8_192);
+      yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(longAuthorizationUrl)}\n`,
+      );
+
+      expect(urls).toEqual([longAuthorizationUrl]);
+    }),
+  );
+
+  it.effect("forwards a fragmented browser-helper URL without exposing other stderr", () =>
+    Effect.gen(function* () {
+      const urls: string[] = [];
+      const markerLine = `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`;
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      });
+
+      yield* handleStderr(`native log\n${markerLine.slice(0, 12)}`);
+      yield* handleStderr(markerLine.slice(12, 70));
+      yield* handleStderr(`${markerLine.slice(70)}another native log\n`);
+
+      expect(urls).toEqual([authorizationUrl]);
+    }),
+  );
+
+  it.effect("ignores malformed and similar browser-helper messages", () =>
+    Effect.gen(function* () {
+      const urls: string[] = [];
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: (url) => Effect.sync(() => void urls.push(url)),
+      });
+
+      yield* handleStderr(
+        ` ${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
+      );
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
+      yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson("https://example.com")}\n`,
+      );
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_STDOUT_PREFIX}https://example.com\n`);
+      yield* handleStderr(` ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
+
+      expect(urls).toEqual([]);
+    }),
+  );
+});
+
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   it.effect("preflights the no-browser helper and creates private directories only", () =>
     Effect.gen(function* () {
@@ -410,6 +509,42 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       yield* prepareAntigravityProfile({ profileDirectory: profile.geminiHome });
       expect(yield* fs.readFileString(profile.tokenPath)).toBe("synthetic-token-fixture");
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links the user's global skill directories into the profile without touching real content",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const configSkills = path.join(userHome, ".gemini", "config", "skills");
+        const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        const configLink = path.join(profileDirectory, "config", "skills");
+        const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
+        expect(yield* fs.readLink(configLink)).toBe(configSkills);
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
+        // Only the skill directories are shared; the rest of the profile stays private.
+        expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
+          false,
+        );
+
+        // A stale link is repointed; a real directory the user placed there is kept.
+        yield* fs.remove(cliLink);
+        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        yield* fs.remove(configLink);
+        yield* fs.makeDirectory(path.join(configLink, "own-skill"), { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
+        expect((yield* fs.stat(configLink)).type).toBe("Directory");
+      }),
   );
 
   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>

@@ -2,9 +2,33 @@ import { assert, describe, it } from "@effect/vitest"
 import { assertNone, assertSome, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Effect, Schema, Stream } from "effect"
 import * as Option from "effect/Option"
-import { HttpClientRequest, HttpServerRequest } from "effect/unstable/http"
+import { HttpBody, HttpClientRequest, HttpServerRequest } from "effect/unstable/http"
 
 describe("HttpServerRequest", () => {
+  it.effect("preserves FormData through client-server-client conversion", () =>
+    Effect.gen(function*() {
+      const formData = new FormData()
+      formData.set("name", "alice")
+      const clientRequest = HttpClientRequest.post("https://example.com/upload").pipe(
+        HttpClientRequest.bodyFormData(formData)
+      )
+
+      const roundTrip = HttpServerRequest.toClientRequest(HttpServerRequest.fromClientRequest(clientRequest))
+      const webRequest = yield* HttpClientRequest.toWeb(roundTrip)
+      const parsed = yield* Effect.tryPromise({
+        try: () => webRequest.formData(),
+        catch: () => undefined
+      }).pipe(Effect.option)
+
+      deepStrictEqual(
+        {
+          multipartMime: webRequest.headers.get("content-type")?.startsWith("multipart/form-data; boundary=") ?? false,
+          name: Option.isSome(parsed) ? parsed.value.get("name") : undefined
+        },
+        { multipartMime: true, name: "alice" }
+      )
+    }))
+
   it("toClientRequest", async () => {
     const serverRequest = HttpServerRequest.fromWeb(
       new Request("http://localhost:3000/todos/1?a=1&a=2#top", {
@@ -109,6 +133,30 @@ describe("HttpServerRequest", () => {
       }
     }))
 
+  it.effect("reads a raw BodyInit after conversion from a client request", () =>
+    Effect.gen(function*() {
+      const client = HttpClientRequest.setBody(HttpClientRequest.post("https://example.com"), HttpBody.raw("abc"))
+      const server = HttpServerRequest.fromClientRequest(client)
+      assert.strictEqual(yield* server.text, "abc")
+    }))
+
+  it.effect("reads raw BodyInit bytes after conversion from a client request", () =>
+    Effect.gen(function*() {
+      const client = HttpClientRequest.setBody(HttpClientRequest.post("https://example.com"), HttpBody.raw("abc"))
+      const server = HttpServerRequest.fromClientRequest(client)
+      assert.deepStrictEqual(new Uint8Array(yield* server.arrayBuffer), new Uint8Array([97, 98, 99]))
+    }))
+
+  it.effect("streams a raw URLSearchParams after conversion from a client request", () =>
+    Effect.gen(function*() {
+      const client = HttpClientRequest.setBody(
+        HttpClientRequest.post("https://example.com"),
+        HttpBody.raw(new URLSearchParams({ a: "1", b: "two" }))
+      )
+      const server = HttpServerRequest.fromClientRequest(client)
+      assert.strictEqual(yield* server.stream.pipe(Stream.decodeText(), Stream.mkString), "a=1&b=two")
+    }))
+
   it.effect("schemaBodyJson applies parse options", () =>
     Effect.gen(function*() {
       const request = HttpServerRequest.fromWeb(
@@ -130,12 +178,15 @@ describe("HttpServerRequest", () => {
         name: Schema.String
       })
 
-      const decoded = yield* HttpServerRequest.schemaBodyJson(schema, { onExcessProperty: "preserve" }).pipe(
+      const decoded = yield* HttpServerRequest.schemaBodyJson(schema, {
+        onExcessProperty: "preserve",
+        reviver: (key, value) => key === "status" ? "revived" : value
+      }).pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request)
       )
       const decodedRecord = decoded as Record<string, unknown>
 
-      assert.strictEqual(decoded.status, "ok")
+      assert.strictEqual(decoded.status, "revived")
       assert.strictEqual(decoded.name, "svc")
       assert.strictEqual(decodedRecord.sha, "abc")
       assert.strictEqual(decodedRecord.version, "1.0.0")

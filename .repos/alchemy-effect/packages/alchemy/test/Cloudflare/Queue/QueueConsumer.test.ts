@@ -408,6 +408,98 @@ test.provider(
 );
 
 /**
+ * Adoption of a stranded prior-generation consumer. A Worker replacement
+ * mints a new physical script name; when the consumer's state entry is
+ * lost across that replacement (the beta.64→beta.67 upgrade wedge), the
+ * queue keeps a worker consumer pointing at the *old* generation's script
+ * while the resource is configured for the new one. Both scripts carry
+ * the same `alchemy:stack/stage/id` ownership tags, which proves the
+ * stranded consumer is this resource's own wiring — the reconciler must
+ * detach it and rebuild for the new script instead of dying with the
+ * foreign-consumer error (which stays reserved for scripts of a
+ * *different* logical worker — see the previous test).
+ */
+test.provider(
+  "adopts stranded consumer from a replaced generation of the same worker",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+
+      yield* stack.destroy();
+
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          const queue = yield* Cloudflare.Queues.Queue("Q");
+          const worker = yield* Cloudflare.Worker("Worker", {
+            main,
+            compatibility: { date: "2024-01-01" },
+          });
+          const consumer = yield* Cloudflare.Queues.Consumer("Consumer", {
+            queueId: queue.queueId,
+            scriptName: worker.workerName,
+          });
+          return { queue, worker, consumer };
+        }),
+      );
+
+      // Lose the consumer's state entry — the live consumer stays
+      // attached to the queue, pointing at the current script.
+      yield* Effect.gen(function* () {
+        const state = yield* yield* State;
+        yield* state.delete({
+          stack: stack.name,
+          stage: "test",
+          fqn: "Consumer",
+        });
+      }).pipe(Effect.provide(stack.state));
+
+      // Replace the worker's physical script (explicit `name` forces a
+      // replacement) in the same deploy that recreates the consumer.
+      // Reconcile observes the stranded consumer on the old script —
+      // same stack/stage/id tags — and must rebuild instead of dying.
+      // Previews cap script names at 54 chars — trim before suffixing.
+      const replacedName = `${initial.worker.workerName.slice(0, 48)}-v2`;
+      const recovered = yield* stack.deploy(
+        Effect.gen(function* () {
+          const queue = yield* Cloudflare.Queues.Queue("Q");
+          const worker = yield* Cloudflare.Worker("Worker", {
+            main,
+            name: replacedName,
+            compatibility: { date: "2024-01-01" },
+          });
+          const consumer = yield* Cloudflare.Queues.Consumer("Consumer", {
+            queueId: queue.queueId,
+            scriptName: worker.workerName,
+          });
+          return { queue, worker, consumer };
+        }),
+      );
+
+      expect(recovered.worker.workerName).toEqual(replacedName);
+      expect(recovered.consumer.scriptName).toEqual(replacedName);
+
+      const live = yield* queues
+        .getConsumer({
+          accountId,
+          queueId: recovered.queue.queueId,
+          consumerId: recovered.consumer.consumerId,
+        })
+        .pipe(
+          Effect.retry({
+            while: (e) => e._tag === "ConsumerNotFound",
+            schedule: Schedule.exponential("500 millis"),
+            times: 8,
+          }),
+        );
+      expect("scriptName" in live ? live.scriptName : undefined).toEqual(
+        replacedName,
+      );
+
+      yield* stack.destroy();
+    }).pipe(logLevel),
+);
+
+/**
  * Suppressed delete: a consumer that only ever existed in dev (its
  * persisted `consumerId` is a `dev:` mock id) has no Cloudflare
  * counterpart. Destroying it must NOT issue a `deleteConsumer` against

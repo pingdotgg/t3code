@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   migratePersistedRightPanelState,
+  pullRequestSurface,
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
@@ -16,10 +17,116 @@ const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"))
 const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
 beforeEach(() => {
-  useRightPanelStore.setState({ byThreadKey: {} });
+  useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
 });
 
 describe("rightPanelStore", () => {
+  const completedDiff = { id: "diff", kind: "diff" } as const;
+  const linkedPullRequest = pullRequestSurface({
+    projectId: "project-a",
+    repository: "pingdotgg/t3code",
+    number: 42,
+  });
+
+  it.each(["diff-first", "pull-request-first"])(
+    "prioritizes the linked pull request over browser and diff with %s delivery",
+    (order) => {
+      const store = useRightPanelStore.getState();
+      store.openBrowser(refA, "existing-browser");
+      const revision = store.getUserActionRevision(refA);
+      const requests =
+        order === "diff-first"
+          ? [completedDiff, linkedPullRequest]
+          : [linkedPullRequest, completedDiff];
+      for (const surface of requests) store.openProactive(refA, surface, revision);
+      store.reconcileBrowserSurfaces(refA, ["existing-browser", "agent-browser"]);
+
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+      ).toEqual(linkedPullRequest);
+
+      store.open(refA, "diff");
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    },
+  );
+
+  it.each([
+    { choice: "file", choose: () => useRightPanelStore.getState().openFile(refA, "src/app.ts") },
+    {
+      choice: "pull request",
+      choose: () =>
+        useRightPanelStore.getState().openPullRequest(refA, { ...linkedPullRequest, number: 41 }),
+    },
+    { choice: "browser", choose: () => useRightPanelStore.getState().openBrowser(refA, "tab-a") },
+    {
+      choice: "terminal",
+      choose: () => useRightPanelStore.getState().openTerminal(refA, "term-1"),
+    },
+    {
+      choice: "same tab",
+      choose: () => useRightPanelStore.getState().activateSurface(refA, "diff"),
+    },
+    { choice: "hide", choose: () => useRightPanelStore.getState().close(refA) },
+    { choice: "toggle", choose: () => useRightPanelStore.getState().toggle(refA, "diff") },
+    { choice: "close all", choose: () => useRightPanelStore.getState().closeAllSurfaces(refA) },
+    {
+      choice: "terminal close",
+      choose: () => {
+        const store = useRightPanelStore.getState();
+        store.openTerminal(refA, "term-1");
+        store.closeTerminal(refA, "terminal:term-1", "term-1");
+      },
+    },
+  ])("keeps a later $choice choice when automatic requests arrive", ({ choose }) => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    const revision = store.getUserActionRevision(refA);
+    choose();
+    const chosen = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
+    expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(false);
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      chosen,
+    );
+  });
+
+  it("allows automatic panels for a later turn after a manual choice", () => {
+    const store = useRightPanelStore.getState();
+    const firstTurnRevision = store.getUserActionRevision(refA);
+    store.openFile(refA, "src/app.ts");
+    expect(store.openProactive(refA, completedDiff, firstTurnRevision)).toBe(false);
+
+    const nextTurnRevision = store.getUserActionRevision(refA);
+    expect(store.openProactive(refA, completedDiff, nextTurnRevision)).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
+  it("keeps manual choices scoped to their thread and environment", () => {
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    const store = useRightPanelStore.getState();
+    const revision = store.getUserActionRevision(refA);
+    store.openFile(refB, "src/app.ts");
+    store.openFile(otherEnvironment, "src/app.ts");
+
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBe("file");
+    expect(
+      selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, otherEnvironment),
+    ).toBe("file");
+  });
+
+  it("does not treat resource reconciliation as a manual choice", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "src/app.ts");
+    const revision = store.getUserActionRevision(refA);
+    store.reconcileBrowserSurfaces(refA, ["agent-browser"]);
+    store.reconcileFileSurfaces(refA, false);
+
+    expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+  });
+
   it("drops the legacy singleton terminal surface during migration", () => {
     expect(
       migratePersistedRightPanelState({
@@ -482,6 +589,8 @@ describe("rightPanelStore", () => {
     const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };
     useRightPanelStore.getState().openPullRequest(refA, first);
     useRightPanelStore.getState().openPullRequest(refA, second);
+    const url = "https://gitlab.example.com/pingdotgg/t3code/-/merge_requests/4909";
+    useRightPanelStore.getState().openPullRequest(refA, { ...first, url });
     useRightPanelStore.getState().openPullRequest(refA, first);
 
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
@@ -490,6 +599,10 @@ describe("rightPanelStore", () => {
       pullRequestSurfaceId(second),
     ]);
     expect(state.activeSurfaceId).toBe(pullRequestSurfaceId(first));
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ url });
+    expect(state.surfaces[1]).not.toHaveProperty("url");
   });
 
   it("keeps one pull request read from two servers as two tabs", () => {

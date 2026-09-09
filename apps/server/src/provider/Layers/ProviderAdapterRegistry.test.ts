@@ -111,13 +111,17 @@ const makeFakeInstance = (
     displayName: undefined,
     enabled: true,
     snapshot: {
-      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-        provider: driverKind,
-        packageName: null,
-      }),
+      resolveMaintenance: () =>
+        Effect.succeed(
+          makeManualOnlyProviderMaintenanceCapabilities({
+            provider: driverKind,
+            packageName: null,
+          }),
+        ),
       getSnapshot: Effect.succeed({} as unknown as ServerProvider),
       refresh: Effect.succeed({} as unknown as ServerProvider),
       streamChanges: Stream.empty,
+      applyUsageLimits: () => Effect.void,
     },
     adapter,
     textGeneration: {} as unknown as TextGeneration.TextGeneration["Service"],

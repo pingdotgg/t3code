@@ -101,6 +101,16 @@ describe("searchSettings", () => {
     ]);
   });
 
+  it.each(["usage providers", "CLIProxyAPI", "CLI proxy hub", "management key"])(
+    "finds usage-provider management by %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "usage-providers",
+        to: "/settings/providers",
+      });
+    },
+  );
+
   it("returns no results for an empty query", () => {
     expect(searchSettings("   ", ITEMS)).toEqual([]);
   });
@@ -197,8 +207,29 @@ describe("searchSettings", () => {
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",
-      targetId: "appearance",
+      targetId: "appearance-interface",
     });
+  });
+
+  it("routes conditional window capture settings to the stable toggle row", () => {
+    const targets = [
+      "capture accessibility data",
+      "capture shortcut",
+      "capture sound",
+      "capture flash",
+      "capture animations",
+    ].map((query) => {
+      const match = searchSettings(query)[0];
+      return [match?.id, match?.targetId];
+    });
+
+    expect(targets).toEqual([
+      ["snap-shot-accessibility", "snap-shot-enabled"],
+      ["snap-shot-shortcut", "snap-shot-enabled"],
+      ["snap-shot-sound", "snap-shot-enabled"],
+      ["snap-shot-flash", "snap-shot-enabled"],
+      ["snap-shot-animations", "snap-shot-enabled"],
+    ]);
   });
 
   it("routes browser recording quality to integrations", () => {
@@ -216,5 +247,13 @@ describe("searchSettings", () => {
       to: "/settings/integrations",
     });
     expect(searchSettings("external links")[0]).toMatchObject({ id: "browser-link-target" });
+  });
+
+  it("finds the default browser profile action in the profiles list", () => {
+    expect(searchSettings("default profile")[0]).toMatchObject({
+      id: "browser-default-profile",
+      to: "/settings/integrations",
+      targetId: "browser-profiles",
+    });
   });
 });

@@ -124,9 +124,8 @@ export interface Scraper extends Resource<
  * Scraper provisioning is slow (the service creates network interfaces and
  * an IAM role; expect several minutes to reach `ACTIVE`).
  *
- * @resource
- * @section Creating a Scraper
- * @example Scrape an EKS Cluster into a Workspace
+ * ### Creating a Scraper
+ * **Example:** Scrape an EKS Cluster into a Workspace
  * ```typescript
  * const workspace = yield* AMP.Workspace("Metrics", {});
  * const scraper = yield* AMP.Scraper("ClusterScraper", {
@@ -142,7 +141,7 @@ export interface Scraper extends Resource<
  * });
  * ```
  *
- * @example Scrape a VPC-Based Source
+ * **Example:** Scrape a VPC-Based Source
  * ```typescript
  * const scraper = yield* AMP.Scraper("VpcScraper", {
  *   scrapeConfiguration: scrapeConfigYaml,
@@ -155,6 +154,8 @@ export interface Scraper extends Resource<
  *   destinationWorkspaceArn: workspace.workspaceArn,
  * });
  * ```
+ *
+ * @resource
  */
 export const Scraper = Resource<Scraper>("AWS.AMP.Scraper");
 

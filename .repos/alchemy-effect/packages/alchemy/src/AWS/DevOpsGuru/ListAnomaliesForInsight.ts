@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the anomalies that belong to an insight — the individual metric deviations DevOps Guru correlated into the incident.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.ListAnomaliesForInsightHttp)`.
- * @binding
- * @section Inspecting Anomalies
- * @example List an Insight's Anomalies
+ * ### Inspecting Anomalies
+ * **Example:** List an Insight's Anomalies
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listAnomaliesForInsight = yield* AWS.DevOpsGuru.ListAnomaliesForInsight();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`anomalies: ${ReactiveAnomalies?.length}`);
  * ```
+ *
+ * @binding
  */
 export interface ListAnomaliesForInsight extends Binding.Service<
   ListAnomaliesForInsight,

@@ -22,9 +22,8 @@ export interface SendVoiceMessageRequest extends Omit<
  * The bound number must carry the `VOICE` capability. Provide the
  * implementation with
  * `Effect.provide(AWS.PinpointSMSVoiceV2.SendVoiceMessageHttp)`.
- * @binding
- * @section Sending Voice Messages
- * @example Call a Recipient with a Spoken Message
+ * ### Sending Voice Messages
+ * **Example:** Call a Recipient with a Spoken Message
  * ```typescript
  * // init
  * const sendVoice = yield* AWS.PinpointSMSVoiceV2.SendVoiceMessage(number);
@@ -37,6 +36,8 @@ export interface SendVoiceMessageRequest extends Omit<
  *   VoiceId: "JOANNA",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SendVoiceMessage extends Binding.Service<
   SendVoiceMessage,
