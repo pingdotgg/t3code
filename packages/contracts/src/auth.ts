@@ -163,6 +163,14 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   [AuthTerminalReadScope]: AuthTerminalOperateScope,
 };
 
+/** Keep permission denials decodable by clients with the original scope enum. */
+export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentScope) {
+  return {
+    requiredScope: legacyParents[requiredPermission] ?? requiredPermission,
+    requiredPermission,
+  };
+}
+
 export interface SessionGrantInput {
   readonly authenticated: boolean;
   readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | undefined;
@@ -392,6 +400,7 @@ export class EnvironmentAuthorizationError extends Schema.TaggedError<Environmen
   {
     message: Schema.String,
     requiredScope: AuthEnvironmentScope,
+    requiredPermission: Schema.optionalKey(Schema.String),
   },
 ) {}
 

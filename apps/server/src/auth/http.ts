@@ -1,4 +1,5 @@
 import {
+  authScopeRequiredResponse,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
@@ -124,7 +125,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
       Effect.fail(
         new EnvironmentScopeRequiredError({
           code: "insufficient_scope",
-          requiredScope,
+          ...authScopeRequiredResponse(requiredScope),
           traceId,
         }),
       ),
