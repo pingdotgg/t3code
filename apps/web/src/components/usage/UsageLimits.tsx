@@ -167,8 +167,8 @@ export function LimitWindows({
     <div
       className={
         compact
-          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
-          : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
+          ? "grid grid-cols-[minmax(0,13.5rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
+          : "grid grid-cols-[13.5rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
       }
     >
       {windows.map((window) => {
@@ -177,7 +177,9 @@ export function LimitWindows({
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
+              <span className="truncate text-muted-foreground" title={window.label}>
+                {window.label}
+              </span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
                 {remainingPercent(window)}% left
               </span>

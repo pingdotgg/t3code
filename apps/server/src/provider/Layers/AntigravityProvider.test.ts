@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -111,7 +112,11 @@ const testLayer = Layer.merge(
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
-  options: { readonly enabled?: boolean; readonly safe?: boolean } = {},
+  options: {
+    readonly enabled?: boolean;
+    readonly safe?: boolean;
+    readonly usageLimits?: Effect.Effect<ServerProviderUsageLimits | undefined>;
+  } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
@@ -132,6 +137,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
         Effect.andThen(Ref.get(safety)),
         Effect.flatten,
       ),
+      ...(options.usageLimits ? { usageLimits: options.usageLimits } : {}),
     },
   );
   const initialUpdate = yield* Stream.toPull(
@@ -641,4 +647,105 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
       }),
     ),
   );
+
+  it.effect("includes usageLimits in snapshot when available and clears on sign-out", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const mockLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-09-09T00:00:00.000Z",
+          windows: [
+            {
+              id: "plan_allowance",
+              kind: "session",
+              label: "Gemini Code Assist",
+              usedPercent: 0,
+            },
+          ],
+        };
+        const harness = yield* makeHarness({
+          usageLimits: Effect.succeed(mockLimits),
+        });
+        yield* harness.initialize;
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.usageLimits).toEqual(mockLimits);
+
+        // onSessionStarted keeps/updates usage limits
+        yield* harness.provider.onSessionStarted(started);
+        const sessionSnapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(sessionSnapshot.usageLimits).toEqual(mockLimits);
+
+        // onSignedOut clears usage limits
+        yield* harness.provider.onSignedOut;
+        const signedOutSnapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(signedOutSnapshot.usageLimits).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("ignores stale onSessionStarted completion when newer session started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const session1Gate = yield* Deferred.make<void>();
+        const session1Continue = yield* Deferred.make<void>();
+        const session1Done = yield* Deferred.make<void>();
+
+        let gateArmed = false;
+        let sessionCalls = 0;
+        const harness = yield* makeHarness({
+          usageLimits: Effect.gen(function* () {
+            if (!gateArmed) {
+              return { checkedAt: "2026-09-09T00:00:00.000Z", windows: [] };
+            }
+            sessionCalls++;
+            if (sessionCalls === 1) {
+              yield* Deferred.succeed(session1Gate, undefined);
+              yield* Deferred.await(session1Continue);
+              yield* Deferred.succeed(session1Done, undefined);
+              return { checkedAt: "2026-09-09T01:00:00.000Z", windows: [] };
+            }
+            return {
+              checkedAt: "2026-09-09T02:00:00.000Z",
+              windows: [
+                { id: "new_session", kind: "session", label: "New", usedPercent: 10 },
+              ],
+            };
+          }),
+        });
+        yield* harness.initialize;
+        gateArmed = true;
+
+        const session2LimitsApplied = yield* Stream.toPull(
+          harness.provider.snapshot.streamChanges.pipe(
+            Stream.filter((s) => s.usageLimits?.checkedAt === "2026-09-09T02:00:00.000Z"),
+          ),
+        );
+
+        const fiber1 = yield* harness.provider
+          .onSessionStarted(started)
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(session1Gate);
+
+        const session2Started: AcpSessionRuntimeStartResult = {
+          ...started,
+          sessionSetupResult: {
+            sessionId: "session-2",
+            configOptions: [
+              { ...modelConfig, currentValue: "gemini-pro-agent", options: [modelOptions[9]!] },
+            ],
+          },
+        };
+        yield* harness.provider.onSessionStarted(session2Started);
+        yield* session2LimitsApplied;
+
+        yield* Deferred.succeed(session1Continue, undefined);
+        yield* Deferred.await(session1Done);
+        yield* Fiber.join(fiber1);
+
+        const finalSnapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(finalSnapshot.models.map((m) => m.slug)).toEqual(["gemini-pro-agent"]);
+        expect(finalSnapshot.usageLimits?.checkedAt).toBe("2026-09-09T02:00:00.000Z");
+      }),
+    ),
+  );
 });
+

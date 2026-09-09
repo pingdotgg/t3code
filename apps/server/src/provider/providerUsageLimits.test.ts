@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
+import {
+  applyUsageLimitsUpdate,
+  makeUsageLimits,
+  resolveUsageLimitsAfterProbe,
+} from "./providerUsageLimits.ts";
 
 const checkedAt = "2026-09-03T12:00:00.000Z";
 const session = {
@@ -85,5 +89,26 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+  });
+});
+
+describe("makeUsageLimits", () => {
+  it("preserves group appearance order while sorting session before weekly within each group", () => {
+    const limits = makeUsageLimits({
+      checkedAt,
+      windows: [
+        { id: "gemini_weekly", kind: "weekly", label: "Gemini (Weekly)", usedPercent: 10 },
+        { id: "gemini_5h", kind: "session", label: "Gemini (5-hour)", usedPercent: 20 },
+        { id: "3p_weekly", kind: "weekly", label: "Claude & GPT (Weekly)", usedPercent: 30 },
+        { id: "3p_5h", kind: "session", label: "Claude & GPT (5-hour)", usedPercent: 40 },
+      ],
+    });
+
+    expect(limits.windows.map((w) => w.label)).toEqual([
+      "Gemini (5-hour)",
+      "Gemini (Weekly)",
+      "Claude & GPT (5-hour)",
+      "Claude & GPT (Weekly)",
+    ]);
   });
 });

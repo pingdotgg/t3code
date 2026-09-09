@@ -6,6 +6,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -126,6 +127,7 @@ interface AntigravityProviderOptions {
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
+  readonly usageLimits?: Effect.Effect<ServerProviderUsageLimits | undefined>;
 }
 
 /** Health uses initialize only. Session callbacks supply account-specific metadata. */
@@ -192,6 +194,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const usageLimits =
+      initialized !== undefined && options.usageLimits
+        ? yield* options.usageLimits.pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+        : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
@@ -212,6 +218,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           version: initialized?.agentInfo?.version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
+          ...(usageLimits ? { usageLimits } : {}),
           ...(missingInstallation
             ? {
                 models: [],
@@ -263,10 +270,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
-      if (
-        state.authRevision !== before.authRevision &&
-        state.draft.auth.status === "unauthenticated"
-      ) {
+      if (state.authRevision !== before.authRevision) {
         return state;
       }
       const { message: _previousMessage, ...draft } = state.draft;
@@ -303,6 +307,23 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
+
+    const revision = (yield* SubscriptionRef.get(metadata)).authRevision;
+    if (options.usageLimits) {
+      yield* options.usageLimits.pipe(
+        Effect.catchCause(() => Effect.succeed(undefined)),
+        Effect.flatMap((usageLimits) =>
+          usageLimits
+            ? SubscriptionRef.update(metadata, (state) =>
+                state.authRevision === revision
+                  ? { ...state, draft: { ...state.draft, usageLimits } }
+                  : state,
+              )
+            : Effect.void,
+        ),
+        Effect.forkChild,
+      );
+    }
   });
 
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
@@ -351,25 +372,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 
   const clearAccountMetadata = Effect.fn("AntigravityProvider.clearAccountMetadata")(function* () {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(
-      metadata,
-      (state) =>
-        ({
-          authRevision: state.authRevision + 1,
-          draft: {
-            ...state.draft,
-            auth: { status: "unauthenticated" },
-            status: settings.enabled ? "warning" : "disabled",
-            message: SIGN_IN_MESSAGE,
-            checkedAt: updatedAt,
-            models: [],
-            slashCommands: [],
-            skills: [],
-            workspaceSnapshots: [],
-            supportsTextGeneration: false,
-          },
-        }) satisfies AntigravityProviderState,
-    );
+    yield* SubscriptionRef.update(metadata, (state) => {
+      const { usageLimits: _previousUsageLimits, ...draft } = state.draft;
+      return {
+        authRevision: state.authRevision + 1,
+        draft: {
+          ...draft,
+          auth: { status: "unauthenticated" },
+          status: settings.enabled ? "warning" : "disabled",
+          message: SIGN_IN_MESSAGE,
+          checkedAt: updatedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          workspaceSnapshots: [],
+          supportsTextGeneration: false,
+        },
+      } satisfies AntigravityProviderState;
+    });
     discoveredSkills.clear();
   });
 
