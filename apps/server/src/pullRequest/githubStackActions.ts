@@ -11,9 +11,15 @@ import * as Schema from "effect/Schema";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import { decodePullRequestStacksJson } from "./gitHubPullRequestJson.ts";
 
+const stackErrorIdentity = {
+  repository: Schema.String,
+  number: Schema.Int,
+  stackNumber: Schema.Int,
+};
+
 export class GitHubStackChangedError extends Schema.TaggedError<GitHubStackChangedError>()(
   "GitHubStackChangedError",
-  { number: Schema.Int, completed: Schema.Int },
+  { ...stackErrorIdentity, completed: Schema.Int },
 ) {
   get detail(): string {
     return this.message;
@@ -28,7 +34,7 @@ export class GitHubStackChangedError extends Schema.TaggedError<GitHubStackChang
 
 export class GitHubStackUnsupportedError extends Schema.TaggedError<GitHubStackUnsupportedError>()(
   "GitHubStackUnsupportedError",
-  {},
+  stackErrorIdentity,
 ) {
   get detail(): string {
     return this.message;
@@ -41,7 +47,7 @@ export class GitHubStackUnsupportedError extends Schema.TaggedError<GitHubStackU
 
 export class GitHubStackResponseInvalidError extends Schema.TaggedError<GitHubStackResponseInvalidError>()(
   "GitHubStackResponseInvalidError",
-  { cause: Schema.optional(Schema.Defect()) },
+  { ...stackErrorIdentity, cause: Schema.optional(Schema.Defect()) },
 ) {
   get detail(): string {
     return this.message;
@@ -54,7 +60,7 @@ export class GitHubStackResponseInvalidError extends Schema.TaggedError<GitHubSt
 
 export class GitHubStackMergeRejectedError extends Schema.TaggedError<GitHubStackMergeRejectedError>()(
   "GitHubStackMergeRejectedError",
-  { cause: Schema.optional(Schema.Defect()) },
+  { ...stackErrorIdentity, cause: Schema.Defect() },
 ) {
   get detail(): string {
     return this.message;
@@ -67,7 +73,7 @@ export class GitHubStackMergeRejectedError extends Schema.TaggedError<GitHubStac
 
 export class GitHubStackMergePendingError extends Schema.TaggedError<GitHubStackMergePendingError>()(
   "GitHubStackMergePendingError",
-  {},
+  stackErrorIdentity,
 ) {
   get detail(): string {
     return this.message;
@@ -80,7 +86,7 @@ export class GitHubStackMergePendingError extends Schema.TaggedError<GitHubStack
 
 export class GitHubStackPermissionError extends Schema.TaggedError<GitHubStackPermissionError>()(
   "GitHubStackPermissionError",
-  {},
+  stackErrorIdentity,
 ) {
   get detail(): string {
     return this.message;
@@ -93,7 +99,7 @@ export class GitHubStackPermissionError extends Schema.TaggedError<GitHubStackPe
 
 export class GitHubStackRebaseFailedError extends Schema.TaggedError<GitHubStackRebaseFailedError>()(
   "GitHubStackRebaseFailedError",
-  { number: Schema.Int, completed: Schema.Int, cause: Schema.Defect() },
+  { ...stackErrorIdentity, completed: Schema.Int, cause: Schema.Defect() },
 ) {
   get detail(): string {
     return this.message;
@@ -184,8 +190,13 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   mergeMethod?: PullRequestMergeMethod;
 }) {
   const github = yield* GitHubCli.GitHubCli;
+  const identity = {
+    repository: input.repository,
+    number: input.number,
+    stackNumber: input.stackNumber,
+  };
   if (input.action !== "merge" && input.action !== "update-branch")
-    return yield* new GitHubStackUnsupportedError({});
+    return yield* new GitHubStackUnsupportedError({ ...identity });
   const endpoint = `repos/${input.repository}`;
   const read = yield* github.execute({
     cwd: input.cwd,
@@ -193,11 +204,11 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   });
   const decoded = decodePullRequestStacksJson(read.stdout);
   if (Result.isFailure(decoded))
-    return yield* new GitHubStackResponseInvalidError({ cause: decoded.failure });
+    return yield* new GitHubStackResponseInvalidError({ ...identity, cause: decoded.failure });
   const stack = decoded.success;
   const top = stack?.layers.at(-1);
   if (stack?.number !== input.stackNumber || top?.number !== input.number) {
-    return yield* new GitHubStackChangedError({ number: input.number, completed: 0 });
+    return yield* new GitHubStackChangedError({ ...identity, number: input.number, completed: 0 });
   }
   const open = stack.layers.filter((layer) => layer.state !== "merged");
   if (
@@ -212,10 +223,10 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
         ),
     )
   ) {
-    return yield* new GitHubStackChangedError({ number: input.number, completed: 0 });
+    return yield* new GitHubStackChangedError({ ...identity, number: input.number, completed: 0 });
   }
   if (open.length === 0 || open.some((layer) => layer.state !== "open"))
-    return yield* new GitHubStackUnsupportedError({});
+    return yield* new GitHubStackUnsupportedError({ ...identity });
   if (input.action === "update-branch") {
     const [owner, name] = input.repository.split("/");
     const permissions = yield* github.execute({
@@ -239,7 +250,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       ],
     });
     const access = yield* decodeBranchAccess(permissions.stdout).pipe(
-      Effect.mapError((cause) => new GitHubStackResponseInvalidError({ cause })),
+      Effect.mapError((cause) => new GitHubStackResponseInvalidError({ ...identity, cause })),
     );
     // viewerCanUpdateBranch is false for an already-current layer, even if rebasing its parent
     // will make it stale. Check branch write access separately before touching any layer.
@@ -253,7 +264,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
         );
       })
     )
-      return yield* new GitHubStackPermissionError({});
+      return yield* new GitHubStackPermissionError({ ...identity });
     for (const [index, layer] of open.entries()) {
       yield* Effect.gen(function* () {
         const read = yield* github.execute({
@@ -281,7 +292,11 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
           },
         } = yield* decodeRebaseBranch(read.stdout);
         if (pr.headRefOid !== layer.headSha)
-          return yield* new GitHubStackChangedError({ number: layer.number, completed: index });
+          return yield* new GitHubStackChangedError({
+            ...identity,
+            number: layer.number,
+            completed: index,
+          });
         if (pr.baseRef.compare.behindBy === 0) return;
         // Pass the reviewed revision to GitHub, including when a push races this read.
         const updated = yield* github.execute({
@@ -305,6 +320,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
           cause._tag === "GitHubStackChangedError"
             ? cause
             : new GitHubStackRebaseFailedError({
+                ...identity,
                 number: layer.number,
                 completed: index,
                 cause,
@@ -314,10 +330,11 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     }
     return;
   }
-  if (open.some((layer) => layer.isDraft)) return yield* new GitHubStackUnsupportedError({});
+  if (open.some((layer) => layer.isDraft))
+    return yield* new GitHubStackUnsupportedError({ ...identity });
   const decode = (raw: string) =>
     decodeMergeResponse(raw).pipe(
-      Effect.mapError((cause) => new GitHubStackResponseInvalidError({ cause })),
+      Effect.mapError((cause) => new GitHubStackResponseInvalidError({ ...identity, cause })),
     );
   const request = yield* github.execute({
     cwd: input.cwd,
@@ -344,7 +361,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     attempt++
   ) {
     const uuid = result.details.uuid;
-    if (!uuid) return yield* new GitHubStackResponseInvalidError({});
+    if (!uuid) return yield* new GitHubStackResponseInvalidError({ ...identity });
     yield* Effect.sleep(Math.min(1_000 * 2 ** attempt, 10_000));
     const poll = yield* github.execute({
       cwd: input.cwd,
@@ -357,7 +374,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     });
     result = yield* decode(poll.stdout);
   }
-  if (result.status === "pending") return yield* new GitHubStackMergePendingError({});
+  if (result.status === "pending") return yield* new GitHubStackMergePendingError({ ...identity });
   if (result.status === "failed")
-    return yield* new GitHubStackMergeRejectedError({ cause: result.details.message });
+    return yield* new GitHubStackMergeRejectedError({ ...identity, cause: result });
 });

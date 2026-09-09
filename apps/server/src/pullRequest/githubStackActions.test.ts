@@ -122,6 +122,24 @@ it.effect("polls an accepted merge and reports a later rule rejection", () =>
   }),
 );
 
+it.effect("retains stack identity and a rejection response without a message", () =>
+  Effect.gen(function* () {
+    const rejection = { status: "failed", details: {} };
+    const api = fake([stack, rejection]);
+    const result = yield* runGitHubStackAction(api.execute, input).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "GitHubStackMergeRejectedError",
+        repository: input.repository,
+        number: input.number,
+        stackNumber: input.stackNumber,
+        cause: rejection,
+      },
+    });
+  }),
+);
+
 it.effect("refuses a changed stack before performing any mutation", () =>
   Effect.gen(function* () {
     const api = fake([stack]);
