@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
 
+import { i18n } from "@t3tools/shared/i18n";
+
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -65,17 +67,17 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
   if (updateState.status === "up-to-date") {
     yield* electronDialog.showMessageBox({
       type: "info",
-      title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
-      buttons: ["OK"],
+      title: i18n.t("desktop.update.upToDateTitle"),
+      message: i18n.t("desktop.update.upToDateMessage", { version: updateState.currentVersion }),
+      buttons: [i18n.t("action.ok")],
     });
   } else if (updateState.status === "error") {
     yield* electronDialog.showMessageBox({
       type: "warning",
-      title: "Update check failed",
-      message: "Could not check for updates.",
-      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
-      buttons: ["OK"],
+      title: i18n.t("desktop.update.checkFailedTitle"),
+      message: i18n.t("desktop.update.checkFailedMessage"),
+      detail: updateState.message ?? i18n.t("desktop.update.checkFailedDetail"),
+      buttons: [i18n.t("action.ok")],
     });
   }
 }).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
@@ -90,10 +92,10 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
     });
     yield* electronDialog.showMessageBox({
       type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
+      title: i18n.t("desktop.update.unavailableTitle"),
+      message: i18n.t("desktop.update.unavailableMessage"),
       detail: disabledReason.value,
-      buttons: ["OK"],
+      buttons: [i18n.t("action.ok")],
     });
     return;
   }
@@ -146,12 +148,12 @@ export const make = Effect.gen(function* () {
         submenu: [
           { role: "about" },
           {
-            label: "Check for Updates...",
+            label: i18n.t("desktop.menu.checkForUpdates"),
             click: checkForUpdatesClick,
           },
           { type: "separator" },
           {
-            label: "Settings...",
+            label: i18n.t("desktop.menu.settings"),
             accelerator: "CmdOrCtrl+,",
             click: settingsClick,
           },
@@ -169,13 +171,13 @@ export const make = Effect.gen(function* () {
 
     template.push(
       {
-        label: "File",
+        label: i18n.t("desktop.menu.file"),
         submenu: [
           ...(environment.platform === "darwin"
             ? []
             : [
                 {
-                  label: "Settings...",
+                  label: i18n.t("desktop.menu.settings"),
                   accelerator: "CmdOrCtrl+,",
                   click: settingsClick,
                 },
@@ -186,7 +188,7 @@ export const make = Effect.gen(function* () {
       },
       { role: "editMenu" },
       {
-        label: "View",
+        label: i18n.t("desktop.menu.view"),
         submenu: [
           { role: "reload" },
           { role: "forceReload" },
@@ -198,15 +200,27 @@ export const make = Effect.gen(function* () {
             page and the app UI appears stuck. These always zoom the main
             window (see DesktopWindow.zoomMain).
           */
-          { label: "Actual Size", accelerator: "CmdOrCtrl+0", click: zoomClick("reset") },
-          { label: "Zoom In", accelerator: "CmdOrCtrl+=", click: zoomClick("in") },
           {
-            label: "Zoom In",
+            label: i18n.t("desktop.menu.actualSize"),
+            accelerator: "CmdOrCtrl+0",
+            click: zoomClick("reset"),
+          },
+          {
+            label: i18n.t("desktop.menu.zoomIn"),
+            accelerator: "CmdOrCtrl+=",
+            click: zoomClick("in"),
+          },
+          {
+            label: i18n.t("desktop.menu.zoomIn"),
             accelerator: "CmdOrCtrl+Plus",
             visible: false,
             click: zoomClick("in"),
           },
-          { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
+          {
+            label: i18n.t("desktop.menu.zoomOut"),
+            accelerator: "CmdOrCtrl+-",
+            click: zoomClick("out"),
+          },
           { type: "separator" },
           { role: "togglefullscreen" },
         ],
@@ -216,7 +230,7 @@ export const make = Effect.gen(function* () {
         role: "help",
         submenu: [
           {
-            label: "Check for Updates...",
+            label: i18n.t("desktop.menu.checkForUpdates"),
             click: checkForUpdatesClick,
           },
         ],
