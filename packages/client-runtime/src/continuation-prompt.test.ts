@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildContinuationPrompt, splitLeadingCdForPrompt } from "./continuation-prompt";
+import { buildContinuationPrompt, splitLeadingCdForPrompt } from "./continuation-prompt.js";
 
 describe("splitLeadingCdForPrompt", () => {
   it("separates a leading cd from the command", () => {
