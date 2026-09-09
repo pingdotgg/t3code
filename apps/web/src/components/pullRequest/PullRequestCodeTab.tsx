@@ -563,9 +563,8 @@ function PullRequestCodeTab({
     () =>
       annotatedFiles.map(({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
         const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
-        // The header carries the reader's own tick, and the viewer redraws a file only when its
-        // version moves. Ticking a file that is already folded changes no fold, so without this
-        // the box on screen would keep saying the opposite of what the count says.
+        // Ticking a file that is already folded changes no fold, so without this the box on
+        // screen would keep saying the opposite of what the count says.
         const viewedMark = filesViewedEnabled
           ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
           : "";
@@ -801,8 +800,7 @@ function PullRequestCodeTab({
 
   // Read through refs rather than closed over. The viewer memoizes each visible file's header
   // portal on the callback below, so a fresh identity on every tick, and on every refresh of the
-  // host's answer, would rebuild every header on screen. Each item's version carries the same
-  // marks, which is what redraws the one file whose tick moved.
+  // host's answer, would rebuild every header on screen.
   const filesViewedRef = useRef(filesViewed);
   filesViewedRef.current = filesViewed;
   const setFileViewedRef = useRef(setFileViewed);
@@ -836,9 +834,8 @@ function PullRequestCodeTab({
       return (
         <span className="flex items-center gap-3">
           {stat}
-          {/* The header itself folds the file, so the tick has to keep its press to itself. The
-              attribute is what the header's capture listener looks for: pressing the word next to
-              the box is pressing the box, and the fold that follows is the tick's to make. */}
+          {/* The header itself folds the file, so the tick keeps its press to itself. The
+              attribute is what the header's capture listener looks for. */}
           <label
             data-viewed-toggle=""
             className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-muted-foreground"
@@ -1186,8 +1183,7 @@ function PullRequestCodeTab({
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               {/* Named on a host that keeps no record of its own, so the reader is told whose
                   ticks these are without having to find the icon beside them. The count holds its
-                  width and the wording gives way, so this segment cannot push the controls on the
-                  right off the strip in the narrow right panel. */}
+                  width and the wording gives way, so the narrow right panel keeps its controls. */}
               <span className="shrink-0">
                 {filesViewed.viewedCount} / {files.length}
               </span>
@@ -1513,9 +1509,8 @@ function PullRequestCodeTab({
               if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
                 return;
               }
-              // A label answers for the control it names, and this listener runs before
-              // that control hears anything, so stopping the press here is the only way to
-              // keep the header from folding a file the tick is about to fold the other way.
+              // A label answers for the control it names and this listener runs before it hears
+              // anything, so stopping the press keeps the header from folding what the tick folds.
               if (node.hasAttribute("data-viewed-toggle")) return;
               if (node.hasAttribute("data-diffs-header")) {
                 const filePath = node.querySelector("[data-title]")?.textContent?.trim();

@@ -560,8 +560,7 @@ export class GitHubPullRequestCli extends Context.Service<
 
     /**
      * Which files of the pull request the signed-in account has cleared, and which of those have
-     * been pushed to since. Read apart from the patch because GitHub only reports it over GraphQL,
-     * and because the two answers go stale at completely different rates.
+     * been pushed to since. Read apart from the patch because GitHub only reports it over GraphQL.
      */
     readonly getPullRequestFilesViewed: (input: {
       readonly cwd: string;
@@ -1030,9 +1029,8 @@ export const make = Effect.gen(function* () {
    * addressed by: a reaction on its description, or a rewrite of its words.
    *
    * A pull request keeps its node id for life, so it is remembered rather than re-read: a reader
-   * ticking files viewed would otherwise pay a GraphQL round trip per press. Bounded and
-   * oldest-first, since a long-lived server sees far more pull requests than a reader ever has
-   * open.
+   * ticking files viewed would otherwise pay a GraphQL round trip per press. Bounded, since a
+   * long-lived server sees far more pull requests than a reader ever has open.
    */
   const NODE_ID_CACHE_CAPACITY = 128;
   const nodeIds = new Map<string, string>();
@@ -2311,8 +2309,6 @@ export const make = Effect.gen(function* () {
             if (page.nextCursor === null) {
               return Effect.succeed({ files, truncated: false });
             }
-            // A change nobody could read in one sitting is not worth a point of budget a page:
-            // the boxes on screen still work, and the count says it is partial rather than lying.
             return pagesLeft <= 1
               ? Effect.succeed({ files, truncated: true })
               : read(page.nextCursor, files, pagesLeft - 1);

@@ -375,9 +375,7 @@ export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabili
  * `host` is the host's own record, so the marks are the ones its web UI shows and a review can be
  * carried on from either side. `environment` is this server's record, for a host that keeps no
  * shared one: GitLab holds its viewed files in one browser's local storage, where nothing outside
- * that browser can read or write them, so marks made here are this environment's own. They still
- * follow the reader between the clients connected to it, which is more than the host manages, but
- * they are not the host's and the surface says so.
+ * that browser can read or write them, so marks made here are this environment's own.
  */
 export const PullRequestViewedFilesStore = Schema.Literals(["host", "environment"]);
 export type PullRequestViewedFilesStore = typeof PullRequestViewedFilesStore.Type;
@@ -420,14 +418,8 @@ export const PullRequestCapabilities = Schema.Struct({
   reactions: Schema.optional(Schema.Boolean),
   /**
    * Where the reader's own marks are kept, or absent where they are kept nowhere and the
-   * checkbox is not offered at all. Optional for the same reason as `reactions`: a server that
-   * says nothing about it has none, which is what every server before this field was.
-   *
-   * Two answers rather than a flag, because the surface has to say which one it is. A mark the
-   * host keeps is the same mark its own web UI shows; a mark this environment keeps is not, and
-   * a reader who ticks twenty files here and then opens the host would find none of them ticked.
-   * A checkbox that looks the same either way and quietly means different things is the failure
-   * this whole feature exists to avoid.
+   * checkbox is not offered at all. Optional for the same reason as `reactions`. Two answers
+   * rather than a flag, because the surface has to say which one it is.
    */
   viewedFiles: Schema.optional(PullRequestViewedFilesStore),
   review: PullRequestReviewCapabilities,
@@ -919,10 +911,9 @@ const FilePath = Schema.String.check(Schema.isNonEmpty());
 /**
  * Where one file of a change request stands with the person reading it.
  *
- * `dismissed` is the state that earns this its own read: the file was cleared, and has since been
- * pushed to. It is not `viewed`, since the reader has not seen what is there now, and it is not
- * `unviewed` either, because saying so would lose the one thing worth telling them, which is that
- * this file and not the other forty is the one that moved.
+ * `dismissed` is the file that was cleared and has since been pushed to. Not `viewed`, since the
+ * reader has not seen what is there now, and not `unviewed`, which would lose the one thing worth
+ * telling them: this file and not the other forty is the one that moved.
  */
 export const PullRequestFileViewedState = Schema.Literals(["unviewed", "viewed", "dismissed"]);
 export type PullRequestFileViewedState = typeof PullRequestFileViewedState.Type;
@@ -936,27 +927,21 @@ export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
 /**
  * Which files of a change request the reader has cleared, read apart from the diff itself.
  *
- * Its own read rather than a field on the patch, for the same reason the listing's line counts
- * are their own: the two move on entirely different clocks. A patch changes when somebody pushes,
- * and is cached by the minute; this changes on every press of the checkbox. Carrying it on the
- * diff would mean either forgetting a three-hundred-file patch each time a box is ticked, or
- * showing a reader their own last press as stale.
+ * Its own read rather than a field on the patch: a patch changes when somebody pushes and is
+ * cached by the minute, this changes on every press. Carrying it on the diff would mean either
+ * forgetting a three-hundred-file patch per tick or showing a reader their own press as stale.
  */
 export const PullRequestFilesViewedResult = Schema.Struct({
   /** Only the files the host reported a state for. A file missing from this list is unviewed. */
   files: Schema.Array(PullRequestFileViewed),
-  /**
-   * The host had more files than were read. The checkbox still works on everything on screen;
-   * the count beside it is the one thing that cannot be trusted to be whole, and says so.
-   */
+  /** The host had more files than were read, so the count is short and says so. */
   truncated: Schema.Boolean,
 });
 export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.Type;
 
 /**
  * Files to clear, or to put back. Several at once because a reader working down a diff ticks
- * boxes far faster than a host answers: the surface gathers a burst into one request rather than
- * opening a subprocess per press.
+ * boxes far faster than a host answers, so a burst is gathered into one request.
  */
 export const PullRequestSetFilesViewedInput = Schema.Struct({
   ...PullRequestRef.fields,

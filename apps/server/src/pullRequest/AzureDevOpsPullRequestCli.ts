@@ -667,7 +667,7 @@ export const make = Effect.gen(function* () {
           `versionDescriptor.version=${input.commit}`,
           "includeContent=true",
           // Azure leaves `contentMetadata` out unless this is asked for, and with it goes its own
-          // word on whether the file is binary — which is the only reliable one, since a binary
+          // word on whether the file is binary, which is the only reliable one, since a binary
           // file arrives encoded rather than as the bytes it is on the host.
           "includeContentMetadata=true",
           // Without this Azure answers with the file's own bytes rather than with a JSON

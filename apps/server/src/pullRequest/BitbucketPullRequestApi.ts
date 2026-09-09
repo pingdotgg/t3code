@@ -140,12 +140,9 @@ const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
 /**
- * How long one read of a pull request's patch keeps answering the version reads behind it, and how
- * many pull requests are held that way at once.
- *
  * A reader ticking files off names one new path at a time, and a path the caller has not asked
- * about before is a path it cannot answer from what it holds, so without this every tick pays for
- * the whole patch again. Deliberately far shorter than the window the caller holds versions for:
+ * about before cannot be answered from what it holds, so without this every tick pays for the
+ * whole patch again. Deliberately far shorter than the window the caller holds versions for:
  * a refresh drops what the caller holds precisely so the next read reaches Bitbucket, and this
  * must not be what answers it instead.
  */
@@ -203,11 +200,6 @@ export class BitbucketPullRequestApi extends Context.Service<
      * Read off the pull request's own patch, the only place Bitbucket states a file's version. A
      * path the patch does not carry is answered as the empty revision, and left out altogether
      * when the patch was cut short at the byte ceiling and so cannot be spoken for.
-     *
-     * The versions themselves are held by the caller rather than here: the marks and the badge
-     * they feed share one window, and a second one underneath it would keep answering after a
-     * refresh had asked it not to. The patch they are read out of is held for a few seconds, which
-     * is what keeps a reader ticking one file after another from downloading it once per tick.
      */
     readonly getFileRevisions: (input: {
       readonly repository: string;
@@ -586,11 +578,7 @@ export const make = Effect.gen(function* () {
             ),
         );
 
-  /**
-   * The pull request's whole patch, shared by the version reads that come one tick at a time. A
-   * second tick arriving while the first read is still in flight waits on that read rather than
-   * starting another.
-   */
+  /** The pull request's whole patch, shared by the version reads that come one tick at a time. */
   const revisionPatches = yield* Cache.makeWith(
     (key: string) => {
       const [repository, number] = JSON.parse(key) as [string, number];
@@ -683,12 +671,8 @@ export const make = Effect.gen(function* () {
         : Cache.get(revisionPatches, JSON.stringify([input.repository, input.number])).pipe(
             Effect.map((diff) => {
               const all = parseDiffFileRevisions(diff.patch);
-              // Narrowed to what was asked for rather than handed back whole: the caller compares
-              // the paths it named, and a patch of a thousand files has no business in its answer.
-              //
               // A patch cut short at the byte ceiling says nothing about the files past the cut,
-              // so those paths are left out rather than reported as removed: the caller reads an
-              // absent path as one it could not learn about, and a mark on it is left alone.
+              // so those paths are left out rather than reported as removed.
               const asked = new Map<string, string>();
               for (const path of input.paths) {
                 const revision = all.get(path);

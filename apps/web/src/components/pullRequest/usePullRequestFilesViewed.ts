@@ -38,10 +38,7 @@ export interface PullRequestFilesViewedView {
   readonly viewedCount: number;
   /** The host had more files than the read covered, so the count above may be short. */
   readonly truncated: boolean;
-  /**
-   * Re-ask the host. The page's refresh button goes around the host's cache, and the ticks and
-   * the marks beside them are part of what the reader asked to be shown again.
-   */
+  /** Re-ask the host, for the page's refresh button, which goes around the host's cache. */
   readonly refresh: () => void;
 }
 
@@ -49,10 +46,8 @@ export interface PullRequestFilesViewedView {
  * Which files this reader has already cleared.
  *
  * The marks live on the server rather than in this tab, so a review carried on from another
- * machine picks up where it was left. Where the host keeps a record of its own, those are the
- * marks, and its web UI shows the same ones; where it does not, the environment keeps them and
- * says so. Presses show immediately and are held over the server's answer until it agrees with
- * them, so the checkbox never waits on a round trip.
+ * machine picks up where it was left. Presses show immediately and are held over the server's
+ * answer until it agrees with them, so the checkbox never waits on a round trip.
  */
 export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
@@ -111,8 +106,7 @@ export function usePullRequestFilesViewed(options: {
         .map((file) => file.path)
         .filter((path) => sentBy.current.get(path) === request);
       for (const path of mine) sentBy.current.delete(path);
-      // The reader has moved to another change request, or another environment, and what is on
-      // screen now has nothing to do with this answer.
+      // The reader has moved on, and what is on screen now has nothing to do with this answer.
       if (scope.current !== sentFrom) return;
       if (result._tag === "Failure") {
         // The host never heard these, so the ticks go back to whatever it last said. Only the
@@ -120,10 +114,9 @@ export function usePullRequestFilesViewed(options: {
         // of its own, or on the next flush, and that press is the one on screen.
         const owned = new Set(mine.filter((path) => !queued.current.has(path)));
         setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
-        // Two silences here. Nothing was still this request's to answer for, so nothing on
-        // screen went back and a later press is the one that gets to speak for these paths. Or
-        // the connection went away mid-flight, which the reader is already being told about and
-        // which the host never refused.
+        // Silent when nothing was still this request's to answer for, so nothing on screen went
+        // back, and when the connection went away mid-flight, which the reader is already being
+        // told about and which the host never refused.
         if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
           toastManager.add({ type: "error", title: "Could not update viewed files" });
         }
@@ -155,8 +148,6 @@ export function usePullRequestFilesViewed(options: {
     };
   }, [scopeKey]);
 
-  // Held through a ref for the same reason `setViewed` is: it goes into the view object below,
-  // which every file header keys off, so it has to keep one identity for the tab's life.
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   const refreshFromHost = useCallback(() => refreshRef.current(), []);
@@ -181,8 +172,7 @@ export function usePullRequestFilesViewed(options: {
     [overlay, paths, states],
   );
 
-  // One identity per change of what it says: the viewer keys every file it draws off this, and a
-  // fresh object each render would redraw the whole diff.
+  // One identity per change of what it says: the viewer keys every file it draws off this.
   return useMemo(
     () => ({
       enabled,

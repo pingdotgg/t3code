@@ -128,10 +128,10 @@ const LIST_STATS_CACHE_TTL = Duration.seconds(60);
  */
 const FILES_VIEWED_CACHE_TTL = Duration.seconds(15);
 /**
- * How long the head's blob for a file is believed without asking the host again, and how long a
- * held answer still stands while the next one is fetched. The marks themselves are this
- * environment's own rows and cost nothing to read; this is the host call behind the **Changed**
- * badge alone, so a held answer costs a badge that is a minute behind rather than a stale tick.
+ * How long the head's version of a file is believed, and how long a held answer stands while the
+ * next one is fetched. The marks themselves are this environment's own rows and cost nothing to
+ * read; this is the host call behind the **Changed** badge alone, so a held answer costs a badge
+ * that is a minute behind rather than a stale tick.
  */
 const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
 const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
@@ -552,8 +552,7 @@ function withRateLimitBackoff(
 /**
  * The provider-native repository selector for a project, which everything downstream is keyed by:
  * the rows' own `repository`, the per-repository cursors, and the detail and diff reads a row
- * leads to. The rule itself is shared with the clients that build a ref, since a ref spelled any
- * other way is refused before it reaches a provider.
+ * leads to.
  */
 export function repositoryIdentityOf(project: OrchestrationProjectShell): string | null {
   return pullRequestRepositoryOf(project.repositoryIdentity);
@@ -1553,9 +1552,9 @@ export const make = Effect.gen(function* () {
       for (const path of paths) {
         asked.add(path);
         const revision = answer.get(path);
-        // Left out of the answer is the host not saying, not the head having nothing: deleting
-        // the version it last gave would turn a file already reported as changed back into a
-        // cleared one on the next answer that had to stop short.
+        // Left out of the answer is the host not saying, not the head having nothing: the
+        // version it last gave stands, since deleting it would turn a file reported as changed
+        // back into a cleared one.
         if (revision !== undefined) revisions.set(path, revision);
       }
       heldFileRevisions.delete(key);
@@ -1563,10 +1562,9 @@ export const make = Effect.gen(function* () {
         const oldest = heldFileRevisions.keys().next().value;
         if (oldest !== undefined) heldFileRevisions.delete(oldest);
       }
-      // The entry is only as fresh as the oldest revision in it. Stamping it with now because
-      // this read answered would let a reader ticking one new file after another keep carrying the
-      // first file's revision past the point it would have been read again, since every press
-      // renews the whole scope while asking about one path.
+      // The entry is only as fresh as the oldest revision in it: stamping it with now would let
+      // a reader ticking one new file after another carry the first file's revision past the point
+      // it would have been read again, since every press renews the scope while asking one path.
       const stamped = [...revisions.keys()].every((path) => answer.has(path))
         ? at
         : (carried?.at ?? at);
@@ -1642,8 +1640,7 @@ export const make = Effect.gen(function* () {
    *
    * A file the head still has at the revision it was cleared at is cleared; one the head has
    * moved on from is reported as changed, which is what GitHub says of a file pushed to since it
-   * was ticked. Revisions are asked for the marked paths alone, so the cost follows how much of
-   * the change request has been read rather than how large it is, and a reader who has marked
+   * was ticked. Revisions are asked for the marked paths alone, so a reader who has marked
    * nothing costs no host call at all.
    */
   const environmentFilesViewed = (
@@ -1656,11 +1653,10 @@ export const make = Effect.gen(function* () {
         .list(filesViewedScope(project, ref.number, viewer))
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
       if (marks.length === 0) return { files: [], truncated: false };
-      // These rows are this environment's own. A rate limit or a signed-out CLI costs the marks
-      // their staleness, which is the thing `fileRevisionsOf` already answers null for, and must
-      // not cost the reader every tick they have made. The press itself still fails loudly on a
-      // host that errors, since a mark stamped with a revision nobody read is wrong rather than
-      // merely less informed; a host that answers without the path is stored with no baseline.
+      // A rate limit or a signed-out CLI costs the marks their staleness, which is what
+      // `fileRevisionsOf` answers null for, not the reader every tick they have made. The press
+      // itself still fails loudly, since a mark stamped with a revision nobody read is wrong
+      // rather than merely less informed.
       const revisions = yield* fileRevisionsOf(
         project,
         ref,
@@ -1676,15 +1672,10 @@ export const make = Effect.gen(function* () {
       );
       return {
         files: marks.map((mark) => {
-          // A path the host had no answer for is one it could not look at, not one it looked at
-          // and found nothing: a read that saw part of a large change must not report the rest
-          // as changed against a revision nobody read. A file the change request deletes is
-          // answered as the empty revision, which is what its mark was stamped with, so it is
-          // cleared once and stays cleared.
-          // A mark stamped with no baseline has nothing to compare against, so it holds until
-          // the reader presses it again. That is the press the host would not answer for, and
-          // reporting it as changed against a revision it was never measured at would move the
-          // file the reader just cleared back into the pile.
+          // A path the host had no answer for is one it could not look at, so the mark holds; a
+          // file the change request deletes is answered as the empty revision, which is what its
+          // mark was stamped with, so it is cleared once and stays cleared. A mark stamped with
+          // no baseline holds for the same reason, until the reader presses it again.
           if (mark.revision === null) return { path: mark.path, state: "viewed" as const };
           const revision = revisions?.get(mark.path);
           return {
@@ -1717,9 +1708,8 @@ export const make = Effect.gen(function* () {
     write: Effect.Effect<void, PullRequestError>,
   ) =>
     // Suspended rather than generated, so finding the gate, putting it in and taking a place in
-    // its queue are one step. `Semaphore.make` is an effect, and yielding for it between the
-    // lookup and the insert lets two presses each find nothing, each make a gate of their own,
-    // and neither wait on the other, which is the ordering this exists for.
+    // its queue are one step: yielding for `Semaphore.make` between the lookup and the insert
+    // lets two presses each make a gate of their own and neither wait on the other.
     Effect.suspend(() => {
       const key = `${project.project.id} ${project.remote} ${number}`;
       const held = filesViewedGates.get(key);
@@ -1757,11 +1747,9 @@ export const make = Effect.gen(function* () {
       yield* filesViewedStore
         .set({
           ...filesViewedScope(project, input.number, viewer),
-          // A path left out of the answer is the host declining to say, not the head having
-          // nothing of the file: the empty revision is an answer, and a mark stamped with it is
-          // reported as changed as soon as the file turns out to have a version after all. Such a
-          // mark is stored with no baseline instead, and a host too far behind to answer for a
-          // large change stays tickable rather than clearing files that come straight back.
+          // A path left out of the answer is the host declining to say, so the mark is stored
+          // with no baseline rather than with the empty revision, which is an answer and would
+          // report the file as changed the moment it turns out to have a version after all.
           files: input.files.map((file) => ({
             path: file.path,
             revision: revisions?.get(file.path) ?? null,

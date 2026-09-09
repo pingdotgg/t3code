@@ -30,16 +30,14 @@ interface Entry {
  * quote, a backslash, or, under `core.quotePath`, any byte outside ASCII.
  *
  * The escapes are per byte, so a name in any other alphabet arrives as a run of octal and only
- * reads back as itself once those bytes are rejoined and decoded together. A name git had no
- * reason to quote is already the name.
+ * reads back as itself once those bytes are rejoined and decoded together.
  */
 function unquotePath(token: string): string {
   if (token.length < 2 || !token.startsWith(QUOTE) || !token.endsWith(QUOTE)) return token;
   const body = token.slice(1, -1);
   const bytes: Array<number> = [];
   // Anything git left as itself is encoded a run at a time rather than a unit at a time, so a
-  // character written outside the basic plane keeps its pair together and comes back as itself
-  // instead of as two halves neither of which is a character.
+  // character outside the basic plane keeps its pair together rather than coming back as halves.
   let literal = "";
   const flush = () => {
     if (literal.length === 0) return;
