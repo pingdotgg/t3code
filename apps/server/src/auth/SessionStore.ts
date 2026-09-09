@@ -8,7 +8,7 @@ import {
   type AuthEnvironmentScope,
   type ClientSurface,
   RuntimeMode,
-  expandLegacyScopes,
+
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -430,9 +430,6 @@ const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
-// v1 tokens predate the split of the broad scopes. Their recorded scopes are
-// expanded on verification so the credential keeps the access it was granted;
-// everything issued since carries the split scopes and is used as-is.
 const SessionClaims = Schema.Struct({
   v: Schema.Literals([1, 2]),
   kind: Schema.Literal("session"),
@@ -670,7 +667,7 @@ export const make = Effect.gen(function* () {
         milliseconds: Duration.toMillis(input?.ttl ?? DEFAULT_SESSION_TTL),
       });
       const claims: SessionClaims = {
-        v: 2,
+        v: 1,
         kind: "session",
         sid: sessionId,
         sub: input?.subject ?? "browser",
@@ -856,7 +853,7 @@ export const make = Effect.gen(function* () {
         client: toClientMetadata(row.value.client),
         expiresAt: expiresAt.value,
         subject: claims.sub,
-        scopes: claims.v === 1 ? expandLegacyScopes(claims.scopes) : claims.scopes,
+        scopes: claims.scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
       } satisfies VerifiedSession;
@@ -966,8 +963,6 @@ export const make = Effect.gen(function* () {
       client: toClientMetadata(row.value.client),
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
-      // Rows recorded before the split were rewritten by migration 048, so
-      // the stored scopes are authoritative here.
       scopes: row.value.scopes,
     } satisfies VerifiedSession;
   });
