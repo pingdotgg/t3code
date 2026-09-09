@@ -11,13 +11,20 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { causeErrorTag } from "@t3tools/shared/observability";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 import { clampPercent, makeUsageLimits } from "../providerUsageLimits.ts";
 
@@ -393,9 +400,13 @@ export const probeAntigravityUsageLimits = (input: {
       checkedAt: input.checkedAt,
     });
   }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logDebug("Antigravity usage-limit probe failed", { cause }).pipe(
-        Effect.as(undefined),
-      ),
-    ),
+    Effect.catchCause((cause) => {
+      const failure = Cause.findErrorOption(cause);
+      const err: unknown = Option.isSome(failure) ? failure.value : undefined;
+      const request = HttpClientError.isHttpClientError(err) ? err.request : undefined;
+      return Effect.logDebug("Antigravity usage-limit probe failed", {
+        errorTag: causeErrorTag(cause),
+        ...(request ? { method: request.method, url: request.url } : {}),
+      }).pipe(Effect.as(undefined));
+    }),
   );

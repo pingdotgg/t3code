@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -307,13 +308,19 @@ describe("probeAntigravityUsageLimits", () => {
         }),
       );
 
-      const mockHttp = HttpClient.make(() => Effect.die("HTTP should not be called"));
+      const calls = yield* Ref.make(0);
+      const mockHttp = HttpClient.make((request) =>
+        Ref.update(calls, (count) => count + 1).pipe(
+          Effect.as(HttpClientResponse.fromWeb(request, Response.json({}))),
+        ),
+      );
       const result = yield* probeAntigravityUsageLimits({
         profileDirectory: tempDir,
         checkedAt,
       }).pipe(Effect.provideService(HttpClient.HttpClient, mockHttp));
 
       expect(result).toBeUndefined();
+      expect(yield* Ref.get(calls)).toBe(0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
