@@ -300,16 +300,19 @@ function DevBlueprintArt({
       <defs>
         <linearGradient
           id={paperId}
-          x1="60"
+          x1={extended ? 0 : 60}
           y1="0"
-          x2="220"
-          y2="96"
+          x2={extended ? 288 : 220}
+          y2={extended ? 384 : 96}
           gradientUnits="userSpaceOnUse"
-          spreadMethod="reflect"
+          spreadMethod={extended ? "pad" : "reflect"}
         >
           <stop style={{ stopColor: "var(--stage-art-bottom)" }} />
           <stop offset="0.5" style={{ stopColor: "var(--stage-art-mid)" }} />
-          <stop offset="1" style={{ stopColor: "var(--stage-art-top)" }} />
+          <stop
+            offset="1"
+            style={{ stopColor: extended ? "var(--stage-art-bottom)" : "var(--stage-art-top)" }}
+          />
         </linearGradient>
         <radialGradient
           id={glowId}
@@ -383,12 +386,23 @@ function DevBlueprintArt({
             strokeWidth="0.5"
           />
         </pattern>
-        <pattern id={glowsId} width="768" height="96" patternUnits="userSpaceOnUse">
-          <rect width="768" height="96" fill={`url(#${glowId})`} />
-          <rect width="768" height="96" fill={`url(#${celesteGlowId})`} />
-          <rect width="768" height="96" fill={`url(#${violetGlowId})`} />
+        {/* Repeat horizontally, but keep the revealed canvas free of stacked glow bands. */}
+        <pattern
+          id={glowsId}
+          width="768"
+          height={extended ? 384 : 96}
+          patternUnits="userSpaceOnUse"
+        >
+          <rect width="768" height={extended ? 384 : 96} fill={`url(#${glowId})`} />
+          <rect width="768" height={extended ? 384 : 96} fill={`url(#${celesteGlowId})`} />
+          <rect width="768" height={extended ? 384 : 96} fill={`url(#${violetGlowId})`} />
         </pattern>
-        <pattern id={annotationsId} width="768" height="96" patternUnits="userSpaceOnUse">
+        <pattern
+          id={annotationsId}
+          width="768"
+          height={extended ? 384 : 96}
+          patternUnits="userSpaceOnUse"
+        >
           <g
             style={{ stroke: "var(--stage-art-line)" }}
             strokeLinecap="round"
@@ -435,6 +449,18 @@ function DevBlueprintArt({
               <path d="M742 44H750M746 40V48" />
             </g>
           </g>
+
+          {extended ? (
+            <g style={{ stroke: "var(--stage-art-line)" }} strokeOpacity="0.35" strokeWidth="0.6">
+              <path d="M48 148H136M48 144V152M136 144V152" strokeDasharray="4 4" />
+              <circle cx="224" cy="196" r="24" strokeDasharray="4 5" />
+              <path d="M218 196H230M224 190V202M72 236V292M68 236H76M68 292H76" />
+              <path
+                d="M344 136H424M340 208L348 216M348 208L340 216M552 260H648"
+                strokeDasharray="5 4"
+              />
+            </g>
+          ) : null}
 
           <g style={{ stroke: "var(--stage-art-line)" }} strokeOpacity="0.35" strokeWidth="0.6">
             <circle cx="196" cy="38" r="13" strokeDasharray="3.5 4" />
