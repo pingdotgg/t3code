@@ -130,7 +130,12 @@ export function DevicePanel(props: {
       setOperationError(null);
       void close({
         environmentId,
-        input: { threadId, deviceId: activeSession.deviceId, shutdown: powerOff },
+        input: {
+          threadId,
+          hostId: activeSession.hostId,
+          deviceId: activeSession.deviceId,
+          shutdown: powerOff,
+        },
       }).then((result) => {
         if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
       });
@@ -140,10 +145,16 @@ export function DevicePanel(props: {
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
-  const hostReady = state.hostStatus === "ready";
-  const hostBusy = state.hostStatus === "installing" || state.hostStatus === "starting";
+  const hostReady = Object.values(state.hostStatuses).some((host) => host.status === "ready");
+  const hostBusy =
+    !hostReady &&
+    Object.values(state.hostStatuses).some(
+      (host) => host.status === "installing" || host.status === "starting",
+    );
   const unavailablePlatforms = state.hosts.flatMap((host) =>
-    host.platforms.filter((platform) => !platform.available),
+    host.platforms
+      .filter((platform) => !platform.available)
+      .map((platform) => ({ ...platform, hostId: host.id, hostLabel: host.label })),
   );
 
   if (loaded && (!state.onboardingCompleted || hostDisabled)) {
@@ -207,6 +218,7 @@ export function DevicePanel(props: {
                         {device.booted ? device.name : `Start ${device.name}`}
                       </span>
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                        {state.hosts.find((host) => host.id === device.hostId)?.label} ·{" "}
                         {device.version}
                       </span>
                     </span>
@@ -381,7 +393,7 @@ export function DevicePanel(props: {
                               </span>
                             }
                             title={device.name}
-                            description={`${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                            description={`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
                             disabled={pendingDeviceKey !== null}
                             aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
                             onClick={() => void selectDevice(deviceKey(device))}
@@ -422,8 +434,9 @@ export function DevicePanel(props: {
               {unavailablePlatforms.length > 0 && hostReady ? (
                 <ul className="max-w-sm space-y-1 text-xs opacity-70">
                   {unavailablePlatforms.map((platform) => (
-                    <li key={platform.platform}>
-                      {platform.platform === "ios" ? "iOS" : "Android"}: {platform.reason}
+                    <li key={`${platform.hostId}:${platform.platform}`}>
+                      {platform.hostLabel} · {platform.platform === "ios" ? "iOS" : "Android"}:{" "}
+                      {platform.reason}
                     </li>
                   ))}
                 </ul>
