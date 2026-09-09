@@ -3369,6 +3369,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         subject: "Add beta behavior",
         commitCount: 2,
       });
+      expect(result.toast).toMatchObject({
+        title: "Created 2 commits",
+        description: "Add alpha behavior\nAdd beta behavior",
+      });
       expect(
         yield* runGit(repoDir, ["log", "-2", "--pretty=%s"]).pipe(
           Effect.map((output) => output.stdout.trim().split("\n")),
