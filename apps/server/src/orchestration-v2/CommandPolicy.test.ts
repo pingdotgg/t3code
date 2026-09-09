@@ -2,7 +2,11 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -14,10 +18,12 @@ import {
   CommandPolicyCapabilityUnsupportedError,
   CommandPolicyV2,
   layer as commandPolicyLayer,
+  resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
 
 const commandId = CommandId.make("command-policy-test");
 const threadId = ThreadId.make("command-policy-thread");
+const activeRunId = RunId.make("command-policy-active-run");
 
 const baseCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 
@@ -26,6 +32,92 @@ function capabilities(
 ): OrchestrationV2ProviderCapabilities {
   return override(baseCapabilities);
 }
+
+function dispatchProjection(
+  sessionCapabilities?: OrchestrationV2ProviderCapabilities,
+): OrchestrationV2ThreadProjection {
+  const providerThreadId = ProviderThreadId.make("command-policy-provider-thread");
+  const providerSessionId = ProviderSessionId.make("command-policy-provider-session");
+  return {
+    runs:
+      sessionCapabilities === undefined
+        ? []
+        : [{ id: activeRunId, status: "running", providerThreadId }],
+    providerThreads:
+      sessionCapabilities === undefined ? [] : [{ id: providerThreadId, providerSessionId }],
+    providerSessions:
+      sessionCapabilities === undefined
+        ? []
+        : [{ id: providerSessionId, capabilities: sessionCapabilities }],
+  } as unknown as OrchestrationV2ThreadProjection;
+}
+
+it("resolves automatic message delivery from authoritative provider capabilities", () => {
+  assert.deepEqual(
+    resolveMessageDispatchIntent(dispatchProjection(), { type: "start_immediately" }, "auto"),
+    { type: "start_immediately" },
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(
+      dispatchProjection(baseCapabilities),
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(
+      dispatchProjection(
+        capabilities((current) => ({
+          ...current,
+          turns: {
+            ...current.turns,
+            supportsActiveSteering: false,
+            supportsQueuedMessages: true,
+            supportsSteeringByInterruptRestart: true,
+          },
+        })),
+      ),
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "queue_after_active" },
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(
+      dispatchProjection(
+        capabilities((current) => ({
+          ...current,
+          turns: {
+            ...current.turns,
+            supportsActiveSteering: false,
+            supportsQueuedMessages: false,
+            supportsSteeringByInterruptRestart: true,
+          },
+        })),
+      ),
+      { type: "start_immediately" },
+      "auto",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+});
+
+it("targets the latest active run for explicit steer and restart intent", () => {
+  const projection = dispatchProjection(baseCapabilities);
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "restart"),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    resolveMessageDispatchIntent(dispatchProjection(), { type: "start_immediately" }, "steer"),
+    { type: "start_immediately" },
+  );
+});
 
 const layer = it.layer(commandPolicyLayer);
 
