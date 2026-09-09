@@ -120,6 +120,7 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as CuaDriver from "./cua/CuaDriver.ts";
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
@@ -176,6 +177,11 @@ const NativeTelemetryLayerLive = NativeTelemetryClient.layer.pipe(
 );
 const DesktopTelemetryReceiverLayerLive = DesktopTelemetryReceiver.layer.pipe(
   Layer.provideMerge(ServerSettingsLayerLive),
+);
+
+const CuaDriverLayerLive = CuaDriver.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(DesktopTelemetryReceiverLayerLive),
 );
 
 const ResourceTelemetryLayerLive = ResourceTelemetry.layer.pipe(
@@ -481,6 +487,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
 ).pipe(
   Layer.provideMerge(AntigravityInstallation.layer),
+  Layer.provideMerge(CuaDriverLayerLive),
   // Shared native/canonical NDJSON writers used by both the per-instance
   // drivers (native stream, written from inside each `<X>Adapter`) and
   // `ProviderService` (canonical stream, written after event normalization).

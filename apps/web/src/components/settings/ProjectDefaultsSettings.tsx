@@ -96,6 +96,9 @@ export function ProjectDefaultsSettings({
       target.serverConfig?.settings.enableAgentBrowserAccess !==
       serverSettings.enableAgentBrowserAccess,
   );
+  const mixedCua = targets.some(
+    (target) => target.serverConfig?.settings.enableCua !== serverSettings.enableCua,
+  );
   const disabled = (key: keyof ServerSettingsPatch) => targets.length === 0 || saving.has(key);
   const mixedAutoPull = targets.some(
     (target) => target.serverConfig?.settings.defaultAutoPull !== serverSettings.defaultAutoPull,
@@ -377,6 +380,47 @@ export function ProjectDefaultsSettings({
                     : mixedBrowser
                       ? "Differs by machine"
                       : serverSettings.enableAgentBrowserAccess
+                        ? "Enabled"
+                        : "Disabled"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="enabled">Enabled</SelectItem>
+                <SelectItem value="disabled">Disabled</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          id={searchableSetting("cua-computer-use").id}
+          title="Cua computer use"
+          description="Let Codex control the selected machine through Cua Driver. Host permissions are required. Start a new session after enabling. Disabling revokes managed access."
+          resetAction={
+            mixedCua || serverSettings.enableCua !== DEFAULT_SERVER_SETTINGS.enableCua ? (
+              <SettingResetButton
+                label="Cua computer use"
+                tooltip="Reset Cua computer use to off"
+                disabled={disabled("enableCua")}
+                onClick={() => void save({ enableCua: DEFAULT_SERVER_SETTINGS.enableCua })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              disabled={disabled("enableCua")}
+              value={mixedCua ? "mixed" : serverSettings.enableCua ? "enabled" : "disabled"}
+              onValueChange={(value) => {
+                if (value === "enabled" || value === "disabled")
+                  void save({ enableCua: value === "enabled" });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Cua computer use">
+                <SelectValue>
+                  {targets.length === 0
+                    ? "Unavailable"
+                    : mixedCua
+                      ? "Differs by machine"
+                      : serverSettings.enableCua
                         ? "Enabled"
                         : "Disabled"}
                 </SelectValue>

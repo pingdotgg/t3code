@@ -20,6 +20,34 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings Cua computer use", () => {
+  it("keeps legacy settings opted out independently of browser access", () => {
+    expect(DEFAULT_SERVER_SETTINGS.enableCua).toBe(false);
+    expect(decodeServerSettings({}).enableCua).toBe(false);
+    expect(decodeServerSettings({ enableAgentBrowserAccess: true }).enableCua).toBe(false);
+  });
+
+  it.each([true, false])("round-trips an explicit opt-in value of %s", (enableCua) => {
+    const settings = decodeServerSettings({ enableCua, enableAgentBrowserAccess: false });
+    expect(settings.enableCua).toBe(enableCua);
+    expect(settings.enableAgentBrowserAccess).toBe(false);
+    expect(encodeServerSettings(settings).enableCua).toBe(enableCua);
+    expect(decodeServerSettingsPatch({ enableCua })).toEqual({ enableCua });
+  });
+
+  it("does not introduce a Cua change into unrelated patches", () => {
+    expect(decodeServerSettingsPatch({})).not.toHaveProperty("enableCua");
+    expect(decodeServerSettingsPatch({ enableAgentBrowserAccess: true })).toEqual({
+      enableAgentBrowserAccess: true,
+    });
+  });
+
+  it.each(["true", 1, null])("rejects a non-boolean opt-in of %s", (enableCua) => {
+    expect(() => decodeServerSettings({ enableCua })).toThrow();
+    expect(() => decodeServerSettingsPatch({ enableCua })).toThrow();
+  });
+});
+
 describe("ServerSettings usage price overrides", () => {
   const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
 

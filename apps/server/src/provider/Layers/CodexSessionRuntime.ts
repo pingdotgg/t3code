@@ -66,6 +66,13 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+export function hasConfiguredBrowserMcpServer(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): boolean {
+  // The adapter emits this exact path for T3's preview tools. Other MCPs do not provide them.
+  return appServerArgs?.some((argument) => argument.startsWith("mcp_servers.t3-code.")) === true;
+}
+
 export const CodexResumeCursorSchema = Schema.Struct({
   threadId: Schema.String,
 });
@@ -2352,7 +2359,7 @@ export const makeCodexSessionRuntime = (
             // Derived from the session's own MCP configuration rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            browserToolsAvailable: hasConfiguredMcpServer(options.appServerArgs),
+            browserToolsAvailable: hasConfiguredBrowserMcpServer(options.appServerArgs),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

@@ -15,6 +15,12 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  CUA_DRIVER_EXTRA_RESOURCE,
+  CuaDriverBundleMissingFileError,
+  CuaDriverChecksumMismatchError,
+  stageCuaDriverExecutable,
+  resolveCuaDriverAsset,
+  stageCuaDriverBundle,
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   buildWslRuntimeArchiveArgs,
@@ -258,6 +264,139 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
+  it.effect("rejects corrupt release downloads before extraction or staging", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-checksum-" });
+        const commands: string[] = [];
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const child = command as unknown as { command: string; args: readonly string[] };
+            commands.push(child.command);
+            const output = child.args[child.args.indexOf("--output") + 1];
+            return child.command === "curl" && output !== undefined
+              ? Effect.as(fs.writeFileString(output, "corrupted archive"), mockProcess(0))
+              : Effect.succeed(mockProcess(0));
+          }),
+        );
+        const error = yield* Effect.flip(
+          stageCuaDriverExecutable({
+            platform: "linux",
+            arch: "x64",
+            repoRoot: root,
+            stageRoot: root,
+            stageResourcesDir: path.join(root, "resources"),
+            verbose: false,
+          }).pipe(Effect.provide(spawnerLayer)),
+        );
+        assert.instanceOf(error, CuaDriverChecksumMismatchError);
+        assert.deepStrictEqual(commands, ["curl"]);
+        assert.isFalse(yield* fs.exists(path.join(root, "resources", "cua-driver")));
+        const cache = path.join(root, "node_modules/.cache/t3code/cua-driver");
+        assert.deepStrictEqual(yield* fs.readDirectory(cache), []);
+      }),
+    ),
+  );
+
+  it("rejects universal Cua Driver targets outside macOS", () => {
+    for (const platform of ["linux", "win"] as const) {
+      assert.throws(() => resolveCuaDriverAsset(platform, "universal"), /no release asset/);
+    }
+  });
+
+  for (const platform of ["mac", "linux", "win"] as const) {
+    for (const arch of [
+      "arm64",
+      "x64",
+      ...(platform === "mac" ? ["universal" as const] : []),
+    ] as const) {
+      it.effect(`stages the ${platform}/${arch} release layout with its companions`, () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-bundle-" });
+            const extractDir = path.join(root, "extract");
+            const stageResourcesDir = path.join(root, "resources");
+            // These are the actual release archive layouts, independent of the resolver.
+            const releaseArch = arch === "x64" ? "x86_64" : arch;
+            const executable =
+              platform === "mac" && arch !== "universal"
+                ? `cua-driver-rs-0.24.0-darwin-${releaseArch}/cua-driver`
+                : platform === "win"
+                  ? "cua-driver.exe"
+                  : "cua-driver";
+            const companions =
+              platform === "win"
+                ? [
+                    "cua-driver-uia.exe",
+                    "cua-cursor-theme.exe",
+                    "cua_driver_sdk.dll",
+                    "cua_driver_node_runtime.node",
+                  ]
+                : platform === "linux"
+                  ? [
+                      "cua-cursor-theme",
+                      "libcua_driver_sdk.so",
+                      "cua_driver_node_runtime.node",
+                      "wayland-helper/winrects@cua/extension.js",
+                    ]
+                  : [];
+            for (const member of [executable, ...companions, "cua_driver_abi.h"]) {
+              const target = path.join(extractDir, member);
+              yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+              yield* fs.writeFileString(target, member);
+            }
+            const asset = resolveCuaDriverAsset(platform, arch);
+            assert.equal(asset.executablePath, executable);
+            assert.match(asset.sha256, /^[0-9a-f]{64}$/);
+            assert.include(asset.url, "/cua-driver-rs-v0.24.0/");
+            yield* stageCuaDriverBundle({ platform, arch, extractDir, stageResourcesDir });
+            const destination = path.join(stageResourcesDir, "cua-driver");
+            if (platform === "mac") {
+              assert.equal(yield* fs.readFileString(destination), executable);
+            } else {
+              for (const member of [executable, ...companions, "cua_driver_abi.h"]) {
+                assert.equal(yield* fs.readFileString(path.join(destination, member)), member);
+              }
+            }
+            if ((yield* HostProcessPlatform) !== "win32" && platform !== "win") {
+              const binary = platform === "mac" ? destination : path.join(destination, executable);
+              assert.equal((yield* fs.stat(binary)).mode & 0o777, 0o755);
+            }
+          }),
+        ),
+      );
+    }
+  }
+
+  it.effect("rejects an incomplete Windows bundle before publishing a staged CLI", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cua-incomplete-" });
+        const extractDir = path.join(root, "extract");
+        const stageResourcesDir = path.join(root, "resources");
+        yield* fs.makeDirectory(extractDir);
+        yield* fs.writeFileString(path.join(extractDir, "cua-driver.exe"), "cli");
+        const error = yield* Effect.flip(
+          stageCuaDriverBundle({
+            platform: "win",
+            arch: "x64",
+            extractDir,
+            stageResourcesDir,
+          }),
+        );
+        assert.instanceOf(error, CuaDriverBundleMissingFileError);
+        assert.isFalse(yield* fs.exists(path.join(stageResourcesDir, "cua-driver")));
+      }),
+    ),
+  );
+
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
@@ -559,6 +698,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+      "!apps/desktop/prod-resources/cua-driver",
+      "!apps/desktop/prod-resources/cua-driver/**/*",
       "!apps/desktop/resources/browser-secret",
       "!apps/desktop/resources/browser-secret/**/*",
       "!apps/desktop/prod-resources/browser-secret",
@@ -638,6 +779,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
       ]);
       assert.deepStrictEqual(win.extraResources, [
+        CUA_DRIVER_EXTRA_RESOURCE,
         {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
@@ -648,6 +790,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // No Linux prebuild means the sidecar staging never writes the archive,
       // so listing it here would fail the build on a missing source file.
       assert.deepStrictEqual(winWithoutWslPrebuild.extraResources, [
+        CUA_DRIVER_EXTRA_RESOURCE,
         {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
@@ -1856,6 +1999,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("stages the resource monitor as an external executable resource", () => {
     assert.deepStrictEqual(DESKTOP_EXTRA_RESOURCES, [
+      CUA_DRIVER_EXTRA_RESOURCE,
       {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",

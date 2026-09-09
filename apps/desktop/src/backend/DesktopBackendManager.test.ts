@@ -163,6 +163,9 @@ function makeTestInstance(input: MakeInstanceInput) {
       latest: Effect.succeed(Option.none()),
       changes: Stream.empty,
       encoded: input.desktopTelemetryStream ?? Stream.empty,
+      encodedForSource: () => input.desktopTelemetryStream ?? Stream.empty,
+      cuaRequests: Stream.empty,
+      publishCuaReport: () => Effect.void,
       handleControl: () => Effect.void,
       handleControlForSource: (_sourceId, message) =>
         (input.desktopTelemetryPublisher?.handleControl ?? (() => Effect.void))(message),
