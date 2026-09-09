@@ -5,7 +5,7 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { CheckIcon, GitMergeIcon, LayersIcon, RefreshCwIcon } from "lucide-react";
+import { GitMergeIcon, LayersIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -29,8 +29,7 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
-import { resolvePullRequestState } from "./pullRequestPresentation";
-import { cn } from "~/lib/utils";
+import { PullRequestStackLayers } from "./PullRequestStackLayers";
 
 export function PullRequestStackMenu({
   stack,
@@ -105,39 +104,6 @@ export function PullRequestStackMenu({
       });
     }
   };
-  const layers = (
-    <div className="max-h-80 overflow-y-auto">
-      {stack.layers.toReversed().map((layer) => {
-        const state = resolvePullRequestState({
-          state: layer.state,
-          isDraft: layer.isDraft ?? false,
-        });
-        return (
-          <MenuItem
-            key={layer.number}
-            onClick={() => {
-              setOpen(false);
-              onSelect?.({ ...reference, number: layer.number });
-            }}
-            disabled={!onSelect || pending}
-            aria-current={layer.number === reference.number ? "true" : undefined}
-          >
-            <state.Icon aria-hidden className={cn("size-4 shrink-0", state.toneClassName)} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate">{layer.title || layer.headBranch}</span>
-              <span className="block truncate text-xs font-normal text-muted-foreground">
-                #{layer.number} · {layer.headBranch} · {state.label}
-              </span>
-            </span>
-            {layer.number === reference.number ? (
-              <CheckIcon aria-hidden className="size-3.5" />
-            ) : null}
-          </MenuItem>
-        );
-      })}
-      <MenuGroupLabel>↳ {stack.base}</MenuGroupLabel>
-    </div>
-  );
   return (
     <>
       <Menu open={open} onOpenChange={setOpen}>
@@ -155,7 +121,19 @@ export function PullRequestStackMenu({
         <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
           <MenuGroup>
             <MenuGroupLabel>Stack #{stack.number}</MenuGroupLabel>
-            {layers}
+            <PullRequestStackLayers
+              stack={stack}
+              reference={reference}
+              pending={pending}
+              onSelect={
+                onSelect
+                  ? (target) => {
+                      setOpen(false);
+                      onSelect(target);
+                    }
+                  : undefined
+              }
+            />
           </MenuGroup>
           {canMerge || canRebase ? (
             <>

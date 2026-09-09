@@ -1,4 +1,5 @@
-import { LayersIcon, SearchIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
+import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -60,6 +61,11 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
   );
 }
 
+export type PullRequestRowTarget = Pick<
+  EnvironmentPullRequestEntry,
+  "environmentId" | "projectId" | "host" | "repository" | "number"
+>;
+
 function PullRequestRowImpl({
   entry,
   selected,
@@ -86,7 +92,7 @@ function PullRequestRowImpl({
   /** Used by the list's shared visibility observer to defer optional line-count reads. */
   statsKey?: string;
   statsRef?: RefCallback<HTMLButtonElement>;
-  onSelect: (entry: EnvironmentPullRequestEntry) => void;
+  onSelect: (entry: PullRequestRowTarget) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
@@ -117,25 +123,19 @@ function PullRequestRowImpl({
         </span>
         <span className="col-start-2 row-start-1 flex max-w-36 items-center justify-self-end gap-2 text-xs">
           {entry.stack ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex shrink-0 items-center gap-1 text-xs font-normal text-muted-foreground" />
-                }
-              >
-                <LayersIcon aria-hidden className="size-3" />
-                <span aria-hidden>
-                  {entry.stack.position}/{entry.stack.size}
-                </span>
-                <span className="sr-only">
-                  Stack layer {entry.stack.position} of {entry.stack.size}
-                </span>
-              </TooltipTrigger>
-              <TooltipPopup>
-                Stack #{entry.stack.number}, layer {entry.stack.position} of {entry.stack.size},
-                targeting {entry.stack.base}
-              </TooltipPopup>
-            </Tooltip>
+            <PullRequestStackPopover
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                host: entry.host,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+              membership={entry.stack}
+              onSelect={(target) =>
+                onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
+              }
+            />
           ) : null}
           {/* Only a verdict somebody has actually given: "review required" is the absence of
               one, and saying so on every unreviewed row would say nothing. */}
