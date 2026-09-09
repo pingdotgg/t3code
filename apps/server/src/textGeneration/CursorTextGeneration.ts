@@ -1,4 +1,4 @@
-import { Agent, type AgentOptions, type Run, type RunResult, type SDKAgent } from "@cursor/sdk";
+import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,6 +24,10 @@ import {
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import { cursorSdkModelSelection } from "../provider/cursorSdkModel.ts";
+import {
+  cleanupCursorSdkRequestAfterSettlement,
+  runCursorSdkRequest,
+} from "../provider/cursorSdkRequest.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 const CURSOR_METADATA_WORKSPACE_PREFIX = "t3-cursor-metadata-";
@@ -49,72 +53,6 @@ function emptyCursorSdkResultDetail(result: RunResult): string {
 const ignoreCursorCleanupFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.ignore({ log: true }));
 
-interface CursorSdkRequest {
-  readonly result: Promise<RunResult>;
-  readonly cancel: () => void;
-}
-
-/**
- * Own the Cursor SDK objects beyond the caller's deadline. Cursor's promises
- * do not accept an AbortSignal, so cancellation is requested without awaiting
- * it and the result settles only after an acquired run and agent settle.
- */
-function runCursorSdkRequest(input: {
-  readonly agentOptions: AgentOptions;
-  readonly prompt: string;
-}): CursorSdkRequest {
-  let cancellationRequested = false;
-  let run: Run | undefined;
-  let runWait: Promise<RunResult> | undefined;
-  let cancellation: Promise<void> | undefined;
-
-  const cancelRun = () => {
-    if (run === undefined || cancellation !== undefined) return;
-    cancellation = (async () => {
-      const cancel =
-        run.status === "running" && run.supports("cancel") ? run.cancel() : Promise.resolve();
-      const wait = runWait ?? (run.supports("wait") ? run.wait() : Promise.resolve(undefined));
-      await Promise.allSettled([cancel, wait]);
-    })();
-  };
-
-  const result = (async () => {
-    let agent: SDKAgent | undefined;
-    try {
-      agent = await Agent.create(input.agentOptions);
-      if (cancellationRequested) {
-        throw new Error("Cursor SDK request was cancelled before sending.");
-      }
-      run = await agent.send(input.prompt);
-      runWait = run.wait();
-      if (cancellationRequested) {
-        cancelRun();
-        await cancellation;
-      }
-      return await runWait;
-    } finally {
-      if (cancellationRequested) {
-        cancelRun();
-        await cancellation?.catch(() => undefined);
-      }
-      if (agent !== undefined) {
-        await Promise.resolve(agent[Symbol.asyncDispose]()).catch(() => undefined);
-      }
-    }
-  })();
-  // The owner starts eagerly, before the Effect fiber attaches its handler.
-  // Observe early failures here while returning the original promise to Effect.
-  void result.catch(() => undefined);
-
-  return {
-    result,
-    cancel: () => {
-      cancellationRequested = true;
-      cancelRun();
-    },
-  };
-}
-
 /**
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -125,7 +63,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const ownerScope = yield* Effect.scope;
-  const ownerContext = yield* Effect.context<never>();
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -209,23 +146,11 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           }).pipe(
             Effect.onExit((exit) =>
               exit._tag === "Failure" && Cause.hasInterrupts(exit.cause)
-                ? Effect.sync(() => {
-                    request.cancel();
-                    // The scope closed while the SDK request was in flight. The
-                    // workspace must outlive the interruption only until the SDK
-                    // settles (cancellation and disposal), then removal is ours.
-                    void request.result
-                      .catch(() => undefined)
-                      .then(() => {
-                        void Effect.runPromiseWith(ownerContext)(
-                          ignoreCursorCleanupFailure(
-                            fileSystem.remove(metadataWorkspace, {
-                              recursive: true,
-                              force: true,
-                            }),
-                          ),
-                        ).catch(() => undefined);
-                      });
+                ? cleanupCursorSdkRequestAfterSettlement({
+                    request,
+                    cleanup: ignoreCursorCleanupFailure(
+                      fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
+                    ),
                   })
                 : ignoreCursorCleanupFailure(
                     fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
