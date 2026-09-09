@@ -614,8 +614,72 @@ describe("deriveMessagesTimelineRows", () => {
         id: "compaction-entry",
         createdAt: "2026-01-01T00:00:00Z",
         label: "Compacted context 899K → 19K tokens",
+        active: false,
       },
     ]);
+  });
+
+  it("gives live compaction the activity slot and restores Thinking when it completes", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const last = fixture.visibleTurnItems.at(-1)!;
+    if (last.item.type !== "assistant_message") throw new Error("Expected assistant fixture");
+    const compact = {
+      ...last,
+      item: {
+        ...last.item,
+        type: "compaction" as const,
+        status: "running" as const,
+        driver: null,
+        beforeTokenCount: 899_000,
+      },
+    };
+    const input = {
+      isWorking: true,
+      runningRunId: fixture.runId,
+      activeTurnStartedAt: fixture.time(5),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const runningEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [...fixture.visibleTurnItems.slice(0, -1), compact],
+      optimisticMessages: [],
+    });
+    const runningRows = deriveMessagesTimelineRows({ ...input, timelineEntries: runningEntries });
+    expect(runningRows.find((row) => row.kind === "context-compaction")).toMatchObject({
+      active: true,
+      label: "Compacting context",
+    });
+    expect(runningRows.some((row) => row.kind === "thinking")).toBe(false);
+
+    const completedRows = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [
+          ...fixture.visibleTurnItems.slice(0, -1),
+          {
+            ...compact,
+            item: { ...compact.item, status: "completed", afterTokenCount: 19_000 },
+          },
+        ],
+        optimisticMessages: [],
+      }),
+    });
+    expect(completedRows.find((row) => row.kind === "context-compaction")).toMatchObject({
+      active: false,
+      label: "Context compacted 899K → 19K tokens",
+    });
+    expect(completedRows.at(-1)?.kind).toBe("thinking");
+
+    const settledRows = deriveMessagesTimelineRows({
+      ...input,
+      isWorking: false,
+      timelineEntries: runningEntries,
+    });
+    expect(settledRows.find((row) => row.kind === "context-compaction")).toMatchObject({
+      active: false,
+    });
+    const stable = computeStableMessagesTimelineRows(runningRows, { result: [], byId: new Map() });
+    expect(computeStableMessagesTimelineRows(settledRows, stable).result).toEqual(settledRows);
   });
 
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
