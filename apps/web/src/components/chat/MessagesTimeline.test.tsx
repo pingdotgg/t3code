@@ -1267,6 +1267,65 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
 
+  it.each([
+    { command: "python3 - <<'PY'\nprint('verification complete')\nPY", detail: undefined },
+    { command: "python3 - <<'PY'\nprint('verification complete')\nPY", detail: "" },
+    {
+      command: "python3 - <<'PY'\r\nprint('verification complete')\r\nPY",
+      detail: "Script finished successfully",
+    },
+    { command: `python3 -c "print('${"x".repeat(120)}')"`, detail: undefined },
+  ])(
+    "keeps a long completed command compact and expandable with output $detail",
+    async ({ command, detail }) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("requestAnimationFrame", () => 0);
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(
+            <MessagesTimeline
+              {...buildProps()}
+              timelineEntries={[
+                {
+                  id: "completed-script",
+                  kind: "work",
+                  createdAt: MESSAGE_CREATED_AT,
+                  entry: {
+                    id: "completed-script-work",
+                    createdAt: MESSAGE_CREATED_AT,
+                    label: "Ran command",
+                    tone: "tool",
+                    itemType: "command_execution",
+                    toolLifecycleStatus: "completed",
+                    command,
+                    ...(detail === undefined ? {} : { detail }),
+                  },
+                },
+              ]}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findAllByProps({
+          role: "button",
+          "aria-label": "Ran python3",
+        });
+        expect(toggle).toHaveLength(1);
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("print('");
+        await act(() => toggle[0]!.props.onClick());
+        const expandedText = renderer!.root
+          .findAllByType("pre")
+          .map((node) => node.children.join(""))
+          .join("\n");
+        expect(expandedText).toContain(command);
+        if (detail) expect(expandedText).toContain(detail);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
+
   it("keeps mixed-success tool groups neutral", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

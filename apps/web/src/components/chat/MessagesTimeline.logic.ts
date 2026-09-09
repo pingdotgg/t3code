@@ -41,7 +41,11 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
   const command = entry.command?.trim();
-  if (command) return command;
+  if (command) {
+    return /[\r\n]/.test(command) || command.length > 120
+      ? liveWorkEntryLabel(entry, undefined, false)
+      : command;
+  }
   const heading = normalizeCompactToolLabel(entry.toolTitle || entry.label);
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
