@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, type ReactNode } from "react";
+import { toolItemForDisplay } from "@t3tools/client-runtime/work-log/presentation";
 
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -146,7 +147,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "command_execution" ? (
         <div className="space-y-2">
           <StructuredValue value={item.input} />
-          {item.output !== undefined ? <StructuredValue value={item.output} /> : null}
           {item.exitCode !== undefined ? (
             <p className={item.exitCode === 0 ? "text-emerald-600" : "text-destructive"}>
               Process exited with code {item.exitCode}
@@ -175,7 +175,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
               Open diff
             </Button>
           ) : null}
-          {item.diffStr ? <StructuredValue value={item.diffStr} /> : null}
         </div>
       ) : null}
 
@@ -225,21 +224,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "dynamic_tool" ? (
-        <div className="grid gap-2 sm:grid-cols-2">
-          <div>
-            <p className="mb-1 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
-              Input
-            </p>
-            <StructuredValue value={item.input} />
-          </div>
-          {item.output !== undefined ? (
-            <div>
-              <p className="mb-1 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
-                Output
-              </p>
-              <StructuredValue value={item.output} />
-            </div>
-          ) : null}
+        <div>
+          <p className="mb-1 text-[10px] font-medium tracking-wide uppercase text-muted-foreground">
+            Input
+          </p>
+          <StructuredValue value={item.input} />
         </div>
       ) : null}
 
@@ -304,7 +293,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           Structured details
         </summary>
         <div className="border-t border-border/45 p-2">
-          <StructuredValue value={item} />
+          <StructuredValue value={toolItemForDisplay(item)} />
         </div>
       </details>
     </div>

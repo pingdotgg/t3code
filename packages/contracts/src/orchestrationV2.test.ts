@@ -11,6 +11,7 @@ import {
   EventId,
   MessageId,
   NodeId,
+  NonNegativeInt,
   ProjectId,
   ProviderInstanceId,
   ProviderReplayTranscript,
@@ -27,10 +28,12 @@ import {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
@@ -41,9 +44,16 @@ const LegacyShellStreamItem = Schema.Union([
     snapshot: OrchestrationV2ShellSnapshot,
   }),
 ]);
+const LegacySubscribeThreadInput = Schema.Struct({
+  threadId: ThreadId,
+  afterSequence: Schema.optionalKey(NonNegativeInt),
+  requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+});
 const decodeLegacyShellStreamItem = Schema.decodeUnknownSync(LegacyShellStreamItem);
+const decodeLegacySubscribeThreadInput = Schema.decodeUnknownSync(LegacySubscribeThreadInput);
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 const decodeOrchestrationV2CheckpointScope = Schema.decodeUnknownSync(
   OrchestrationV2CheckpointScope,
 );
@@ -59,8 +69,69 @@ const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
 );
 const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(OrchestrationV2ProviderThread);
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
+const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
+  OrchestrationV2SubscribeThreadInput,
+);
 
 describe("orchestration V2 contracts", () => {
+  it("carries command failure metadata through runtime and JSON schemas without output text", () => {
+    const base = {
+      id: "command-item",
+      type: "command_execution",
+      threadId: "thread-1",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: "Command",
+      input: "example",
+      startedAt: null,
+      completedAt: null,
+    };
+    for (const metadata of [
+      {},
+      { outputIndicatesFailure: true },
+      { outputIndicatesFailure: false },
+    ]) {
+      const runtime = decodeOrchestrationV2TurnItem({ ...base, ...metadata, updatedAt: now });
+      const json = decodeOrchestrationV2TurnItemJson({
+        ...base,
+        ...metadata,
+        updatedAt: DateTime.formatIso(now),
+      });
+      expect(runtime.type).toBe("command_execution");
+      expect(json.type).toBe("command_execution");
+      expect(runtime).toMatchObject(metadata);
+      expect(json).toMatchObject(metadata);
+      expect(runtime).not.toHaveProperty("output");
+      expect(json).not.toHaveProperty("output");
+    }
+  });
+
+  it("negotiates bounded socket snapshots as an optional capability", () => {
+    expect(
+      decodeOrchestrationV2SubscribeThreadInput({
+        threadId: "thread-1",
+        acceptBoundedSnapshot: true,
+      }).acceptBoundedSnapshot,
+    ).toBe(true);
+    expect(
+      decodeOrchestrationV2SubscribeThreadInput({ threadId: "thread-1" }).acceptBoundedSnapshot,
+    ).toBeUndefined();
+
+    const legacyDecoded = decodeLegacySubscribeThreadInput({
+      threadId: "thread-1",
+      afterSequence: 12,
+      acceptBoundedSnapshot: true,
+    });
+    expect(legacyDecoded.afterSequence).toBe(12);
+    expect("acceptBoundedSnapshot" in legacyDecoded).toBe(false);
+  });
+
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
     const decoded = decodeLegacyShellStreamItem({
       kind: "snapshot",

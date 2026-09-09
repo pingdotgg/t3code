@@ -20,7 +20,7 @@ The adapter supports:
 
 - creating and resuming local Cursor agent threads;
 - changing the model and model parameters between turns;
-- assistant text, reasoning, tool output, plans, and todo streaming;
+- assistant text, reasoning, tool activity, plans, and todo streaming;
 - thread-scoped T3 Code MCP tools;
 - image attachments;
 - interruption, queued app messages, and orchestrator-owned interrupt/restart steering;

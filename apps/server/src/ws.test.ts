@@ -1,12 +1,16 @@
 import { assert, it } from "@effect/vitest";
+import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
-import { hasCompatibleOrchestrationProtocol, resolveAvailableEditorsForConfig } from "./ws.ts";
-import { ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
+import {
+  hasCompatibleOrchestrationProtocol,
+  resolveAvailableEditorsForConfig,
+  shouldUseBoundedThreadSnapshot,
+} from "./ws.ts";
 
 it("accepts only the current orchestration protocol before websocket RPC setup", () => {
   assert.isTrue(
@@ -20,6 +24,12 @@ it("accepts only the current orchestration protocol before websocket RPC setup",
       new URL(`https://host.test/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION - 1}`),
     ),
   );
+});
+
+it("keeps full thread snapshot fallback unless the client opts into bounded history", () => {
+  assert.isFalse(shouldUseBoundedThreadSnapshot({}));
+  assert.isFalse(shouldUseBoundedThreadSnapshot({ acceptBoundedSnapshot: false }));
+  assert.isTrue(shouldUseBoundedThreadSnapshot({ acceptBoundedSnapshot: true }));
 });
 
 it.effect("does not block server config when editor discovery never resolves", () =>
