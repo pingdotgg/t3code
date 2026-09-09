@@ -360,7 +360,6 @@ export class TextGenerationError extends Schema.TaggedError<TextGenerationError>
     operation: Schema.String,
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),
-    retryable: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
