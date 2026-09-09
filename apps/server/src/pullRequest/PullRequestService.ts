@@ -1530,33 +1530,30 @@ export const make = Effect.gen(function* () {
   }
   const heldFileRevisions = new Map<string, HeldFileRevisions>();
   const refreshingFileRevisions = new Set<string>();
+  /** Bumped by a whole-workspace refresh, the one drop no single reference's epoch covers. */
+  let everyFileRevisionEpoch = 0;
   /**
-   * Moved every time a held answer is dropped. A refresh already in flight when that happens
-   * still answers its own caller, and its answer is simply not kept: it was taken against a head
-   * the reader has since asked to stop believing, and keeping it would put the dropped entry
-   * straight back. One counter for every scope rather than one each, so an unrelated refresh
-   * costs an in-flight read its place in the cache and nothing else.
+   * Carries the reference's epoch like the read it serves, so whatever moved the head strands
+   * what was held against the old one, including an answer still in flight, which stores under
+   * the key it began with. Normalised, because a reference arrives spelled however the client
+   * spelled it while the project carries the remote's own spelling.
    */
-  let fileRevisionsGeneration = 0;
-  /**
-   * Normalised, because a reference reaches here spelled however the client spelled it while the
-   * project carries the remote's own spelling, and a refresh that missed by a capital would leave
-   * the held answer standing.
-   */
-  const fileRevisionsScope = (projectId: string, repository: string, number: number) =>
-    `${projectId} ${repository.trim().toLowerCase()} ${number}`;
+  const fileRevisionsKey = (ref: PullRequestRef) =>
+    [
+      refEpoch(ref),
+      everyFileRevisionEpoch,
+      ref.projectId,
+      ref.repository.trim().toLowerCase(),
+      ref.number,
+    ].join(" ");
 
   const recordFileRevisions = (
-    scope: string,
+    key: string,
     paths: ReadonlyArray<string>,
     answer: ReadonlyMap<string, string>,
-    generation: number,
   ) =>
     Effect.map(Clock.currentTimeMillis, (at) => {
-      // Answered from, never stored: the caller asked for this and it is as fresh as anything
-      // could be, but the scope it belongs to has been dropped since the read began.
-      if (generation !== fileRevisionsGeneration) return answer;
-      const held = heldFileRevisions.get(scope);
+      const held = heldFileRevisions.get(key);
       // Past the stale window the old entry is not worth merging into: it would carry paths
       // nobody has asked about since, at revisions the head has long moved off.
       const carried =
@@ -1573,7 +1570,7 @@ export const make = Effect.gen(function* () {
         // cleared one on the next answer that had to stop short.
         if (revision !== undefined) revisions.set(path, revision);
       }
-      heldFileRevisions.delete(scope);
+      heldFileRevisions.delete(key);
       if (heldFileRevisions.size >= FILE_REVISIONS_CACHE_CAPACITY) {
         const oldest = heldFileRevisions.keys().next().value;
         if (oldest !== undefined) heldFileRevisions.delete(oldest);
@@ -1585,26 +1582,16 @@ export const make = Effect.gen(function* () {
       const stamped = [...revisions.keys()].every((path) => answer.has(path))
         ? at
         : (carried?.at ?? at);
-      heldFileRevisions.set(scope, { at: stamped, asked, revisions });
+      heldFileRevisions.set(key, { at: stamped, asked, revisions });
       return revisions;
     });
 
   /** A held entry that covers every path asked for and is still worth answering from. */
-  const heldFileRevisionsFor = (scope: string, paths: ReadonlyArray<string>, now: number) => {
-    const held = heldFileRevisions.get(scope);
+  const heldFileRevisionsFor = (key: string, paths: ReadonlyArray<string>, now: number) => {
+    const held = heldFileRevisions.get(key);
     if (held === undefined) return null;
     if (now - held.at > Duration.toMillis(FILE_REVISIONS_STALE_WINDOW)) return null;
     return paths.every((path) => held.asked.has(path)) ? held : null;
-  };
-
-  const forgetFileRevisions = (scope: string) => {
-    heldFileRevisions.delete(scope);
-    fileRevisionsGeneration += 1;
-  };
-
-  const forgetEveryFileRevision = () => {
-    heldFileRevisions.clear();
-    fileRevisionsGeneration += 1;
   };
 
   /**
@@ -1619,43 +1606,43 @@ export const make = Effect.gen(function* () {
    */
   const fileRevisionsOf = (
     project: SupportedProject,
-    number: number,
+    ref: PullRequestRef,
     paths: ReadonlyArray<string>,
     operation: string,
     freshness: "held" | "fresh" = "held",
   ): Effect.Effect<ReadonlyMap<string, string> | null, PullRequestError> => {
     const read = project.api.getFileRevisions;
     if (read === undefined) return Effect.succeed(null);
-    const scope = fileRevisionsScope(project.project.id, project.repository, number);
     // Suspended, so a held answer costs the host nothing: a provider is free to do its work as
     // the request is built rather than as the effect is run.
     const fetch = Effect.suspend(() => {
-      const generation = fileRevisionsGeneration;
+      const key = fileRevisionsKey(ref);
       return read({
         cwd: project.project.workspaceRoot,
         repository: project.repository,
         host: project.host,
-        number,
+        number: ref.number,
         paths,
       }).pipe(
         Effect.mapError(toPullRequestError(operation)),
-        Effect.flatMap((answer) => recordFileRevisions(scope, paths, answer.revisions, generation)),
+        Effect.flatMap((answer) => recordFileRevisions(key, paths, answer.revisions)),
       );
     });
     return Effect.flatMap(Clock.currentTimeMillis, (now) => {
-      const held = heldFileRevisionsFor(scope, paths, now);
+      const key = fileRevisionsKey(ref);
+      const held = heldFileRevisionsFor(key, paths, now);
       if (held === null) return fetch;
       if (now - held.at <= Duration.toMillis(FILE_REVISIONS_CACHE_TTL))
         return Effect.succeed(held.revisions);
       if (freshness === "fresh") return fetch;
-      if (refreshingFileRevisions.has(scope)) return Effect.succeed(held.revisions);
+      if (refreshingFileRevisions.has(key)) return Effect.succeed(held.revisions);
       // Its own fiber rather than a child: the caller has been answered and is gone before this
       // lands. One at a time per change request, so a page of files costs one host read.
       return Effect.sync(() => {
-        refreshingFileRevisions.add(scope);
+        refreshingFileRevisions.add(key);
         runFork(
           Effect.ignore(fetch).pipe(
-            Effect.ensuring(Effect.sync(() => refreshingFileRevisions.delete(scope))),
+            Effect.ensuring(Effect.sync(() => refreshingFileRevisions.delete(key))),
           ),
         );
       }).pipe(Effect.as(held.revisions));
@@ -1673,12 +1660,12 @@ export const make = Effect.gen(function* () {
    */
   const environmentFilesViewed = (
     project: SupportedProject,
-    number: number,
+    ref: PullRequestRef,
   ): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> =>
     Effect.gen(function* () {
       const viewer = yield* requiredViewerOf(project, "filesViewed");
       const marks = yield* filesViewedStore
-        .list(filesViewedScope(project, number, viewer))
+        .list(filesViewedScope(project, ref.number, viewer))
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
       if (marks.length === 0) return { files: [], truncated: false };
       // These rows are this environment's own. A rate limit or a signed-out CLI costs the marks
@@ -1688,7 +1675,7 @@ export const make = Effect.gen(function* () {
       // merely less informed; a host that answers without the path is stored with no baseline.
       const revisions = yield* fileRevisionsOf(
         project,
-        number,
+        ref,
         marks.map((mark) => mark.path),
         "filesViewed",
       ).pipe(
@@ -1777,7 +1764,7 @@ export const make = Effect.gen(function* () {
       const revisions =
         cleared.length === 0
           ? null
-          : yield* fileRevisionsOf(project, input.number, cleared, "setFilesViewed", "fresh");
+          : yield* fileRevisionsOf(project, input, cleared, "setFilesViewed", "fresh");
       const viewedAt = DateTime.formatIso(yield* DateTime.now);
       yield* filesViewedStore
         .set({
@@ -1810,7 +1797,7 @@ export const make = Effect.gen(function* () {
           }).pipe(Effect.mapError(toPullRequestError("filesViewed")));
         }
         if (project.api.capabilities.viewedFiles === "environment") {
-          return environmentFilesViewed(project, input.number);
+          return environmentFilesViewed(project, input);
         }
         return Effect.fail(
           new PullRequestOperationError({
@@ -2919,20 +2906,14 @@ export const make = Effect.gen(function* () {
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     const reference = input.reference;
     if (reference !== undefined) {
-      return Effect.sync(() => {
-        bumpRefEpoch(reference);
-        // Not keyed by epoch, so this one is dropped by hand rather than stranded.
-        forgetFileRevisions(
-          fileRevisionsScope(reference.projectId, reference.repository, reference.number),
-        );
-      });
+      return Effect.sync(() => bumpRefEpoch(reference));
     }
     // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
     // and that includes who the hosts say they are.
     return Effect.sync(() => {
       listingsEpoch = ++epochCounter;
+      everyFileRevisionEpoch = ++epochCounter;
       viewersByHost.clear();
-      forgetEveryFileRevision();
     }).pipe(Effect.andThen(Cache.invalidateAll(viewerFlights)));
   };
 
@@ -2954,12 +2935,6 @@ export const make = Effect.gen(function* () {
           Effect.sync(() => {
             bumpRefEpoch(input);
             listingsEpoch = ++epochCounter;
-            // Not keyed by epoch, so this one is dropped by hand. Merging or bringing a stale
-            // branch up to date moves the head, and a mark compared against what the head had
-            // before it moved reports a file as cleared that has been pushed to since.
-            forgetFileRevisions(
-              fileRevisionsScope(input.projectId, input.repository, input.number),
-            );
           }),
         ),
       );
@@ -2969,10 +2944,6 @@ export const make = Effect.gen(function* () {
     const repository = yield* runAction(input);
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
-    // Not keyed by epoch, so this one is dropped by hand. Merging or bringing a stale branch up
-    // to date moves the head, and a mark compared against what the head had before it moved
-    // reports a file as cleared that has been pushed to since.
-    forgetFileRevisions(fileRevisionsScope(input.projectId, repository, input.number));
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
       const confirmed = yield* summaryUncached({ ...input, repository }).pipe(

@@ -4573,6 +4573,26 @@ it.effect("keeps the version it last heard when a later read of the head stops s
   }),
 );
 
+it.effect("re-asks what the head has of a marked file after a whole-workspace refresh", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // A push nobody told this environment about. No single reference has moved, so the held
+    // answer goes only because the refresh is the reader asking for all of it to be read again.
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.invalidate({});
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
 it.effect("forgets what the head had of a marked file once a mutation moves the head", () =>
   Effect.gen(function* () {
     const revisions = new Map([["src/a.ts", "blob-a"]]);
