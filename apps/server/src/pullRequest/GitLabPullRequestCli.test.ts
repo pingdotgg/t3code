@@ -69,6 +69,7 @@ function notes(count: number, firstId: number): string {
 /** Who opened the merge request, and somebody already reviewing it. */
 const author = { id: 1, username: "bilal" };
 const reviewer = { id: 5, username: "octocat" };
+const diffRefs = { base_sha: "base", head_sha: "head", start_sha: "start" };
 
 /** One merge request as `/merge_requests/:iid` answers with it. */
 function mergeRequestJson(overrides: Record<string, unknown>): string {
@@ -390,7 +391,9 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("merges immediately rather than leaving auto-merge armed", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ diff_refs: diffRefs }))))
+        .mockReturnValueOnce(Effect.succeed(output("")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       yield* cli.runMergeRequestAction({
@@ -401,7 +404,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         mergeMethod: "squash",
       });
 
-      expect(argsOfCall(0)).toEqual([
+      expect(argsOfCall(1)).toEqual([
         "mr",
         "merge",
         "7",
@@ -410,13 +413,17 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "--auto-merge=false",
         "--yes",
         "--squash",
+        "--sha",
+        "head",
       ]);
     }),
   );
 
   it.effect("arms auto-merge with the same strategy a merge would have used", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("")));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ diff_refs: diffRefs }))))
+        .mockReturnValueOnce(Effect.succeed(output("")));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       yield* cli.runMergeRequestAction({
@@ -427,7 +434,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         mergeMethod: "squash",
       });
 
-      expect(argsOfCall(0)).toEqual([
+      expect(argsOfCall(1)).toEqual([
         "mr",
         "merge",
         "7",
@@ -436,7 +443,35 @@ layer("GitLabPullRequestCli.layer", (it) => {
         "--auto-merge=true",
         "--yes",
         "--squash",
+        "--sha",
+        "head",
       ]);
+    }),
+  );
+
+  it.effect.each([
+    { action: "merge", label: "merge" },
+    { action: "enable-auto-merge", label: "arm auto-merge" },
+  ] as const)("does not $label without the current diff revisions", ({ action }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(mergeRequestJson({ diff_refs: null }))),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action,
+          mergeMethod: "squash",
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitLabDiffRefsUnavailableError");
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      expect(argsOfCall(0)).toEqual(["api", "projects/acme%2Fweb/merge_requests/7"]);
     }),
   );
 

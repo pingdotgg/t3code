@@ -1273,6 +1273,27 @@ export const make = Effect.gen(function* () {
         }).pipe(Effect.asVoid);
       }
       const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
+      // GitLab projects can require the current source SHA for every merge attempt.
+      if (input.action === "merge" || input.action === "enable-auto-merge") {
+        return getDiffRefs(input).pipe(
+          Effect.flatMap((refs) =>
+            gitlab.execute({
+              cwd: input.cwd,
+              args: [
+                "mr",
+                subcommand!,
+                String(input.number),
+                "--repo",
+                input.repository,
+                ...flags,
+                "--sha",
+                refs.headSha,
+              ],
+            }),
+          ),
+          Effect.asVoid,
+        );
+      }
       return gitlab
         .execute({
           cwd: input.cwd,
