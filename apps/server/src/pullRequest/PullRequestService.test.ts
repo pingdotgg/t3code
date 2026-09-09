@@ -1564,6 +1564,48 @@ it.effect("refuses a repository that does not belong to the requested project", 
   }),
 );
 
+it.effect("caches stack membership separately from action details", () =>
+  Effect.gen(function* () {
+    const reads: Array<boolean> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestStack: (input) =>
+            Effect.sync(() => {
+              reads.push(input.includeDetails === true);
+              return {
+                id: "9",
+                number: 3,
+                url: "https://github.com/acme/web/stacks/3",
+                base: "main",
+                layers: [
+                  {
+                    number: 7,
+                    headBranch: "a",
+                    state: "open" as const,
+                    ...(input.includeDetails ? { title: "First layer", headSha: "abc" } : {}),
+                  },
+                ],
+              };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 7 };
+    yield* service.stack(reference, { includeDetails: false });
+    yield* service.stack(reference, { includeDetails: false });
+    const detail = yield* service.stack(reference);
+    yield* service.stack(reference);
+    assert.deepStrictEqual(reads, [false, true]);
+    assert.strictEqual(detail?.layers[0]?.headSha, "abc");
+    yield* service.invalidate({ reference });
+    yield* service.stack(reference, { includeDetails: false });
+    yield* service.stack(reference);
+    assert.deepStrictEqual(reads, [false, true, false, true]);
+  }),
+);
+
 it.effect("reads a host-native stack through the provider and null where it has none", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

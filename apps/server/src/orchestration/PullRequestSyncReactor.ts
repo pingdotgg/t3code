@@ -256,7 +256,7 @@ export const make = Effect.gen(function* () {
             entry.link.snapshot === null || !snapshotFieldsEqual(entry.link.snapshot, fields),
         );
       const fetchedStack = needsStack
-        ? yield* pullRequests.stack(ref).pipe(
+        ? yield* pullRequests.stack(ref, { includeDetails: false }).pipe(
             Effect.map((stack) => ({
               stack: stack === null ? null : ({ kind: "native", ...stack } as const),
             })),

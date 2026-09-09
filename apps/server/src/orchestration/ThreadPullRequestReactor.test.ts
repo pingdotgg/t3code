@@ -1,9 +1,11 @@
 import {
+  CheckpointRef,
   EventId,
   GitManagerError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationProjectShell,
@@ -311,54 +313,79 @@ describe("ThreadPullRequestReactor", () => {
     ),
   );
 
-  it.effect("refreshes discovery after a turn ends without client demand", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const current = thread("turn-thread");
-        const detected = yield* Ref.make<GitBranchPullRequest | null>(null);
-        const fixture = yield* makeHarness({
-          threads: [current],
-          branchPullRequest: (_input, options) =>
-            options?.refresh
-              ? Ref.set(detected, branchPullRequest()).pipe(Effect.andThen(Ref.get(detected)))
-              : Ref.get(detected),
-        });
-        yield* Effect.gen(function* () {
-          const reactor = yield* fixture.start();
-          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
-          yield* fixture.publish({
-            type: "thread.session-set",
-            sequence: 2,
-            eventId: EventId.make("turn-finished"),
-            aggregateKind: "thread",
-            aggregateId: current.id,
-            occurredAt: NOW,
-            commandId: null,
-            causationEventId: null,
-            correlationId: null,
-            metadata: {},
-            payload: {
-              threadId: current.id,
-              session: {
-                threadId: current.id,
-                status: "ready",
-                providerName: "Codex",
-                runtimeMode: "full-access",
-                activeTurnId: null,
-                lastError: null,
-                updatedAt: NOW,
-              },
-            },
+  it.effect.each(["session-first", "checkpoint-first"] as const)(
+    "refreshes discovery once after a turn ends with %s event ordering",
+    (order) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const current = thread("turn-thread");
+          const detected = yield* Ref.make<GitBranchPullRequest | null>(null);
+          const fixture = yield* makeHarness({
+            threads: [current],
+            branchPullRequest: (_input, options) =>
+              options?.refresh
+                ? Ref.set(detected, branchPullRequest()).pipe(Effect.andThen(Ref.get(detected)))
+                : Ref.get(detected),
           });
-          yield* Queue.take(fixture.reads);
-          yield* reactor.drain;
-          expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
-          expect((yield* Ref.get(fixture.branchCalls)).filter((call) => call.refresh)).toHaveLength(
-            1,
-          );
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
+          yield* Effect.gen(function* () {
+            const reactor = yield* fixture.start();
+            expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
+            const sessionEvent: OrchestrationEvent = {
+              type: "thread.session-set",
+              sequence: 2,
+              eventId: EventId.make("turn-finished"),
+              aggregateKind: "thread",
+              aggregateId: current.id,
+              occurredAt: NOW,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: {
+                threadId: current.id,
+                session: {
+                  threadId: current.id,
+                  status: "ready",
+                  providerName: "Codex",
+                  runtimeMode: "full-access",
+                  activeTurnId: null,
+                  lastError: null,
+                  updatedAt: NOW,
+                },
+              },
+            };
+            const checkpointEvent: OrchestrationEvent = {
+              ...sessionEvent,
+              type: "thread.turn-diff-completed",
+              sequence: 3,
+              eventId: EventId.make("checkpoint-finished"),
+              payload: {
+                threadId: current.id,
+                turnId: TurnId.make("turn"),
+                checkpointTurnCount: 1,
+                checkpointRef: CheckpointRef.make("checkpoint"),
+                status: "ready",
+                files: [],
+                assistantMessageId: null,
+                completedAt: NOW,
+              },
+            };
+            const events =
+              order === "session-first"
+                ? [sessionEvent, checkpointEvent]
+                : [checkpointEvent, sessionEvent];
+            for (const event of events) {
+              yield* fixture.publish(event);
+              yield* Queue.take(fixture.reads);
+              yield* reactor.drain;
+            }
+            expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
+            expect(
+              (yield* Ref.get(fixture.branchCalls)).filter((call) => call.refresh),
+            ).toHaveLength(1);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
   );
 
   it.effect("uses live worktrees and falls back to the project for removed worktrees", () =>
@@ -455,54 +482,56 @@ describe("ThreadPullRequestReactor", () => {
     ),
   );
 
-  it.effect("retries failed settled backfills and stops querying them after success", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const online = yield* Ref.make(false);
-        const fixture = yield* makeHarness({
-          threads: [
-            thread("backfill", { settledOverride: "settled", settledAt: NOW }),
-            thread("known", {
-              branch: "known",
-              settledOverride: "settled",
-              settledAt: NOW,
-              branchPullRequest: reference(1),
-            }),
-          ],
-          branchPullRequest: ({ cwd }) =>
-            Ref.get(online).pipe(
-              Effect.flatMap((connected) =>
-                connected
-                  ? Effect.succeed(branchPullRequest(42, "merged"))
-                  : Effect.fail(
-                      new GitManagerError({
-                        operation: "branchPullRequest",
-                        cwd,
-                        detail: "Offline",
-                      }),
-                    ),
+  it.effect.each(["settled", null] as const)(
+    "retries settled backfills and stops after success with settledOverride %s",
+    (settledOverride) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const online = yield* Ref.make(false);
+          const fixture = yield* makeHarness({
+            threads: [
+              thread("backfill", { settledOverride, settledAt: NOW }),
+              thread("known", {
+                branch: "known",
+                settledOverride,
+                settledAt: NOW,
+                branchPullRequest: reference(1),
+              }),
+            ],
+            branchPullRequest: ({ cwd }) =>
+              Ref.get(online).pipe(
+                Effect.flatMap((connected) =>
+                  connected
+                    ? Effect.succeed(branchPullRequest(42, "merged"))
+                    : Effect.fail(
+                        new GitManagerError({
+                          operation: "branchPullRequest",
+                          cwd,
+                          detail: "Offline",
+                        }),
+                      ),
+                ),
               ),
-            ),
-        });
-        yield* Effect.gen(function* () {
-          const reactor = yield* fixture.start();
-          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
-          yield* Ref.set(online, true);
-          yield* TestClock.adjust("1 minute");
-          yield* Queue.take(fixture.reads);
-          yield* reactor.drain;
-          expect((yield* Ref.get(fixture.commands))[0]?.threadId).toBe("backfill");
-          yield* TestClock.adjust("1 minute");
-          yield* Queue.take(fixture.reads);
-          yield* reactor.drain;
-          expect((yield* Ref.get(fixture.branchCalls)).map((call) => call.branch)).toEqual([
-            "feature",
-            "feature",
-            "feature",
-          ]);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* fixture.start();
+            expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
+            yield* Ref.set(online, true);
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(fixture.reads);
+            yield* reactor.drain;
+            expect((yield* Ref.get(fixture.commands))[0]?.threadId).toBe("backfill");
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(fixture.reads);
+            yield* reactor.drain;
+            expect((yield* Ref.get(fixture.branchCalls)).map((call) => call.branch)).toEqual([
+              "feature",
+              "feature",
+              "feature",
+            ]);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
   );
 
   it.effect("stops retrying a settled backfill after repeated lookup failures", () =>

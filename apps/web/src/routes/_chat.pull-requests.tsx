@@ -810,7 +810,31 @@ function PullRequestsRouteView() {
   // from the first moment rather than the second: a button that stays live through the slow half
   // of its own work is a button that gets pressed again, and buys the whole cascade twice.
   const [invalidating, setInvalidating] = useState(false);
-  const refreshFromHost = async (includeDetail = true) => {
+  const refreshListAndStats = (
+    requestedStatsScope = statsScopeRef.current,
+    actedEnvironmentId?: EnvironmentId,
+  ) => {
+    refreshList(true, actedEnvironmentId);
+    const visible = visibleStatsKeys.current;
+    const batches = pullRequestStatsRefreshBatches({
+      requestedScope: requestedStatsScope,
+      currentScope: statsScopeRef.current,
+      entriesByKey: entriesByStatsKey.current,
+      candidateKeys: visible.key === requestedStatsScope.key ? visible.values : new Set(),
+      statsByRow: statsByRowRef.current,
+    });
+    if (batches !== null) {
+      setStatsTargetState({ key: requestedStatsScope.key, batches });
+      statsQuery.refresh(
+        batches
+          .filter(({ environmentId }) =>
+            actedEnvironmentId === undefined ? true : environmentId === actedEnvironmentId,
+          )
+          .map(({ environmentId, input }) => ({ environmentId, input })),
+      );
+    }
+  };
+  const refreshFromHost = async () => {
     const requestedStatsScope = statsScopeRef.current;
     setInvalidating(true);
     try {
@@ -822,20 +846,8 @@ function PullRequestsRouteView() {
     } finally {
       setInvalidating(false);
     }
-    refreshList(true);
-    const visible = visibleStatsKeys.current;
-    const batches = pullRequestStatsRefreshBatches({
-      requestedScope: requestedStatsScope,
-      currentScope: statsScopeRef.current,
-      entriesByKey: entriesByStatsKey.current,
-      candidateKeys: visible.key === requestedStatsScope.key ? visible.values : new Set(),
-      statsByRow: statsByRowRef.current,
-    });
-    if (batches !== null) {
-      setStatsTargetState({ key: requestedStatsScope.key, batches });
-      statsQuery.refresh(batches.map(({ environmentId, input }) => ({ environmentId, input })));
-    }
-    if (includeDetail) setDetailRefreshToken((token) => token + 1);
+    refreshListAndStats(requestedStatsScope);
+    setDetailRefreshToken((token) => token + 1);
   };
   const refreshing = invalidating || listQuery.isPending;
 
@@ -1069,17 +1081,28 @@ function PullRequestsRouteView() {
   // re-reads only its own slice, so the rows loaded before it would never see a merge, a close,
   // or a retitle. Going back to a single page long enough to cover everything on screen lets the
   // merge above bring every row up to date in place.
-  const refreshList = (includeRelated = false) => {
-    const related = includeRelated
-      ? [
-          ...baselineTargets,
-          ...facetTargets,
-          ...partitionTargets.authored,
-          ...partitionTargets.reviewing,
-        ]
-      : [];
+  const refreshList = (includeRelated = false, actedEnvironmentId?: EnvironmentId) => {
+    const related = (
+      includeRelated
+        ? [
+            ...baselineTargets,
+            ...facetTargets,
+            ...partitionTargets.authored,
+            ...partitionTargets.reviewing,
+          ]
+        : []
+    ).filter(
+      ({ environmentId }) =>
+        actedEnvironmentId === undefined || environmentId === actedEnvironmentId,
+    );
     if (sentCursors === null) {
-      listQuery.refresh([...listTargets, ...related]);
+      listQuery.refresh([
+        ...listTargets.filter(
+          ({ environmentId }) =>
+            actedEnvironmentId === undefined || environmentId === actedEnvironmentId,
+        ),
+        ...related,
+      ]);
       return;
     }
     if (related.length > 0) listQuery.refresh(related);
@@ -1995,7 +2018,8 @@ function PullRequestsRouteView() {
               // Host actions can change both readiness and diff size, so refresh the counts
               // alongside the list. The panel already refreshes itself after each action.
               onActed={() => {
-                void refreshFromHost(false);
+                // Mutations already invalidate the host's affected caches.
+                refreshListAndStats(undefined, panelEnvironmentId);
               }}
             />
           </RightPanelTabs>
