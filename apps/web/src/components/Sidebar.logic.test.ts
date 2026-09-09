@@ -29,6 +29,7 @@ import {
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarThreadSection,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
@@ -52,7 +53,6 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
-  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
@@ -82,6 +82,23 @@ describe("animateSidebarLayoutChanges", () => {
 
   it("keeps layout movement while the user is sorting", () => {
     expect(animateSidebarLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
+  });
+});
+
+describe("resolveSidebarThreadSection", () => {
+  it("keeps a pinned thread in the pinned shelf", () => {
+    expect(resolveSidebarThreadSection({ snoozed: false, settled: false, pinned: true })).toBe(
+      "pinned",
+    );
+  });
+
+  it("keeps lifecycle shelves authoritative over a stale pin", () => {
+    expect(resolveSidebarThreadSection({ snoozed: true, settled: true, pinned: true })).toBe(
+      "snoozed",
+    );
+    expect(resolveSidebarThreadSection({ snoozed: false, settled: true, pinned: true })).toBe(
+      "settled",
+    );
   });
 });
 
