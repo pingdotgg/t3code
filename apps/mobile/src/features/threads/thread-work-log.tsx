@@ -99,7 +99,7 @@ function WorkLogIcon(props: {
             ? { ios: "globe", android: "public" }
             : props.icon === "device"
               ? { ios: "iphone", android: "smartphone" }
-            : props.icon
+              : props.icon
       }
       size={14}
       weight="medium"

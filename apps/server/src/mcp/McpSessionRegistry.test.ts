@@ -55,7 +55,7 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
-it.effect("always grants pull-requests and gates preview on the request", () =>
+it.effect("always grants pull-requests and gates browser and device access independently", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry(() => 1_000);
     const withPreview = yield* registry.issue({
@@ -68,6 +68,11 @@ it.effect("always grants pull-requests and gates preview on the request", () =>
       providerInstanceId: ProviderInstanceId.make("codex"),
       capabilities: new Set(),
     });
+    const withDevice = yield* registry.issue({
+      threadId: ThreadId.make("thread-device"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["device"]),
+    });
     const capabilitiesOf = (issued: typeof withPreview) =>
       registry
         .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
@@ -75,6 +80,7 @@ it.effect("always grants pull-requests and gates preview on the request", () =>
 
     expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
     expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
+    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
   }),
 );
 
@@ -91,7 +97,7 @@ it.effect("builds MCP endpoints from the bound server host", () =>
       const registry = yield* makeRegistry(() => 1_000, makeFakeHttpServer(hostname));
       const issued = yield* registry.issue({
         threadId: ThreadId.make(`thread-${hostname}`),
-          providerInstanceId: ProviderInstanceId.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
         capabilities: new Set(["preview"]),
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);

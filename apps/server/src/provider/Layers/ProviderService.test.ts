@@ -4926,7 +4926,9 @@ describe("agent browser access", () => {
 
       const issued = yield* startSessionWith(true, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "preview", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "preview", "pull-requests"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
