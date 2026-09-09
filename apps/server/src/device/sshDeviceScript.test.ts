@@ -57,7 +57,7 @@ const args=process.argv.slice(2); http.createServer((req,res)=>{res.statusCode=f
 const args=process.argv.slice(2);
 const state=process.env.AGENT_DEVICE_STATE_DIR || args[args.indexOf('--state-dir')+1];
 const file=path.join(state,'daemon.json');
-if(args[0]==='daemon') { const data=JSON.parse(fs.readFileSync(file,'utf8')); try {process.kill(data.pid,'SIGTERM')} catch {} }
+if(args[0]==='daemon') { const data=JSON.parse(fs.readFileSync(file,'utf8')); fs.writeFileSync(path.join(state,'stopped-agent'),String(data.pid)); try {process.kill(data.pid,'SIGTERM')} catch {} }
 else if(args[0]==='serve') { const server=http.createServer((req,res)=>res.end('ok')); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token:'test'}));process.send?.('ready');process.disconnect?.();}); }
 else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
@@ -126,7 +126,22 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
             .split("\n");
           expect(stopped).toContain(String(firstHub.pid));
           expect(stopped).not.toContain(String(secondHub.pid));
-          await invoke("one", "stop-agent");
+          // Stop still uses the recorded entry when a future pinned package is not installed yet.
+          const originalScript = remoteDeviceScript("one", "stop-agent");
+          const upgradedStop = NodePath.join(home, "upgraded-stop.cjs");
+          await NodeFSP.writeFile(
+            upgradedStop,
+            originalScript.replace(AGENT_DEVICE_VERSION, "999.0.0"),
+          );
+          await exec(process.execPath, [upgradedStop], {
+            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+          });
+          const daemon = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/daemon.json"), "utf8"),
+          );
+          expect(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/stopped-agent"), "utf8"),
+          ).toBe(String(daemon.pid));
           expect((await fetch(`http://127.0.0.1:${repaired.hubPort}/readyz`)).ok).toBe(true);
           await invoke("one", "stop");
           expect((await fetch(`http://127.0.0.1:${second.hubPort}/readyz`)).ok).toBe(true);

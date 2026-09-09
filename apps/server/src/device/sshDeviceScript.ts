@@ -114,13 +114,14 @@ async function install(name, version, entry) {
   try {
   const hubFile = path.join(state, 'hub.json');
   const daemonFile = path.join(state, 'daemon.json');
+  const agentFile = path.join(state, 'agent.json');
   if (mode === 'stop' || mode === 'stop-agent') {
     const hub = read(hubFile);
     if (mode === 'stop' && hub && hub.owner === owner) {
       stopHub(hub);
       fs.rmSync(hubFile, { force: true });
     }
-    const entry = path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
+    const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
     if (fs.existsSync(entry)) run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]);
     return;
   }
@@ -157,6 +158,7 @@ async function install(name, version, entry) {
   let agentResult = {};
   if (mode === 'agent-start') {
   const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
+  write(agentFile, { entryPath: agentEntry });
   let daemon = read(daemonFile);
   if (!daemon || !await healthy(daemon.httpPort, '/health')) {
     fs.rmSync(daemonFile, { force: true });
