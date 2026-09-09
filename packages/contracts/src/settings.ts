@@ -52,6 +52,9 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+// "repository_path" is a legacy alias of "repository": both group checkouts of
+// one repository path and keep nested workspaces separate. Stored preferences
+// still carry it, so it stays decodable.
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",

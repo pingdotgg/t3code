@@ -124,7 +124,7 @@ const ProjectIconPickerDialog = lazy(() =>
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
-  repository_path: "Group by repository path",
+  repository_path: "Group by repository",
   separate: "Keep separate",
 };
 
@@ -1307,9 +1307,6 @@ function ProjectDetail({
                   </SelectItem>
                   <SelectItem hideIndicator value="repository">
                     {PROJECT_GROUPING_MODE_LABELS.repository}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository_path">
-                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
                   </SelectItem>
                   <SelectItem hideIndicator value="separate">
                     {PROJECT_GROUPING_MODE_LABELS.separate}

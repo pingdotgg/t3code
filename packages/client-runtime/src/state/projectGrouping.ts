@@ -96,17 +96,18 @@ export function resolveProjectGroupingMode(
   );
 }
 
+/**
+ * Groups checkouts of one repository path, so the same workspace opened in
+ * several environments or worktrees shares a row. Nested workspaces keep their
+ * repo-relative path in the key: a monorepo package is its own project, and
+ * collapsing it into the repository row would leave no way to target it.
+ */
 function deriveRepositoryScopedKey(
   project: Pick<EnvironmentProject, "workspaceRoot" | "repositoryIdentity">,
-  groupingMode: SidebarProjectGroupingMode,
 ): string | null {
   const canonicalKey = project.repositoryIdentity?.canonicalKey;
   if (!canonicalKey) {
     return null;
-  }
-
-  if (groupingMode === "repository") {
-    return canonicalKey;
   }
 
   const relativeProjectPath = deriveRepositoryRelativeProjectPath(project);
@@ -134,7 +135,7 @@ export function deriveLogicalProjectKey(
   }
 
   return (
-    deriveRepositoryScopedKey(project, groupingMode) ??
+    deriveRepositoryScopedKey(project) ??
     derivePhysicalProjectKey(project) ??
     scopedProjectKey(scopeProjectRef(project.environmentId, project.id))
   );

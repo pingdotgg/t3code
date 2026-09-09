@@ -24,12 +24,7 @@ const GROUPING_OPTIONS: ReadonlyArray<{
   {
     mode: "repository",
     label: "Group by repository",
-    description: "Matching repositories appear as one project.",
-  },
-  {
-    mode: "repository_path",
-    label: "Group by repository path",
-    description: "Keep monorepo paths separate.",
+    description: "Matching checkouts appear as one project. Nested workspaces stay separate.",
   },
   {
     mode: "separate",

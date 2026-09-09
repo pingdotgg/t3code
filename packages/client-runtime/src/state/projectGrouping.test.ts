@@ -136,6 +136,38 @@ describe("buildProjectGroups", () => {
     }
   });
 
+  it("keeps a monorepo workspace out of its parent repository's group", () => {
+    const rootIdentity = { ...repositoryIdentity, rootPath: "/work/t3code" };
+    const projects = [
+      makeProject("root", "/work/t3code", { repositoryIdentity: rootIdentity }),
+      makeProject("java", "/work/t3code/java", { repositoryIdentity: rootIdentity }),
+      makeProject("account_approval", "/work/t3code/python/account_approval", {
+        repositoryIdentity: rootIdentity,
+      }),
+    ];
+
+    for (const mode of ["repository", "repository_path"] as const) {
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups.map((group) => group.label)).toEqual(["root", "java", "account_approval"]);
+    }
+  });
+
+  it("groups checkouts of one monorepo workspace across environments", () => {
+    const projects = [
+      makeProject("local", "/work/t3code/java", {
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/work/t3code" },
+      }),
+      makeProject("remote", "/srv/t3code/java", {
+        environmentId: EnvironmentId.make("remote-environment"),
+        repositoryIdentity: { ...repositoryIdentity, rootPath: "/srv/t3code" },
+      }),
+    ];
+
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["local", "remote"]);
+  });
+
   it("uses a shared custom title as the repository group's label", () => {
     const projects = [
       makeProject("first", "/work/t3code", { title: "Custom project" }),

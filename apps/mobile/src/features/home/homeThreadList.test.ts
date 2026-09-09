@@ -524,7 +524,7 @@ describe("buildHomeThreadGroups", () => {
     expect(groups[0]?.threads.map((thread) => thread.environmentId)).toEqual([remoteEnvironmentId]);
   });
 
-  it("matches web repository, repository-path, and separate grouping modes", () => {
+  it("keeps monorepo workspaces separate in every web grouping mode", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const repositoryIdentity = {
       canonicalKey: "github.com/t3tools/t3code",
@@ -564,17 +564,11 @@ describe("buildHomeThreadGroups", () => {
       }),
     );
 
-    expect(buildGroups(projects, threads, { projectGroupingMode: "repository" })).toHaveLength(1);
-    expect(
-      buildGroups(projects, threads, { projectGroupingMode: "repository_path" }).map(
-        (group) => group.title,
-      ),
-    ).toEqual(["Mobile", "Web"]);
-    expect(
-      buildGroups(projects, threads, { projectGroupingMode: "separate" }).map(
-        (group) => group.title,
-      ),
-    ).toEqual(["Mobile", "Web"]);
+    for (const projectGroupingMode of ["repository", "repository_path", "separate"] as const) {
+      expect(
+        buildGroups(projects, threads, { projectGroupingMode }).map((group) => group.title),
+      ).toEqual(["Mobile", "Web"]);
+    }
   });
 
   it("default view shows only threads from the last 5 days", () => {

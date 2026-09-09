@@ -19,6 +19,16 @@ Reset that list to use shared actions again. Existing project actions are preser
 Project names, icons, removal, and importing actions from a checkout remain project-specific.
 When there are several checkouts, the checkout picker selects which actions and grouping to edit.
 
+## Project grouping
+
+Project grouping combines checkouts of one repository folder into a single row. A project at
+`~/code/app` and the same folder on another machine or in a worktree share that row.
+
+Folders inside a repository stay separate. Add `~/code/app` and `~/code/app/services/api` as two
+projects, and each keeps its own row. Start a thread in either one.
+
+Turn grouping off to give every checkout its own row.
+
 ## Project icons
 
 Choose an icon, emoji, or image from the project to make it easier to recognize. The choice applies
