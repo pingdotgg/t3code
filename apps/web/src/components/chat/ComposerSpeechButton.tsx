@@ -145,7 +145,7 @@ export function ComposerSpeechStatus(props: {
 
   return (
     <div
-      className="flex h-9 min-w-0 flex-1 items-center gap-2"
+      className="me-2 flex h-9 min-w-0 flex-1 items-center gap-2"
       role="status"
       aria-live={isRecording ? "off" : "polite"}
       aria-label={presentation.status}
@@ -155,7 +155,7 @@ export function ComposerSpeechStatus(props: {
       ) : (
         <span
           className={cn(
-            "min-w-0 flex-1 truncate text-center text-sm text-secondary-label",
+            "min-w-0 flex-1 truncate text-right text-sm text-secondary-label",
             isError && "text-destructive",
           )}
         >

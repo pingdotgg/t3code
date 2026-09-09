@@ -3545,10 +3545,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                   {speechInput.available ? (
                     <>
-                      <ComposerSpeechCancelButton
-                        state={speechInput.state}
-                        onCancel={() => void speechInput.cancel()}
-                      />
                       <ComposerSpeechButton
                         state={speechInput.state}
                         progress={speechInput.progress}
@@ -3557,6 +3553,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         }
                         onStart={() => void speechInput.start()}
                         onStop={() => void speechInput.stop()}
+                        onCancel={() => void speechInput.cancel()}
+                      />
+                      <ComposerSpeechCancelButton
+                        state={speechInput.state}
                         onCancel={() => void speechInput.cancel()}
                       />
                     </>
