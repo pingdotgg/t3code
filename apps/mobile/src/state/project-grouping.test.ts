@@ -15,9 +15,16 @@ describe("mobile project grouping preferences", () => {
     expect(
       resolveMobileProjectGroupingSettings({
         projectGroupingEnabled: false,
-        projectGroupingMode: "repository_path",
+        projectGroupingMode: "repository",
       }).sidebarProjectGroupingMode,
-    ).toBe("repository_path");
+    ).toBe("repository");
+  });
+
+  it("reads the legacy repository_path mode as repository", () => {
+    expect(
+      resolveMobileProjectGroupingSettings({ projectGroupingMode: "repository_path" })
+        .sidebarProjectGroupingMode,
+    ).toBe("repository");
   });
 
   it("dual-writes the legacy boolean for rollback compatibility", () => {

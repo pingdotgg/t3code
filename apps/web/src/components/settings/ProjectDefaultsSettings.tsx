@@ -30,6 +30,7 @@ import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { normalizeProjectGroupingMode } from "../../logicalProject";
 import { PROJECT_GROUPING_MODE_LABELS } from "./ProjectSettingsPanel";
 import { ProjectDefaultActionsSettings } from "./ProjectDefaultActionsSettings";
 import { searchableSetting } from "./settingsSearch";
@@ -420,7 +421,7 @@ export function ProjectDefaultsSettings({
           }
           control={
             <Select
-              value={clientSettings.sidebarProjectGroupingMode}
+              value={normalizeProjectGroupingMode(clientSettings.sidebarProjectGroupingMode)}
               onValueChange={(value) => {
                 if (value === "repository" || value === "repository_path" || value === "separate")
                   void updateClientSettings({ sidebarProjectGroupingMode: value });
@@ -428,7 +429,11 @@ export function ProjectDefaultsSettings({
             >
               <SelectTrigger size="sm" aria-label="Default project grouping">
                 <SelectValue>
-                  {PROJECT_GROUPING_MODE_LABELS[clientSettings.sidebarProjectGroupingMode]}
+                  {
+                    PROJECT_GROUPING_MODE_LABELS[
+                      normalizeProjectGroupingMode(clientSettings.sidebarProjectGroupingMode)
+                    ]
+                  }
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

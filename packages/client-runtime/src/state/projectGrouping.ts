@@ -16,10 +16,26 @@ export interface ProjectGroupingSettings {
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
 
+/**
+ * Maps the legacy "repository_path" preference onto "repository". Both group
+ * checkouts of one repository path, so callers and pickers only ever see the
+ * two modes that still differ.
+ */
+export function normalizeProjectGroupingMode(
+  mode: SidebarProjectGroupingMode,
+): SidebarProjectGroupingMode {
+  return mode === "repository_path" ? "repository" : mode;
+}
+
 export function selectProjectGroupingSettings(settings: ClientSettings): ProjectGroupingSettings {
   return {
-    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+    sidebarProjectGroupingMode: normalizeProjectGroupingMode(settings.sidebarProjectGroupingMode),
+    sidebarProjectGroupingOverrides: Object.fromEntries(
+      Object.entries(settings.sidebarProjectGroupingOverrides).map(([key, mode]) => [
+        key,
+        normalizeProjectGroupingMode(mode),
+      ]),
+    ),
   };
 }
 
@@ -55,8 +71,12 @@ function deriveRepositoryRelativeProjectPath(
     return "";
   }
 
+  // A repository rooted at a filesystem root ("/" or "c:\\") already ends with
+  // its separator; appending another one stops every nested path from matching.
   const separator = normalizedRootPath.includes("\\") ? "\\" : "/";
-  const rootPrefix = `${normalizedRootPath}${separator}`;
+  const rootPrefix = normalizedRootPath.endsWith(separator)
+    ? normalizedRootPath
+    : `${normalizedRootPath}${separator}`;
   if (!normalizedProjectPath.startsWith(rootPrefix)) {
     return null;
   }

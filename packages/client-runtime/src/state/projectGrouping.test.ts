@@ -6,6 +6,8 @@ import { chooseLoadBalancedEnvironment } from "../load-balancing.ts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  normalizeProjectGroupingMode,
+  selectProjectGroupingSettings,
   type ProjectGroupingSettings,
 } from "./projectGrouping.ts";
 
@@ -150,6 +152,32 @@ describe("buildProjectGroups", () => {
       const groups = buildProjectGroups({ projects, settings: settings(mode) });
       expect(groups.map((group) => group.label)).toEqual(["root", "java", "account_approval"]);
     }
+  });
+
+  it("keeps a nested workspace separate when the repository is a filesystem root", () => {
+    const rootIdentity = { ...repositoryIdentity, rootPath: "/" };
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("root", "/", { repositoryIdentity: rootIdentity }),
+        makeProject("api", "/services/api", { repositoryIdentity: rootIdentity }),
+      ],
+      settings: settings("repository"),
+    });
+
+    expect(groups.map((group) => group.label)).toEqual(["root", "api"]);
+  });
+
+  it("keeps a nested workspace separate when the repository is a Windows drive root", () => {
+    const driveIdentity = { ...repositoryIdentity, rootPath: "C:\\" };
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("drive", "C:\\", { repositoryIdentity: driveIdentity }),
+        makeProject("drive-api", "C:\\services\\api", { repositoryIdentity: driveIdentity }),
+      ],
+      settings: settings("repository"),
+    });
+
+    expect(groups.map((group) => group.label)).toEqual(["drive", "drive-api"]);
   });
 
   it("groups checkouts of one monorepo workspace across environments", () => {
@@ -309,5 +337,22 @@ describe("buildProjectGroups", () => {
     });
     expect(groups).toHaveLength(1);
     expect(groups[0]?.members.map((member) => member.project.id)).toEqual(["winner", "sibling"]);
+  });
+});
+
+describe("selectProjectGroupingSettings", () => {
+  it("reads the legacy repository_path preference as repository", () => {
+    expect(normalizeProjectGroupingMode("repository_path")).toBe("repository");
+    expect(normalizeProjectGroupingMode("separate")).toBe("separate");
+
+    const settings = selectProjectGroupingSettings({
+      sidebarProjectGroupingMode: "repository_path",
+      sidebarProjectGroupingOverrides: { "environment:/work/t3code": "repository_path" },
+    } as never);
+
+    expect(settings.sidebarProjectGroupingMode).toBe("repository");
+    expect(settings.sidebarProjectGroupingOverrides).toEqual({
+      "environment:/work/t3code": "repository",
+    });
   });
 });

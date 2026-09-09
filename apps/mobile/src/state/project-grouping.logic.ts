@@ -1,4 +1,7 @@
-import type { ProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  normalizeProjectGroupingMode,
+  type ProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 
 import type { Preferences } from "../persistence/mobile-preferences";
@@ -12,9 +15,10 @@ export function resolveMobileProjectGroupingSettings(
   preferences: Preferences,
 ): ProjectGroupingSettings {
   return {
-    sidebarProjectGroupingMode:
+    sidebarProjectGroupingMode: normalizeProjectGroupingMode(
       preferences.projectGroupingMode ??
-      (preferences.projectGroupingEnabled === false ? "separate" : "repository"),
+        (preferences.projectGroupingEnabled === false ? "separate" : "repository"),
+    ),
     sidebarProjectGroupingOverrides: {},
   };
 }
