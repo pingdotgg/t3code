@@ -51,6 +51,18 @@ const access = {
   },
 };
 
+const branch = (number: number, headRefOid: string, behindBy = 1) => ({
+  data: {
+    repository: {
+      pullRequest: { id: `PR_${number}`, headRefOid, baseRef: { compare: { behindBy } } },
+    },
+  },
+});
+const rebased = {
+  data: { updatePullRequestBranch: { pullRequest: { headRefOid: "rebased-sha" } } },
+};
+const rebaseResponses = [branch(2, "bbb"), rebased, branch(3, "ccc"), rebased];
+
 function fake(responses: readonly unknown[]) {
   const calls: ReadonlyArray<string>[] = [];
   const execute: GitHubCli.GitHubCli["Service"]["execute"] = (request) =>
@@ -118,20 +130,25 @@ it.effect("refuses a changed stack before performing any mutation", () =>
 
 it.effect("rebases unmerged layers bottom to top without local git commands", () =>
   Effect.gen(function* () {
-    const api = fake([stack, access, {}, {}]);
+    const api = fake([stack, access, ...rebaseResponses]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    expect(api.calls.slice(2)).toEqual([
-      ["pr", "update-branch", "2", "--repo", "github.com/acme/web", "--rebase"],
-      ["pr", "update-branch", "3", "--repo", "github.com/acme/web", "--rebase"],
-    ]);
+    const mutations = api.calls.filter((args) =>
+      args.some((arg) => arg.startsWith("query=mutation")),
+    );
+    expect(mutations).toHaveLength(2);
+    expect(mutations[0]).toContain("id=PR_2");
+    expect(mutations[0]).toContain("sha=bbb");
+    expect(mutations[1]).toContain("id=PR_3");
+    expect(mutations[1]).toContain("sha=ccc");
+    expect(api.calls.every((args) => args[0] === "api")).toBe(true);
   }),
 );
 
 it.effect("does not update later layers after a rebase failure", () =>
   Effect.gen(function* () {
-    const api = fake([stack, access]);
+    const api = fake([stack, access, branch(2, "bbb")]);
     const execute: typeof api.execute = (request) =>
-      request.args[0] === "api"
+      !request.args.some((arg) => arg.startsWith("query=mutation"))
         ? api.execute(request)
         : Effect.fail(
             new GitHubCli.GitHubCliAuthenticationError({
@@ -185,11 +202,10 @@ it.effect("allows a fork that explicitly permits maintainer updates", () =>
           },
         },
       },
-      {},
-      {},
+      ...rebaseResponses,
     ]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    expect(api.calls.at(-1)).toContain("3");
+    expect(api.calls.at(-1)).toContain("id=PR_3");
   }),
 );
 
@@ -209,5 +225,71 @@ it.effect("bounds polling and reports a still-running merge without claiming suc
       failure: { reason: "pending" },
     });
     expect(api.calls.length).toBeLessThan(40);
+  }),
+);
+
+it.effect("rejects a push after preflight without rebasing the new revision", () =>
+  Effect.gen(function* () {
+    const api = fake([stack, access, branch(2, "new-head")]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      action: "update-branch",
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "changed", number: 2, completed: 0 },
+    });
+    expect(api.calls).toHaveLength(3);
+  }),
+);
+
+it.effect("skips current layers without submitting a rebase mutation", () =>
+  Effect.gen(function* () {
+    const api = fake([stack, access, branch(2, "bbb", 0), branch(3, "ccc", 0)]);
+    yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
+    expect(api.calls.some((args) => args.some((arg) => arg.startsWith("query=mutation")))).toBe(
+      false,
+    );
+  }),
+);
+
+it.effect("keeps earlier progress and stops after a later layer fails", () =>
+  Effect.gen(function* () {
+    const api = fake([
+      stack,
+      access,
+      branch(2, "bbb"),
+      rebased,
+      branch(3, "ccc"),
+      { data: { updatePullRequestBranch: null } },
+    ]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      action: "update-branch",
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "rebase-failed", number: 3, completed: 1 },
+    });
+  }),
+);
+
+it.effect("reports partial progress when a later head changes during the rebase", () =>
+  Effect.gen(function* () {
+    const api = fake([stack, access, branch(2, "bbb"), rebased, branch(3, "concurrent-head")]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      action: "update-branch",
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "changed", number: 3, completed: 1 },
+    });
+    if (result._tag === "Failure") {
+      expect(result.failure.message).toContain("Earlier updates remain on GitHub");
+    }
+    expect(
+      api.calls.filter((args) => args.some((arg) => arg.startsWith("query=mutation"))),
+    ).toHaveLength(1);
   }),
 );

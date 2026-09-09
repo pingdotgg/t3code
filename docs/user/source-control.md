@@ -124,4 +124,5 @@ respecting branch rules and merge queues. The confirmation shows the scope and m
 
 **Rebase stack** updates remote branches from bottom to top without changing your local checkout.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
-layer before retrying. Stack actions require an environment that supports them.
+layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
+even when its changes look independent. Stack actions require an environment that supports them.

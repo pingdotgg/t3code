@@ -31,7 +31,9 @@ export class GitHubStackActionError extends Schema.TaggedError<GitHubStackAction
   get detail(): string {
     switch (this.reason) {
       case "changed":
-        return "The stack changed. Refresh it before trying again.";
+        return this.completed > 0
+          ? `The stack changed at PR #${this.number} after ${this.completed} layers. Earlier updates remain on GitHub. Refresh it before trying again.`
+          : "The stack changed. Refresh it before trying again.";
       case "unsupported":
         return "This operation is not supported for this stack.";
       case "invalid-response":
@@ -50,6 +52,8 @@ export class GitHubStackActionError extends Schema.TaggedError<GitHubStackAction
     return this.detail;
   }
 }
+
+const isStackActionError = Schema.is(GitHubStackActionError);
 
 const MergeResponse = Schema.Struct({
   status: Schema.Literals(["pending", "merged", "enqueued", "failed"]),
@@ -76,6 +80,33 @@ const decodeBranchAccess = Schema.decodeEffect(
             ),
           ),
         ),
+      }),
+    }),
+  ),
+);
+
+const decodeRebaseBranch = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Struct({
+        repository: Schema.Struct({
+          pullRequest: Schema.Struct({
+            id: Schema.String,
+            headRefOid: Schema.String,
+            baseRef: Schema.Struct({ compare: Schema.Struct({ behindBy: Schema.Int }) }),
+          }),
+        }),
+      }),
+    }),
+  ),
+);
+const decodeRebaseResponse = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Struct({
+        updatePullRequestBranch: Schema.Struct({
+          pullRequest: Schema.Struct({ headRefOid: Schema.String }),
+        }),
       }),
     }),
   ),
@@ -174,23 +205,60 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     )
       return yield* fail("permission");
     for (const [index, layer] of open.entries()) {
-      yield* execute({
-        cwd: input.cwd,
-        args: [
-          "pr",
-          "update-branch",
-          String(layer.number),
-          "--repo",
-          `${input.host}/${input.repository}`,
-          "--rebase",
-        ],
+      yield* Effect.gen(function* () {
+        const read = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            "--hostname",
+            input.host,
+            "graphql",
+            "-f",
+            `owner=${owner}`,
+            "-f",
+            `name=${name}`,
+            "-F",
+            `number=${layer.number}`,
+            "-f",
+            `sha=${layer.headSha}`,
+            "-f",
+            "query=query($owner:String!,$name:String!,$number:Int!,$sha:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid baseRef{compare(headRef:$sha){behindBy}}}}}",
+          ],
+        });
+        const {
+          data: {
+            repository: { pullRequest: pr },
+          },
+        } = yield* decodeRebaseBranch(read.stdout);
+        if (pr.headRefOid !== layer.headSha) return yield* fail("changed");
+        if (pr.baseRef.compare.behindBy === 0) return;
+        // Pass the reviewed revision to GitHub, including when a push races this read.
+        const updated = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            "--hostname",
+            input.host,
+            "graphql",
+            "-f",
+            `id=${pr.id}`,
+            "-f",
+            `sha=${layer.headSha}`,
+            "-f",
+            "query=mutation($id:ID!,$sha:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$sha,updateMethod:REBASE}){pullRequest{headRefOid}}}",
+          ],
+        });
+        yield* decodeRebaseResponse(updated.stdout);
       }).pipe(
         Effect.mapError(
           (cause) =>
             new GitHubStackActionError({
               number: layer.number,
               completed: index,
-              reason: "rebase-failed",
+              reason:
+                isStackActionError(cause) && cause.reason === "changed"
+                  ? "changed"
+                  : "rebase-failed",
               cause,
             }),
         ),
