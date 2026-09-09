@@ -1,5 +1,4 @@
 import { Agent, type AgentOptions, type Run, type RunResult, type SDKAgent } from "@cursor/sdk";
-import * as Effect from "effect/Effect";
 
 interface CursorSdkRequest {
   readonly result: Promise<RunResult>;
@@ -66,19 +65,3 @@ export function runCursorSdkRequest(input: {
     },
   };
 }
-
-/**
- * Bridge late SDK settlement back into application cleanup after its owning
- * scope has closed. Cursor cannot abort acquisition or disposal promises; the
- * workspace must remain until those promises settle, even after interruption.
- */
-export const cleanupCursorSdkRequestAfterSettlement = Effect.fn(
-  "cleanupCursorSdkRequestAfterSettlement",
-)(function* (input: { readonly request: CursorSdkRequest; readonly cleanup: Effect.Effect<void> }) {
-  const runCleanup = Effect.runPromiseWith(yield* Effect.context<never>());
-  input.request.cancel();
-  void input.request.result
-    .catch(() => undefined)
-    .then(() => runCleanup(input.cleanup))
-    .catch(() => undefined);
-});

@@ -1,3 +1,4 @@
+import * as CursorRequestLifetime from "../CursorRequestLifetime.ts";
 import * as CodexResetCredit from "./codexResetCredit.ts";
 /**
  * Multi-instance validation slices for `ProviderInstanceRegistryLive`.
@@ -312,7 +313,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(Layer.merge(testLayer, CursorRequestLifetime.layer))),
   );
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
@@ -338,7 +339,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(Layer.merge(testLayer, CursorRequestLifetime.layer))),
   );
 
   it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
@@ -392,7 +393,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         installed: true,
         version: "2.1.219",
       });
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(Layer.merge(testLayer, CursorRequestLifetime.layer))),
   );
 
   it.live(
@@ -432,7 +433,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
         expect(ghost.driver).toBe("ghostDriver");
         expect(ghost.availability).toBe("unavailable");
         expect(ghost.unavailableReason).toMatch(/ghostDriver/);
-      }).pipe(Effect.provide(testLayer)),
+      }).pipe(Effect.provide(Layer.merge(testLayer, CursorRequestLifetime.layer))),
   );
 });
 
@@ -627,6 +628,6 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       expect(openCodeSnapshot.continuation?.groupKey).toBe(
         `${openCodeDriverKind}:instance:${openCodeId}`,
       );
-    }).pipe(Effect.provide(testLayer)),
+    }).pipe(Effect.provide(Layer.merge(testLayer, CursorRequestLifetime.layer))),
   );
 });

@@ -1,3 +1,4 @@
+import { CursorRequestLifetime } from "../provider/CursorRequestLifetime.ts";
 import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -24,10 +25,7 @@ import {
   sanitizeThreadTitle,
 } from "./TextGenerationUtils.ts";
 import { cursorSdkModelSelection } from "../provider/cursorSdkModel.ts";
-import {
-  cleanupCursorSdkRequestAfterSettlement,
-  runCursorSdkRequest,
-} from "../provider/cursorSdkRequest.ts";
+import { runCursorSdkRequest } from "../provider/cursorSdkRequest.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 const CURSOR_METADATA_WORKSPACE_PREFIX = "t3-cursor-metadata-";
@@ -63,6 +61,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const ownerScope = yield* Effect.scope;
+  const lifetime = yield* CursorRequestLifetime;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -146,20 +145,20 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
           }).pipe(
             Effect.onExit((exit) =>
               exit._tag === "Failure" && Cause.hasInterrupts(exit.cause)
-                ? cleanupCursorSdkRequestAfterSettlement({
-                    request,
-                    cleanup: ignoreCursorCleanupFailure(
-                      fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
-                    ),
-                  })
+                ? Effect.sync(request.cancel)
                 : ignoreCursorCleanupFailure(
                     fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
                   ),
             ),
             Effect.interruptible,
+            lifetime.fork,
+          );
+          const instanceWait = yield* Fiber.join(completionFiber).pipe(
+            Effect.onInterrupt(() => Effect.sync(request.cancel)),
+            Effect.interruptible,
             Effect.forkIn(ownerScope, { startImmediately: true }),
           );
-          return yield* restore(Fiber.join(completionFiber)).pipe(
+          return yield* restore(Fiber.join(instanceWait)).pipe(
             Effect.onInterrupt(() => Effect.sync(request.cancel)),
           );
         }),

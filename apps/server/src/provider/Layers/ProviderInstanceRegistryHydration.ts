@@ -1,3 +1,4 @@
+import * as CursorRequestLifetime from "../CursorRequestLifetime.ts";
 /**
  * ProviderInstanceRegistryHydration — derive a `ProviderInstanceConfigMap`
  * from `ServerSettings` and keep `ProviderInstanceRegistry` in sync with it.
@@ -62,7 +63,10 @@ import {
 } from "./ProviderOrchestrationAdapterInfrastructure.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
-  | Exclude<BuiltInDriversEnv, ProviderOrchestrationAdapterInfrastructure>
+  | Exclude<
+      BuiltInDriversEnv,
+      ProviderOrchestrationAdapterInfrastructure | CursorRequestLifetime.CursorRequestLifetime
+    >
   | ServerSettingsService;
 
 /**
@@ -176,7 +180,10 @@ export const ProviderInstanceRegistryHydrationLive: Layer.Layer<
     const mutableLayer = ProviderInstanceRegistryMutableLayer({
       drivers: BUILT_IN_DRIVERS,
       configMap: initialConfigMap,
-    }).pipe(Layer.provide(ProviderOrchestrationAdapterInfrastructureLive));
+    }).pipe(
+      Layer.provide(ProviderOrchestrationAdapterInfrastructureLive),
+      Layer.provide(CursorRequestLifetime.layer),
+    );
 
     return SettingsWatcherLive.pipe(Layer.provideMerge(mutableLayer));
   }),

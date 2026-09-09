@@ -7,6 +7,7 @@
  *
  * @module provider/Drivers/CursorDriver
  */
+import { CursorRequestLifetime } from "../CursorRequestLifetime.ts";
 import { CursorSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -51,6 +52,7 @@ const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 export type CursorDriverEnv =
+  | CursorRequestLifetime
   | CursorAdapterV2DriverEnv
   | FileSystem.FileSystem
   | Path.Path

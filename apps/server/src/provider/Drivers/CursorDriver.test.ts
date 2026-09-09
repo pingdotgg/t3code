@@ -1,3 +1,4 @@
+import * as CursorRequestLifetime from "../CursorRequestLifetime.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -40,7 +41,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   ),
 );
 
-it.layer(testLayer)("CursorDriver", (it) => {
+it.layer(Layer.merge(testLayer, CursorRequestLifetime.layer))("CursorDriver", (it) => {
   it.effect("keeps the bundled SDK manual-only without probing or updating cursor-agent", () =>
     Effect.gen(function* () {
       const instance = yield* CursorDriver.create({
