@@ -104,7 +104,7 @@ import {
 } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
@@ -1587,7 +1587,7 @@ export function PullRequestDetailPanel({
         </div>
         <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {detail ? (
-            <>
+            <TooltipProvider delay={150} closeDelay={150} timeout={400}>
               {supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
@@ -2056,7 +2056,7 @@ export function PullRequestDetailPanel({
                   ) : null}
                 </MenuPopup>
               </Menu>
-            </>
+            </TooltipProvider>
           ) : null}
           {onClose ? (
             <Button
