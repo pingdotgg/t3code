@@ -56,7 +56,7 @@ export const enMessages = {
   "sidebar.usage": "Usage",
   "sidebar.back": "Back",
   "sidebar.projects": "Projects",
-  "sidebar.search": "Search",
+  "sidebar.search": "Search threads or PRs",
   "sidebar.searchThreads": "Search threads",
   "draft.hero.buildInPrefix": "What should we build in ",
   "draft.hero.buildInSuffix": "?",

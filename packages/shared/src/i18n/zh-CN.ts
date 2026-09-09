@@ -57,7 +57,7 @@ export const zhCNMessages: Partial<Record<MessageKey, string>> = {
   "sidebar.usage": "用量",
   "sidebar.back": "返回",
   "sidebar.projects": "项目",
-  "sidebar.search": "搜索",
+  "sidebar.search": "搜索会话或 PR",
   "sidebar.searchThreads": "搜索会话",
   "draft.hero.buildInPrefix": "我们可以在 ",
   "draft.hero.buildInSuffix": " 中构建什么？",
