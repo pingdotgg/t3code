@@ -219,6 +219,7 @@ it.effect(
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
           getThreadProjection: () => Effect.die("control effects must not load transcript"),
+          getRuntimeRecoveryProjection: () => Effect.die("unused getRuntimeRecoveryProjection"),
           getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
           getPendingNativeUserInputs: () => Effect.die("unused getPendingNativeUserInputs"),
           getProviderControlContext: (_threadId, target) =>

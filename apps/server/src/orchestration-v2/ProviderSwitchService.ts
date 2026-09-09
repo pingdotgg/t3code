@@ -86,15 +86,24 @@ export const layer: Layer.Layer<
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
             )[0];
+          // Detaching a process removes its session binding, not its native history.
+          const currentProviderThread = projection.providerThreads.find(
+            (thread) =>
+              thread.id === projection.thread.activeProviderThreadId &&
+              thread.providerInstanceId === current.instanceId &&
+              thread.nativeThreadRef !== null,
+          );
           const selectionTransition =
             current.instanceId === targetModelSelection.instanceId &&
             !modelSelectionsEqual(current, targetModelSelection) &&
             Option.isSome(targetAdapter) &&
-            currentSession !== undefined
+            Option.isSome(currentInstance) &&
+            (currentSession !== undefined || currentProviderThread !== undefined)
               ? yield* targetAdapter.value.planSelectionTransition({
                   current,
                   target: targetModelSelection,
-                  sessionCapabilities: currentSession.capabilities,
+                  sessionCapabilities:
+                    currentSession?.capabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
           const transition =
@@ -105,7 +114,8 @@ export const layer: Layer.Layer<
                 } as const)
               : decideProviderSessionTransition({
                   current:
-                    Option.isNone(currentInstance) || currentSession === undefined
+                    Option.isNone(currentInstance) ||
+                    (currentSession === undefined && currentProviderThread === undefined)
                       ? null
                       : {
                           driver: currentInstance.value.driver,
@@ -116,8 +126,12 @@ export const layer: Layer.Layer<
                           modelSelection: current,
                           runtimeMode: projection.thread.runtimeMode,
                           interactionMode: projection.thread.interactionMode,
-                          workspace: currentSession.cwd,
-                          capabilities: currentSession.capabilities,
+                          workspace:
+                            currentSession?.cwd ??
+                            projection.thread.worktreePath ??
+                            "<unresolved-workspace>",
+                          capabilities:
+                            currentSession?.capabilities ?? currentInstance.value.capabilities,
                         },
                   target: {
                     driver: targetInstance.value.driver,
