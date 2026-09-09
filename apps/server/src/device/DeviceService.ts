@@ -36,7 +36,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { ensureAgentDevice } from "./DeviceToolchain.ts";
-import { ServerConfig } from "../config.ts";
+import * as ServerConfig from "../config.ts";
 import {
   agentDeviceConfigPath,
   agentDeviceSession,
@@ -797,7 +797,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
-  const config = yield* ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
