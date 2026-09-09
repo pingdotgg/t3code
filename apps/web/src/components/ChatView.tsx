@@ -1501,8 +1501,8 @@ export default function ChatView(props: ChatViewProps) {
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
-  const setLastUsedRuntimeMode = useComposerDraftStore((store) => store.setLastUsedRuntimeMode);
-  const getLastUsedRuntimeMode = useComposerDraftStore((store) => store.getLastUsedRuntimeMode);
+  const setStickyRuntimeMode = useComposerDraftStore((store) => store.setStickyRuntimeMode);
+  const getStickyRuntimeMode = useComposerDraftStore((store) => store.getStickyRuntimeMode);
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
   const citationLocation = useLocation({
@@ -2271,7 +2271,7 @@ export default function ChatView(props: ChatViewProps) {
       const resolvedRuntimeMode = resolveNewPullRequestDraftRuntimeMode({
         composerRuntimeMode,
         viewedThreadRuntimeMode: activeThread?.runtimeMode ?? null,
-        lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
+        stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: settings.defaultRuntimeMode ?? null,
       });
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
@@ -2294,7 +2294,7 @@ export default function ChatView(props: ChatViewProps) {
       draftId,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
-      getLastUsedRuntimeMode,
+      getStickyRuntimeMode,
       isServerThread,
       navigate,
       projectGroupingSettings,
@@ -4060,7 +4060,7 @@ export default function ChatView(props: ChatViewProps) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
       if (activeLogicalProjectKey) {
-        setLastUsedRuntimeMode(activeLogicalProjectKey, mode);
+        setStickyRuntimeMode(activeLogicalProjectKey, mode);
       }
       scheduleComposerFocus();
     },
@@ -4072,7 +4072,7 @@ export default function ChatView(props: ChatViewProps) {
       composerDraftTarget,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
-      setLastUsedRuntimeMode,
+      setStickyRuntimeMode,
     ],
   );
 

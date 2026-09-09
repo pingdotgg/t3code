@@ -49,7 +49,7 @@ import {
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
-  setLastUsedComposerRuntimeMode,
+  setStickyComposerRuntimeMode,
   updateComposerDraftSettings,
   useComposerDraft,
 } from "./use-composer-drafts";
@@ -598,7 +598,7 @@ export function useThreadComposerState() {
       if (!selectedThreadProject) {
         return;
       }
-      setLastUsedComposerRuntimeMode(
+      setStickyComposerRuntimeMode(
         deriveLogicalProjectKeyFromSettings(selectedThreadProject, projectGroupingSettings),
         value,
       );

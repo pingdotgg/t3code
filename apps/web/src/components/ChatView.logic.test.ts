@@ -264,7 +264,7 @@ describe("proactive panels", () => {
     expect(
       resolveNewPullRequestDraftRuntimeMode({
         viewedThreadRuntimeMode: "approval-required",
-        lastUsedRuntimeMode: null,
+        stickyRuntimeMode: null,
         configuredRuntimeMode: "full-access",
       }),
     ).toBe("approval-required");
@@ -272,7 +272,7 @@ describe("proactive panels", () => {
       resolveNewPullRequestDraftRuntimeMode({
         composerRuntimeMode: "auto-accept-edits",
         viewedThreadRuntimeMode: "approval-required",
-        lastUsedRuntimeMode: "full-access",
+        stickyRuntimeMode: "full-access",
         configuredRuntimeMode: "full-access",
       }),
     ).toBe("auto-accept-edits");

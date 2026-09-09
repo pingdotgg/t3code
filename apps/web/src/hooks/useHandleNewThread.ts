@@ -87,8 +87,8 @@ export function useNewThreadHandler() {
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
         getDraftThread,
-        getLastUsedRuntimeMode,
-        setLastUsedRuntimeMode,
+        getStickyRuntimeMode,
+        setStickyRuntimeMode,
         applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
@@ -101,9 +101,9 @@ export function useNewThreadHandler() {
       const currentRouteTarget = getCurrentRouteTarget();
       // A new thread carries the user's working mode from the thread being
       // viewed only when that source belongs to the same logical project.
-      // Otherwise the project's last-used mode wins over the hardcoded
+      // Otherwise the project's sticky mode wins over the hardcoded
       // full-access default. The target project's configured model still wins;
-      // interaction/plan mode carries independently and is not last-used.
+      // interaction/plan mode carries independently and is not sticky.
       // Branch, worktree, and env mode come from configured defaults unless
       // the caller passes them explicitly.
       const carrySourceShell =
@@ -221,7 +221,7 @@ export function useNewThreadHandler() {
           : null;
       // Composer runtimeMode is the explicit-pick signal (nullable). The draft
       // session always carries a seeded mode from mint, so using that here
-      // would permanently shadow later last-used / Default access changes on
+      // would permanently shadow later sticky / Default access changes on
       // empty-draft resurrection. Prefer the composer's own mode when present.
       const emptyDraftComposerRuntimeMode =
         emptyStoredDraftThread != null
@@ -230,14 +230,14 @@ export function useNewThreadHandler() {
       const resolvedRuntimeMode = resolveNewThreadRuntimeMode({
         draftRuntimeMode: emptyDraftComposerRuntimeMode,
         carryRuntimeMode: sameProjectCarryRuntimeMode,
-        lastUsedRuntimeMode: getLastUsedRuntimeMode(logicalProjectKey),
+        stickyRuntimeMode: getStickyRuntimeMode(logicalProjectKey),
         configuredRuntimeMode: targetServerSettings.defaultRuntimeMode,
       });
-      // Only promote carry into last-used. Seeding from the machine default would
+      // Only promote carry into sticky. Seeding from the machine default would
       // permanently shadow later Default access changes (including Auto).
-      // Explicit composer picks update last-used in ChatView.
+      // Explicit composer picks update sticky in ChatView.
       if (sameProjectCarryRuntimeMode != null) {
-        setLastUsedRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
+        setStickyRuntimeMode(logicalProjectKey, resolvedRuntimeMode);
       }
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"
@@ -314,7 +314,7 @@ export function useNewThreadHandler() {
           }
           // Composer mode is what the picker reads. Only write when the
           // composer already has an explicit pick — seeding it on every
-          // resurrect would turn ambient last-used / machine defaults into
+          // resurrect would turn ambient sticky / machine defaults into
           // sticky draft picks that shadow later Default access changes.
           if (emptyDraftComposerRuntimeMode != null) {
             setRuntimeMode(emptyStoredDraftThread.draftId, resolvedRuntimeMode);

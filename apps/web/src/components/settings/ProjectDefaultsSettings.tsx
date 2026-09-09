@@ -328,7 +328,7 @@ export function ProjectDefaultsSettings({
         <SettingsRow
           id={searchableSetting("default-access").id}
           title="Default access"
-          description="Permission mode for new threads when nothing carries from the current view and the project has no last-used mode."
+          description="Permission mode for new threads when nothing carries from the current view and the project has no sticky mode."
           status={
             targets.length === 0 ? undefined : mixedRuntimeMode ? "Differs by machine" : undefined
           }

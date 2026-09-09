@@ -633,18 +633,18 @@ export interface PullRequestDialogState {
 
 /**
  * Access mode for a freshly minted pull-request draft opened from ChatView.
- * Composer overrides win over the viewed thread/session, then last-used and
+ * Composer overrides win over the viewed thread/session, then sticky and
  * the machine default — same carry precedence as new-thread creation.
  */
 export function resolveNewPullRequestDraftRuntimeMode(sources: {
   readonly composerRuntimeMode?: RuntimeMode | null;
   readonly viewedThreadRuntimeMode?: RuntimeMode | null;
-  readonly lastUsedRuntimeMode?: RuntimeMode | null;
+  readonly stickyRuntimeMode?: RuntimeMode | null;
   readonly configuredRuntimeMode?: RuntimeMode | null;
 }): RuntimeMode {
   return resolveNewThreadRuntimeMode({
     carryRuntimeMode: sources.composerRuntimeMode ?? sources.viewedThreadRuntimeMode ?? null,
-    lastUsedRuntimeMode: sources.lastUsedRuntimeMode ?? null,
+    stickyRuntimeMode: sources.stickyRuntimeMode ?? null,
     configuredRuntimeMode: sources.configuredRuntimeMode ?? null,
   });
 }

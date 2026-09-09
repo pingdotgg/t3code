@@ -54,11 +54,11 @@ import {
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   setStickyComposerModelSelection,
-  setLastUsedComposerRuntimeMode,
+  setStickyComposerRuntimeMode,
   updateComposerDraftSettings,
   useComposerDraft,
   useStickyComposerModelSelection,
-  useLastUsedComposerRuntimeMode,
+  useStickyComposerRuntimeMode,
 } from "../../state/use-composer-drafts";
 import { resolveNewThreadRuntimeMode } from "@t3tools/shared/runtimeMode";
 import {
@@ -474,15 +474,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
   );
-  // Last-used access mode is keyed by logical project identity (same as web),
+  // Sticky access mode is keyed by logical project identity (same as web),
   // so equivalent repo instances share the preference across grouping modes.
   const selectedLogicalProjectKey = selectedProject
     ? deriveLogicalProjectKeyFromSettings(selectedProject, groupingSettings)
     : null;
-  const lastUsedRuntimeMode = useLastUsedComposerRuntimeMode(selectedLogicalProjectKey);
+  const stickyRuntimeMode = useStickyComposerRuntimeMode(selectedLogicalProjectKey);
   const runtimeMode = resolveNewThreadRuntimeMode({
     draftRuntimeMode: selectedProjectDraft.runtimeMode,
-    lastUsedRuntimeMode,
+    stickyRuntimeMode,
     configuredRuntimeMode: selectedEnvironmentServerConfig?.settings.defaultRuntimeMode,
   });
   const modelOptions = useMemo(
@@ -889,7 +889,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
       }
       if (selectedLogicalProjectKey) {
-        setLastUsedComposerRuntimeMode(selectedLogicalProjectKey, value);
+        setStickyComposerRuntimeMode(selectedLogicalProjectKey, value);
       }
     },
     [selectedLogicalProjectKey, selectedProjectDraftKey],

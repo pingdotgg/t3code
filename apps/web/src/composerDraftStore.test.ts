@@ -150,7 +150,7 @@ function resetComposerDraftStore() {
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     stickyModelSelectionByProvider: {},
     stickyActiveProvider: null,
-    lastUsedRuntimeModeByLogicalProjectKey: {},
+    stickyRuntimeModeByLogicalProjectKey: {},
   });
 }
 
@@ -732,7 +732,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
-      lastUsedRuntimeModeByLogicalProjectKey: {},
+      stickyRuntimeModeByLogicalProjectKey: {},
     });
   });
 
@@ -788,7 +788,7 @@ describe("composerDraftStore terminal contexts", () => {
       logicalProjectDraftThreadKeyByLogicalProjectKey: {},
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
-      lastUsedRuntimeModeByLogicalProjectKey: {},
+      stickyRuntimeModeByLogicalProjectKey: {},
     });
   });
 
@@ -2549,36 +2549,36 @@ describe("composerDraftStore provider-scoped option updates", () => {
   });
 });
 
-describe("composerDraftStore last-used runtime mode", () => {
+describe("composerDraftStore sticky runtime mode", () => {
   beforeEach(() => {
     resetComposerDraftStore();
   });
 
-  it("stores a last-used runtime mode per logical project", () => {
+  it("stores a sticky runtime mode per logical project", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setLastUsedRuntimeMode("project-a", "approval-required");
-    store.setLastUsedRuntimeMode("project-b", "auto-accept-edits");
+    store.setStickyRuntimeMode("project-a", "approval-required");
+    store.setStickyRuntimeMode("project-b", "auto-accept-edits");
 
-    expect(store.getLastUsedRuntimeMode("project-a")).toBe("approval-required");
-    expect(store.getLastUsedRuntimeMode("project-b")).toBe("auto-accept-edits");
-    expect(useComposerDraftStore.getState().lastUsedRuntimeModeByLogicalProjectKey).toEqual({
+    expect(store.getStickyRuntimeMode("project-a")).toBe("approval-required");
+    expect(store.getStickyRuntimeMode("project-b")).toBe("auto-accept-edits");
+    expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({
       "project-a": "approval-required",
       "project-b": "auto-accept-edits",
     });
   });
 
-  it("clears last-used runtime mode for a project", () => {
+  it("clears sticky runtime mode for a project", () => {
     const store = useComposerDraftStore.getState();
 
-    store.setLastUsedRuntimeMode("project-a", "approval-required");
-    store.setLastUsedRuntimeMode("project-a", null);
+    store.setStickyRuntimeMode("project-a", "approval-required");
+    store.setStickyRuntimeMode("project-a", null);
 
-    expect(store.getLastUsedRuntimeMode("project-a")).toBeNull();
-    expect(useComposerDraftStore.getState().lastUsedRuntimeModeByLogicalProjectKey).toEqual({});
+    expect(store.getStickyRuntimeMode("project-a")).toBeNull();
+    expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({});
   });
 
-  it("migrates legacy stickyRuntimeModeByLogicalProjectKey on hydrate", async () => {
+  it("reads an intermediate lastUsedRuntimeModeByLogicalProjectKey on hydrate", async () => {
     vi.useFakeTimers();
     try {
       await useComposerDraftStore.persist.clearStorage();
@@ -2590,7 +2590,7 @@ describe("composerDraftStore last-used runtime mode", () => {
           draftsByThreadKey: {},
           draftThreadsByThreadKey: {},
           logicalProjectDraftThreadKeyByLogicalProjectKey: {},
-          stickyRuntimeModeByLogicalProjectKey: {
+          lastUsedRuntimeModeByLogicalProjectKey: {
             "project-legacy": "auto",
           },
         },
@@ -2598,12 +2598,10 @@ describe("composerDraftStore last-used runtime mode", () => {
       await vi.advanceTimersByTimeAsync(300);
       await useComposerDraftStore.persist.rehydrate();
 
-      expect(useComposerDraftStore.getState().lastUsedRuntimeModeByLogicalProjectKey).toEqual({
+      expect(useComposerDraftStore.getState().stickyRuntimeModeByLogicalProjectKey).toEqual({
         "project-legacy": "auto",
       });
-      expect(useComposerDraftStore.getState().getLastUsedRuntimeMode("project-legacy")).toBe(
-        "auto",
-      );
+      expect(useComposerDraftStore.getState().getStickyRuntimeMode("project-legacy")).toBe("auto");
     } finally {
       vi.useRealTimers();
       await useComposerDraftStore.persist.clearStorage();

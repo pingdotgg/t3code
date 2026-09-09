@@ -23,8 +23,8 @@ const testState = vi.hoisted(() => {
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() => null),
     getDraftThread: vi.fn(() => null),
-    getLastUsedRuntimeMode: vi.fn((): string | null => null),
-    setLastUsedRuntimeMode: vi.fn(),
+    getStickyRuntimeMode: vi.fn((): string | null => null),
+    setStickyRuntimeMode: vi.fn(),
     applyStickyState: vi.fn(),
     setDraftThreadContext: vi.fn(),
     setLogicalProjectDraftThreadId: vi.fn(),
@@ -45,13 +45,13 @@ const testState = vi.hoisted(() => {
       router.navigate.mockClear();
       draftStore.getComposerDraft.mockReset();
       draftStore.getComposerDraft.mockImplementation(() => ({}));
-      draftStore.getLastUsedRuntimeMode.mockReset();
-      draftStore.getLastUsedRuntimeMode.mockImplementation(() => null);
+      draftStore.getStickyRuntimeMode.mockReset();
+      draftStore.getStickyRuntimeMode.mockImplementation(() => null);
       draftStore.setLogicalProjectDraftThreadId.mockClear();
       draftStore.setRuntimeMode.mockClear();
       draftStore.setInteractionMode.mockClear();
       draftStore.setDraftThreadContext.mockClear();
-      draftStore.setLastUsedRuntimeMode.mockClear();
+      draftStore.setStickyRuntimeMode.mockClear();
       projectFileRead = new Promise<null>((resolve) => {
         completeProjectFileRead = resolve;
       });
@@ -95,12 +95,12 @@ vi.mock("@t3tools/shared/runtimeMode", () => ({
   resolveNewThreadRuntimeMode: (sources: {
     readonly draftRuntimeMode?: string | null;
     readonly carryRuntimeMode?: string | null;
-    readonly lastUsedRuntimeMode?: string | null;
+    readonly stickyRuntimeMode?: string | null;
     readonly configuredRuntimeMode?: string | null;
   }) =>
     sources.draftRuntimeMode ??
     sources.carryRuntimeMode ??
-    sources.lastUsedRuntimeMode ??
+    sources.stickyRuntimeMode ??
     sources.configuredRuntimeMode ??
     "full-access",
 }));
@@ -216,7 +216,7 @@ describe("useNewThreadHandler", () => {
       "draft-existing",
       expect.objectContaining({ runtimeMode: "full-access" }),
     );
-    // No composer pick yet — do not seed last-used into the composer draft.
+    // No composer pick yet — do not seed sticky into the composer draft.
     expect(testState.draftStore.setRuntimeMode).not.toHaveBeenCalled();
     expect(testState.router.navigate).toHaveBeenCalled();
   });
@@ -231,7 +231,7 @@ describe("useNewThreadHandler", () => {
     testState.draftStore.getComposerDraft.mockImplementation(() => ({
       runtimeMode: "approval-required",
     }));
-    testState.draftStore.getLastUsedRuntimeMode.mockImplementation(() => "auto-accept-edits");
+    testState.draftStore.getStickyRuntimeMode.mockImplementation(() => "auto-accept-edits");
     const openThread = useNewThreadHandler();
     const pendingOpen = openThread({
       environmentId: "environment-ssh",
@@ -251,7 +251,7 @@ describe("useNewThreadHandler", () => {
     );
   });
 
-  it("does not seed last-used from the machine default alone", async () => {
+  it("does not seed sticky from the machine default alone", async () => {
     testState.reset(null);
     const openThread = useNewThreadHandler();
     const pendingOpen = openThread({
@@ -262,6 +262,6 @@ describe("useNewThreadHandler", () => {
     testState.completeProjectFileRead(null);
     await pendingOpen;
 
-    expect(testState.draftStore.setLastUsedRuntimeMode).not.toHaveBeenCalled();
+    expect(testState.draftStore.setStickyRuntimeMode).not.toHaveBeenCalled();
   });
 });
