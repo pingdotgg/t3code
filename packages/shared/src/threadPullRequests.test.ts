@@ -1,9 +1,14 @@
-import type { ThreadPullRequestLink, ThreadPullRequestSnapshot } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type ThreadPullRequestLink,
+  type ThreadPullRequestSnapshot,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   legacyLinkedPullRequestOf,
   legacyThreadPullRequestKey,
+  threadPullRequestSearchTerms,
   resolveThreadCurrentPullRequest,
   resolveThreadPullRequestChains,
   resolveThreadPullRequestBadge,
@@ -348,4 +353,30 @@ describe("chain selection and badge state", () => {
       links.map((entry) => [entry]),
     );
   });
+});
+
+describe("threadPullRequestSearchTerms", () => {
+  it("includes completed and unsynced links but excludes dismissed links", () => {
+    const terms = threadPullRequestSearchTerms({
+      pullRequests: [
+        link(12, { snapshot: snapshot({ title: "Fix login", state: "merged" }) }),
+        link(34),
+        link(56, { source: "stack-dismissed" }),
+      ],
+    });
+    expect(terms).toContain("#12");
+    expect(terms).toContain("pingdotgg/t3code#12");
+    expect(terms).toContain("https://github.com/pingdotgg/t3code/pull/12");
+    expect(terms).toContain("Fix login");
+    expect(terms).toContain("#34");
+    expect(terms.join(" ")).not.toContain("56");
+  });
+});
+
+it("searches the legacy projection when old environments decode to an empty links list", () => {
+  const linkedPullRequest = legacyLinkedPullRequestOf([link(12)], ProjectId.make("project"));
+  expect(threadPullRequestSearchTerms({ pullRequests: [], linkedPullRequest })).toContain("#12");
+  expect(
+    threadPullRequestSearchTerms({ pullRequests: [link(34)], linkedPullRequest }),
+  ).not.toContain("#12");
 });

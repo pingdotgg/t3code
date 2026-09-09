@@ -269,3 +269,20 @@ export function resolveThreadPullRequestBadge(
   }
   return { kind: "pull-request", others: visible.length - 1 };
 }
+
+/** Search terms for visible PR links, including the legacy single-link projection. */
+export function threadPullRequestSearchTerms(thread: {
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+}): string[] {
+  if (thread.pullRequests !== undefined && thread.pullRequests.length > 0) {
+    return visibleThreadPullRequests(thread.pullRequests).flatMap((link) => [
+      `#${link.number}`,
+      `${link.repository}#${link.number}`,
+      link.url,
+      link.snapshot?.title ?? "",
+    ]);
+  }
+  const legacy = thread.linkedPullRequest;
+  return legacy ? [`#${legacy.number}`, `${legacy.repository}#${legacy.number}`, legacy.url] : [];
+}
