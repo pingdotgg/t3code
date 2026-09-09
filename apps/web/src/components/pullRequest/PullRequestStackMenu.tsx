@@ -6,7 +6,7 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { GitMergeIcon, LayersIcon, RefreshCwIcon } from "lucide-react";
+import { GitMergeIcon, LayersIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -41,7 +41,11 @@ export function PullRequestStackMenu({
   mergeMethod,
   onSelect,
   onActed,
+  notice,
+  onRetry,
 }: {
+  notice?: string | null;
+  onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
   reference: PullRequestRef;
   environmentId: EnvironmentId;
@@ -75,7 +79,11 @@ export function PullRequestStackMenu({
     mergeLayers.some((layer) => layer.isDraft);
   const rebaseDisabled = pending || hasUnknownHead || hasClosed || unmerged.length === 0;
   const run = async () => {
-    if (pending || !confirmation || (confirmation === "merge" ? mergeDisabled : rebaseDisabled))
+    if (
+      pending ||
+      !confirmation ||
+      (confirmation === "merge" ? !canMerge || mergeDisabled : !canRebase || rebaseDisabled)
+    )
       return;
     const action = confirmation;
     const target = action === "merge" ? selectedLayer : top;
@@ -132,16 +140,24 @@ export function PullRequestStackMenu({
                 }
               >
                 <LayersIcon aria-hidden className="size-3.5" /> {position}/{stack.layers.length}
+                {onRetry ? <TriangleAlertIcon aria-hidden className="size-3 text-warning" /> : null}
               </MenuTrigger>
             }
           />
           <TooltipPopup>
             View stack #{stack.number}, layer {position} of {stack.layers.length}
+            {notice ? ` · ${notice}` : null}
           </TooltipPopup>
         </Tooltip>
         <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
           <MenuGroup>
             <MenuGroupLabel>Stack #{stack.number}</MenuGroupLabel>
+            {notice ? (
+              <p role="status" className="px-2 py-1 text-xs text-muted-foreground">
+                {notice}
+              </p>
+            ) : null}
+            {onRetry ? <MenuItem onClick={onRetry}>Retry stack refresh</MenuItem> : null}
             <PullRequestStackLayers
               stack={stack}
               reference={reference}

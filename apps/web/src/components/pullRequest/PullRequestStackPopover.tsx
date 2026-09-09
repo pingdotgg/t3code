@@ -2,9 +2,8 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
 import { useState } from "react";
-import { pullRequestStackAtom } from "~/state/pullRequests";
-import { useEnvironmentQuery } from "~/state/query";
-import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel } from "../ui/menu";
+import { usePullRequestStack } from "~/state/usePullRequestStack";
+import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } from "../ui/menu";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 
 /** Mounted only while the menu is open, so list rows do not each fetch a stack. */
@@ -17,9 +16,19 @@ function StackBody({
   reference: PullRequestRef;
   onSelect: (reference: PullRequestRef) => void;
 }) {
-  const query = useEnvironmentQuery(pullRequestStackAtom({ environmentId, input: reference }));
+  const query = usePullRequestStack(environmentId, reference);
   if (query.data !== null) {
-    return <PullRequestStackLayers stack={query.data} reference={reference} onSelect={onSelect} />;
+    return (
+      <>
+        {query.notice ? (
+          <p role="status" className="px-2 py-1 text-xs text-muted-foreground">
+            {query.notice}
+          </p>
+        ) : null}
+        {query.error ? <MenuItem onClick={query.refresh}>Retry stack refresh</MenuItem> : null}
+        <PullRequestStackLayers stack={query.data} reference={reference} onSelect={onSelect} />
+      </>
+    );
   }
   return (
     <MenuGroupLabel>
