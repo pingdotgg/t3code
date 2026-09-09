@@ -1,3 +1,4 @@
+import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -49,6 +50,30 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
+  if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
+    const config = yield* ServerConfig.ServerConfig;
+    const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
+    for (const [questionId, attachments] of Object.entries(command.attachmentsByQuestionId)) {
+      const claimed = yield* AttachmentClaims.claimPendingAttachments({
+        threadId: command.threadId,
+        attachments,
+      });
+      Object.defineProperty(attachmentsByQuestionId, questionId, {
+        value: claimed.attachments,
+        enumerable: true,
+      });
+    }
+    const answers = yield* appendUserInputAttachmentPaths({
+      answers: command.answers ?? {},
+      attachmentsByQuestionId,
+      attachmentsDir: config.attachmentsDir,
+    }).pipe(
+      Effect.mapError(
+        (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
+      ),
+    );
+    return yield* threads.dispatch({ ...command, answers, attachmentsByQuestionId });
+  }
   if (command.type !== "message.dispatch") return yield* threads.dispatch(command);
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: command.threadId,
