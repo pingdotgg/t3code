@@ -212,7 +212,14 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("gitlab"),
     readChangeRequestTemplate: Effect.fn("GitLabSourceControlProvider.readChangeRequestTemplate")(
       function ({ cwd, treeish }) {
-        return GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute);
+        return gitlab.getConfiguredChangeRequestTemplate({ cwd }).pipe(
+          Effect.orElseSucceed(() => null),
+          Effect.flatMap((configured) =>
+            configured === null
+              ? GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute)
+              : Effect.succeed(Option.some(configured)),
+          ),
+        );
       },
     ),
     refineRepositoryIdentity,

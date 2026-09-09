@@ -29,6 +29,34 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect("reads the configured merge request template", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              default_branch: "main",
+              merge_requests_template: "  ## Summary\n\nDescribe the change.  ",
+            }),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const template = yield* glab.getConfiguredChangeRequestTemplate({ cwd: "/repo" });
+
+      expect(template).toBe("## Summary\n\nDescribe the change.");
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", "projects/:fullpath"],
+        }),
+      );
+    }),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

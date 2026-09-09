@@ -110,6 +110,9 @@ const withRepository = <A, E>(
     readonly write: (path: string, contents: string) => Effect.Effect<void>;
     readonly readTemplate: (treeish?: string) => Effect.Effect<Option.Option<string>>;
   }) => Effect.Effect<A, E>,
+  configuredTemplate: ReturnType<
+    GitLabCli.GitLabCli["Service"]["getConfiguredChangeRequestTemplate"]
+  > = Effect.succeed(null),
 ) =>
   Effect.gen(function* () {
     const host = yield* SourceControlHost.SourceControlHost;
@@ -133,7 +136,11 @@ const withRepository = <A, E>(
     yield* git("add", "README.md");
     yield* git("commit", "-m", "Initial commit");
     const provider = yield* GitLabSourceControlProvider.make.pipe(
-      Effect.provide(Layer.mock(GitLabCli.GitLabCli)({})),
+      Effect.provide(
+        Layer.mock(GitLabCli.GitLabCli)({
+          getConfiguredChangeRequestTemplate: () => configuredTemplate,
+        }),
+      ),
     );
     return yield* test({
       git,
@@ -184,5 +191,38 @@ it.effect("bounds GitLab template content and marks truncation", () =>
 
       expect(yield* readTemplate()).toEqual(Option.some(prefix + "\n\n[truncated]"));
     }),
+  ),
+);
+
+it.effect("prefers the configured GitLab template over the committed default", () =>
+  withRepository(
+    ({ git, write, readTemplate }) =>
+      Effect.gen(function* () {
+        yield* write(DEFAULT_TEMPLATE, "Repository template");
+        yield* git("add", ".gitlab");
+        yield* git("commit", "-m", "Add repository template");
+        expect(yield* readTemplate()).toEqual(Option.some("Project settings template"));
+      }),
+    Effect.succeed("Project settings template"),
+  ),
+);
+
+it.effect("falls back to the committed template when GitLab configuration cannot be read", () =>
+  withRepository(
+    ({ git, write, readTemplate }) =>
+      Effect.gen(function* () {
+        yield* write(DEFAULT_TEMPLATE, "Repository template");
+        yield* git("add", ".gitlab");
+        yield* git("commit", "-m", "Add repository template");
+        expect(yield* readTemplate()).toEqual(Option.some("Repository template"));
+      }),
+    Effect.fail(
+      new GitLabCli.GitLabCliUnavailableError({
+        operation: "execute",
+        command: "glab",
+        cwd: "/repo",
+        cause: "Not installed",
+      }),
+    ),
   ),
 );

@@ -196,7 +196,12 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   "GitLabRepositoryDecodeError",
   {
     ...gitLabCliDecodeErrorContext,
-    operation: Schema.Literals(["getRepositoryCloneUrls", "createRepository", "getDefaultBranch"]),
+    operation: Schema.Literals([
+      "getRepositoryCloneUrls",
+      "createRepository",
+      "getDefaultBranch",
+      "getConfiguredChangeRequestTemplate",
+    ]),
     repository: Schema.optional(Schema.String),
   },
 ) {
@@ -313,6 +318,10 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
     }) => Effect.Effect<string | null, GitLabCliError>;
 
+    readonly getConfiguredChangeRequestTemplate: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string | null, GitLabCliError>;
+
     readonly checkoutMergeRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -328,8 +337,9 @@ const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   ssh_url_to_repo: TrimmedNonEmptyString,
 });
 
-const RawGitLabDefaultBranchSchema = Schema.Struct({
+const RawGitLabProjectConfigurationSchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  merge_requests_template: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
 const RawGitLabNamespaceSchema = Schema.Struct({
@@ -339,8 +349,8 @@ const RawGitLabNamespaceSchema = Schema.Struct({
 const decodeGitLabRepositoryCloneUrls = Schema.decodeEffect(
   Schema.fromJsonString(RawGitLabRepositoryCloneUrlsSchema),
 );
-const decodeGitLabDefaultBranch = Schema.decodeEffect(
-  Schema.fromJsonString(RawGitLabDefaultBranchSchema),
+const decodeGitLabProjectConfiguration = Schema.decodeEffect(
+  Schema.fromJsonString(RawGitLabProjectConfigurationSchema),
 );
 const decodeGitLabNamespace = Schema.decodeEffect(Schema.fromJsonString(RawGitLabNamespaceSchema));
 
@@ -659,7 +669,7 @@ export const make = Effect.gen(function* () {
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
-          decodeGitLabDefaultBranch(raw).pipe(
+          decodeGitLabProjectConfiguration(raw).pipe(
             Effect.mapError(
               (cause) =>
                 new GitLabRepositoryDecodeError({
@@ -674,6 +684,30 @@ export const make = Effect.gen(function* () {
         Effect.map((value) => value.default_branch ?? null),
       );
     }),
+    getConfiguredChangeRequestTemplate: Effect.fn("GitLabCli.getConfiguredChangeRequestTemplate")(
+      function (input) {
+        return execute({
+          cwd: input.cwd,
+          args: ["api", "projects/:fullpath"],
+        }).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.flatMap((raw) =>
+            decodeGitLabProjectConfiguration(raw).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitLabRepositoryDecodeError({
+                    operation: "getConfiguredChangeRequestTemplate",
+                    command: "glab",
+                    cwd: input.cwd,
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+          Effect.map((value) => value.merge_requests_template?.trim() || null),
+        );
+      },
+    ),
     checkoutMergeRequest: Effect.fn("GitLabCli.checkoutMergeRequest")(function (input) {
       return executeMergeRequest({
         cwd: input.cwd,
