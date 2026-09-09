@@ -1438,7 +1438,14 @@ function PullRequestsRouteView() {
           repository: activePullRequestSurface.repository,
           number: activePullRequestSurface.number,
           projectId: activePullRequestSurface.projectId as ProjectId,
-          ...(activePullRequestSurface.host ? { host: activePullRequestSurface.host } : {}),
+          host:
+            activePullRequestSurface.host ??
+            (selectedProject?.repositoryIdentity
+              ? pullRequestHostOf(
+                  selectedProject.repositoryIdentity,
+                  selectedProject.repositoryIdentity.provider as SourceControlProviderKind,
+                )
+              : undefined),
         }
       : null;
 
@@ -1640,6 +1647,7 @@ function PullRequestsRouteView() {
                     selected={
                       selected?.environmentId === entry.environmentId &&
                       selected.repository === entry.repository &&
+                      selected.host?.toLowerCase() === entry.host.toLowerCase() &&
                       selected.number === entry.number
                     }
                     onSelect={selectEntry}
