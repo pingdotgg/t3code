@@ -166,7 +166,7 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
-// Early V2 builds numbered this same migration sequence from 44 or 45.
+// Early V2 builds numbered this same migration sequence from 44, 45, or 48.
 // Match the complete recorded prefix before moving IDs; names alone must not
 // cause an unknown or partially applied schema to be accepted as current.
 const reconcileHistoricalV2 = Effect.fn("reconcileHistoricalV2")(function* (
@@ -181,13 +181,13 @@ const reconcileHistoricalV2 = Effect.fn("reconcileHistoricalV2")(function* (
     SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
   `;
   const firstV2 = rows.find(({ name }) => name === "OrchestrationV2");
-  if (!firstV2 || firstV2.migration_id === 48) return [];
+  if (!firstV2 || firstV2.migration_id === 50) return [];
 
   const base = firstV2.migration_id - 1;
   const valid =
-    (base === 43 || base === 44) &&
+    (base === 43 || base === 44 || base === 47) &&
     rows.every((row, index) => {
-      const entry = migrationEntries[index < base ? index : index + 47 - base];
+      const entry = migrationEntries[index < base ? index : index + 49 - base];
       return row.migration_id === index + 1 && entry?.[1] === row.name;
     });
   if (!valid) {
@@ -197,20 +197,20 @@ const reconcileHistoricalV2 = Effect.fn("reconcileHistoricalV2")(function* (
     });
   }
 
-  if (toMigrationInclusive !== undefined && toMigrationInclusive < 47) {
+  if (toMigrationInclusive !== undefined && toMigrationInclusive < 49) {
     return yield* new Migrator.MigrationError({
       kind: "BadState",
-      message: "Historical V2 reconciliation requires a migration ceiling of at least 47",
+      message: "Historical V2 reconciliation requires a migration ceiling of at least 49",
     });
   }
 
   // Descending updates leave room for each lower ID and retain original dates.
   for (const row of rows.slice(base).toReversed()) {
-    yield* sql`UPDATE effect_sql_migrations SET migration_id = ${row.migration_id + 47 - base}
+    yield* sql`UPDATE effect_sql_migrations SET migration_id = ${row.migration_id + 49 - base}
       WHERE migration_id = ${row.migration_id}`;
   }
   const executed: Array<readonly [number, string]> = [];
-  for (const [id, name, migration] of migrationEntries.filter(([id]) => id > base && id < 48)) {
+  for (const [id, name, migration] of migrationEntries.filter(([id]) => id > base && id < 50)) {
     yield* Effect.mapError(
       migration,
       (cause: unknown) =>

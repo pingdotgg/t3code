@@ -9,10 +9,10 @@ const seedHistorical = Effect.fn("seedHistorical")(function* (base: number, coun
   const sql = yield* SqlClient.SqlClient;
   yield* runMigrations({ toMigrationInclusive: base });
   for (const [id, name, migration] of migrationEntries.filter(
-    ([id]) => id >= 48 && id < 48 + count,
+    ([id]) => id >= 50 && id < 50 + count,
   )) {
     yield* migration;
-    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${base + 1 + id - 48}, ${name})`;
+    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${base + 1 + id - 50}, ${name})`;
   }
 });
 
@@ -22,6 +22,8 @@ for (const [base, count] of [
   [44, 11],
   [43, 1],
   [44, 5],
+  [47, 9],
+  [47, 11],
 ] as const) {
   it.effect(`upgrades historical V2 ${base + 1}–${base + count} without replaying its DDL`, () =>
     Effect.gen(function* () {
@@ -101,7 +103,7 @@ it.effect("preserves V2 import progress and original migration timestamps", () =
     yield* runMigrations();
     assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, before);
     assert.deepStrictEqual(
-      yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 48`,
+      yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 50`,
       [{ created_at: "2026-09-01 00:00:00" }],
     );
   }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
@@ -113,7 +115,7 @@ it.effect("rejects a historical migration ceiling below the required main schema
     yield* seedHistorical(43, 9);
     const before = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
     assert.strictEqual(
-      (yield* Effect.exit(runMigrations({ toMigrationInclusive: 46 })))._tag,
+      (yield* Effect.exit(runMigrations({ toMigrationInclusive: 48 })))._tag,
       "Failure",
     );
     assert.deepStrictEqual(
