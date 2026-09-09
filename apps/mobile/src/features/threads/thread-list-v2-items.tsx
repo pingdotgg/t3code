@@ -406,7 +406,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly titleRegenerationSupported: boolean;
   /** Server supports reordering this card's section. */
   readonly reorderSupported?: boolean;
-  readonly onMoveThread?: (thread: EnvironmentThreadShell, direction: "up" | "down") => void;
+  readonly onMoveThread?: (
+    thread: EnvironmentThreadShell,
+    direction: ThreadMoveDestination,
+  ) => void;
   /** Position flags for the card's section so the menu disables the move that
       would fall off the end of the list. */
   readonly canMoveUp?: boolean;
@@ -441,6 +444,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const pr = useThreadPr(thread);
 
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
@@ -518,8 +522,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // hides the card until wake with the pin intact.)
   const arrangementMenuItems = useMemo<MenuAction[]>(
     () => [
-      ...(variant === "card" && props.reorderSupported === true
+      ...(props.reorderSupported === true
         ? [
+            { id: "arrange", title: "Arrange threads…", image: "line.3.horizontal" },
             {
               id: "move-up",
               title: "Move up",
@@ -586,11 +591,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
       SLIM_MENU_ACTIONS[0]!,
-      ...(thread.pinnedAt != null ? arrangementMenuItems : []),
+      ...arrangementMenuItems.filter(
+        (action) => action.id !== "move-up" && action.id !== "move-down",
+      ),
       ...titleRegenerationMenuItems,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [arrangementMenuItems, thread.pinnedAt, titleRegenerationMenuItems],
+    [arrangementMenuItems, titleRegenerationMenuItems],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [SNOOZED_MENU_ACTIONS[0]!, ...titleRegenerationMenuItems, SNOOZED_MENU_ACTIONS[1]!],
@@ -613,6 +620,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
+      if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
       if (nativeEvent.event === "move-up") handleMoveUp();
       if (nativeEvent.event === "move-down") handleMoveDown();
       if (nativeEvent.event === "archive") handleArchive();
