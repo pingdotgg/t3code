@@ -40,7 +40,6 @@ const source = "export const View = () => <div>Ready</div>;";
 let pool: WorkerPoolManager;
 let renderer: FileRenderer;
 let terminationPromises: Promise<number>[];
-const pendingAnimationFrames = new Set<NodeJS.Immediate>();
 
 class WorkerTransport {
   private readonly worker = new NodeWorkerThreads.Worker(
@@ -97,23 +96,10 @@ function firstEnter(highlighter: DiffsHighlighter, file: FileContents, language:
 
 beforeEach(async () => {
   terminationPromises = [];
-  pendingAnimationFrames.clear();
-  // Pierre's worker pool broadcasts on rAF. Track the Node immediates so
-  // teardown can cancel them before unstubbing cancelAnimationFrame — otherwise
-  // a late broadcast throws ReferenceError and fails the whole web suite.
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
-    const handle = setImmediate(() => {
-      pendingAnimationFrames.delete(handle);
-      callback(0);
-    });
-    pendingAnimationFrames.add(handle);
-    return handle as unknown as number;
-  });
-  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
-    const handle = id as unknown as NodeJS.Immediate;
-    pendingAnimationFrames.delete(handle);
-    clearImmediate(handle);
-  });
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    setImmediate(() => callback(0)),
+  );
+  vi.stubGlobal("cancelAnimationFrame", clearImmediate);
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
   await disposeHighlighter();
   pool = new WorkerPoolManager(
@@ -130,10 +116,6 @@ afterEach(async () => {
   pool?.terminate();
   await Promise.all(terminationPromises);
   await disposeHighlighter();
-  for (const handle of pendingAnimationFrames) {
-    clearImmediate(handle);
-  }
-  pendingAnimationFrames.clear();
   vi.unstubAllGlobals();
 });
 
