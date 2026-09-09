@@ -204,7 +204,13 @@ export const UsageSummary = Schema.Struct({
   pricing: UsagePricing,
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,
-});
+}).check(
+  Schema.makeFilter(
+    (summary) =>
+      summary.buckets.every((bucket) => bucket.sourceIndex < summary.sources.length) ||
+      "Bucket sourceIndex must refer to an existing summary source.",
+  ),
+);
 export type UsageSummary = typeof UsageSummary.Type;
 
 export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageReadError", {
