@@ -51,8 +51,7 @@ import {
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import {
-  PR_STATE_COLOR_CLASS,
-  ThreadPullRequestBadgeContent,
+  ThreadPullRequestBadgeControl,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
   useLinkedThreadPullRequest,
@@ -651,14 +650,6 @@ export function BranchToolbarBranchSelector({
   );
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
-  const isStack = prBadge?.kind === "stack";
-  const prTooltip = isStack
-    ? `Open stack of ${prBadge.layers} pull requests, ${prBadge.state}`
-    : `Open ${sourceControlPresentation.terminology.singular} #${prNumber}${
-        prBadge?.kind === "pull-request" && prBadge.others > 0
-          ? `, and ${prBadge.others} more linked`
-          : ""
-      }`;
   const openPrLink = useOpenPrLink(threadRef);
 
   function renderPickerItem(itemValue: string, index: number) {
@@ -762,36 +753,16 @@ export function BranchToolbarBranchSelector({
         className={cn("flex min-w-0 items-center gap-1", className)}
         data-composer-context-control
       >
-        {isStack || prUrl ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={prTooltip}
-                  onClick={(event) => {
-                    if (isStack) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      useRightPanelStore.getState().open(threadRef, "pull-requests");
-                    } else if (prUrl) {
-                      openPrLink(event, prUrl);
-                    }
-                  }}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium tabular-nums transition-colors hover:bg-muted/60",
-                    isStack
-                      ? PR_STATE_COLOR_CLASS[prBadge.state]
-                      : (displayedPrStatus?.colorClass ?? "text-muted-foreground"),
-                  )}
-                />
-              }
-            >
-              <ThreadPullRequestBadgeContent badge={prBadge} number={prNumber} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{prTooltip}</TooltipPopup>
-          </Tooltip>
-        ) : null}
+        <ThreadPullRequestBadgeControl
+          badge={prBadge}
+          number={prNumber}
+          url={prUrl}
+          status={displayedPrStatus}
+          onOpenStack={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
+          onOpenPullRequest={(event) => {
+            if (prUrl) openPrLink(event, prUrl);
+          }}
+        />
         {/* Context menu lives on the wrapper: the disabled Button has
             pointer-events-none, so the trigger itself never sees right-clicks
             while refs are loading or a branch action is pending. */}

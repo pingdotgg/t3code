@@ -15,7 +15,8 @@ import {
   type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, type MouseEvent } from "react";
+import { InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -134,22 +135,76 @@ export function ThreadPullRequestBadgeIcon({
   return <Icon aria-hidden className={cn("size-3 shrink-0", className)} />;
 }
 
-/** Shared stack count and current-PR label for the sidebar and composer footer. */
-export function ThreadPullRequestBadgeContent({
+/** The complete linked-PR control shared by the sidebar and composer footer. */
+export function ThreadPullRequestBadgeControl({
   badge,
   number,
+  url,
+  status,
+  onOpenStack,
+  onOpenPullRequest,
 }: {
   badge: ThreadPullRequestBadge | null;
   number?: number | undefined;
+  url?: string | undefined;
+  status: PrStatusIndicator | null;
+  onOpenStack: () => void;
+  onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
-  return (
+  const isStack = badge?.kind === "stack";
+  if (!isStack && (number === undefined || url === undefined)) return null;
+  const label = isStack
+    ? `Stack of ${badge.layers} pull requests, ${badge.state}`
+    : `${status?.tooltip ?? `PR #${number}, status pending`}${
+        badge?.kind === "pull-request" && badge.others > 0
+          ? `, and ${badge.others} more linked`
+          : ""
+      }`;
+  const className = cn(
+    "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent text-xs tabular-nums hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+    isStack ? PR_STATE_COLOR_CLASS[badge.state] : (status?.colorClass ?? "text-muted-foreground"),
+  );
+  const content = (
     <>
       <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
-      {badge?.kind === "stack" ? badge.layers : number}
+      {isStack ? badge.layers : number}
       {badge?.kind === "pull-request" && badge.others > 0 ? (
         <span className="opacity-70">+{badge.others}</span>
       ) : null}
     </>
+  );
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          isStack ? (
+            <InlineButton
+              className={className}
+              aria-label={label}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpenStack();
+              }}
+            />
+          ) : (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={className}
+              aria-label={label}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={onOpenPullRequest}
+            />
+          )
+        }
+      >
+        {content}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
