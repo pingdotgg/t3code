@@ -2447,7 +2447,7 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.composerSendKey}
               onValueChange={(value) => {
-                if (value) {
+                if (value === "enter" || value === "mod-enter") {
                   updateSettings({ composerSendKey: value });
                 }
               }}
