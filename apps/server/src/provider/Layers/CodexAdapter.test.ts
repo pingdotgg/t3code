@@ -1233,6 +1233,45 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("carries a turn diff once instead of mirroring it into the raw payload", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      const diff = `diff --git a/file.ts b/file.ts
++${"x".repeat(4_096)}
+`;
+      yield* runtime.emit({
+        id: asEventId("evt-turn-diff"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "turn/diff/updated",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: { threadId: "thread-1", turnId: "turn-1", diff },
+      });
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some") {
+        return;
+      }
+      const mapped = firstEvent.value;
+      NodeAssert.equal(mapped.type, "turn.diff.updated");
+      if (mapped.type !== "turn.diff.updated") {
+        return;
+      }
+      NodeAssert.equal(mapped.payload.unifiedDiff, diff);
+
+      const rawPayload = mapped.raw?.payload as { readonly diff?: unknown } | undefined;
+      NodeAssert.equal(
+        rawPayload?.diff,
+        `[omitted by t3, ${diff.length} characters in payload.unifiedDiff]`,
+      );
+    }),
+  );
+
   it.effect("labels MCP lifecycle entries with server and tool names", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

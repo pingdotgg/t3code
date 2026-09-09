@@ -32,6 +32,17 @@ const DEFAULT_MAX_AGE_MS = 14 * DAY_MS;
 const DEFAULT_RETENTION_CHECK_INTERVAL_MS = 5 * 60 * 1_000;
 const DEFAULT_MAX_BUFFERED_BYTES = MEBIBYTE;
 const DEFAULT_MAX_BUFFERED_RECORDS = 512;
+// Per string value, in UTF-16 code units rather than bytes: `String.length` is
+// O(1), while measuring real bytes would scan every string on the write path.
+const DEFAULT_MAX_STRING_LENGTH = 256 * 1024;
+// Across all string values of one record, so that many merely large values
+// cannot add up to a line the per-value cap would have allowed individually.
+const DEFAULT_MAX_RECORD_LENGTH = 4 * MEBIBYTE;
+// Values this short are the identifiers that make a record legible - `type`,
+// `method`, ids. They draw from a reserve a long value may not touch, because
+// key order puts a provider's bulky `raw` payload ahead of `type`, so without
+// one a single large field would empty every identifier behind it.
+const SHORT_VALUE_RESERVE = 256;
 const GLOBAL_THREAD_SEGMENT = "_global";
 const LOG_SCOPE = "provider-observability";
 const encodeUnknownJsonString = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
@@ -80,6 +91,8 @@ export interface EventNdjsonLogStoreOptions {
   readonly retentionCheckIntervalMs?: number;
   readonly maxBufferedBytes?: number;
   readonly maxBufferedRecords?: number;
+  readonly maxStringLength?: number;
+  readonly maxRecordLength?: number;
   readonly attribution?: ResourceAttribution["Service"];
 }
 
@@ -126,6 +139,8 @@ interface ResolvedOptions {
   readonly retentionCheckIntervalMs: number;
   readonly maxBufferedBytes: number;
   readonly maxBufferedRecords: number;
+  readonly maxStringLength: number;
+  readonly maxRecordLength: number;
   readonly attribution: ResourceAttribution["Service"] | undefined;
 }
 
@@ -373,6 +388,8 @@ function resolveOptions(
       options.retentionCheckIntervalMs ?? DEFAULT_RETENTION_CHECK_INTERVAL_MS,
     maxBufferedBytes: options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES,
     maxBufferedRecords: options.maxBufferedRecords ?? DEFAULT_MAX_BUFFERED_RECORDS,
+    maxStringLength: options.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH,
+    maxRecordLength: options.maxRecordLength ?? DEFAULT_MAX_RECORD_LENGTH,
     attribution: options.attribution,
   } satisfies ResolvedOptions;
 
@@ -385,6 +402,8 @@ function resolveOptions(
     ["retentionCheckIntervalMs", resolved.retentionCheckIntervalMs, 1],
     ["maxBufferedBytes", resolved.maxBufferedBytes, 1],
     ["maxBufferedRecords", resolved.maxBufferedRecords, 1],
+    ["maxStringLength", resolved.maxStringLength, 1],
+    ["maxRecordLength", resolved.maxRecordLength, 1],
   ] as const;
 
   for (const [option, value, minimum] of validations) {
@@ -492,6 +511,115 @@ function drainPending(input: {
       lastRetentionAt: retentionDue ? input.now : input.state.lastRetentionAt,
     },
   ];
+}
+
+function truncationMarker(length: number): string {
+  return `[truncated by t3, ${length} characters total]`;
+}
+
+/**
+ * Keeps the head of an oversized value and records how long the original was, so
+ * a truncated record still says which file a diff touched and how much was cut.
+ */
+function truncateString(value: string, headLength: number): string {
+  // Never cut between a surrogate pair; a lone surrogate would survive into the log line.
+  const lastCode = value.charCodeAt(headLength - 1);
+  const keep = lastCode >= 0xd800 && lastCode <= 0xdbff ? headLength - 1 : headLength;
+  return `${value.slice(0, Math.max(keep, 0))}${truncationMarker(value.length)}`;
+}
+
+/**
+ * Answers whether a value can be rebuilt field by field. Anything else reaches the
+ * encoder untouched, because a class instance or a `toJSON` carrier such as `Date`
+ * would not survive being copied into a plain object.
+ */
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true;
+  const prototype = Reflect.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Bounds the string values of one event before it is serialized. A provider can
+ * hand us a payload far larger than any log record should be (a Codex
+ * `turn/diff/updated` diff reaches hundreds of MiB on a big turn), and encoding
+ * it whole materializes an equally large line that can exhaust the heap.
+ *
+ * Two bounds apply. No single value keeps more than `maxLength` characters, and
+ * the string values of one record, truncation markers included, together keep no
+ * more than the record budget, so an event carrying many merely large values
+ * cannot add up to a line the per-value cap would have allowed on its own. Once
+ * the budget cannot even fit a marker, the value is dropped. The budget is spent
+ * in encounter order, which is stable for a given event shape, and short values
+ * keep a reserve of it so the identifiers behind a bulky field survive.
+ *
+ * Values that already fit are returned by reference, so an event that needs no
+ * truncation copies no object or array. Anything that is not a plain object or
+ * array is left alone, because `toJSON` carriers such as `Date` must reach the
+ * encoder intact. A cycle is returned untouched at the point it closes, so
+ * serialization still fails the way it did before and `serializeEvent` reports it.
+ */
+function clampStrings(
+  value: unknown,
+  maxLength: number,
+  budget: { remaining: number },
+  ancestors: Set<object>,
+): unknown {
+  if (typeof value === "string") {
+    const spendable =
+      value.length <= SHORT_VALUE_RESERVE
+        ? budget.remaining
+        : Math.max(budget.remaining - SHORT_VALUE_RESERVE, 0);
+
+    if (value.length <= maxLength && value.length <= spendable) {
+      budget.remaining -= value.length;
+      return value;
+    }
+    // The marker is itself part of the record, so it is charged like any other
+    // retained text. Otherwise a run of oversized values would keep spending
+    // marker-sized bites of a budget that reads as exhausted.
+    const marker = truncationMarker(value.length);
+    if (marker.length > spendable) return "";
+
+    const replacement = truncateString(value, Math.min(maxLength, spendable - marker.length));
+    budget.remaining -= replacement.length;
+    return replacement;
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (!isPlainContainer(value) || ancestors.has(value)) return value;
+
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const entries = value as ReadonlyArray<unknown>;
+      let clampedEntries: Array<unknown> | undefined;
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const clamped = clampStrings(entry, maxLength, budget, ancestors);
+        if (clamped !== entry && clampedEntries === undefined) {
+          clampedEntries = entries.slice(0, index);
+        }
+        clampedEntries?.push(clamped);
+      }
+      return clampedEntries ?? value;
+    }
+
+    const fields = value as Record<string, unknown>;
+    let clampedFields: Record<string, unknown> | undefined;
+    // `for...in` rather than `Object.entries`: this runs on every logged event,
+    // and the entries array would be allocated even when nothing is truncated.
+    for (const key in fields) {
+      if (!Object.hasOwn(fields, key)) continue;
+      const entry = fields[key];
+      const clamped = clampStrings(entry, maxLength, budget, ancestors);
+      if (clamped === entry) continue;
+      clampedFields ??= { ...fields };
+      clampedFields[key] = clamped;
+    }
+    return clampedFields ?? value;
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 const serializeEvent = Effect.fnUntraced(function* (event: unknown) {
@@ -613,7 +741,14 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
 
     const write = Effect.fnUntraced(function* (event: unknown, threadId: ThreadId | null) {
       if (!shouldPersist(stream, event)) return;
-      const payload = yield* serializeEvent(event);
+      const payload = yield* serializeEvent(
+        clampStrings(
+          event,
+          resolved.maxStringLength,
+          { remaining: resolved.maxRecordLength },
+          new Set(),
+        ),
+      );
       if (payload === undefined) return;
 
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));

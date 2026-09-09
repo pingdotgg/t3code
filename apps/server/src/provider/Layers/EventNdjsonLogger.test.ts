@@ -21,6 +21,7 @@ import {
 } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeUnknownJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function ownedLogPath(basePath: string, segment: string): string {
   const basename = NodePath.basename(basePath);
@@ -121,6 +122,156 @@ describe("EventNdjsonLogger", () => {
           second.payload,
           '{"type":"turn.completed","threadId":"provider-thread-2","id":"evt-2"}',
         );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("truncates oversized string values before serializing an event", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "canonical",
+          maxStringLength: 64,
+        });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        // A real Codex turn diff reaches hundreds of MiB. Serializing it whole,
+        // twice over, is what exhausted the backend heap.
+        const diff = "d".repeat(200_000);
+        yield* logger.write(
+          {
+            type: "turn.diff.updated",
+            id: "evt-diff",
+            payload: { unifiedDiff: diff },
+            raw: { method: "turn/diff/updated", payload: { diff } },
+          },
+          ThreadId.make("thread-diff"),
+        );
+        yield* logger.close();
+
+        const line = NodeFS.readFileSync(ownedLogPath(basePath, "thread-diff"), "utf8").trim();
+        assert.equal(line.length < 1_000, true);
+        assert.notInclude(line, "d".repeat(65));
+        assert.include(line, "[truncated by t3, 200000 characters total]");
+        assert.include(line, '"id":"evt-diff"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("bounds the whole record, not only each value", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "canonical",
+          maxStringLength: 64,
+          maxRecordLength: 128,
+        });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        // Every value here clears the per-value cap on its own; only the record
+        // budget stops ten of them from adding up to an oversized line.
+        const fields = Object.fromEntries(
+          Array.from({ length: 10 }, (_, index) => [`field${index}`, "v".repeat(64)]),
+        );
+        yield* logger.write({ id: "evt-budget", ...fields }, ThreadId.make("thread-budget"));
+        yield* logger.close();
+
+        const line = NodeFS.readFileSync(ownedLogPath(basePath, "thread-budget"), "utf8").trim();
+        assert.equal((line.match(/v/gu) ?? []).length <= 128, true);
+        assert.include(line, "[truncated by t3, 64 characters total]");
+        assert.include(line, '"id":"evt-budget"');
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("charges truncation markers against the record budget", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "canonical",
+          maxStringLength: 32,
+          maxRecordLength: 2_048,
+        });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        // Two hundred oversized values. Each marker runs to about 40 characters,
+        // so leaving them unbilled would spend roughly 8,000 against a budget of
+        // 2,048 that already reads as exhausted.
+        const fields = Object.fromEntries(
+          Array.from({ length: 200 }, (_, index) => [`f${index}`, "w".repeat(5_000)]),
+        );
+        yield* logger.write(fields, ThreadId.make("thread-markers"));
+        yield* logger.close();
+
+        const line = NodeFS.readFileSync(ownedLogPath(basePath, "thread-markers"), "utf8").trim();
+        const record = decodeUnknownJson(parseLogLine(line).payload) as Record<string, string>;
+        const retained = Object.values(record).reduce((total, value) => total + value.length, 0);
+        assert.equal(retained <= 2_048, true);
+        assert.include(line, "[truncated by t3, 5000 characters total]");
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("keeps short identifying values behind an oversized one", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "provider-canonical.ndjson");
+
+      try {
+        const logger = yield* makeEventNdjsonLogger(basePath, {
+          stream: "canonical",
+          maxStringLength: 4_096,
+          maxRecordLength: 512,
+        });
+        assert.notEqual(logger, undefined);
+        if (!logger) {
+          return;
+        }
+
+        // Key order puts a provider's bulky `raw` payload ahead of `type`, so
+        // without a reserve the identifiers behind it are emptied and the record
+        // no longer says what it is.
+        yield* logger.write(
+          {
+            raw: "r".repeat(100_000),
+            type: "turn.diff.updated",
+            eventId: "evt-legible",
+          },
+          ThreadId.make("thread-legible"),
+        );
+        yield* logger.close();
+
+        const line = NodeFS.readFileSync(ownedLogPath(basePath, "thread-legible"), "utf8").trim();
+        const record = decodeUnknownJson(parseLogLine(line).payload) as Record<string, string>;
+        assert.equal(record.type, "turn.diff.updated");
+        assert.equal(record.eventId, "evt-legible");
+        assert.include(record.raw ?? "", "[truncated by t3, 100000 characters total]");
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });
       }
