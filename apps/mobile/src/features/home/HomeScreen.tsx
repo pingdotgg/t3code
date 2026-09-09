@@ -1,3 +1,4 @@
+import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { createThreadMovePlanner } from "../threads/threadOrder";
 import {
   LegendList,
@@ -122,7 +123,7 @@ interface HomeScreenProps {
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
-    direction: "up" | "down",
+    direction: ThreadMoveDestination,
   ) => Promise<boolean>;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
@@ -519,7 +520,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [props.onPinThread],
   );
   const handleMoveThread = useCallback(
-    (thread: EnvironmentThreadShell, direction: "up" | "down") => {
+    (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
       void props.onMoveThread(thread, direction);
     },
     [props.onMoveThread],
