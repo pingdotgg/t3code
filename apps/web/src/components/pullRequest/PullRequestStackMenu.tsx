@@ -51,15 +51,19 @@ export function PullRequestStackMenu({
   const unmerged = stack.layers.filter((layer) => layer.state !== "merged");
   const hasClosed = unmerged.some((layer) => layer.state !== "open");
   const position = stack.layers.findIndex((layer) => layer.number === reference.number) + 1;
+  const expectedStackHeads = unmerged.flatMap((layer) =>
+    layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+  );
+  const hasUnknownHead = expectedStackHeads.length !== unmerged.length;
   const mergeDisabled =
     pending ||
-    !top?.headSha ||
+    hasUnknownHead ||
     hasClosed ||
     unmerged.length === 0 ||
     unmerged.some((layer) => layer.isDraft);
-  const rebaseDisabled = pending || !top?.headSha || hasClosed || unmerged.length === 0;
+  const rebaseDisabled = pending || hasUnknownHead || hasClosed || unmerged.length === 0;
   const run = async () => {
-    if (pending || !confirmation || !top?.headSha) return;
+    if (pending || !confirmation || !top?.headSha || hasUnknownHead) return;
     setPending(true);
     const action = confirmation;
     const result = await runAction({
@@ -68,7 +72,7 @@ export function PullRequestStackMenu({
         ...reference,
         number: top.number,
         stackNumber: stack.number,
-        expectedHeadSha: top.headSha,
+        expectedStackHeads,
         action,
         ...(action === "merge" ? { mergeMethod } : { updateMethod: "rebase" }),
       },

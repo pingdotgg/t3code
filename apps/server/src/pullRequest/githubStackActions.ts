@@ -1,5 +1,10 @@
-import type { PullRequestAction, PullRequestMergeMethod } from "@t3tools/contracts";
+import type {
+  PullRequestAction,
+  PullRequestMergeMethod,
+  PullRequestStackHead,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -17,6 +22,7 @@ export class GitHubStackActionError extends Schema.TaggedError<GitHubStackAction
       "rejected",
       "pending",
       "rebase-failed",
+      "permission",
     ]),
     completed: Schema.Int,
     cause: Schema.optional(Schema.Defect()),
@@ -34,6 +40,8 @@ export class GitHubStackActionError extends Schema.TaggedError<GitHubStackAction
         return "GitHub refused the stack merge. Check the stack's branch rules and merge requirements.";
       case "pending":
         return "The merge is still running on GitHub. Check its status there before submitting another request.";
+      case "permission":
+        return "You cannot update every branch in this stack. Check write access and fork maintainer permissions before retrying.";
       case "rebase-failed":
         return `Stack rebase stopped at PR #${this.number} after ${this.completed} layers. Earlier updates remain on GitHub; resolve the failing layer before retrying.`;
     }
@@ -51,6 +59,28 @@ const MergeResponse = Schema.Struct({
   }),
 });
 
+const decodeBranchAccess = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      data: Schema.Struct({
+        repository: Schema.NullOr(
+          Schema.Record(
+            Schema.String,
+            Schema.NullOr(
+              Schema.Struct({
+                headRepository: Schema.NullOr(
+                  Schema.Struct({ viewerPermission: Schema.NullOr(Schema.String) }),
+                ),
+                maintainerCanModify: Schema.Boolean,
+              }),
+            ),
+          ),
+        ),
+      }),
+    }),
+  ),
+);
+
 const decodeMergeResponse = Schema.decodeEffect(Schema.fromJsonString(MergeResponse));
 
 /** Remote-only updates: a stack rebase never switches or rewrites the environment's checkout. */
@@ -62,7 +92,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     host: string;
     number: number;
     stackNumber: number;
-    expectedHeadSha?: string;
+    expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
     action: PullRequestAction;
     mergeMethod?: PullRequestMergeMethod;
   },
@@ -85,18 +115,64 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   if (Result.isFailure(decoded)) return yield* fail("invalid-response", decoded.failure);
   const stack = decoded.success;
   const top = stack?.layers.at(-1);
-  if (
-    stack?.number !== input.stackNumber ||
-    top?.number !== input.number ||
-    !input.expectedHeadSha ||
-    top.headSha !== input.expectedHeadSha
-  ) {
+  if (stack?.number !== input.stackNumber || top?.number !== input.number) {
     return yield* fail("changed");
   }
   const open = stack.layers.filter((layer) => layer.state !== "merged");
+  if (
+    !input.expectedStackHeads ||
+    input.expectedStackHeads.length !== open.length ||
+    new Set(input.expectedStackHeads.map((layer) => layer.number)).size !== open.length ||
+    open.some(
+      (layer) =>
+        !layer.headSha ||
+        !input.expectedStackHeads?.some(
+          (expected) => expected.number === layer.number && expected.headSha === layer.headSha,
+        ),
+    )
+  ) {
+    return yield* fail("changed");
+  }
   if (open.length === 0 || open.some((layer) => layer.state !== "open"))
     return yield* fail("unsupported");
   if (input.action === "update-branch") {
+    const [owner, name] = input.repository.split("/");
+    const permissions = yield* execute({
+      cwd: input.cwd,
+      args: [
+        "api",
+        "--hostname",
+        input.host,
+        "graphql",
+        "-f",
+        `owner=${owner}`,
+        "-f",
+        `name=${name}`,
+        "-f",
+        `query=query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${open
+          .map(
+            (layer) =>
+              `pr${layer.number}:pullRequest(number:${layer.number}){headRepository{viewerPermission} maintainerCanModify}`,
+          )
+          .join(" ")}}}`,
+      ],
+    });
+    const access = yield* decodeBranchAccess(permissions.stdout).pipe(
+      Effect.mapError((cause) => fail("invalid-response", cause)),
+    );
+    // viewerCanUpdateBranch is false for an already-current layer, even if rebasing its parent
+    // will make it stale. Check branch write access separately before touching any layer.
+    if (
+      open.some((layer) => {
+        const pr = access.data.repository?.[`pr${layer.number}`];
+        return (
+          !pr?.headRepository ||
+          (!pr.maintainerCanModify &&
+            !["ADMIN", "MAINTAIN", "WRITE"].includes(pr.headRepository.viewerPermission ?? ""))
+        );
+      })
+    )
+      return yield* fail("permission");
     for (const [index, layer] of open.entries()) {
       yield* execute({
         cwd: input.cwd,
@@ -139,14 +215,19 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       "-f",
       "merge_action=default",
       "-f",
-      `sha=${input.expectedHeadSha}`,
+      `sha=${top.headSha}`,
     ],
   });
   let result = yield* decode(request.stdout);
-  for (let attempt = 0; result.status === "pending" && attempt < 120; attempt++) {
+  const deadline = (yield* Clock.currentTimeMillis) + 5 * 60_000;
+  for (
+    let attempt = 0;
+    result.status === "pending" && (yield* Clock.currentTimeMillis) < deadline;
+    attempt++
+  ) {
     const uuid = result.details.uuid;
     if (!uuid) return yield* fail("invalid-response");
-    yield* Effect.sleep("1 second");
+    yield* Effect.sleep(Math.min(1_000 * 2 ** attempt, 10_000));
     const poll = yield* execute({
       cwd: input.cwd,
       args: [

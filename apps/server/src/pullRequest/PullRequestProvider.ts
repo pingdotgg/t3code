@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
+  PullRequestStackHead,
   PullRequestActor,
   PullRequestBaseComparison,
   PullRequestCapabilities,
@@ -432,7 +433,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
-      readonly expectedHeadSha?: string;
+      readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */

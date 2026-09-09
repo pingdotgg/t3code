@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import {
   resolvePullRequestAuthorFilter,
   type PullRequestAction,
+  type PullRequestStackHead,
   type PullRequestActor,
   type PullRequestInvolvement,
   type PullRequestListFilters,
@@ -631,7 +632,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly number: number;
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
-      readonly expectedHeadSha?: string;
+      readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;

@@ -124,7 +124,12 @@ function PullRequestRowImpl({
                 }
               >
                 <LayersIcon aria-hidden className="size-3" />
-                {entry.stack.position}/{entry.stack.size}
+                <span aria-hidden>
+                  {entry.stack.position}/{entry.stack.size}
+                </span>
+                <span className="sr-only">
+                  Stack layer {entry.stack.position} of {entry.stack.size}
+                </span>
               </TooltipTrigger>
               <TooltipPopup>
                 Stack #{entry.stack.number}, layer {entry.stack.position} of {entry.stack.size},

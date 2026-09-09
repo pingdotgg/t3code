@@ -1538,7 +1538,7 @@ export const make = Effect.gen(function* () {
           input.stackNumber !== undefined &&
           (project.api.capabilities.stackActions !== true ||
             !["merge", "update-branch"].includes(input.action) ||
-            input.expectedHeadSha === undefined ||
+            input.expectedStackHeads === undefined ||
             (input.action === "update-branch" && input.updateMethod !== "rebase"))
         ) {
           return Effect.fail(
@@ -1621,9 +1621,9 @@ export const make = Effect.gen(function* () {
                 number: input.number,
                 action: input.action,
                 ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
-                ...(input.expectedHeadSha === undefined
+                ...(input.expectedStackHeads === undefined
                   ? {}
-                  : { expectedHeadSha: input.expectedHeadSha }),
+                  : { expectedStackHeads: input.expectedStackHeads }),
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })

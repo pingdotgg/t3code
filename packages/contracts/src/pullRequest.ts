@@ -923,10 +923,16 @@ export const PullRequestDiffFileContentsResult = Schema.Struct({
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
+export const PullRequestStackHead = Schema.Struct({
+  number: PositiveInt,
+  headSha: TrimmedNonEmptyString,
+});
+export type PullRequestStackHead = typeof PullRequestStackHead.Type;
+
 export const PullRequestActionInput = Schema.Struct({
   /** Native stack scope; only send to environments advertising pullRequestStackActions. */
   stackNumber: Schema.optional(PositiveInt),
-  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
+  expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   /**

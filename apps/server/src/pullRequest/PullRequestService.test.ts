@@ -4044,7 +4044,7 @@ it.effect("authorizes stack rebases independently of whether the selected layer 
       action: "update-branch" as const,
       updateMethod: "rebase" as const,
       stackNumber: 50,
-      expectedHeadSha: "ccc",
+      expectedStackHeads: [{ number: 3, headSha: "ccc" }],
     };
     yield* service.runAction(input);
     assert.strictEqual(taken, 1);

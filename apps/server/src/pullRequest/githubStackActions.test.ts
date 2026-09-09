@@ -36,9 +36,21 @@ const input = {
   host: "github.com",
   number: 3,
   stackNumber: 50,
-  expectedHeadSha: "ccc",
+  expectedStackHeads: [
+    { number: 2, headSha: "bbb" },
+    { number: 3, headSha: "ccc" },
+  ],
   action: "merge" as const,
 };
+const access = {
+  data: {
+    repository: {
+      pr2: { headRepository: { viewerPermission: "WRITE" }, maintainerCanModify: false },
+      pr3: { headRepository: { viewerPermission: "WRITE" }, maintainerCanModify: false },
+    },
+  },
+};
+
 function fake(responses: readonly unknown[]) {
   const calls: ReadonlyArray<string>[] = [];
   const execute: GitHubCli.GitHubCli["Service"]["execute"] = (request) =>
@@ -94,7 +106,10 @@ it.effect("refuses a changed stack before performing any mutation", () =>
     const api = fake([stack]);
     const result = yield* runGitHubStackAction(api.execute, {
       ...input,
-      expectedHeadSha: "old",
+      expectedStackHeads: [
+        { number: 2, headSha: "old" },
+        { number: 3, headSha: "ccc" },
+      ],
     }).pipe(Effect.result);
     expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "changed" } });
     expect(api.calls).toHaveLength(1);
@@ -103,9 +118,9 @@ it.effect("refuses a changed stack before performing any mutation", () =>
 
 it.effect("rebases unmerged layers bottom to top without local git commands", () =>
   Effect.gen(function* () {
-    const api = fake([stack, {}, {}]);
+    const api = fake([stack, access, {}, {}]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
-    expect(api.calls.slice(1)).toEqual([
+    expect(api.calls.slice(2)).toEqual([
       ["pr", "update-branch", "2", "--repo", "github.com/acme/web", "--rebase"],
       ["pr", "update-branch", "3", "--repo", "github.com/acme/web", "--rebase"],
     ]);
@@ -114,7 +129,7 @@ it.effect("rebases unmerged layers bottom to top without local git commands", ()
 
 it.effect("does not update later layers after a rebase failure", () =>
   Effect.gen(function* () {
-    const api = fake([stack]);
+    const api = fake([stack, access]);
     const execute: typeof api.execute = (request) =>
       request.args[0] === "api"
         ? api.execute(request)
@@ -132,5 +147,67 @@ it.effect("does not update later layers after a rebase failure", () =>
       _tag: "Failure",
       failure: { reason: "rebase-failed", number: 2, completed: 0 },
     });
+  }),
+);
+
+it.effect("refuses the entire rebase before mutation when a later fork denies write access", () =>
+  Effect.gen(function* () {
+    const api = fake([
+      stack,
+      {
+        data: {
+          repository: {
+            ...access.data.repository,
+            pr3: { headRepository: { viewerPermission: "READ" }, maintainerCanModify: false },
+          },
+        },
+      },
+    ]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      action: "update-branch",
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "permission" } });
+    expect(api.calls).toHaveLength(2);
+    expect(api.calls.every((args) => args[0] === "api")).toBe(true);
+  }),
+);
+
+it.effect("allows a fork that explicitly permits maintainer updates", () =>
+  Effect.gen(function* () {
+    const api = fake([
+      stack,
+      {
+        data: {
+          repository: {
+            ...access.data.repository,
+            pr3: { headRepository: { viewerPermission: "READ" }, maintainerCanModify: true },
+          },
+        },
+      },
+      {},
+      {},
+    ]);
+    yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
+    expect(api.calls.at(-1)).toContain("3");
+  }),
+);
+
+it.effect("bounds polling and reports a still-running merge without claiming success", () =>
+  Effect.gen(function* () {
+    const api = fake([
+      stack,
+      ...Array.from({ length: 40 }, () => ({ status: "pending", details: { uuid: "operation" } })),
+    ]);
+    const fiber = yield* runGitHubStackAction(api.execute, input).pipe(
+      Effect.result,
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust("6 minutes");
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "pending" },
+    });
+    expect(api.calls.length).toBeLessThan(40);
   }),
 );
