@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { Link } from "@tanstack/react-router";
+import { openCommandPalette } from "~/commandPaletteBus";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, LinkIcon, MessageSquareIcon, UnlinkIcon } from "lucide-react";
 import { useState } from "react";
@@ -11,11 +11,10 @@ import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { buildThreadRouteParams } from "~/threadRoutes";
 import { Button } from "../ui/button";
 import { Command, CommandInput, CommandItem, CommandList } from "../ui/command";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { MenuItem } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 
 interface PullRequestThreadLinksProps {
@@ -60,8 +59,7 @@ function EnabledPullRequestThreadLinks({
         })
       : null,
   );
-  // Refreshes can briefly clear the query value. Keep the last response so polling
-  // does not unmount an open menu or move its highlighted thread.
+  // Keep the count stable while its query refreshes.
   const [lastRelations, setLastRelations] = useState(relations.data);
   if (relations.data !== null && relations.data !== lastRelations) {
     setLastRelations(relations.data);
@@ -101,47 +99,19 @@ function EnabledPullRequestThreadLinks({
   return (
     <>
       {display === "count" && (linkedThreads.length > 0 || relations.error !== null) ? (
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                size="xs"
-                variant="ghost"
-                aria-label={linkedThreadsLabel}
-                title={linkedThreadsLabel}
-              />
-            }
-          >
-            <MessageSquareIcon aria-hidden className="size-3.5" />
-            <span className="@max-[40rem]/pr-header:hidden">{linkedThreadsLabel}</span>
-            <span aria-hidden className="hidden @max-[40rem]/pr-header:inline">
-              {linkedThreads.length || "?"}
-            </span>
-          </MenuTrigger>
-          <MenuPopup align="end" className="max-h-72 max-w-80 overflow-y-auto">
-            {relations.error !== null ? (
-              <MenuItem onClick={relations.refresh}>Could not load linked threads. Retry</MenuItem>
-            ) : null}
-            {linkedThreads.map((linkedThread) => (
-              <MenuItem
-                key={linkedThread.id}
-                render={
-                  <Link
-                    to="/$environmentId/$threadId"
-                    params={buildThreadRouteParams(scopeThreadRef(environmentId, linkedThread.id))}
-                  />
-                }
-              >
-                <span className="min-w-0 flex-1 truncate">
-                  {linkedThread.title || "Untitled thread"}
-                </span>
-                {linkedThread.archivedAt !== null ? (
-                  <span className="text-xs text-muted-foreground">Archived</span>
-                ) : null}
-              </MenuItem>
-            ))}
-          </MenuPopup>
-        </Menu>
+        <Button
+          size="xs"
+          variant="ghost"
+          aria-label={linkedThreadsLabel}
+          title={linkedThreadsLabel}
+          onClick={() => openCommandPalette({ query: url })}
+        >
+          <MessageSquareIcon aria-hidden className="size-3.5" />
+          <span className="@max-[40rem]/pr-header:hidden">{linkedThreadsLabel}</span>
+          <span aria-hidden className="hidden @max-[40rem]/pr-header:inline">
+            {linkedThreads.length || "?"}
+          </span>
+        </Button>
       ) : null}
       {display === "menu-item" ? (
         <MenuItem

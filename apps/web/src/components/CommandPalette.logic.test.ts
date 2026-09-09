@@ -64,6 +64,18 @@ describe("reduceCommandPaletteUiState", () => {
     });
   });
 
+  it("opens a supplied search from another overlay and clears it on close", () => {
+    const query = "https://github.com/pingdotgg/t3code/pull/10636";
+    const opened = reduceCommandPaletteUiState(
+      { open: true, mode: "files", openIntent: null },
+      { _tag: "OpenSearch", query },
+    );
+    expect(opened).toEqual({ open: true, mode: "command", openIntent: { kind: "search", query } });
+    expect(
+      reduceCommandPaletteUiState(opened, { _tag: "SetOpen", open: false }).openIntent,
+    ).toBeNull();
+  });
+
   it("preserves the mode on close and resets it on open", () => {
     const filesOpen = reduceCommandPaletteUiState(closedState, {
       _tag: "ToggleMode",
