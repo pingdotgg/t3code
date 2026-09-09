@@ -1,3 +1,4 @@
+import { GitPullRequestIcon } from "lucide-react";
 import {
   type AssistantCitation,
   type EnvironmentId,
@@ -2225,6 +2226,11 @@ function toolGroupSummaryIconName(
   kind: Extract<TimelineRow, { kind: "work-toggle" }>["summaryKind"],
 ): WorkEntryIconName {
   switch (kind) {
+    case "pull-request":
+    case "link-pr":
+    case "unlink-pr":
+    case "list-prs":
+      return "pull-request";
     case "read":
       return "eye";
     case "edit":
@@ -2801,6 +2807,7 @@ type WorkEntryIconName =
   | "search"
   | "square-pen"
   | "terminal"
+  | "pull-request"
   | "t3-code"
   | "wrench"
   | "x"
@@ -3005,6 +3012,8 @@ function ToolActivityImageIcon(props: {
 
 function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
   switch (name) {
+    case "pull-request":
+      return <GitPullRequestIcon className={className} aria-hidden />;
     case "bot":
       return <BotIcon className={className} aria-hidden />;
     case "brain":
