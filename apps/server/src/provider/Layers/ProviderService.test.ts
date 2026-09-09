@@ -4806,7 +4806,7 @@ describe("agent browser access", () => {
     projectOverride?: boolean,
   ) =>
     Effect.gen(function* () {
-      const issued: Array<ThreadId> = [];
+      const issued: Array<{ threadId: ThreadId; capabilities?: ReadonlyArray<string> }> = [];
       const codex = makeFakeCodexAdapter();
       const providerAdapterLayer = Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistry,
@@ -4865,7 +4865,7 @@ describe("agent browser access", () => {
       const providerLayer = makeProviderServiceLive({
         issueMcpCredential: (request) =>
           Effect.sync(() => {
-            issued.push(request.threadId);
+            issued.push(request);
             return undefined;
           }),
         revokeMcpCredential: (revoked) => Effect.sync(() => void revokedThreads.push(revoked)),
@@ -4903,14 +4903,14 @@ describe("agent browser access", () => {
       return issued;
     });
 
-  // Credential issuance is the observable that matters: it is the only place a
-  // credential is minted, and `/mcp` accepts nothing else, so withholding it is
-  // what actually denies every provider and external MCP client.
-  it.effect("requests no MCP credential when agent browser access is off", () =>
+  it.effect("requests only monitoring capability for Codex when browser access is off", () =>
     Effect.gen(function* () {
       const issued = yield* startSessionWith(false, asThreadId("thread-browser-off"));
 
-      assert.deepEqual(issued, []);
+      assert.deepEqual(
+        issued.map(({ capabilities }) => capabilities),
+        [["monitor"]],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -4934,25 +4934,36 @@ describe("agent browser access", () => {
 
       const issued = yield* startSessionWith(true, threadId);
 
-      assert.deepEqual(issued, [threadId]);
+      assert.deepEqual(
+        issued.map(({ capabilities }) => capabilities),
+        [["preview", "monitor"]],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("withholds and revokes MCP credentials when the project disables browser access", () =>
-    Effect.gen(function* () {
-      const threadId = asThreadId("thread-project-browser-off");
-      revokedThreads.length = 0;
-      const issued = yield* startSessionWith(true, threadId, false);
-      assert.deepEqual(issued, []);
-      assert.deepEqual(revokedThreads, [threadId]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "retains only monitoring and revokes old credentials when the project disables browser access",
+    () =>
+      Effect.gen(function* () {
+        const threadId = asThreadId("thread-project-browser-off");
+        revokedThreads.length = 0;
+        const issued = yield* startSessionWith(true, threadId, false);
+        assert.deepEqual(
+          issued.map(({ capabilities }) => capabilities),
+          [["monitor"]],
+        );
+        assert.deepEqual(revokedThreads, [threadId]);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("requests an MCP credential when the project overrides browser access to on", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith(false, threadId, true);
-      assert.deepEqual(issued, [threadId]);
+      assert.deepEqual(
+        issued.map(({ capabilities }) => capabilities),
+        [["preview", "monitor"]],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
