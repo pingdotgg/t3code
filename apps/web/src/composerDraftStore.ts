@@ -64,9 +64,10 @@ const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isSnapShotSource = Schema.is(SnapShotSource);
+const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 9;
+const COMPOSER_DRAFT_STORAGE_VERSION = 10;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -254,6 +255,10 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   // selections (project default / sticky) leave it unset so later seeds can
   // replace them; legacy entries predate the flag and read as seeded too.
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
+  // True once the server confirmed a send carrying this selection while the
+  // draft was still a draft session; promotion drops it instead of moving it
+  // onto the server thread.
+  modelSelectionSent: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
 });
@@ -391,6 +396,18 @@ export interface ComposerThreadDraftState {
    * may replace it. Legacy entries predate the flag and read as seeded.
    */
   modelSelectionExplicit?: boolean;
+  /**
+   * Identity of the current explicit pick. Fresh on every picker or trait
+   * write, even one that repeats the value, and never persisted. A send
+   * captures it so that confirming the send releases only the pick it carried.
+   */
+  modelSelectionId?: string;
+  /**
+   * True once the server confirmed a send carrying this selection while the
+   * draft was still a draft session. Promotion then drops the selection
+   * instead of moving it onto the server thread.
+   */
+  modelSelectionSent?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
 }
@@ -583,6 +600,15 @@ interface ComposerDraftStoreState {
       | undefined,
   ) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  /**
+   * Lets the thread's own model show through again after the server confirms a
+   * send. The captured id means a pick made since that send started, including
+   * a same-value re-pick, stays in the draft.
+   */
+  releaseModelSelection: (
+    threadRef: ComposerThreadTarget,
+    modelSelectionId: string | undefined,
+  ) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -892,6 +918,25 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.runtimeMode === null &&
     draft.interactionMode === null
   );
+}
+
+let nextModelSelectionPickSequence = 0;
+
+/** Gives each explicit model pick an identity, including same-value re-picks. */
+function newModelSelectionId(): string {
+  nextModelSelectionPickSequence += 1;
+  return nextModelSelectionPickSequence.toString(36);
+}
+
+/** Drops the model override so the server thread's model becomes effective. */
+function withoutModelSelection(draft: ComposerThreadDraftState): ComposerThreadDraftState {
+  const {
+    modelSelectionExplicit: _explicit,
+    modelSelectionId: _id,
+    modelSelectionSent: _sent,
+    ...retained
+  } = draft;
+  return { ...retained, modelSelectionByProvider: {}, activeProvider: null };
 }
 
 function normalizeProviderDriverKind(value: unknown): ProviderDriverKind | null {
@@ -1664,7 +1709,14 @@ function removeDraftThreadReferences(
     state.draftThreadsByThreadKey;
   const { [threadKey]: removedComposerDraft, ...restDraftsByThreadKey } = state.draftsByThreadKey;
   if (composerDestination && removedComposerDraft) {
-    restDraftsByThreadKey[composerTargetKey(composerDestination)] = removedComposerDraft;
+    // A selection already confirmed on a draft session belongs to the new
+    // server thread, so do not move that old override across promotion.
+    const movedComposerDraft = removedComposerDraft.modelSelectionSent
+      ? withoutModelSelection(removedComposerDraft)
+      : removedComposerDraft;
+    if (!shouldRemoveDraft(movedComposerDraft)) {
+      restDraftsByThreadKey[composerTargetKey(composerDestination)] = movedComposerDraft;
+    }
   } else {
     revokeDraftThreadPreviewUrls(removedComposerDraft);
   }
@@ -1920,6 +1972,9 @@ function normalizePersistedDraftsByThreadId(
           return normalized ? [normalized] : [];
         })
       : [];
+    const previewAnnotations = Array.isArray(draftCandidate.previewAnnotations)
+      ? draftCandidate.previewAnnotations.filter(isPreviewAnnotationPayload)
+      : [];
     const reviewComments = Array.isArray(draftCandidate.reviewComments)
       ? draftCandidate.reviewComments.filter(isReviewCommentContext)
       : [];
@@ -1939,6 +1994,7 @@ function normalizePersistedDraftsByThreadId(
     let modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
     let activeProvider: ProviderInstanceId | null = null;
     let modelSelectionExplicit: true | undefined = undefined;
+    let modelSelectionSent: true | undefined = undefined;
 
     if (
       draftCandidate.modelSelectionByProvider &&
@@ -1950,6 +2006,7 @@ function normalizePersistedDraftsByThreadId(
       >;
       activeProvider = normalizeProviderInstanceId(draftCandidate.activeProvider);
       modelSelectionExplicit = draftCandidate.modelSelectionExplicit === true ? true : undefined;
+      modelSelectionSent = draftCandidate.modelSelectionSent === true ? true : undefined;
     } else {
       // v2 or legacy format: migrate
       const normalizedModelOptions =
@@ -1990,6 +2047,7 @@ function normalizePersistedDraftsByThreadId(
       files.length === 0 &&
       terminalContexts.length === 0 &&
       elementContexts.length === 0 &&
+      previewAnnotations.length === 0 &&
       reviewComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
@@ -2015,12 +2073,14 @@ function normalizePersistedDraftsByThreadId(
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(elementContexts.length > 0 ? { elementContexts } : {}),
+      ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
             activeProvider,
             ...(modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
+            ...(modelSelectionSent ? { modelSelectionSent: true } : {}),
           }
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
@@ -2043,16 +2103,22 @@ function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraf
   );
 }
 
-function stripLegacyModelSeedsFromEmptyDraftSessions(
+/**
+ * Drops model selections nobody picked: a seed on an empty draft session,
+ * which the next new-thread flow re-seeds anyway, and any seed on a server
+ * thread, which already has a model of its own. Explicit picks and content
+ * stay.
+ */
+function stripLegacyModelSeeds(
   draftsByThreadKey: PersistedComposerDraftStoreState["draftsByThreadKey"],
   draftThreadsByThreadKey: PersistedComposerDraftStoreState["draftThreadsByThreadKey"],
 ): PersistedComposerDraftStoreState["draftsByThreadKey"] {
   return Object.fromEntries(
     Object.entries(draftsByThreadKey).flatMap(([threadKey, draft]) => {
+      const isDraftSession = draftThreadsByThreadKey[threadKey] !== undefined;
       if (
-        draftThreadsByThreadKey[threadKey] === undefined ||
         draft.modelSelectionExplicit === true ||
-        persistedComposerDraftHasUserContent(draft)
+        (isDraftSession && persistedComposerDraftHasUserContent(draft))
       ) {
         return [[threadKey, draft]];
       }
@@ -2061,9 +2127,14 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
         activeProvider: _activeProvider,
         modelSelectionByProvider: _modelSelectionByProvider,
         modelSelectionExplicit: _modelSelectionExplicit,
+        modelSelectionSent: _modelSelectionSent,
         ...retained
       } = draft;
-      return retained.runtimeMode || retained.interactionMode ? [[threadKey, retained]] : [];
+      return retained.runtimeMode ||
+        retained.interactionMode ||
+        persistedComposerDraftHasUserContent(retained)
+        ? [[threadKey, retained]]
+        : [];
     }),
   );
 }
@@ -2074,7 +2145,7 @@ function migratePersistedComposerDraftStoreState(
   const normalized = normalizeCurrentPersistedComposerDraftStoreState(persistedState);
   return {
     ...normalized,
-    draftsByThreadKey: stripLegacyModelSeedsFromEmptyDraftSessions(
+    draftsByThreadKey: stripLegacyModelSeeds(
       normalized.draftsByThreadKey,
       normalized.draftThreadsByThreadKey,
     ),
@@ -2202,6 +2273,7 @@ export function partializeComposerDraftStoreState(
             ),
             activeProvider: draft.activeProvider,
             ...(draft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
+            ...(draft.modelSelectionSent ? { modelSelectionSent: true } : {}),
           }
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
@@ -2467,6 +2539,7 @@ function toHydratedThreadDraft(
     modelSelectionByProvider,
     activeProvider,
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
+    ...(persistedDraft.modelSelectionSent ? { modelSelectionSent: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
   };
@@ -2955,17 +3028,49 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextMap = compactModelSelectionByProvider(stickyMap);
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              base.activeProvider === stickyActiveProvider &&
-              base.modelSelectionExplicit === undefined
+              base.activeProvider === stickyActiveProvider
             ) {
               return state;
             }
-            const { modelSelectionExplicit: _modelSelectionExplicit, ...retained } = base;
+            // A draft session can be waiting for promotion after a confirmed
+            // send. Keep its sent marker so this re-seed cannot cross onto the
+            // canonical server thread.
+            const {
+              modelSelectionExplicit: _modelSelectionExplicit,
+              modelSelectionId: _modelSelectionId,
+              ...retained
+            } = base;
             const nextDraft: ComposerThreadDraftState = {
               ...retained,
               modelSelectionByProvider: nextMap,
               activeProvider: stickyActiveProvider,
             };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        releaseModelSelection: (threadRef, modelSelectionId) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current || current.modelSelectionId !== modelSelectionId) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState =
+              state.draftThreadsByThreadKey[threadKey] !== undefined
+                ? { ...current, modelSelectionSent: true }
+                : withoutModelSelection(current);
+            if (Equal.equals(current, nextDraft)) {
+              return state;
+            }
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
               delete nextDraftsByThreadKey[threadKey];
@@ -3051,22 +3156,32 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               }
             }
             const nextActiveProvider = normalized?.instanceId ?? base.activeProvider;
+            // Explicit picks always write, even one repeating the current
+            // value. Identical seed writes are no-ops so they do not erase an
+            // explicit or sent marker.
             if (
+              opts?.explicit !== true &&
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              base.activeProvider === nextActiveProvider &&
-              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true)
+              base.activeProvider === nextActiveProvider
             ) {
               return state;
             }
-            // Last writer defines intent: picker writes mark the selection
-            // explicit; seeding writes leave it unset so future seeds can
-            // replace it.
-            const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;
+            // Picker writes mark the selection explicit; seeding writes leave
+            // it unset so future seeds can replace it. Either way the prior
+            // pick's id and sent marker no longer describe this selection.
+            const {
+              modelSelectionExplicit: _previousExplicit,
+              modelSelectionId: _previousId,
+              modelSelectionSent: _previousSent,
+              ...restBase
+            } = base;
             const nextDraft: ComposerThreadDraftState = {
               ...restBase,
               modelSelectionByProvider: nextMap,
               activeProvider: nextActiveProvider,
-              ...(opts?.explicit === true ? { modelSelectionExplicit: true as const } : {}),
+              ...(opts?.explicit === true
+                ? { modelSelectionExplicit: true as const, modelSelectionId: newModelSelectionId() }
+                : {}),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3181,22 +3296,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : (base.activeProvider ?? instanceKey);
             }
 
-            if (
-              Equal.equals(base.modelSelectionByProvider, nextMap) &&
-              Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
-            ) {
-              return state;
-            }
-
             // Trait edits are user-driven intent: mark the selection explicit
-            // so later seeds cannot silently replace the chosen options.
-            const { modelSelectionExplicit: _previousExplicit, ...restBase } = base;
+            // so later seeds cannot silently replace the chosen options, and
+            // give it a fresh pick id even when the value repeats.
+            const {
+              modelSelectionExplicit: _previousExplicit,
+              modelSelectionId: _previousId,
+              modelSelectionSent: _previousSent,
+              ...restBase
+            } = base;
             const nextDraft: ComposerThreadDraftState = {
               ...restBase,
               ...(options?.instanceId ? { activeProvider: instanceKey } : {}),
               modelSelectionByProvider: nextMap,
               modelSelectionExplicit: true,
+              modelSelectionId: newModelSelectionId(),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
