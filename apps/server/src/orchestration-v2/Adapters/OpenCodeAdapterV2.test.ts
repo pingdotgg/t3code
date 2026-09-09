@@ -63,8 +63,10 @@ function asyncEventStream() {
   const values: Array<{ value: unknown; handled: ReturnType<typeof promiseGate<void>> }> = [];
   const waiters: Array<(value: IteratorResult<unknown>) => void> = [];
   let previousHandled: ReturnType<typeof promiseGate<void>> | undefined;
+  let closed = false;
   return {
     close() {
+      closed = true;
       for (const waiter of waiters.splice(0)) waiter({ done: true, value: undefined });
     },
     push(value: unknown) {
@@ -81,6 +83,7 @@ function asyncEventStream() {
         return {
           next: () => {
             previousHandled?.resolve();
+            if (closed) return Promise.resolve({ done: true as const, value: undefined });
             const entry = values.shift();
             if (entry !== undefined) {
               previousHandled = entry.handled;
@@ -227,6 +230,39 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("fails an active turn when the event stream reaches unexpected clean EOF", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness("eof", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      nativeEvents.close();
+      const events = yield* Fiber.join(received);
+      assert.isTrue(
+        events.some(
+          (event) =>
+            event.type === "provider_session.updated" && event.providerSession.status === "error",
+        ),
+      );
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "transport_error");
+      assert.equal(terminal?.threadDisposition, "broken");
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("aborts external root and descendants before closing the event stream", () =>
     Effect.gen(function* () {
       const scope = yield* Scope.make();
