@@ -279,9 +279,9 @@
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
     },
-    "./providerRateLimits": {
-      "types": "./src/providerRateLimits.ts",
-      "import": "./src/providerRateLimits.ts"
+    "./providerAccountSwitching": {
+      "types": "./src/providerAccountSwitching.ts",
+      "import": "./src/providerAccountSwitching.ts"
     }
   },
   "scripts": {

@@ -15,9 +15,9 @@ import {
 } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
-  isProviderRateLimitActive,
-  selectRateLimitFallbackProvider,
-} from "@t3tools/shared/providerRateLimits";
+  exhaustedUsageWindow,
+  selectAccountSwitchTarget,
+} from "@t3tools/shared/providerAccountSwitching";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -48,9 +48,9 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
-  formatRateLimitSwitchSummary,
+  formatAccountSwitchSummary,
   PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
-} from "../ProviderRateLimitReactor.ts";
+} from "../ProviderAccountSwitchReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderCommandReactor,
@@ -1195,8 +1195,8 @@ const make = Effect.gen(function* () {
    * the same provider session. The switch is recorded as a thread activity so
    * it is visible in the transcript.
    */
-  const resolveRateLimitedModelSelection = Effect.fnUntraced(function* (input: {
-    readonly thread: OrchestrationThread;
+  const resolveAccountSwitchModelSelection = Effect.fnUntraced(function* (input: {
+    readonly thread: Pick<OrchestrationThread, "id" | "modelSelection" | "session">;
     readonly requestedModelSelection: ModelSelection | undefined;
     readonly createdAt: string;
   }) {
@@ -1211,7 +1211,8 @@ const make = Effect.gen(function* () {
     const nowMs = Date.parse(input.createdAt);
     const providers = yield* providerRegistry.getProviders;
     const current = providers.find((provider) => provider.instanceId === currentInstanceId);
-    if (!current || !isProviderRateLimitActive(current.rateLimit, nowMs)) {
+    const spent = current ? exhaustedUsageWindow(current, nowMs) : null;
+    if (!current || !spent) {
       return input.requestedModelSelection;
     }
     const autoSwitch = yield* serverSettingsService.getSettings.pipe(
@@ -1221,7 +1222,7 @@ const make = Effect.gen(function* () {
     if (!autoSwitch) {
       return input.requestedModelSelection;
     }
-    const fallback = selectRateLimitFallbackProvider({
+    const fallback = selectAccountSwitchTarget({
       providers,
       instanceId: currentInstanceId,
       nowMs,
@@ -1229,14 +1230,15 @@ const make = Effect.gen(function* () {
     if (!fallback) {
       return input.requestedModelSelection;
     }
-    yield* Effect.logInfo("provider command reactor routing turn to fallback account", {
+    yield* Effect.logInfo("provider command reactor routing turn to another account", {
       threadId: input.thread.id,
       fromInstanceId: currentInstanceId,
       toInstanceId: fallback.instanceId,
-      resetsAt: current.rateLimit?.resetsAt,
+      window: spent.id,
+      resetsAt: spent.resetsAt,
     });
     yield* Effect.all({
-      commandId: serverCommandId("provider-rate-limit-switch"),
+      commandId: serverCommandId("provider-account-switch"),
       eventId: serverEventId(),
     }).pipe(
       Effect.flatMap(({ commandId, eventId }) =>
@@ -1248,12 +1250,12 @@ const make = Effect.gen(function* () {
             id: eventId,
             tone: "info",
             kind: PROVIDER_INSTANCE_SWITCHED_ACTIVITY_KIND,
-            summary: formatRateLimitSwitchSummary({ from: current, to: fallback }),
+            summary: formatAccountSwitchSummary({ from: current, to: fallback }),
             payload: {
-              reason: "rate-limit",
+              reason: "usage-limit",
               fromInstanceId: currentInstanceId,
               toInstanceId: fallback.instanceId,
-              ...(current.rateLimit?.resetsAt ? { resetsAt: current.rateLimit.resetsAt } : {}),
+              ...(spent.resetsAt ? { resetsAt: spent.resetsAt } : {}),
             },
             turnId: null,
             createdAt: input.createdAt,
@@ -1515,7 +1517,7 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const modelSelection = yield* resolveRateLimitedModelSelection({
+    const modelSelection = yield* resolveAccountSwitchModelSelection({
       thread,
       requestedModelSelection: event.payload.modelSelection,
       createdAt: event.payload.createdAt,

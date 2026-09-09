@@ -233,6 +233,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "resume running active interrupted work restart reboot machine crash desktop update automatically",
     ],
+  },
+  {
     id: "provider-rate-limit-auto-switch",
     title: "Switch accounts on usage limit",
     to: "/settings/general",

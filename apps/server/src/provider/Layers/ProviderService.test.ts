@@ -1075,7 +1075,7 @@ it.effect(
           provider: driverKind,
           providerInstanceId: workInstanceId,
           threadId,
-          cwd: "/tmp/project-claude-sibling",
+          cwd: tempDir,
           runtimeMode: "full-access",
         });
         yield* provider.stopSession({ threadId });
@@ -1097,66 +1097,64 @@ it.effect(
         cwd?: string;
         resumeCursor?: unknown;
       };
-      assert.equal(startPayload.cwd, "/tmp/project-claude-sibling");
+      assert.equal(startPayload.cwd, tempDir);
       assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
       NodeFS.rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect(
-  "ProviderServiceLive starts fresh on a sibling instance with a different continuation key",
-  () =>
-    Effect.gen(function* () {
-      const driverKind = ProviderDriverKind.make("codex");
-      const workInstanceId = ProviderInstanceId.make("codex_work");
-      const personalInstanceId = ProviderInstanceId.make("codex_personal");
-      const work = makeFakeCodexAdapter(driverKind);
-      const personal = makeFakeCodexAdapter(driverKind);
-      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-sibling-"));
-      const dbPath = NodePath.join(tempDir, "orchestration.sqlite");
-      const registry = makeSiblingInstanceRegistry({
-        driverKind,
-        instances: [
-          { instanceId: workInstanceId, adapter: work.adapter, continuationKey: "codex:home:a" },
-          {
-            instanceId: personalInstanceId,
-            adapter: personal.adapter,
-            continuationKey: "codex:home:b",
-          },
-        ],
+it.effect("ProviderServiceLive refuses a sibling instance with a different continuation key", () =>
+  Effect.gen(function* () {
+    const driverKind = ProviderDriverKind.make("codex");
+    const workInstanceId = ProviderInstanceId.make("codex_work");
+    const personalInstanceId = ProviderInstanceId.make("codex_personal");
+    const work = makeFakeCodexAdapter(driverKind);
+    const personal = makeFakeCodexAdapter(driverKind);
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-sibling-"));
+    const dbPath = NodePath.join(tempDir, "orchestration.sqlite");
+    const registry = makeSiblingInstanceRegistry({
+      driverKind,
+      instances: [
+        { instanceId: workInstanceId, adapter: work.adapter, continuationKey: "codex:home:a" },
+        {
+          instanceId: personalInstanceId,
+          adapter: personal.adapter,
+          continuationKey: "codex:home:b",
+        },
+      ],
+    });
+    const threadId = asThreadId("thread-codex-sibling");
+
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* provider.startSession(threadId, {
+        provider: driverKind,
+        providerInstanceId: workInstanceId,
+        threadId,
+        cwd: tempDir,
+        runtimeMode: "full-access",
       });
-      const threadId = asThreadId("thread-codex-sibling");
+      yield* provider.stopSession({ threadId });
+    }).pipe(Effect.provide(makeProviderLayerForRegistry(registry, dbPath)));
 
-      yield* Effect.gen(function* () {
+    const failure = yield* Effect.flip(
+      Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        yield* provider.startSession(threadId, {
-          provider: driverKind,
-          providerInstanceId: workInstanceId,
-          threadId,
-          cwd: "/tmp/project-codex-sibling",
-          runtimeMode: "full-access",
-        });
-        yield* provider.stopSession({ threadId });
-      }).pipe(Effect.provide(makeProviderLayerForRegistry(registry, dbPath)));
-
-      yield* Effect.gen(function* () {
-        const provider = yield* ProviderService.ProviderService;
-        yield* provider.startSession(threadId, {
+        return yield* provider.startSession(threadId, {
           provider: driverKind,
           providerInstanceId: personalInstanceId,
           threadId,
           runtimeMode: "full-access",
         });
-      }).pipe(Effect.provide(makeProviderLayerForRegistry(registry, dbPath)));
+      }).pipe(Effect.provide(makeProviderLayerForRegistry(registry, dbPath))),
+    );
 
-      const startPayload = personal.startSession.mock.calls[0]?.[0] as {
-        cwd?: string;
-        resumeCursor?: unknown;
-      };
-      assert.equal(startPayload.cwd, undefined);
-      assert.equal(startPayload.resumeCursor, undefined);
-      NodeFS.rmSync(tempDir, { recursive: true, force: true });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    // Sibling reuse never weakens the incompatible-resume guard.
+    assert.instanceOf(failure, ProviderValidationError);
+    assert.include(failure.issue, "provider resume state is incompatible");
+    assert.equal(personal.startSession.mock.calls.length, 0);
+    NodeFS.rmSync(tempDir, { recursive: true, force: true });
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const routing = makeProviderServiceLayer();

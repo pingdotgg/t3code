@@ -559,6 +559,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.continueThreadsAfterServerUpdate !==
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
+        : []),
       ...(settings.autoSwitchProviderOnRateLimit !==
       DEFAULT_UNIFIED_SETTINGS.autoSwitchProviderOnRateLimit
         ? ["Switch accounts on usage limit"]

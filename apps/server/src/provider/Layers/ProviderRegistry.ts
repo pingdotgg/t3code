@@ -27,7 +27,6 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
-  type ServerProviderRateLimit,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -393,12 +392,7 @@ export const ProviderRegistryLive = Layer.effect(
           cacheDir: config.providerStatusCacheDir,
           instanceId: key,
         }).pipe(Effect.provideService(Path.Path, path));
-        // Usage-limit state is volatile; never let it survive a restart.
-        const {
-          workspaceSnapshots: _workspaceSnapshots,
-          rateLimit: _rateLimit,
-          ...machineProvider
-        } = provider;
+        const { workspaceSnapshots: _workspaceSnapshots, ...machineProvider } = provider;
         yield* writeProviderStatusCache({ filePath, provider: machineProvider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -407,26 +401,18 @@ export const ProviderRegistryLive = Layer.effect(
         );
       });
 
-    const rateLimitStatesRef = yield* Ref.make<Map<ProviderInstanceId, ServerProviderRateLimit>>(
-      new Map(),
-    );
-
     const applyProviderUpdateState = Effect.fn("applyProviderUpdateState")(function* (
       provider: ServerProvider,
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
-      const rateLimitStates = yield* Ref.get(rateLimitStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      const rateLimit = rateLimitStates.get(provider.instanceId);
-      const {
-        updateState: _updateState,
-        rateLimit: _rateLimit,
-        ...providerWithoutVolatileState
-      } = provider;
+      if (!updateState) {
+        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
+        return providerWithoutUpdateState;
+      }
       return {
-        ...providerWithoutVolatileState,
-        ...(updateState ? { updateState } : {}),
-        ...(rateLimit ? { rateLimit } : {}),
+        ...provider,
+        updateState,
       };
     });
 
@@ -534,30 +520,6 @@ export const ProviderRegistryLive = Layer.effect(
         });
       },
     );
-
-    const setProviderRateLimit = Effect.fn("setProviderRateLimit")(function* (input: {
-      readonly instanceId: ProviderInstanceId;
-      readonly rateLimit: ServerProviderRateLimit | null;
-    }) {
-      yield* Ref.update(rateLimitStatesRef, (previous) => {
-        const next = new Map(previous);
-        if (input.rateLimit === null) {
-          next.delete(input.instanceId);
-        } else {
-          next.set(input.instanceId, input.rateLimit);
-        }
-        return next;
-      });
-
-      const existingProviders = yield* Ref.get(providersRef);
-      const matchingProvider = existingProviders.find(
-        (candidate) => candidate.instanceId === input.instanceId,
-      );
-      if (!matchingProvider) {
-        return existingProviders;
-      }
-      return yield* upsertProviders([matchingProvider], { persist: false });
-    });
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
@@ -764,15 +726,6 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
-        yield* Ref.update(rateLimitStatesRef, (previous) => {
-          const next = new Map(previous);
-          for (const instanceId of previous.keys()) {
-            if (!knownInstanceIds.has(instanceId)) {
-              next.delete(instanceId);
-            }
-          }
-          return next;
-        });
       }),
     );
     const syncLiveSourcesAndContinue = syncLiveSources.pipe(
@@ -922,7 +875,6 @@ export const ProviderRegistryLive = Layer.effect(
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
-      setProviderRateLimit,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
-import * as ProviderRateLimitReactor from "../ProviderRateLimitReactor.ts";
+import * as ProviderAccountSwitchReactor from "../ProviderAccountSwitchReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
@@ -50,9 +50,9 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
-          Layer.succeed(ProviderRateLimitReactor.ProviderRateLimitReactor, {
+          Layer.succeed(ProviderAccountSwitchReactor.ProviderAccountSwitchReactor, {
             start: () => {
-              started.push("provider-rate-limit-reactor");
+              started.push("provider-account-switch-reactor");
               return Effect.void;
             },
             drain: Effect.void,
@@ -113,7 +113,7 @@ describe("OrchestrationReactor", () => {
     expect(started).toEqual([
       "provider-runtime-ingestion",
       "provider-command-reactor",
-      "provider-rate-limit-reactor",
+      "provider-account-switch-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
       "thread-pull-request-reactor",

@@ -2,8 +2,8 @@ import { type ProviderInstanceId } from "@t3tools/contracts";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { SparklesIcon, StarIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import { formatProviderRateLimitReset } from "./providerRateLimitBanner.logic";
-import { isProviderRateLimitActive } from "@t3tools/shared/providerRateLimits";
+import { describeExhaustedWindow } from "./providerAccountSwitchBanner.logic";
+import { exhaustedUsageWindow } from "@t3tools/shared/providerAccountSwitching";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import {
@@ -31,10 +31,12 @@ function describeUnavailableInstance(entry: ProviderInstanceEntry): string {
   return msg ? `${label} — ${kind}. ${msg}` : `${label} — ${kind}.`;
 }
 
-function describeRateLimitedInstance(entry: ProviderInstanceEntry): string | null {
-  if (!isProviderRateLimitActive(entry.rateLimit, Date.now())) return null;
-  const reset = formatProviderRateLimitReset(entry.rateLimit?.resetsAt, Date.now());
-  return `${entry.displayName} — Usage limit reached${reset ? `, ${reset}` : ""}.`;
+function describeOutOfUsageInstance(entry: ProviderInstanceEntry): string | null {
+  const now = Date.now();
+  const window = exhaustedUsageWindow(entry.snapshot, now);
+  return window
+    ? `${entry.displayName} — Out of usage. ${describeExhaustedWindow(window, now)}`
+    : null;
 }
 
 const SELECTED_INDICATOR_CLASS =
@@ -158,7 +160,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               ? describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
-                : (describeRateLimitedInstance(entry) ??
+                : (describeOutOfUsageInstance(entry) ??
                   (showNewBadge ? `${entry.displayName} — New` : entry.displayName));
 
             const button = (
@@ -180,7 +182,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled={isDisabled}
                 type="button"
                 aria-label={
-                  isUnavailable || isContextDisabled || describeRateLimitedInstance(entry) !== null
+                  isUnavailable || isContextDisabled || describeOutOfUsageInstance(entry) !== null
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`

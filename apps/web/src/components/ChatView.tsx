@@ -354,10 +354,10 @@ import {
 } from "./chat/ThreadErrorBanner";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
-  formatProviderRateLimitReset,
+  describeExhaustedWindow,
   providerLabel,
-  resolveProviderRateLimitSuggestion,
-} from "./chat/providerRateLimitBanner.logic";
+  resolveAccountSwitchSuggestion,
+} from "./chat/providerAccountSwitchBanner.logic";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableCompactionProvider,
@@ -5887,7 +5887,7 @@ export default function ChatView(props: ChatViewProps) {
   const rateLimitSuggestion = useMemo(
     () =>
       activeThread
-        ? resolveProviderRateLimitSuggestion({
+        ? resolveAccountSwitchSuggestion({
             providers: providerStatuses,
             instanceId: activeThread.session?.providerInstanceId ?? activeProviderInstanceId,
             autoSwitchEnabled: settings.autoSwitchProviderOnRateLimit,
@@ -5903,8 +5903,8 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const handleSwitchRateLimitedAccount = useCallback(() => {
-    if (!activeThread || !rateLimitSuggestion?.fallback) return;
-    const fallback = rateLimitSuggestion.fallback;
+    if (!activeThread || !rateLimitSuggestion?.target) return;
+    const fallback = rateLimitSuggestion.target;
     const currentModel = activeThread.modelSelection.model;
     const resolvedModel =
       resolveAppModelSelectionForInstance(
@@ -5958,25 +5958,25 @@ export default function ChatView(props: ChatViewProps) {
     ) {
       return null;
     }
-    const reset = formatProviderRateLimitReset(
-      rateLimitSuggestion.limited.rateLimit?.resetsAt,
+    const reset = describeExhaustedWindow(
+      rateLimitSuggestion.window,
       Date.parse(`${nowMinute}:00.000Z`),
     );
-    const fallback = rateLimitSuggestion.fallback;
+    const target = rateLimitSuggestion.target;
     return {
-      id: `provider-rate-limit:${rateLimitSuggestion.key}`,
+      id: `provider-account-switch:${rateLimitSuggestion.key}`,
       variant: "warning",
       icon: <GaugeIcon />,
-      title: `${providerInstanceLabel(rateLimitSuggestion.limited)} hit its usage limit`,
-      description: fallback
-        ? `${reset ? `${reset[0]!.toUpperCase()}${reset.slice(1)}. ` : ""}${providerInstanceLabel(fallback)} can continue this thread.`
-        : (reset ?? undefined),
-      actions: fallback ? (
+      title: `${providerInstanceLabel(rateLimitSuggestion.limited)} is out of usage`,
+      description: target
+        ? `${reset} ${providerInstanceLabel(target)} can continue this thread.`
+        : reset,
+      actions: target ? (
         <Button size="xs" variant="ghost" onClick={handleSwitchRateLimitedAccount}>
-          Switch to {providerInstanceLabel(fallback)}
+          Switch to {providerInstanceLabel(target)}
         </Button>
       ) : undefined,
-      dismissLabel: "Dismiss usage limit notice",
+      dismissLabel: "Dismiss usage notice",
       onDismiss: () => setDismissedRateLimitKeys((keys) => new Set(keys).add(rateLimitDismissKey)),
     };
   }, [

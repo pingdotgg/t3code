@@ -10,7 +10,6 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
-  ServerProviderRateLimit,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -75,16 +74,6 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
-  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
-
-  /**
-   * Record the latest usage-limit state a provider runtime reported for one
-   * instance. Volatile like maintenance-action state: projected onto
-   * `ServerProvider.rateLimit`, never persisted. `null` clears it.
-   */
-  readonly setProviderRateLimit: (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly rateLimit: ServerProviderRateLimit | null;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
