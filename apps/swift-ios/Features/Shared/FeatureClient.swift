@@ -10,6 +10,7 @@ public protocol FeatureClient: AnyObject {
     func backgroundSnapshot() async throws -> FeatureSnapshot
     func events() -> AsyncStream<FeatureEvent>
     func resumeAfterBackground(reconnect: Bool) async
+    func suspendForBackground()
 
     func preuploadAttachment(
         _ attachment: FeatureUploadAttachment,
@@ -100,6 +101,8 @@ public protocol FeatureClient: AnyObject {
         identity: FeatureSubmissionIdentity
     ) async throws
     func cancelTurn(threadID: String) async throws
+    func stopStatus(threadID: String) async throws -> FeatureThread
+    func cancelTurn(threadID: String, expectedTurnID: String?) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws
     func resolveUserInput(id: String, answers: [String: FeatureInputAnswer]) async throws
     func resolveUserInput(
@@ -245,6 +248,14 @@ public protocol FeatureClient: AnyObject {
 }
 
 public extension FeatureClient {
+    func stopStatus(threadID: String) async throws -> FeatureThread {
+        throw FeatureStopStatusUnavailableError()
+    }
+
+    func cancelTurn(threadID: String, expectedTurnID: String?) async throws {
+        try await cancelTurn(threadID: threadID)
+    }
+
     func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot {
         throw FeatureCapabilityUnavailable("Server preferences")
     }
@@ -315,6 +326,8 @@ public extension FeatureClient {
     }
 
     func resumeAfterBackground(reconnect: Bool) async {}
+
+    func suspendForBackground() {}
 
     func preuploadAttachment(
         _ attachment: FeatureUploadAttachment,
@@ -712,4 +725,14 @@ public extension FeatureClient {
     func closeTerminal(threadID: String, terminalID _: String) async throws {
         throw FeatureCapabilityUnavailable("Terminal")
     }
+}
+
+public struct FeatureStopTurnChangedError: LocalizedError {
+    public init() {}
+    public var errorDescription: String? { "The active turn changed. Check the thread before stopping again." }
+}
+
+public struct FeatureStopStatusUnavailableError: LocalizedError {
+    public init() {}
+    public var errorDescription: String? { "Could not confirm the thread’s stop status." }
 }

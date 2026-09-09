@@ -47,6 +47,38 @@ final class WebSocketRPCRaceTests: XCTestCase {
         await client.stop()
     }
 
+    func testColdBatchedSubscriptionRetainsFailedSocketIdentity() async throws {
+        let connection = SubscriptionTrafficConnection(sendsInvalidSubscriptionValue: true)
+        let connector = GatedConnector(connection: connection)
+        let client = WebSocketRPCClient(
+            connector: connector,
+            endpointProvider: { URL(string: "wss://studio.example/ws")! }
+        )
+        let pending = Task {
+            try await client.subscribeBatchesOnCurrentConnection("thread.events", as: Int.self)
+        }
+        await connector.waitUntilConnectStarted()
+        let beforeConnection = await client.currentConnectionID()
+        XCTAssertNil(beforeConnection)
+        await connector.release()
+        let subscription = try await pending.value
+        var events = subscription.events.makeAsyncIterator()
+        do {
+            _ = try await events.next()
+            XCTFail("The first invalid value must terminate the cold subscription.")
+        } catch is DecodingError {}
+        let failedSocketID = await client.currentConnectionID()
+        XCTAssertEqual(subscription.connectionID, failedSocketID)
+        let waiting = Task { try await client.waitForConnection(after: subscription.connectionID) }
+        _ = try await client.request("server.stillHealthy", as: JSONValue.self)
+        waiting.cancel()
+        do {
+            _ = try await waiting.value
+            XCTFail("The failed socket must not satisfy the wait for its replacement.")
+        } catch is CancellationError {}
+        await client.stop()
+    }
+
     func testColdSubscriptionRetainsFailedSocketIdentity() async throws {
         let connection = SubscriptionTrafficConnection(sendsInvalidSubscriptionValue: true)
         let connector = GatedConnector(connection: connection)

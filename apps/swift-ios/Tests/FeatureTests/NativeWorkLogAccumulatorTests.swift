@@ -33,7 +33,7 @@ struct NativeWorkLogAccumulatorTests {
 
         var message = accumulator.message(groupID: "turn-1")
         #expect(message.activeWorkLabel == "Run focused tests")
-        #expect(message.text.isEmpty)
+        #expect(message.text == "• Run focused tests")
 
         accumulator.append(
             activity(
@@ -47,8 +47,35 @@ struct NativeWorkLogAccumulatorTests {
         )
         message = accumulator.message(groupID: "turn-1")
         #expect(message.activeWorkLabel == nil)
-        #expect(message.toolName == "Work log · 1")
-        #expect(message.text == "• 2 tests passed")
+        #expect(message.toolName == "Run focused tests completed")
+        #expect(message.text == "• Run focused tests completed\n2 tests passed")
+    }
+
+    @Test func groupRetainsDistinctCallsCommandsAndOutputsWithoutTruncation() {
+        var accumulator = NativeWorkLogAccumulator()
+        let command = String(repeating: "command ", count: 50)
+        accumulator.append(activity(id: "a-start", kind: "tool.started", summary: "Run command",
+            payload: ["toolCallId": .string("a")]), preview: command, createdAt: .now)
+        accumulator.append(activity(id: "b", kind: "tool.completed", summary: "Read file",
+            payload: ["toolCallId": .string("b")]), preview: "file detail", createdAt: .now)
+        accumulator.append(activity(id: "a-end", kind: "tool.completed", summary: "Ran command",
+            payload: ["toolCallId": .string("a")]), preview: "command output", createdAt: .now)
+        let message = accumulator.message(groupID: "group")
+        #expect(message.toolName == "2 tool calls")
+        #expect(message.text.contains(command))
+        #expect(message.text.contains("command output"))
+        #expect(message.text.contains("file detail"))
+        #expect(message.activeWorkLabel == nil)
+    }
+
+    @Test func changingProgressRetainsOnlyInitialAndLatestFullDetails() {
+        var accumulator = NativeWorkLogAccumulator()
+        for index in 0..<1_000 {
+            accumulator.append(activity(id: "event-\(index)", kind: "tool.updated", summary: "Run command",
+                payload: ["toolCallId": .string("a")]), preview: "progress \(index)", createdAt: .now)
+        }
+        let message = accumulator.message(groupID: "group")
+        #expect(message.text == "• Run command\nprogress 0\nprogress 999")
     }
 
     @Test
