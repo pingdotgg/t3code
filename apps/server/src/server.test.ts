@@ -117,6 +117,7 @@ import {
 } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
+import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationEventStore } from "./persistence/Services/OrchestrationEventStore.ts";
@@ -331,6 +332,7 @@ const makeDefaultOrchestrationReadModel = () => {
         runtimeMode: "full-access" as const,
         branch: null,
         worktreePath: null,
+        pullRequests: [],
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
@@ -361,6 +363,7 @@ const makeDefaultOrchestrationThreadShell = (
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     latestTurn: null,
     createdAt: now,
     updatedAt: now,
@@ -384,7 +387,7 @@ const browserOtlpTracingLayer = Layer.mergeAll(
 
 const makeAuthTestLayer = () =>
   EnvironmentAuth.layer.pipe(
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(
       Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
@@ -959,6 +962,11 @@ const buildAppUnderTest = (options?: {
             start: () => Effect.void,
             drainThrough: () => Effect.void,
             ...options?.layers?.threadDeletionReactor,
+          }),
+          Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({
+            start: () => Effect.void,
+            drain: Effect.void,
+            requestSync: () => Effect.void,
           }),
         ),
       ),
@@ -8108,6 +8116,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             runtimeMode: "full-access" as const,
             branch: null,
             worktreePath: null,
+            pullRequests: [],
             createdAt: now,
             updatedAt: now,
             archivedAt: null,

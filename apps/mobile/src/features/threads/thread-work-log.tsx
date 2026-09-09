@@ -76,7 +76,7 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
-type WorkContentIcon = AppSymbolName | "browser" | "t3-code";
+type WorkContentIcon = AppSymbolName | "browser" | "t3-code" | "pull-request";
 
 function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
@@ -92,7 +92,13 @@ function WorkLogIcon(props: {
   }
   return (
     <SymbolView
-      name={props.icon === "browser" ? { ios: "globe", android: "public" } : props.icon}
+      name={
+        props.icon === "pull-request"
+          ? "arrow.triangle.pull"
+          : props.icon === "browser"
+            ? { ios: "globe", android: "public" }
+            : props.icon
+      }
       size={14}
       weight="medium"
       {...(colorClassName ? { tintColorClassName: colorClassName } : { tintColor: props.color })}
@@ -893,7 +899,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
-  readonly summaryToolIcon?: "browser" | "t3-code";
+  readonly summaryToolIcon?: "browser" | "t3-code" | "pull-request";
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1231,6 +1237,11 @@ function ToolActivityImage(props: {
 
 function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
   switch (kind) {
+    case "pull-request":
+    case "link-pr":
+    case "unlink-pr":
+    case "list-prs":
+      return "arrow.triangle.pull";
     case "read":
       return { ios: "eye", android: "visibility" };
     case "edit":

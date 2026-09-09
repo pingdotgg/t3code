@@ -3,6 +3,7 @@ import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  PullRequestStackMembership,
   PullRequestActor,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -112,12 +113,22 @@ const RawListItemSchema = Schema.Struct({
   statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(RawCheckSchema))),
 });
 
+const RawStackMembershipSchema = Schema.Struct({
+  stack: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ number: Schema.Int, size: Schema.Int, baseRefName: Schema.String }),
+    ),
+  ),
+  stackEntry: Schema.optional(Schema.NullOr(Schema.Struct({ position: Schema.Int }))),
+});
+
 /**
  * A search's own answer, which is the listing's row one connection deeper: `gh pr list --json`
  * flattens reviewers and labels, and GraphQL does not. Everything below the row is optional
  * because a node that is not a pull request decodes as an empty object, which is skipped.
  */
 const RawSearchItemSchema = Schema.Struct({
+  ...RawStackMembershipSchema.fields,
   number: Schema.Int,
   title: Schema.String,
   url: Schema.String,
@@ -219,6 +230,13 @@ const RawStatsSchema = Schema.Struct({
         ),
       ),
     ),
+  ),
+});
+
+const RawStackMembershipsSchema = Schema.Struct({
+  data: Schema.Record(
+    Schema.String,
+    Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(RawStackMembershipSchema) })),
   ),
 });
 
@@ -649,12 +667,13 @@ export const PULL_REQUEST_SEARCH_MAX_ROWS = GRAPHQL_PAGE_SIZE;
  * than twenty labels shows twenty, and one that has asked more than twenty people for a review
  * is already past what a row can say.
  */
-export function pullRequestSearchGraphQlQuery(rows: number): string {
+export function pullRequestSearchGraphQlQuery(rows: number, includeStacks = false): string {
   return `query($q: String!) {
   search(query: $q, type: ISSUE, first: ${Math.min(Math.max(Math.trunc(rows), 1), PULL_REQUEST_SEARCH_MAX_ROWS)}) {
     pageInfo { hasNextPage }
     nodes {
       ... on PullRequest {
+        ${includeStacks ? "stack { number size baseRefName } stackEntry { position }" : ""}
         number
         title
         url
@@ -1020,6 +1039,7 @@ export const REPOSITORY_ACCESS_JSON_FIELDS =
   "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerPermission";
 
 export interface GitHubPullRequestListItem {
+  readonly stack?: PullRequestStackMembership;
   /** The author's node id, kept so a batch can resolve the avatar the listing does not carry. */
   readonly authorId: string | null;
   readonly number: number;
@@ -1527,6 +1547,7 @@ export function decodePullRequestSearchJson(
     const node = decodedNode.value;
     const repository = trimmed(node.repository?.nameWithOwner);
     if (repository === null) continue;
+    const stack = toStackMembership(node);
     items.push({
       ...toListItem({
         ...node,
@@ -1542,6 +1563,7 @@ export function decodePullRequestSearchJson(
           return state === null ? [] : [{ state }];
         }),
       }),
+      ...(stack === undefined ? {} : { stack }),
       repository,
     });
   }
@@ -1550,6 +1572,19 @@ export function decodePullRequestSearchJson(
     rawCount: nodes.length,
     hasNextPage: decoded.success.data.search.pageInfo?.hasNextPage ?? false,
   });
+}
+
+function toStackMembership(
+  raw: Schema.Schema.Type<typeof RawStackMembershipSchema>,
+): PullRequestStackMembership | undefined {
+  return raw.stack && raw.stackEntry
+    ? {
+        number: raw.stack.number,
+        size: raw.stack.size,
+        base: raw.stack.baseRefName,
+        position: raw.stackEntry.position,
+      }
+    : undefined;
 }
 
 /** What a repository selector may hold before it is written into a GraphQL document unquoted. */
@@ -1580,6 +1615,42 @@ export function buildPullRequestStatsGraphQlQuery(
     );
   }
   return `query {\n${selections.join("\n")}\n}`;
+}
+
+/** Stack membership for the visible rows of a per-repository listing. */
+export function buildPullRequestStackMembershipsGraphQlQuery(
+  repository: string,
+  numbers: ReadonlyArray<number>,
+): string | null {
+  if (numbers.length === 0) return null;
+  const [owner, name, ...rest] = repository.trim().split("/");
+  if (rest.length > 0 || owner === undefined || name === undefined) return null;
+  if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+  const selections: string[] = [];
+  for (const [index, number] of numbers.entries()) {
+    if (!Number.isSafeInteger(number) || number <= 0) return null;
+    selections.push(
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { stack { number size baseRefName } stackEntry { position } } }`,
+    );
+  }
+  return `query PullRequestStackMemberships {\n${selections.join("\n")}\n}`;
+}
+
+const decodeStackMemberships = decodeJsonResult(RawStackMembershipsSchema);
+
+export function decodePullRequestStackMembershipsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<number, PullRequestStackMembership>, DecodeFailure> {
+  const decoded = decodeStackMemberships(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const memberships = new Map<number, PullRequestStackMembership>();
+  for (const [alias, value] of Object.entries(decoded.success.data)) {
+    const index = /^s(\d+)$/.exec(alias)?.[1];
+    if (index === undefined || value?.pullRequest == null) continue;
+    const stack = toStackMembership(value.pullRequest);
+    if (stack !== undefined) memberships.set(Number(index), stack);
+  }
+  return Result.succeed(memberships);
 }
 
 /**
@@ -2564,4 +2635,78 @@ export function buildSetFilesViewedGraphQlMutation(
     query: `mutation($pullRequestId: ID!, ${parameters}) {\n${fields}\n}`,
     variables: Object.fromEntries(files.map((file, index) => [`path${index}`, file.path])),
   };
+}
+
+/** One pull request as the stacks API lists it: a number, a head, and whether it is done. */
+const RawStackPullRequestSchema = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  draft: Schema.optional(Schema.Boolean),
+  number: Schema.Int,
+  head: Schema.Struct({ ref: Schema.String, sha: Schema.optional(Schema.String) }),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_at: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * A stack as `GET /repos/{owner}/{repo}/stacks` answers it, in a public preview whose shape may
+ * still move. Only what a stack is made of is required — where it lives, what it stands on, and
+ * its pull requests — and `base` is accepted both as the ref object the preview sends today and
+ * as the bare branch name it started out as.
+ */
+const RawStackSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Union([Schema.Int, Schema.String]))),
+  number: Schema.Int,
+  node_id: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.String,
+  html_url: Schema.optional(Schema.NullOr(Schema.String)),
+  base: Schema.Union([Schema.String, Schema.Struct({ ref: Schema.String })]),
+  pull_requests: Schema.Array(RawStackPullRequestSchema),
+});
+
+const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
+
+export interface GitHubPullRequestStackLayer {
+  readonly title?: string;
+  readonly isDraft?: boolean;
+  readonly headSha?: string;
+  readonly number: number;
+  readonly headBranch: string;
+  readonly state: PullRequestState;
+}
+
+export interface GitHubPullRequestStack {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly base: string;
+  /** Bottom to top, which is the order GitHub lists them in. */
+  readonly layers: ReadonlyArray<GitHubPullRequestStackLayer>;
+}
+
+/**
+ * The first stack of a `?pull_request=` listing, or null for an empty one: a pull request is in
+ * at most one stack, so the array is GitHub's way of saying "none" rather than a page.
+ */
+export function decodePullRequestStacksJson(
+  raw: string,
+): Result.Result<GitHubPullRequestStack | null, DecodeFailure> {
+  const decoded = decodeStacks(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const stack = decoded.success[0];
+  if (stack === undefined) return Result.succeed(null);
+  return Result.succeed({
+    id: stack.id == null ? (trimmed(stack.node_id) ?? String(stack.number)) : String(stack.id),
+    number: stack.number,
+    // The page a person opens where the preview reports one; the API URL is what it always has.
+    url: trimmed(stack.html_url) ?? stack.url,
+    base: typeof stack.base === "string" ? stack.base : stack.base.ref,
+    layers: stack.pull_requests.map((pullRequest) => ({
+      ...(pullRequest.title === undefined ? {} : { title: pullRequest.title }),
+      ...(pullRequest.draft === undefined ? {} : { isDraft: pullRequest.draft }),
+      ...(pullRequest.head.sha === undefined ? {} : { headSha: pullRequest.head.sha }),
+      number: pullRequest.number,
+      headBranch: pullRequest.head.ref,
+      state: toState({ state: pullRequest.state, mergedAt: pullRequest.merged_at }),
+    })),
+  });
 }

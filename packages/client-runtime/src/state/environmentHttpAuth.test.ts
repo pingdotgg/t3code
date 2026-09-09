@@ -84,6 +84,7 @@ const THREAD = {
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: null,
+    pullRequests: [],
     worktreePath: null,
     latestTurn: null,
     createdAt: "2026-09-04T00:00:00.000Z",

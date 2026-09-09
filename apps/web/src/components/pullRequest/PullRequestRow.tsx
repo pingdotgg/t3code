@@ -1,4 +1,5 @@
 import { SearchIcon } from "lucide-react";
+import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -60,6 +61,11 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
   );
 }
 
+export type PullRequestRowTarget = Pick<
+  EnvironmentPullRequestEntry,
+  "environmentId" | "projectId" | "host" | "repository" | "number"
+>;
+
 function PullRequestRowImpl({
   entry,
   selected,
@@ -86,7 +92,7 @@ function PullRequestRowImpl({
   /** Used by the list's shared visibility observer to defer optional line-count reads. */
   statsKey?: string;
   statsRef?: RefCallback<HTMLButtonElement>;
-  onSelect: (entry: EnvironmentPullRequestEntry) => void;
+  onSelect: (entry: PullRequestRowTarget) => void;
 }) {
   const { Icon, providerName } = getSourceControlPresentationForKind(entry.provider);
   return (
@@ -116,6 +122,21 @@ function PullRequestRowImpl({
           {entry.title}
         </span>
         <span className="col-start-2 row-start-1 flex max-w-36 items-center justify-self-end gap-2 text-xs">
+          {entry.stack ? (
+            <PullRequestStackPopover
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                host: entry.host,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+              membership={entry.stack}
+              onSelect={(target) =>
+                onSelect({ ...target, host: entry.host, environmentId: entry.environmentId })
+              }
+            />
+          ) : null}
           {/* Only a verdict somebody has actually given: "review required" is the absence of
               one, and saying so on every unreviewed row would say nothing. */}
           {entry.reviewDecision === "approved" || entry.reviewDecision === "changes-requested" ? (

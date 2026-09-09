@@ -1,6 +1,7 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -9,14 +10,22 @@ import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { BASE_COMPARISON_GRAPHQL_QUERY } from "./gitHubPullRequestJson.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
 const mockedExecute = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>();
+const mockedStackMemberships = vi.fn<GitHubCli.GitHubCli["Service"]["execute"]>(() =>
+  Effect.succeed(output('{"data":{}}')),
+);
 const mockedGetPullRequest = vi.fn<GitHubCli.GitHubCli["Service"]["getPullRequest"]>();
 
 const layer = it.layer(
   GitHubPullRequestCli.layer.pipe(
     Layer.provide(
       Layer.mock(GitHubCli.GitHubCli)({
-        execute: mockedExecute,
+        execute: (input) =>
+          input.args.some((arg) => arg.includes("query PullRequestStackMemberships"))
+            ? mockedStackMemberships(input)
+            : mockedExecute(input),
         getPullRequest: mockedGetPullRequest,
       }),
     ),
@@ -179,24 +188,42 @@ function searchQueryOfCall(index: number): string | undefined {
 
 afterEach(() => {
   mockedExecute.mockReset();
+  mockedStackMemberships.mockReset();
   mockedGetPullRequest.mockReset();
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
-  it.effect("reads linked pull request status through one narrow request", () =>
+  it.effect("reads linked pull request status with the overview fields in one request", () =>
     Effect.gen(function* () {
-      mockedGetPullRequest.mockReturnValueOnce(
-        Effect.succeed({
-          number: 7,
-          title: "Reuse the summary",
-          url: "https://github.com/acme/web/pull/7",
-          baseRefName: "main",
-          headRefName: "feat/summary",
-          state: "merged",
-          closedAt: "2026-08-23T10:00:00Z",
-          mergedAt: "2026-08-23T10:00:00Z",
-          updatedAt: "2026-08-24T12:34:56.000Z",
-        }),
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 7,
+              title: "Reuse the summary",
+              url: "https://github.com/acme/web/pull/7",
+              author: { login: "octocat", name: "Octo Cat" },
+              baseRefName: "main",
+              headRefName: "feat/summary",
+              state: "OPEN",
+              isDraft: false,
+              mergeable: "MERGEABLE",
+              reviewDecision: "APPROVED",
+              additions: 12,
+              deletions: 3,
+              changedFiles: 2,
+              createdAt: "2026-08-20T00:00:00.000Z",
+              updatedAt: "2026-08-24T12:34:56.000Z",
+              reviewRequests: [],
+              labels: [],
+              statusCheckRollup: [
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "ci" },
+              ],
+              body: "",
+            }),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
@@ -207,23 +234,252 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      assert.deepStrictEqual(summary, {
-        number: 7,
-        title: "Reuse the summary",
-        url: "https://github.com/acme/web/pull/7",
-        headBranch: "feat/summary",
-        baseBranch: "main",
-        state: "merged",
-        closedAt: "2026-08-23T10:00:00Z",
-        mergedAt: "2026-08-23T10:00:00Z",
-        updatedAt: "2026-08-24T12:34:56.000Z",
-      });
-      expect(mockedGetPullRequest).toHaveBeenCalledOnce();
-      expect(mockedGetPullRequest).toHaveBeenCalledWith({
+      assert.deepStrictEqual(
+        {
+          number: summary.number,
+          state: summary.state,
+          headBranch: summary.headBranch,
+          isDraft: summary.isDraft,
+          author: summary.author?.login,
+          additions: summary.additions,
+          deletions: summary.deletions,
+          changedFiles: summary.changedFiles,
+          reviewDecision: summary.reviewDecision,
+          checksState: summary.checksState,
+          mergeability: summary.mergeability,
+        },
+        {
+          number: 7,
+          state: "open",
+          headBranch: "feat/summary",
+          isDraft: false,
+          author: "octocat",
+          additions: 12,
+          deletions: 3,
+          changedFiles: 2,
+          reviewDecision: "approved",
+          checksState: "passing",
+          mergeability: "mergeable",
+        },
+      );
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(mockedExecute.mock.calls[0]?.[0]?.args).toEqual([
+        "pr",
+        "view",
+        "7",
+        "--repo",
+        "github.com/acme/web",
+        "--json",
+        expect.stringContaining("statusCheckRollup"),
+      ]);
+      expect(mockedGetPullRequest).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("reads the stack a pull request is in through the stacks preview, on its host", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                id: 42,
+                number: 3,
+                url: "https://api.github.com/repos/acme/web/stacks/3",
+                base: { ref: "main" },
+                pull_requests: [
+                  {
+                    number: 6,
+                    head: { ref: "feat/one" },
+                    state: "closed",
+                    merged_at: "2026-09-02",
+                  },
+                  { number: 7, head: { ref: "feat/two" }, state: "open", merged_at: null },
+                ],
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const stack = yield* cli.getPullRequestStack({
         cwd: "/w",
-        reference: "https://github.com/acme/web/pull/7",
+        repository: "acme/web",
+        host: "ghe.example.com",
+        number: 7,
       });
-      expect(mockedExecute).not.toHaveBeenCalled();
+
+      assert.deepStrictEqual(stack, {
+        id: "42",
+        number: 3,
+        url: "https://api.github.com/repos/acme/web/stacks/3",
+        base: "main",
+        layers: [
+          { number: 6, headBranch: "feat/one", state: "merged" },
+          { number: 7, headBranch: "feat/two", state: "open" },
+        ],
+      });
+      assert.deepStrictEqual(callAt(0).args, [
+        "api",
+        "--hostname",
+        "ghe.example.com",
+        "repos/acme/web/stacks?pull_request=7",
+      ]);
+    }),
+  );
+
+  it.effect("fetches layer titles only when the caller asks for stack details", () =>
+    Effect.gen(function* () {
+      const minimal = {
+        url: "https://api.github.com/repos/acme/web/stacks/3",
+        number: 3,
+        base: { ref: "main" },
+        pull_requests: [
+          { number: 7, head: { ref: "feat/two", sha: "abc123" }, state: "open", merged_at: null },
+        ],
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify([minimal]))));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              ...minimal,
+              pull_requests: [{ ...minimal.pull_requests[0], title: "Second layer", draft: false }],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const stack = yield* cli.getPullRequestStack({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        includeDetails: true,
+      });
+      expect(stack?.layers[0]).toMatchObject({
+        title: "Second layer",
+        headSha: "abc123",
+        isDraft: false,
+      });
+      expect(callAt(1).args).toEqual([
+        "api",
+        "--hostname",
+        "github.com",
+        "repos/acme/web/stacks/3",
+      ]);
+    }),
+  );
+
+  it.effect("reads an empty stacks listing as not stacked", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const stack = yield* cli.getPullRequestStack({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.isNull(stack);
+    }),
+  );
+
+  it.effect("reads a host that refuses the stacks preview as not stacked", () =>
+    Effect.gen(function* () {
+      // The CLI classifies a missing preview endpoint as not found.
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubPullRequestNotFoundError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error("HTTP 404: Not Found (https://api.github.com/repos/acme/web/stacks)"),
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const stack = yield* cli.getPullRequestStack({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.isNull(stack);
+    }),
+  );
+
+  it.effect("does not read a signed-out gh as an unstacked pull request", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubCliAuthenticationError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error("gh auth login"),
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubCliAuthenticationError");
+    }),
+  );
+
+  it.effect("preserves transient stack failures instead of reporting no stack", () =>
+    Effect.gen(function* () {
+      const failure = new GitHubCli.GitHubCliCommandError({
+        command: "gh",
+        cwd: "/w",
+        cause: new Error("HTTP 503"),
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+      assert.strictEqual(error, failure);
+    }),
+  );
+
+  it.effect("reports a stacks answer it cannot read against the stack read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('[{"id":42}]')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+      if (error._tag !== "GitHubPullRequestReadError") return;
+      assert.strictEqual(error.operation, "getPullRequestStack");
     }),
   );
 
@@ -511,6 +767,127 @@ layer("GitHubPullRequestCli.layer", (it) => {
       assert.isTrue(overflowing.truncated);
       // A slice at GitHub's own ceiling has no extra row to probe with, so `hasNextPage` answers.
       assert.isTrue(capped.truncated);
+    }),
+  );
+
+  it.effect("enriches only the visible fallback rows after filtering and widening", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(pullRequests(3, 1, () => ({ isDraft: true })))),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(pullRequests(6, 1, (number) => ({ isDraft: number < 4 })))),
+      );
+      mockedStackMemberships.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                s0: {
+                  pullRequest: {
+                    stack: { number: 3, size: 2, baseRefName: "main" },
+                    stackEntry: { position: 1 },
+                  },
+                },
+                s1: { pullRequest: { stack: null, stackEntry: null } },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 2,
+        filters: { draft: "hide" },
+      });
+      expect(batch.items.map((item) => item.number)).toEqual([4, 5]);
+      expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, base: "main", position: 1 });
+      expect(batch.items[1]?.stack).toBeUndefined();
+      expect(batch.truncated).toBe(true);
+      expect(batch.continues).toBe(false);
+      expect(mockedStackMemberships).toHaveBeenCalledTimes(1);
+      const query = mockedStackMemberships.mock.calls[0]?.[0].args.at(-1) ?? "";
+      expect(query).toContain("pullRequest(number: 4)");
+      expect(query).toContain("pullRequest(number: 5)");
+      expect(query).not.toContain("pullRequest(number: 1)");
+      expect(query).not.toContain("pullRequest(number: 6)");
+    }),
+  );
+
+  it.effect("batches membership reads and keeps successful rows when one chunk fails", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(27, 1))));
+      mockedStackMemberships.mockImplementation((input) =>
+        input.args.at(-1)?.includes("pullRequest(number: 26)")
+          ? Effect.fail(
+              new GitHubCli.GitHubCliCommandError({
+                command: "gh",
+                cwd: "/w",
+                cause: new Error("HTTP 502"),
+              }),
+            )
+          : Effect.succeed(
+              output(
+                encodeJson({
+                  data: {
+                    s0: {
+                      pullRequest: {
+                        stack: { number: 3, size: 2, baseRefName: "main" },
+                        stackEntry: { position: 1 },
+                      },
+                    },
+                  },
+                }),
+              ),
+            ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 26,
+      });
+      expect(batch.items.map((item) => item.number)).toEqual(
+        Array.from({ length: 26 }, (_, i) => i + 1),
+      );
+      expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, base: "main", position: 1 });
+      expect(batch.items[25]?.stack).toBeUndefined();
+      expect(batch.truncated).toBe(true);
+      expect(batch.continues).toBe(true);
+      expect(mockedStackMemberships).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("skips membership enrichment for empty pages and enterprise hosts", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(1, 7))));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        state: "open" as const,
+        involvement: "all" as const,
+        viewer: "bilal",
+        limit: 2,
+      };
+      const empty = yield* cli.listPullRequests({ ...input, host: "github.com" });
+      const enterprise = yield* cli.listPullRequests({ ...input, host: "github.acme.test" });
+      expect(empty.items).toEqual([]);
+      expect(enterprise.items.map((item) => item.number)).toEqual([7]);
+      expect(mockedStackMemberships).not.toHaveBeenCalled();
     }),
   );
 

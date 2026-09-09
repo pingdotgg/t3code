@@ -7,9 +7,9 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { type RepositoryIdentity } from "./environment.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
 
 export const PullRequestInvolvement = Schema.Literals(["all", "reviewing", "authored"]);
@@ -431,6 +431,12 @@ export const PullRequestCapabilities = Schema.Struct({
    */
   edit: Schema.optional(PullRequestEditCapabilities),
   /**
+   * The host keeps stacks of change requests as objects of its own, so a linked thread can show
+   * the stack the host shows. Absent means chains are only ever inferred from base branches.
+   */
+  stacks: Schema.optional(Schema.Boolean),
+  stackActions: Schema.optional(Schema.Boolean),
+  /**
    * The repository's labels can be listed, and one put on a change request or taken off it.
    * Optional for the same reason `edit` is: a server that says nothing about labels has no way
    * to change them, which is what every server before this field was.
@@ -450,6 +456,8 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * offering one they may not use ends in the host's own refusal — which at least says why.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  /** May request remote stack rebases, including when this layer is already current. */
+  stackRebase: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
   actions: Schema.Array(PullRequestAction),
   /** This viewer may write a remark: a comment, a reply, or a note against a line. */
@@ -481,7 +489,16 @@ export const PullRequestMergeCapabilities = Schema.Struct({
 });
 export type PullRequestMergeCapabilities = typeof PullRequestMergeCapabilities.Type;
 
+export const PullRequestStackMembership = Schema.Struct({
+  number: PositiveInt,
+  position: PositiveInt,
+  size: PositiveInt,
+  base: TrimmedNonEmptyString,
+});
+export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
+
 export const PullRequestListEntry = Schema.Struct({
+  stack: Schema.optional(PullRequestStackMembership),
   provider: SourceControlProviderKind,
   /**
    * The host below which `repository` is addressed, so the same provider kind can serve more
@@ -633,38 +650,32 @@ export const PullRequestListResult = Schema.Struct({
 });
 export type PullRequestListResult = typeof PullRequestListResult.Type;
 
+/**
+ * Addresses one pull request for reads and writes. `projectId` picks the checkout the host
+ * CLI runs in and, when its repository matches, the credentials; `host` lets the server
+ * route a pull request from another repository through any project on the same host
+ * (a frontend project's thread linking a backend PR). Absent `host` means "the project's
+ * own host", which is every reference from before thread links became host-level.
+ */
 export const PullRequestRef = Schema.Struct({
   projectId: ProjectId,
+  host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
 export type PullRequestRef = typeof PullRequestRef.Type;
 
-/**
- * The `repository` a {@link PullRequestRef} carries, read off the project's recorded identity.
- *
- * `displayName` is the full path below the host, which is what nested GitLab groups need;
- * owner/name is the two-segment fallback for identities recorded before that field existed.
- *
- * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
- * takes the organisation and project from the checkout it detects, so the recorded
- * `org/project/_git/repo` path is refused outright and the whole repository reads as
- * unavailable. Its name is the last segment, which is what this hands over.
- *
- * Shared rather than server-only because the server checks a ref's `repository` against the one
- * it derives here, so a client that spells it any other way is turned away at the door.
- */
-export function pullRequestRepositoryOf(
-  identity: RepositoryIdentity | null | undefined,
-): string | null {
-  if (!identity) return null;
-  if (identity.provider === "azure-devops") {
-    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
-    return identity.name || segments.at(-1) || null;
-  }
-  if (identity.displayName) return identity.displayName;
-  return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
-}
+export const PullRequestLinkedThreadsResult = Schema.Struct({
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      projectId: ProjectId,
+      title: Schema.String,
+      archivedAt: Schema.NullOr(IsoDateTime),
+    }),
+  ),
+});
+export type PullRequestLinkedThreadsResult = typeof PullRequestLinkedThreadsResult.Type;
 
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
@@ -685,8 +696,34 @@ export const PullRequestSummary = Schema.Struct({
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
+  author: Schema.optional(Schema.NullOr(PullRequestActor)),
+  additions: Schema.optional(NonNegativeInt),
+  deletions: Schema.optional(NonNegativeInt),
+  changedFiles: Schema.optional(NonNegativeInt),
+  reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
+  checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
+  mergeability: Schema.optional(PullRequestMergeability),
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
+
+/** The host-native stack a pull request belongs to, in the thread link's shape. */
+export const PullRequestStack = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+  base: TrimmedNonEmptyString,
+  layers: Schema.Array(
+    Schema.Struct({
+      number: PositiveInt,
+      title: Schema.optional(Schema.String),
+      isDraft: Schema.optional(Schema.Boolean),
+      headSha: Schema.optional(TrimmedNonEmptyString),
+      headBranch: TrimmedNonEmptyString,
+      state: PullRequestState,
+    }),
+  ),
+});
+export type PullRequestStack = typeof PullRequestStack.Type;
 
 /**
  * One row's line counts, read after the listing rather than inside it. On GitHub the pair is
@@ -954,7 +991,16 @@ export const PullRequestSetFilesViewedInput = Schema.Struct({
 });
 export type PullRequestSetFilesViewedInput = typeof PullRequestSetFilesViewedInput.Type;
 
+export const PullRequestStackHead = Schema.Struct({
+  number: PositiveInt,
+  headSha: TrimmedNonEmptyString,
+});
+export type PullRequestStackHead = typeof PullRequestStackHead.Type;
+
 export const PullRequestActionInput = Schema.Struct({
+  /** Native stack scope; only send to environments advertising pullRequestStackActions. */
+  stackNumber: Schema.optional(PositiveInt),
+  expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   /**
