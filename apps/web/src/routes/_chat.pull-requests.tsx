@@ -163,6 +163,8 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly repository?: string;
   readonly number?: number;
   readonly selectedProjectId?: ProjectId;
+  /** Host of the open review; changing tabs must not narrow the list host filter. */
+  readonly selectedHost?: string;
   /**
    * Which server the selected pull request was read from. A project id only names a project on
    * its own server, so this is what tells two servers holding one project apart. Optional: a
@@ -262,6 +264,9 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.host === "string" && raw.host ? { host: raw.host.slice(0, 200) } : {}),
     ...(typeof raw.selectedProjectId === "string" && raw.selectedProjectId
       ? { selectedProjectId: raw.selectedProjectId as ProjectId }
+      : {}),
+    ...(typeof raw.selectedHost === "string" && raw.selectedHost
+      ? { selectedHost: raw.selectedHost.slice(0, 200) }
       : {}),
     ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
@@ -367,6 +372,7 @@ function PullRequestsRouteView() {
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is
   // resolved here; an explicit `projectId` in the URL still wins.
+  const selectedHost = search.selectedHost ?? search.host;
   const projectIdForRepository = useMemo(() => {
     const repository = search.repository?.toLowerCase();
     if (repository === undefined) return undefined;
@@ -378,14 +384,14 @@ function PullRequestsRouteView() {
           repository &&
         // The same `owner/name` can exist on two hosts. Without this the first match wins, and
         // a link that named its host opens the pull request from the other one.
-        (search.host === undefined ||
+        (selectedHost === undefined ||
           pullRequestHostOf(
             project.repositoryIdentity,
             project.repositoryIdentity.provider as SourceControlProviderKind,
-          ) === search.host.toLowerCase()),
+          ) === selectedHost.toLowerCase()),
     );
     return identity?.id;
-  }, [projects, search.host, search.repository]);
+  }, [projects, selectedHost, search.repository]);
 
   // The selection is resolved the same way the scope is: an id no connected environment has can
   // never be read here, and one that arrived before the projects did is not yet wrong.
@@ -472,6 +478,7 @@ function PullRequestsRouteView() {
             ...(next.projectId ? { projectId: next.projectId } : {}),
             ...(next.environmentId ? { environmentId: next.environmentId } : {}),
             ...(next.host ? { host: next.host } : {}),
+            ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
             ...(next.selectedProjectId ? { selectedProjectId: next.selectedProjectId } : {}),
             ...(next.selectedEnvironmentId
               ? { selectedEnvironmentId: next.selectedEnvironmentId }
@@ -494,6 +501,7 @@ function PullRequestsRouteView() {
     number: undefined,
     selectedProjectId: undefined,
     selectedEnvironmentId: undefined,
+    selectedHost: undefined,
   };
   // List controls change the rows behind the detail, not the independent selected surface. The
   // reader can keep working in that panel while narrowing, sorting, or switching projects.
@@ -1412,9 +1420,10 @@ function PullRequestsRouteView() {
             repository: search.repository,
             number: search.number,
             projectId: selectedProject.id,
+            ...(selectedHost ? { host: selectedHost } : {}),
           }
         : null,
-    [search.number, search.repository, selectedProject],
+    [search.number, search.repository, selectedProject, selectedHost],
   );
   const rightPanelAvailable = selectedPullRequestSurface !== null;
   useEffect(() => {
@@ -1429,6 +1438,7 @@ function PullRequestsRouteView() {
           repository: activePullRequestSurface.repository,
           number: activePullRequestSurface.number,
           projectId: activePullRequestSurface.projectId as ProjectId,
+          ...(activePullRequestSurface.host ? { host: activePullRequestSurface.host } : {}),
         }
       : null;
 
@@ -1440,6 +1450,7 @@ function PullRequestsRouteView() {
             repository: surface.repository,
             number: surface.number,
             selectedProjectId: surface.projectId as ProjectId,
+            selectedHost: surface.host,
             ...(surface.environmentId === undefined
               ? {}
               : { selectedEnvironmentId: surface.environmentId as EnvironmentId }),
@@ -1512,6 +1523,7 @@ function PullRequestsRouteView() {
         number: entry.number,
         selectedProjectId: entry.projectId,
         selectedEnvironmentId: entry.environmentId,
+        selectedHost: entry.host,
       });
     },
     [rightPanelRef, updateSearch],
@@ -1950,7 +1962,7 @@ function PullRequestsRouteView() {
                 updateSearch({
                   repository: reference.repository,
                   number: reference.number,
-                  host: reference.host,
+                  selectedHost: reference.host,
                   selectedProjectId: reference.projectId,
                   selectedEnvironmentId: panelEnvironmentId,
                 });
