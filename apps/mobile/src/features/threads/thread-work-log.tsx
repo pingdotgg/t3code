@@ -1,3 +1,4 @@
+import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
@@ -858,13 +859,19 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         </View>
       </Pressable>
 
-      {expanded && (fullDetail || viewedImagePath) ? (
+      {expanded && (fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
         <Animated.View
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
           className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
         >
+          {row.workEntry.questionAnswer ? (
+            <QuestionAnswerHistory
+              environmentId={props.environmentId}
+              answer={row.workEntry.questionAnswer}
+            />
+          ) : null}
           {viewedImagePath ? (
             <View className="pb-1.5">
               {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
@@ -1242,6 +1249,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return { ios: "eye", android: "visibility" };
     case "edit":
       return { ios: "square.and.pencil", android: "edit" };
+    case "thread-create":
+      return { ios: "bubble.left", android: "chat" };
     case "command":
       return { ios: "terminal", android: "terminal" };
     case "device":

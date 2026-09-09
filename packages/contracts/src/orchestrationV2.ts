@@ -43,6 +43,8 @@ import {
   ProviderInteractionMode,
   ProviderRequestKind,
   ProviderUserInputAnswers,
+  UserInputAttachments,
+  UserInputAttachmentAnswerPayload,
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
@@ -966,6 +968,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("user_input_request"),
     requestId: RuntimeRequestId,
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
+    questionAnswer: Schema.optional(UserInputAttachmentAnswerPayload),
     responseMode: Schema.optional(Schema.Literal("message")),
   }),
   Schema.Struct({
@@ -1665,6 +1668,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("user_input_request"),
     requestId: RuntimeRequestId,
     questions: Schema.Array(OrchestrationV2UserInputQuestion),
+    questionAnswer: Schema.optional(UserInputAttachmentAnswerPayload),
     responseMode: Schema.optional(Schema.Literal("message")),
   }),
   Schema.Struct({
@@ -2316,6 +2320,7 @@ export const OrchestrationV2Command = Schema.Union([
     requestId: RuntimeRequestId,
     decision: Schema.optional(ProviderApprovalDecision),
     answers: Schema.optional(ProviderUserInputAnswers),
+    attachmentsByQuestionId: Schema.optional(UserInputAttachments),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),

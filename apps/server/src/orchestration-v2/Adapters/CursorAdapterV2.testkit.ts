@@ -585,6 +585,7 @@ function makeReplayServerConfig(
       providerStatusCacheDir,
       worktreesDir,
       attachmentsDir,
+      browserArtifactsDir: path.join(stateDir, "browser-artifacts"),
       environmentThemesDir,
       logsDir,
       serverLogPath: path.join(logsDir, "server.log"),
