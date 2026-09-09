@@ -545,6 +545,7 @@ export const clientApi = HttpApiBuilder.group(
       .handle(
         "listDevices",
         Effect.fn("relay.api.client.listDevices")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
           const { userId } = yield* RelayClientPrincipal;
           const registered = yield* devices.listForUser({ userId });
           return {
@@ -559,6 +560,7 @@ export const clientApi = HttpApiBuilder.group(
       .handle(
         "listDevicesV2",
         Effect.fn("relay.api.client.listDevicesV2")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
           const { userId } = yield* RelayClientPrincipal;
           return { devices: yield* devices.listForUser({ userId }) };
         }, mapRelayCommonApiErrors("not_authorized")),

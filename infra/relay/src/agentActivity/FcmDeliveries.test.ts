@@ -3,9 +3,13 @@ import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import type * as Cloudflare from "alchemy/Cloudflare";
+import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
 import { RelayConfiguration } from "../Config.ts";
 import { RelayDb } from "../db.ts";
@@ -756,4 +760,51 @@ it("stops reducing five-character row fields and fits the remaining alert", () =
   });
   expect(data.activity_line_0).toBe("Approval\taaaaa\tbbbbb");
   expect(new TextEncoder().encode(encodeJson(data)).length).toBeLessThanOrEqual(3800);
+});
+
+describe("FCM queue message isolation", () => {
+  for (const failure of ["invalid-job", "fcm-rejection"] as const) {
+    it.effect(`retries only the ${failure} message and delivers the rest of its batch`, () => {
+      const h = harness();
+      const outcomes = new Map<string, "ack" | "retry">();
+      const message = (id: string, body: unknown): Cloudflare.Queues.Message<unknown> => ({
+        id,
+        body,
+        timestamp: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+        attempts: 1,
+        ack: () => {
+          if (!outcomes.has(id)) outcomes.set(id, "ack");
+        },
+        retry: () => {
+          if (!outcomes.has(id)) outcomes.set(id, "retry");
+        },
+      });
+      const batch = [
+        message("failed", failure === "invalid-job" ? {} : h.job),
+        message("healthy", h.job),
+      ];
+      return Effect.gen(function* () {
+        yield* Stream.fromIterable(batch).pipe(
+          Stream.tap((item) =>
+            Effect.sync(() => {
+              h.current.deliveryFailure =
+                item.id === "failed" && failure === "fcm-rejection"
+                  ? new FcmClientError({ operation: "send", status: 400 })
+                  : null;
+            }),
+          ),
+          Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
+        );
+        // Alchemy acknowledges the batch after a successful stream. Cloudflare
+        // ignores those acknowledgements for messages explicitly retried earlier.
+        for (const item of batch) item.ack();
+        expect([...outcomes]).toEqual([
+          ["failed", "retry"],
+          ["healthy", "ack"],
+        ]);
+        expect(h.sent).toHaveLength(1);
+        expect(h.marked).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    });
+  }
 });

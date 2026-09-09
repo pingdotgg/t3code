@@ -16,7 +16,7 @@ import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpServer from "effect/unstable/http/HttpServer";
-import * as HttpApiTest from "effect/unstable/httpapi/HttpApiTest";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -136,14 +136,34 @@ describe("device listing compatibility", () => {
       ),
     );
     return Effect.gen(function* () {
-      const client = yield* HttpApiTest.groups(
-        HttpApi.make("RelayApi").add(RelayApi.groups.client),
-        ["client"],
+      const app = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.client)).pipe(
+              Layer.provide(handlers),
+              Layer.provide(HttpServer.layerServices),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        (app) => Effect.promise(() => app.dispose()),
       );
-      const request = { headers: { authorization: "Bearer test-token" } };
-      expect(yield* client.client.listDevices(request)).toEqual({ devices: [iphone] });
-      expect(yield* client.client.listDevicesV2(request)).toEqual({ devices: [iphone, android] });
-    }).pipe(Effect.provide(Layer.mergeAll(handlers, HttpServer.layerServices)), Effect.scoped);
+      for (const [version, devices] of [
+        ["v1", [iphone]],
+        ["v2", [iphone, android]],
+      ] as const) {
+        const response = yield* Effect.promise(() =>
+          app.handler(
+            new Request(`https://relay.example.test/${version}/client/devices`, {
+              headers: { authorization: "Bearer test-token" },
+            }),
+          ),
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(yield* Effect.promise(() => response.json())).toEqual({ devices });
+      }
+    }).pipe(Effect.scoped);
   });
 });
 
