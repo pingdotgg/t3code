@@ -5151,15 +5151,6 @@ const AZURE_PAIR = [
 const AZURE_PLATFORM = { projectId: "p1" as ProjectId, repository: "web", number: 1 };
 const AZURE_OTHER = { projectId: "p2" as ProjectId, repository: "web", number: 1 };
 
-/** A project as an older environment recorded it, before this identity field was written. */
-const withoutIdentityField = (
-  current: OrchestrationProjectShell,
-  field: "canonicalKey" | "displayName",
-) => {
-  const { [field]: _dropped, ...identity } = current.repositoryIdentity!;
-  return { ...current, repositoryIdentity: identity } as unknown as OrchestrationProjectShell;
-};
-
 it.effect("keeps the marks of two Azure repositories of the same name apart", () =>
   Effect.gen(function* () {
     // Azure addresses a repository by its bare name, which is unique inside one of its projects
@@ -5175,63 +5166,6 @@ it.effect("keeps the marks of two Azure repositories of the same name apart", ()
       { path: "src/a.ts", state: "viewed" },
     ]);
     assert.deepStrictEqual((yield* service.filesViewed(AZURE_OTHER)).files, []);
-  }),
-);
-
-it.effect("keeps two same-named Azure repositories apart without a canonical key", () =>
-  Effect.gen(function* () {
-    // The path below the host is the only spelling left that tells the two apart.
-    const service = yield* azureViewedService(
-      AZURE_PAIR.map((current) => withoutIdentityField(current, "canonicalKey")),
-    );
-
-    yield* service.setFilesViewed({
-      ...AZURE_PLATFORM,
-      files: [{ path: "src/a.ts", viewed: true }],
-    });
-
-    assert.deepStrictEqual((yield* service.filesViewed(AZURE_PLATFORM)).files, [
-      { path: "src/a.ts", state: "viewed" },
-    ]);
-    assert.deepStrictEqual((yield* service.filesViewed(AZURE_OTHER)).files, []);
-  }),
-);
-
-it.effect("keeps a repository's marks when its identity carries only owner and name", () =>
-  Effect.gen(function* () {
-    const current = project({
-      id: "p1",
-      title: "on gitlab",
-      workspaceRoot: "/a",
-      repository: "group/project",
-      provider: "gitlab",
-    });
-    const stripped = withoutIdentityField(
-      withoutIdentityField(current, "canonicalKey"),
-      "displayName",
-    );
-    const service = yield* makeService({
-      projects: [
-        {
-          ...stripped,
-          repositoryIdentity: {
-            ...stripped.repositoryIdentity,
-            owner: "group",
-            name: "project",
-          },
-        } as unknown as OrchestrationProjectShell,
-      ],
-      providers: [environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), [])],
-    });
-
-    yield* service.setFilesViewed({
-      ...GITLAB_REFERENCE,
-      files: [{ path: "src/a.ts", viewed: true }],
-    });
-
-    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
-      { path: "src/a.ts", state: "viewed" },
-    ]);
   }),
 );
 
@@ -5282,6 +5216,69 @@ it.effect("keeps one reader's marks on a host that names nobody", () =>
     assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
       { path: "src/a.ts", state: "viewed" },
     ]);
+  }),
+);
+
+it.effect("records a press while the host is backing off", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.sync(() => {
+              viewerLookups += 1;
+              return "bilal";
+            }),
+          // Backing off for the hour, so the pause outlives the ten minutes who is signed in is
+          // held for and the second press has to ask again while it is on.
+          getFileRevisions: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "getFileRevisions",
+                reason: "rate-limited",
+                detail: "API rate limit exceeded.",
+                retryAt: 60 * 60 * 1_000,
+              }),
+            ),
+        },
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* TestClock.adjust("11 minutes");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+
+    // Nothing about a host holding its reads off says the reader did not press these, and these
+    // rows are this environment's own. They keep no baseline, because none was read, so they hold
+    // until they are pressed again rather than reporting a staleness nobody looked up.
+    assert.deepStrictEqual(
+      [...(yield* service.filesViewed(GITLAB_REFERENCE)).files].toSorted((left, right) =>
+        left.path.localeCompare(right.path),
+      ),
+      [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+    assert.strictEqual(viewerLookups, 2);
   }),
 );
 

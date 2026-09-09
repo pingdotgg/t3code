@@ -1205,6 +1205,20 @@ function PullRequestCodeTab({
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
+              {filesViewed.error !== null ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                    <TriangleAlertIcon
+                      aria-label="Your ticks could not be read"
+                      className="size-3.5 text-amber-600 dark:text-amber-500"
+                    />
+                  </TooltipTrigger>
+                  <TooltipPopup side="bottom">
+                    The boxes below are whatever was last read, and empty if nothing has been read
+                    yet. {filesViewed.error}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
               {filesViewed.truncated ? (
                 <Tooltip>
                   <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>

@@ -404,8 +404,26 @@ export const make = Effect.gen(function* () {
         let edits = 0;
         let index = cursor?.fileIndex ?? 0;
         let full = false;
+        // How many files to read at once. Every file costs a request a side, and everything read
+        // past the point the slice fills is thrown away and read again by the next slice, so the
+        // batch narrows as the budgets do: what is left of each, over what a file has spent of it
+        // on average so far, which is the only estimate there is before a file is read. At least
+        // one, so a file heavier than the whole budget still moves the cursor.
+        const batchWidth = () => {
+          if (sections.length === 0) return DIFF_FILE_CONCURRENCY;
+          const admits = (left: number, spent: number) =>
+            Math.ceil(left / Math.max(1, spent / sections.length));
+          return Math.max(
+            1,
+            Math.min(
+              DIFF_FILE_CONCURRENCY,
+              admits(MAX_DIFF_SLICE_BYTES - bytes, bytes),
+              admits(MAX_DIFF_SLICE_EDITS - MAX_FILE_DIFF_EDITS - edits, edits),
+            ),
+          );
+        };
         while (!full && index < changes.length) {
-          const batch = changes.slice(index, index + DIFF_FILE_CONCURRENCY);
+          const batch = changes.slice(index, index + batchWidth());
           const read = yield* Effect.forEach(
             batch,
             (change) =>

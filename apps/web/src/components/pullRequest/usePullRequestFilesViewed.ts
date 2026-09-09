@@ -38,6 +38,12 @@ export interface PullRequestFilesViewedView {
   readonly viewedCount: number;
   /** The host had more files than the read covered, so the count above may be short. */
   readonly truncated: boolean;
+  /**
+   * Why the marks could not be read, when they could not. The boxes fall back to the last answer
+   * there was, or to empty when there has not been one, and neither of those says so on its own:
+   * a reader who sees every box unticked has no way to tell a fresh review from a failed read.
+   */
+  readonly error: string | null;
   /** Re-ask the host, for the page's refresh button, which goes around the host's cache. */
   readonly refresh: () => void;
 }
@@ -61,8 +67,12 @@ export function usePullRequestFilesViewed(options: {
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
   );
   const refresh = query.refresh;
+  // `query.data` holds the last answer through a failure, so the boxes stay where the host last
+  // put them rather than emptying under the reader; the error travels with them, because ticks
+  // that stopped being refreshed look exactly like ticks that are current.
   const states = useMemo(() => toFileViewedStates(query.data), [query.data]);
   const truncated = query.data?.truncated === true;
+  const error = query.error;
   const [overlay, setOverlay] = useState<FileViewedOverlay>(NO_OVERLAY);
   const setFilesViewed = useAtomCommand(pullRequestEnvironment.setFilesViewed, {
     reportFailure: false,
@@ -181,8 +191,9 @@ export function usePullRequestFilesViewed(options: {
       setViewed,
       viewedCount,
       truncated,
+      error,
       refresh: refreshFromHost,
     }),
-    [enabled, isStale, isViewed, refreshFromHost, setViewed, truncated, viewedCount],
+    [enabled, error, isStale, isViewed, refreshFromHost, setViewed, truncated, viewedCount],
   );
 }

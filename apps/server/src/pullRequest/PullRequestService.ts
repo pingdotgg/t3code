@@ -278,8 +278,8 @@ export interface SupportedProject {
   /** The host the repository lives on, which is the account boundary rather than the kind. */
   readonly host: string;
   /**
-   * The normalised remote, which is what this environment's own records are keyed by. Unique
-   * where `repository` is not: Azure's is a bare name that repeats across an organisation.
+   * The identity's canonical key, which is what this environment's own records are keyed by.
+   * Unique where `repository` is not: Azure's is a bare name that repeats across an organisation.
    */
   readonly remote: string;
 }
@@ -442,6 +442,13 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
+  options: {
+    /**
+     * Whether this provider's viewer lookup stands in front of something the reader is waiting
+     * on, rather than in front of a listing that can wait for the host to recover.
+     */
+    readonly interactiveViewer?: boolean;
+  } = {},
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
   const protect = <A>(
@@ -492,7 +499,11 @@ function withRateLimitBackoff(
   const wrapped = {
     kind: api.kind,
     capabilities: api.capabilities,
-    getViewer: wrap("getViewer", api.getViewer),
+    // A lookup that stands in front of an interactive operation is let through a pause for the
+    // same reason the operation itself is: refusing the reader their own name while the host backs
+    // off turns a press they made into a failure, and the lookup's answer is then held for the
+    // ten minutes that signing in moves on, so a paused host is asked at most once for it.
+    getViewer: wrap("getViewer", api.getViewer, options.interactiveViewer === true),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
@@ -679,11 +690,10 @@ export const make = Effect.gen(function* () {
             if (roots === undefined) viewerRoots.set(host, [project.workspaceRoot]);
             else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
           }
-          // Rungs for an identity missing its canonical key, the bare selector last because
-          // Azure's repeats across an organisation.
-          const remote =
-            identity.canonicalKey?.trim() || identity.displayName?.trim() || repository;
-          const key = listCursorKey(host, kind === "azure-devops" ? remote : repository);
+          const key = listCursorKey(
+            host,
+            kind === "azure-devops" ? identity.canonicalKey : repository,
+          );
           if (seen.has(key)) continue;
           seen.add(key);
           if (api === null) {
@@ -698,7 +708,7 @@ export const make = Effect.gen(function* () {
             api: withRateLimitBackoff(api, host, rateLimits),
             repository,
             host,
-            remote,
+            remote: identity.canonicalKey,
           });
         }
         return { supported, unimplemented, viewerRoots };
@@ -835,16 +845,19 @@ export const make = Effect.gen(function* () {
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots] = JSON.parse(key) as [
+      const [host, kind, roots, interactive] = JSON.parse(key) as [
         string,
         SourceControlProviderKind,
         ReadonlyArray<string>,
+        boolean,
       ];
       const registered = registry.get(kind);
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
-      const api = withRateLimitBackoff(registered, host, rateLimits);
+      const api = withRateLimitBackoff(registered, host, rateLimits, {
+        interactiveViewer: interactive,
+      });
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd }))).pipe(
         Effect.map((viewer) => ({
           host,
@@ -877,6 +890,8 @@ export const make = Effect.gen(function* () {
   const resolveViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
+    /** Whether the reader is waiting on what this lookup stands in front of. */
+    interactive = false,
   ) =>
     Effect.forEach(
       [...new Set(projects.map(({ host }) => host))],
@@ -892,7 +907,7 @@ export const make = Effect.gen(function* () {
           // unreadable worktree would otherwise report the whole host as signed out.
           const roots =
             viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
+          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort(), interactive]);
           return Cache.get(viewerFlights, key);
         }),
       { concurrency: REPOSITORY_CONCURRENCY },
@@ -1572,15 +1587,17 @@ export const make = Effect.gen(function* () {
 
   /**
    * Who the host says the reader is, for the paths whose rows are keyed by it. A lookup that
-   * failed is refused rather than answered as the unnamed reader: a rate-limited or momentarily
-   * signed-out CLI would otherwise hide every tick this reader has made and file the next press
-   * under rows that are orphaned once it recovers.
+   * failed is refused rather than answered as the unnamed reader: a momentarily signed-out CLI
+   * would otherwise hide every tick this reader has made and file the next press under rows that
+   * are orphaned once it recovers. The reader is waiting on every one of these paths, a press or
+   * the boxes on a diff they just opened, so the lookup is let through a host's backoff rather
+   * than failing with it and turning a pause into a refusal.
    */
   const requiredViewerOf = (
     project: SupportedProject,
     operation: string,
   ): Effect.Effect<string | null, PullRequestError> =>
-    resolveViewers([project], new Map()).pipe(
+    resolveViewers([project], new Map(), true).pipe(
       Effect.flatMap(([resolved]) => {
         const error = resolved?.error ?? null;
         return error === null

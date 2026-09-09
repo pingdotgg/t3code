@@ -229,10 +229,11 @@ export const make = (dependencies: Dependencies) => {
         .list(filesViewedScope(project, ref.number, viewer))
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
       if (marks.length === 0) return { files: [], truncated: false };
-      // A rate limit or a signed-out CLI costs the marks their staleness, which is what
-      // `fileRevisionsOf` answers null for, not the reader every tick they have made. The press
-      // itself still fails loudly, since a mark stamped with a revision nobody read is wrong
-      // rather than merely less informed.
+      // A host that will not say what its head has of a file costs the marks their staleness,
+      // which is what `fileRevisionsOf` answers null for, rather than costing the reader every
+      // tick they have made. Who the reader is, above, cannot give way like that: these rows are
+      // keyed by it, so a lookup that failed is reported, and the client says the marks could not
+      // be read rather than drawing a reader with marks as one with none.
       const revisions = yield* fileRevisionsOf(
         project,
         ref,
@@ -318,7 +319,19 @@ export const make = (dependencies: Dependencies) => {
       const revisions =
         cleared.length === 0
           ? null
-          : yield* fileRevisionsOf(project, input, cleared, "setFilesViewed", "fresh");
+          : yield* fileRevisionsOf(project, input, cleared, "setFilesViewed", "fresh").pipe(
+              // A host that will not say what its head has, because it is backing off or because
+              // the CLI is having a bad minute, costs the press its baseline rather than costing
+              // the reader the press. The mark is stored with none, which holds until it is
+              // pressed again: the file stops reporting staleness, and nothing is stamped with a
+              // revision that was never read.
+              Effect.catch((error) =>
+                Effect.logWarning("recording viewed files without what the head has of them", {
+                  operation: "setFilesViewed",
+                  reason: error._tag,
+                }).pipe(Effect.as(null)),
+              ),
+            );
       const viewedAt = DateTime.formatIso(yield* DateTime.now);
       yield* filesViewedStore
         .set({

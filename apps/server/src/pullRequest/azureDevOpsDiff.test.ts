@@ -155,11 +155,13 @@ describe("azureDevOpsFilePatch", () => {
   const lineRange = (count: number, prefix: string) =>
     Array.from({ length: count }, (_, line) => `${prefix} ${line}`).join("\n");
 
-  it("lists a file too far apart to diff as wholly replaced", () => {
+  it("lists a file too far apart to diff without its hunks", () => {
     // Sharing no line at all costs one edit per line on each side, so this pair is twice the
     // ceiling apart. Left to itself the search costs about the square of that and would hold the
-    // whole server, every websocket client with it, while it worked out a patch nobody reads. What
-    // the two sides are is known without any search, so the reader gets them.
+    // whole server, every websocket client with it, while it worked out a patch nobody reads.
+    // Writing both sides out instead would read as a genuine rewrite: the ceiling is a distance
+    // rather than a proportion, so a long file reaches it having changed in one corner, and that
+    // corner would be buried in a wall of red and green.
     const lines = (prefix: string) =>
       Array.from({ length: MAX_FILE_DIFF_EDITS }, (_, line) => `${prefix} ${line}`).join("\n");
     const patch = azureDevOpsFilePatch({
@@ -171,9 +173,14 @@ describe("azureDevOpsFilePatch", () => {
     // And it says the search was given up on, because the reader of a run of files is meant to
     // stop rather than spend that work again on each of the ones behind it.
     expect(patch.abandoned).toBe(true);
-    expect(patch.section).toContain(`@@ -1,${MAX_FILE_DIFF_EDITS} +1,${MAX_FILE_DIFF_EDITS} @@`);
-    expect(patch.section.match(/^-old /gmu)).toHaveLength(MAX_FILE_DIFF_EDITS);
-    expect(patch.section.match(/^\+new /gmu)).toHaveLength(MAX_FILE_DIFF_EDITS);
+    expect(patch.section).toBe(
+      [
+        "diff --git a/generated.ts b/generated.ts",
+        "--- a/generated.ts",
+        "+++ b/generated.ts",
+        "",
+      ].join("\n"),
+    );
   });
 
   it("writes out a wholly new file however many lines it has", () => {
@@ -197,11 +204,12 @@ describe("azureDevOpsFilePatch", () => {
     expect(patch.section.match(/^\+/gmu)).toHaveLength(15_001);
   });
 
-  it("writes out a wholly new file whose patch weighs more than one file is let through at", () => {
-    // Every line carries a prefix, so a side of very short lines answers with up to twice its own
-    // bytes. A two-sided file declines to be written out at that size, because there was a real
-    // diff it was only standing in for. A creation has no smaller true patch to fall back to, and
-    // the byte ceiling on each side is what bounds it instead.
+  it("keeps a wholly new file too heavy to write out listed without its hunks", () => {
+    // Every line carries a marker, so a side of very short lines answers with up to twice its own
+    // bytes: these 200,000 one-character lines fit the ceiling each side is read under and weigh
+    // about 600KB written out, more than twice what a whole slice may carry. There is no smaller
+    // true patch for a creation to fall back to, so it is listed without its hunks, the same as a
+    // side too big to read at all, rather than sent at a size the slice budget exists to prevent.
     const contents = `${Array.from({ length: 200_000 }, () => "x").join("\n")}\n`;
     const patch = azureDevOpsFilePatch({
       change: change({ path: "bundle.min.js", oldPath: "bundle.min.js", changeKind: "new" }),
@@ -209,10 +217,19 @@ describe("azureDevOpsFilePatch", () => {
     });
 
     expect(byteLength(contents)).toBeLessThan(512 * 1024);
-    expect(byteLength(patch.section)).toBeGreaterThan(512 * 1024);
-    expect(patch.truncated).toBe(false);
+    expect(patch.truncated).toBe(true);
+    expect(patch.abandoned).toBe(false);
+    // It still cost the walk over its lines, which is what the slice is charged for.
     expect(patch.edits).toBe(200_000);
-    expect(patch.section).toContain("@@ -0,0 +1,200000 @@");
+    expect(patch.section).toBe(
+      [
+        "diff --git a/bundle.min.js b/bundle.min.js",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/bundle.min.js",
+        "",
+      ].join("\n"),
+    );
   });
 
   it("writes out a wholly deleted file however many lines it had", () => {
@@ -242,60 +259,22 @@ describe("azureDevOpsFilePatch", () => {
     expect(patch.section).not.toContain("@@");
   });
 
-  it("marks a replaced side that does not end in a newline", () => {
-    const lines = (prefix: string) =>
-      Array.from({ length: MAX_FILE_DIFF_EDITS }, (_, line) => `${prefix} ${line}`).join("\n");
+  it("marks a wholly new file whose last line has no newline after it", () => {
     const patch = azureDevOpsFilePatch({
-      change: change(),
-      texts: texts(`${lines("old")}\n`, lines("new")),
+      change: change({ path: "NOTES.md", oldPath: "NOTES.md", changeKind: "new" }),
+      texts: texts("", "one\ntwo"),
     });
 
-    expect(patch.abandoned).toBe(true);
-    expect(patch.section.match(/^\\ No newline at end of file$/gmu)).toHaveLength(1);
-    expect(patch.section).toContain(
-      `+new ${MAX_FILE_DIFF_EDITS - 1}\n\\ No newline at end of file\n`,
-    );
-  });
-
-  it("keeps a file too long to call wholly replaced listed without its hunks", () => {
-    // Past a few thousand lines, being further apart than the ceiling no longer means the sides
-    // share little: the file may have changed in one corner, and calling it wholly replaced would
-    // bury that corner in a wall of red and green.
-    const lines = (prefix: string) =>
-      Array.from({ length: 5_000 }, (_, line) => `${prefix} ${line}`).join("\n");
-    const patch = azureDevOpsFilePatch({
-      change: change({ path: "generated.ts", oldPath: "generated.ts" }),
-      texts: texts(`${lines("old")}\n`, `${lines("new")}\n`),
-    });
-
-    expect(patch.abandoned).toBe(true);
     expect(patch.section).toBe(
       [
-        "diff --git a/generated.ts b/generated.ts",
-        "--- a/generated.ts",
-        "+++ b/generated.ts",
-        "",
-      ].join("\n"),
-    );
-  });
-
-  it("keeps a replacement heavier than one file's bytes listed without its hunks", () => {
-    // Few enough lines to be worth calling wholly replaced, and long enough lines that saying so
-    // would answer with twice what either side was let through at.
-    const wide = "z".repeat(200);
-    const lines = (prefix: string) =>
-      Array.from({ length: 2_000 }, (_, line) => `${prefix} ${line} ${wide}`).join("\n");
-    const patch = azureDevOpsFilePatch({
-      change: change({ path: "generated.ts", oldPath: "generated.ts" }),
-      texts: texts(`${lines("old")}\n`, `${lines("new")}\n`),
-    });
-
-    expect(patch.abandoned).toBe(true);
-    expect(patch.section).toBe(
-      [
-        "diff --git a/generated.ts b/generated.ts",
-        "--- a/generated.ts",
-        "+++ b/generated.ts",
+        "diff --git a/NOTES.md b/NOTES.md",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/NOTES.md",
+        "@@ -0,0 +1,2 @@",
+        "+one",
+        "+two",
+        "\\ No newline at end of file",
         "",
       ].join("\n"),
     );

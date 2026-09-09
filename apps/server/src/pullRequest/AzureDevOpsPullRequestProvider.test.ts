@@ -191,6 +191,20 @@ describe("what one diff slice spends", () => {
     }),
   );
 
+  it.effect("narrows what it reads at once as the slice fills", () =>
+    Effect.gen(function* () {
+      // Four files fit inside the budget and the fifth is past half of what is left of it, so
+      // reading four more would throw most of them away and read them again next slice. Every
+      // file is two `az` invocations, so the batch is judged against what the files before it
+      // weighed rather than left at its full width to the last file.
+      const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts", "g.ts", "h.ts"];
+      const read = yield* readSlice({ paths, lines: 50, width: 450 });
+
+      expect(read.slice.nextCursor).not.toBeNull();
+      expect(new Set(read.reads)).toEqual(new Set(patchedPaths(read.slice.patch)));
+    }),
+  );
+
   it.effect("stops once the diff work one request may do is spent", () =>
     Effect.gen(function* () {
       // Short lines are cheap on the wire and dear to diff, so the byte ceiling alone would let

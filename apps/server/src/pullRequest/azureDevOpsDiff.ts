@@ -88,27 +88,20 @@ const PATCH_CONTEXT_LINES = 3;
  * client with it, while it works out a patch of tens of thousands of lines nobody reads. Bounded in
  * edits rather than in milliseconds so a change slices the same way on every machine.
  *
- * Measured at around 210ms for a pair at the size ceiling that shares no line at all, which is the
- * longest this can hold the thread for one file.
+ * Measured at up to about 175ms for a pair at the size ceiling that shares no line at all, and at
+ * about 800ms for the same pair on a slower machine, which is the longest this can hold the thread
+ * for one file.
  */
 export const MAX_FILE_DIFF_EDITS = 2_000;
 
 /**
- * How many lines a file may be listed as wholly replaced by when its diff was given up on. The
- * edit ceiling is a distance rather than a proportion, so a long file can exceed it having changed
- * in one corner only, and calling that a whole replacement would be a wall of red and green hiding
- * the part that moved. Four times the ceiling keeps the claim within reach of what is known to
- * differ: measured against this repository's own history, no section it admits overstates the real
- * change by more than about a factor of two.
+ * A backstop for a machine slower than any the edit ceiling was measured on. It sits several times
+ * above what that ceiling costs, because a timeout within reach of it would decide the shape of a
+ * patch by how fast the machine is: the same change would slice one way here and another on a
+ * busier host, and a file the ceiling admits would lose its hunks on the slower of the two.
+ * Nothing within the ceiling comes near this, so it changes no patch.
  */
-const MAX_FULL_REPLACEMENT_LINES = 4 * MAX_FILE_DIFF_EDITS;
-
-/**
- * A backstop for a machine slower than the one the edit ceiling was measured on. Nothing within
- * that ceiling comes near this on ordinary hardware, so it changes no patch; it is only here so
- * the longest one file can hold the thread stays a number rather than a hope.
- */
-const MAX_FILE_DIFF_MILLIS = 500;
+const MAX_FILE_DIFF_MILLIS = 2_000;
 
 /**
  * How much diff work one slice does before the rest is left for the next one, which bounds what a
@@ -175,8 +168,8 @@ function patchHeader(change: AzureDevOpsChangeEntry): string {
 
 /**
  * A file written out as wholly replaced: every old line gone, every new line arrived, in one hunk.
- * Costs no search at all, around 45ns a line, so it is both the whole patch for a file that has
- * only one side and a stand-in for one whose real diff was given up on.
+ * Costs no search at all, around 45ns a line, which is what makes it the whole patch for a file
+ * that has only one side.
  */
 function replacementSection(header: string, texts: AzureDevOpsFileTexts): string {
   const oldLines = contentLines(texts.oldContents);
@@ -192,19 +185,6 @@ function replacementSection(header: string, texts: AzureDevOpsFileTexts): string
     ...noNewline(texts.newContents, newLines),
     "",
   ].join("\n");
-}
-
-/**
- * The same section, for a file that has two sides and so a real diff that this is only standing in
- * for. Null where the claim would be too loose to make or too heavy to send, leaving the file
- * listed without its hunks.
- */
-function boundedReplacementSection(header: string, texts: AzureDevOpsFileTexts): string | null {
-  const lines = contentLines(texts.oldContents).length + contentLines(texts.newContents).length;
-  if (lines > MAX_FULL_REPLACEMENT_LINES) return null;
-  const section = replacementSection(header, texts);
-  // One file's worth of bytes, the same ceiling its two sides were each let through under.
-  return byteLength(section) > MAX_FILE_BYTES ? null : section;
 }
 
 /**
@@ -236,12 +216,14 @@ export function azureDevOpsFilePatch(input: {
   const deleted = newContents === "" && oldContents !== "";
   if (created || deleted) {
     const lines = contentLines(created ? newContents : oldContents);
-    return {
-      section: replacementSection(header, input.texts),
-      truncated: false,
-      abandoned: false,
-      edits: lines.length,
-    };
+    const section = replacementSection(header, input.texts);
+    // A marker on every line puts a side that just fits the size ceiling half again over it, and
+    // what one file weighs is what a slice's budget is spent in. Such a file is listed without its
+    // hunks, the same as one whose sides were too big to read at all.
+    if (byteLength(section) > MAX_FILE_BYTES) {
+      return { section: `${header}\n`, truncated: true, abandoned: false, edits: lines.length };
+    }
+    return { section, truncated: false, abandoned: false, edits: lines.length };
   }
 
   const patch = structuredPatch(
@@ -257,14 +239,15 @@ export function azureDevOpsFilePatch(input: {
       timeout: MAX_FILE_DIFF_MILLIS,
     },
   );
-  // The bound is reported by giving nothing back. Such a file is listed as wholly replaced where
-  // that is close enough to the truth to say, and listed without its hunks otherwise, rather than
-  // dropped from the change. Either way it spent the whole of what one file is allowed to get here,
-  // which is what `edits` carries: writing the replacement out costs nothing on top.
+  // The bound is reported by giving nothing back. Such a file is listed without its hunks rather
+  // than dropped from the change, and rather than written out as wholly replaced: the edit ceiling
+  // is a distance rather than a proportion, so a long file can reach it having changed in one
+  // corner, and both sides in full would read as a genuine rewrite and bury that corner in a wall
+  // of red and green. It spent the whole of what one file is allowed to get here, which is what
+  // `edits` carries, so the caller reading a run of files stops rather than paying that again.
   if (patch === undefined) {
-    const replaced = boundedReplacementSection(header, input.texts);
     return {
-      section: replaced ?? `${header}\n`,
+      section: `${header}\n`,
       truncated: true,
       abandoned: true,
       edits: MAX_FILE_DIFF_EDITS,
