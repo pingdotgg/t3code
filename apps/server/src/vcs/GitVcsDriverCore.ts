@@ -2549,7 +2549,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           // A user-supplied message needs change detection, but no patch for generation.
           if (options?.includePatch === false) return { stagedSummary, stagedPatch: "" };
 
-          const stagedPatch = yield* runGitStdoutWithOptions(
+          const stagedPatch = yield* executeGit(
             "GitVcsDriver.prepareCommitContext.stagedPatch",
             cwd,
             [
@@ -2562,17 +2562,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "--cached",
               "--patch",
               "--minimal",
+              ...(options?.binaryPatch ? ["--binary", "--full-index"] : []),
             ],
             {
               env,
-              maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
+              maxOutputBytes: options?.maxOutputBytes ?? PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
               appendTruncationMarker: true,
             },
           );
 
           return {
             stagedSummary,
-            stagedPatch,
+            stagedPatch: stagedPatch.stdoutTruncated
+              ? `${stagedPatch.stdout}${OUTPUT_TRUNCATED_MARKER}`
+              : stagedPatch.stdout,
+            stagedPatchTruncated: stagedPatch.stdoutTruncated,
           };
         }),
       ).pipe(

@@ -2211,6 +2211,7 @@ export const make = Effect.gen(function* () {
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
     commitLabel = "Committing...",
+    stageChanges = true,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -2296,7 +2297,7 @@ export const make = Effect.gen(function* () {
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
-      stage: filePaths ? { filePaths } : {},
+      ...(stageChanges ? { stage: filePaths ? { filePaths } : {} } : {}),
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
     if (currentHookName !== null) {
@@ -2340,25 +2341,22 @@ export const make = Effect.gen(function* () {
       label: "Planning logical commits...",
     });
 
-    const prepared = yield* gitCore.prepareCommitContext(cwd, selectedFilePaths);
+    const prepared = yield* gitCore.prepareCommitContext(cwd, selectedFilePaths, {
+      binaryPatch: true,
+      maxOutputBytes: MAX_LOGICAL_COMMIT_PATCH_BYTES,
+    });
     if (!prepared) {
       return { status: "skipped_no_changes" as const };
     }
 
-    const stagedPatch = yield* gitCore.execute({
-      operation: "GitManager.runSplitCommitStep.readStagedPatch",
-      cwd,
-      args: ["diff", "--cached", "--binary", "--full-index", "--patch"],
-      maxOutputBytes: MAX_LOGICAL_COMMIT_PATCH_BYTES,
-    });
-    if (stagedPatch.stdoutTruncated) {
+    if (prepared.stagedPatchTruncated) {
       return yield* new GitManagerError({
         operation: "runSplitCommitStep",
         cwd,
         detail: `Logical commit splitting supports patches up to ${MAX_LOGICAL_COMMIT_PATCH_BYTES} bytes.`,
       });
     }
-    const changeUnits = parseLogicalChangeUnits(stagedPatch.stdout);
+    const changeUnits = parseLogicalChangeUnits(prepared.stagedPatch);
     if (changeUnits.length === 0 || changeUnits.length > MAX_LOGICAL_CHANGE_UNITS) {
       return yield* new GitManagerError({
         operation: "runSplitCommitStep",
@@ -2470,6 +2468,7 @@ export const make = Effect.gen(function* () {
         progressReporter,
         actionId,
         `Committing ${index + 1} of ${commits.length}...`,
+        false,
       );
       if (result.status !== "created") {
         return yield* new GitManagerError({

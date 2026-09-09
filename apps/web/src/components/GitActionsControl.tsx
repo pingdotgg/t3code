@@ -135,6 +135,7 @@ interface PendingDefaultBranchAction {
 interface RunGitActionWithToastInput {
   action: GitStackedAction;
   commitMessage?: string;
+  splitCommits?: boolean;
   onConfirmed?: () => void;
   skipDefaultBranchPrompt?: boolean;
   statusOverride?: VcsStatusResult | null;
@@ -276,6 +277,135 @@ function getMenuActionDisabledReason({
 const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
+
+type WorkingTreeFile = VcsStatusResult["workingTree"]["files"][number];
+
+function CommitFileSelection({
+  files,
+  excludedFiles,
+  isEditing,
+  onExcludedFilesChange,
+  onEditingChange,
+  onOpenFile,
+  canOpenFile,
+}: {
+  files: readonly WorkingTreeFile[];
+  excludedFiles: ReadonlySet<string>;
+  isEditing: boolean;
+  onExcludedFilesChange: (files: ReadonlySet<string>) => void;
+  onEditingChange: (editing: boolean) => void;
+  onOpenFile: (path: string) => void;
+  canOpenFile: boolean;
+}) {
+  const selectedFiles = files.filter((file) => !excludedFiles.has(file.path));
+  const allSelected = excludedFiles.size === 0;
+  const noneSelected = selectedFiles.length === 0;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {isEditing && files.length > 0 && (
+            <Checkbox
+              aria-label="Select all files"
+              checked={allSelected}
+              indeterminate={!allSelected && !noneSelected}
+              onCheckedChange={() => {
+                onExcludedFilesChange(
+                  allSelected ? new Set(files.map((file) => file.path)) : new Set(),
+                );
+              }}
+            />
+          )}
+          <span className="text-muted-foreground">Files</span>
+          {!allSelected && !isEditing && (
+            <span className="text-muted-foreground">
+              ({selectedFiles.length} of {files.length})
+            </span>
+          )}
+        </div>
+        {files.length > 0 && (
+          <Button variant="ghost" size="xs" onClick={() => onEditingChange(!isEditing)}>
+            {isEditing ? "Done" : "Edit"}
+          </Button>
+        )}
+      </div>
+      {files.length === 0 ? (
+        <p className="font-medium">none</p>
+      ) : (
+        <div className="space-y-2">
+          <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
+            <ScrollArea>
+              <div className="space-y-1 p-1">
+                {files.map((file) => {
+                  const isExcluded = excludedFiles.has(file.path);
+                  return (
+                    <div
+                      key={file.path}
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
+                    >
+                      {isEditing && (
+                        <Checkbox
+                          aria-label={`Include ${file.path}`}
+                          checked={!isExcluded}
+                          onCheckedChange={() => {
+                            const next = new Set(excludedFiles);
+                            if (next.has(file.path)) {
+                              next.delete(file.path);
+                            } else {
+                              next.add(file.path);
+                            }
+                            onExcludedFilesChange(next);
+                          }}
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                        disabled={!canOpenFile}
+                        aria-label={`Open ${file.path} in editor`}
+                        onClick={() => onOpenFile(file.path)}
+                      >
+                        <StartTruncatedPath
+                          path={file.path}
+                          className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
+                        />
+                        <span className="shrink-0">
+                          {isExcluded ? (
+                            <span className="text-muted-foreground">Excluded</span>
+                          ) : (
+                            <>
+                              <span className="text-diff-addition">
+                                +{formatDiffCount(file.insertions)}
+                              </span>
+                              <span className="text-muted-foreground"> / </span>
+                              <span className="text-diff-deletion">
+                                -{formatDiffCount(file.deletions)}
+                              </span>
+                            </>
+                          )}
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </div>
+          <div className="flex justify-end font-mono">
+            <span className="text-diff-addition">
+              +{formatDiffCount(selectedFiles.reduce((sum, file) => sum + file.insertions, 0))}
+            </span>
+            <span className="text-muted-foreground"> / </span>
+            <span className="text-diff-deletion">
+              -{formatDiffCount(selectedFiles.reduce((sum, file) => sum + file.deletions, 0))}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function GitActionItemIcon({
   icon,
@@ -968,6 +1098,7 @@ export default function GitActionsControl({
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+  const [isSplitCommitDialogOpen, setIsSplitCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
@@ -1154,6 +1285,7 @@ export default function GitActionsControl({
   async function runGitActionWithToast({
     action,
     commitMessage,
+    splitCommits = false,
     onConfirmed,
     skipDefaultBranchPrompt = false,
     statusOverride,
@@ -1209,6 +1341,7 @@ export default function GitActionsControl({
       actionId,
       action,
       ...(commitMessage ? { commitMessage } : {}),
+      ...(splitCommits ? { splitCommits: true } : {}),
       ...(featureBranch ? { featureBranch } : {}),
       ...(filePaths ? { filePaths } : {}),
       ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
@@ -1455,6 +1588,21 @@ export default function GitActionsControl({
           </MenuItem>
         );
       })}
+      <MenuItem
+        disabled={
+          !canWriteSourceControl ||
+          isGitActionRunning ||
+          !gitStatusForActions?.hasWorkingTreeChanges
+        }
+        onClick={() => {
+          setExcludedFiles(new Set());
+          setIsEditingFiles(false);
+          setIsSplitCommitDialogOpen(true);
+        }}
+      >
+        <GitCommitIcon />
+        <MenuItemLabel>Split into logical commits...</MenuItemLabel>
+      </MenuItem>
       {canPublishRepository ? (
         <MenuItem
           disabled={isGitActionRunning}
@@ -1706,112 +1854,15 @@ export default function GitActionsControl({
                   {isDefaultRef && <span className="text-right text-warning">Default branch</span>}
                 </span>
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {isEditingFiles && allFiles.length > 0 && (
-                      <Checkbox
-                        checked={allSelected}
-                        indeterminate={!allSelected && !noneSelected}
-                        onCheckedChange={() => {
-                          setExcludedFiles(
-                            allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
-                          );
-                        }}
-                      />
-                    )}
-                    <span className="text-muted-foreground">Files</span>
-                    {!allSelected && !isEditingFiles && (
-                      <span className="text-muted-foreground">
-                        ({selectedFiles.length} of {allFiles.length})
-                      </span>
-                    )}
-                  </div>
-                  {allFiles.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => setIsEditingFiles((prev) => !prev)}
-                    >
-                      {isEditingFiles ? "Done" : "Edit"}
-                    </Button>
-                  )}
-                </div>
-                {!gitStatusForActions || allFiles.length === 0 ? (
-                  <p className="font-medium">none</p>
-                ) : (
-                  <div className="space-y-2">
-                    <div className="h-44 rounded-lg bg-card ring-1 ring-black/5 dark:bg-white/[0.025] dark:ring-white/5">
-                      <ScrollArea>
-                        <div className="space-y-1 p-1">
-                          {allFiles.map((file) => {
-                            const isExcluded = excludedFiles.has(file.path);
-                            return (
-                              <div
-                                key={file.path}
-                                className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono hover:bg-accent/50"
-                              >
-                                {isEditingFiles && (
-                                  <Checkbox
-                                    checked={!excludedFiles.has(file.path)}
-                                    onCheckedChange={() => {
-                                      setExcludedFiles((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(file.path)) {
-                                          next.delete(file.path);
-                                        } else {
-                                          next.add(file.path);
-                                        }
-                                        return next;
-                                      });
-                                    }}
-                                  />
-                                )}
-                                <button
-                                  type="button"
-                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left enabled:cursor-pointer"
-                                  disabled={!canOperateThread || workingTreeRoot === null}
-                                  aria-label={`Open ${file.path} in editor`}
-                                  onClick={() => openChangedFileInEditor(file.path)}
-                                >
-                                  <StartTruncatedPath
-                                    path={file.path}
-                                    className={`flex-1${isExcluded ? " text-muted-foreground" : ""}`}
-                                  />
-                                  <span className="shrink-0">
-                                    {isExcluded ? (
-                                      <span className="text-muted-foreground">Excluded</span>
-                                    ) : (
-                                      <>
-                                        <span className="text-diff-addition">
-                                          +{formatDiffCount(file.insertions)}
-                                        </span>
-                                        <span className="text-muted-foreground"> / </span>
-                                        <span className="text-diff-deletion">
-                                          -{formatDiffCount(file.deletions)}
-                                        </span>
-                                      </>
-                                    )}
-                                  </span>
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                    <div className="flex justify-end font-mono">
-                      <span className="text-diff-addition">
-                        +{formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.insertions, 0))}
-                      </span>
-                      <span className="text-muted-foreground"> / </span>
-                      <span className="text-diff-deletion">
-                        -{formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.deletions, 0))}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <CommitFileSelection
+                files={allFiles}
+                excludedFiles={excludedFiles}
+                isEditing={isEditingFiles}
+                onExcludedFilesChange={setExcludedFiles}
+                onEditingChange={setIsEditingFiles}
+                onOpenFile={openChangedFileInEditor}
+                canOpenFile={canOperateThread && workingTreeRoot !== null}
+              />
             </div>
             <div className="space-y-1">
               <p className="text-sm font-medium">Commit message (optional)</p>
@@ -1850,6 +1901,73 @@ export default function GitActionsControl({
               onClick={runDialogAction}
             >
               Commit
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        open={isSplitCommitDialogOpen}
+        onOpenChange={(open) => {
+          setIsSplitCommitDialogOpen(open);
+          if (!open) {
+            setExcludedFiles(new Set());
+            setIsEditingFiles(false);
+          }
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Split into logical commits</DialogTitle>
+            <DialogDescription>
+              T3 Code will use the configured model to group the selected changes into focused
+              commits.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
+              <CommitFileSelection
+                files={allFiles}
+                excludedFiles={excludedFiles}
+                isEditing={isEditingFiles}
+                onExcludedFilesChange={setExcludedFiles}
+                onEditingChange={setIsEditingFiles}
+                onOpenFile={openChangedFileInEditor}
+                canOpenFile={canOperateThread && workingTreeRoot !== null}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Separate Git diff hunks can go into different commits. Binary files, renames, mode
+              changes, and nearby edits that share one hunk stay together.
+            </p>
+          </DialogPanel>
+          <DialogFooter variant="bare">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setIsSplitCommitDialogOpen(false);
+                setExcludedFiles(new Set());
+                setIsEditingFiles(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!canWriteSourceControl || noneSelected}
+              onClick={() => {
+                setIsSplitCommitDialogOpen(false);
+                setExcludedFiles(new Set());
+                setIsEditingFiles(false);
+                void runGitActionWithToast({
+                  action: "commit",
+                  splitCommits: true,
+                  ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+                });
+              }}
+            >
+              Split &amp; commit
             </Button>
           </DialogFooter>
         </DialogPopup>
