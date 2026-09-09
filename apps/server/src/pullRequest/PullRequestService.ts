@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -52,8 +53,8 @@ import {
   type PullRequestLabelChangeInput,
   type PullRequestSetFilesViewedInput,
   type PullRequestSubmitReviewInput,
-  type PullRequestStack,
-  type PullRequestSummary,
+  PullRequestStack,
+  PullRequestSummary,
   type PullRequestThreadReplyInput,
   type PullRequestThreadResolutionInput,
   type PullRequestThreadCommentsInput,
@@ -74,6 +75,7 @@ import {
   type PullRequestProviderApi,
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
+import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
 import * as ViewedFiles from "./pullRequestViewedFiles.ts";
 
@@ -118,7 +120,6 @@ const REPOSITORY_SEARCH_CHUNK = 100;
  * `invalidate` rather than a flag on the read, so an ordinary read can never opt out.
  */
 const LIST_CACHE_TTL = Duration.seconds(30);
-const SUMMARY_CACHE_TTL = Duration.seconds(60);
 const DETAIL_CACHE_TTL = Duration.seconds(15);
 const DIFF_CACHE_TTL = Duration.seconds(60);
 /** A commit is content-addressed, so its own diff cannot change under its key. */
@@ -578,6 +579,7 @@ export const make = Effect.gen(function* () {
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const rateLimits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const filesViewedStore = yield* PullRequestFilesViewed.PullRequestFilesViewedRepository;
+  const readCache = yield* PullRequestReadCache.PullRequestReadCache;
 
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
@@ -2432,18 +2434,49 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const summaryCache = yield* Cache.makeWith(
-    (key: string) => {
-      return summaryUncached(refOfCacheKey(key));
-    },
-    {
-      capacity: DETAIL_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? SUMMARY_CACHE_TTL : Duration.zero),
-    },
-  );
+  const persistedRead = Effect.fn("PullRequestService.persistedRead")(function* <A>(
+    input: PullRequestRef,
+    operation: string,
+    codec: Schema.Codec<A, string>,
+    read: Effect.Effect<A, PullRequestError>,
+  ) {
+    const project = yield* requireProject(input);
+    const key = [
+      operation,
+      project.api.kind,
+      project.host.toLowerCase(),
+      project.repository.toLowerCase(),
+      project.project.id,
+      project.project.workspaceRoot,
+      String(input.number),
+    ]
+      .map(encodeURIComponent)
+      .join(":");
+    const lookup = yield* Effect.cached(read);
+    const encodedRead = lookup.pipe(
+      Effect.flatMap((value) =>
+        Schema.encodeEffect(codec)(value).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "cache",
+                detail: "Could not encode PR cache data.",
+                cause,
+              }),
+          ),
+        ),
+      ),
+    );
+    const payload = yield* readCache.get(key, encodedRead);
+    const decoded = yield* Schema.decodeUnknownEffect(codec)(payload).pipe(Effect.option);
+    return Option.isSome(decoded) ? decoded.value : yield* lookup;
+  });
+  const summaryCodec = Schema.fromJsonString(PullRequestSummary);
+  const stackCodec = Schema.fromJsonString(Schema.NullOr(PullRequestStack));
+
   const summary: PullRequestService["Service"]["summary"] = (input, options) => {
     const key = refCacheKey(input);
-    const cached = Cache.get(summaryCache, key);
+    const cached = persistedRead(input, "summary", summaryCodec, summaryUncached(input));
     const held = lastGoodSummary.peek(key);
     return held !== undefined &&
       (options?.recoverTransientFailure !== false || held.state === "merged")
@@ -2455,18 +2488,13 @@ export const make = Effect.gen(function* () {
         );
   };
 
-  const stackCache = yield* Cache.makeWith(
-    (key: string) => {
-      const [referenceKey, includeDetails] = JSON.parse(key) as [string, boolean];
-      return stackUncached(refOfCacheKey(referenceKey), { includeDetails });
-    },
-    {
-      capacity: DETAIL_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? SUMMARY_CACHE_TTL : Duration.zero),
-    },
-  );
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
-    Cache.get(stackCache, JSON.stringify([refCacheKey(input), options?.includeDetails !== false]));
+    persistedRead(
+      input,
+      `stack:${options?.includeDetails !== false}`,
+      stackCodec,
+      stackUncached(input, options),
+    );
 
   // Keys serialize positionally and parse back in the lookup, so the cache is the only holder
   // of in-flight state: concurrent identical reads coalesce on the key into one host request.
@@ -2769,7 +2797,7 @@ export const make = Effect.gen(function* () {
   const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
     const reference = input.reference;
     if (reference !== undefined) {
-      return Effect.sync(() => bumpRefEpoch(reference));
+      return readCache.invalidate.pipe(Effect.andThen(Effect.sync(() => bumpRefEpoch(reference))));
     }
     // A whole-workspace refresh is the reader asking to be re-answered from the hosts,
     // and that includes who the hosts say they are.
@@ -2782,7 +2810,9 @@ export const make = Effect.gen(function* () {
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.suspend(() => {
     turnRefreshEpoch = listingsEpoch = ++epochCounter;
-    return SubscriptionRef.set(pullRequestRefreshes, turnRefreshEpoch);
+    return readCache.invalidate.pipe(
+      Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, turnRefreshEpoch)),
+    );
   });
 
   // A mutation's own client re-reads right after it, and every other client's next read must
@@ -2793,7 +2823,9 @@ export const make = Effect.gen(function* () {
       method: (input: I) => Effect.Effect<void, PullRequestError>,
     ): ((input: I) => Effect.Effect<void, PullRequestError>) =>
     (input) =>
-      method(input).pipe(
+      readCache.invalidate.pipe(
+        Effect.andThen(method(input)),
+        Effect.ensuring(readCache.invalidate),
         Effect.tap(() =>
           Effect.sync(() => {
             bumpRefEpoch(input);
@@ -2804,7 +2836,8 @@ export const make = Effect.gen(function* () {
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
-    const repository = yield* runAction(input);
+    yield* readCache.invalidate;
+    const repository = yield* runAction(input).pipe(Effect.ensuring(readCache.invalidate));
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
     if (input.action === "merge") {
