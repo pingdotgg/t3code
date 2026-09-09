@@ -45,20 +45,25 @@ const healthy = async (port, route) => { try { return (await fetch('http://127.0
 const port = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const value = server.address().port; server.close(() => resolve(value)); }); });
 async function acquireLock(lock, complete = () => false) {
   const deadline = Date.now() + 600000;
+  const token = process.pid + ':' + require('node:crypto').randomUUID();
+  const owner = () => { try { return fs.readlinkSync(lock); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
   while (true) {
-    try { fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, 'pid'), String(process.pid)); return true; } catch (error) {
+    try {
+      // Publishing the PID and token is atomic; suspension cannot leave an incomplete owner.
+      fs.symlinkSync(token, lock);
+      return () => { if (owner() === token) fs.unlinkSync(lock); };
+    } catch (error) {
       if (error.code !== 'EEXIST') throw error;
-      if (complete()) return false;
-      try {
-        const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8'));
-        if (!Number.isSafeInteger(pid) || pid <= 0) throw Object.assign(Error('Invalid installer PID'), { code: 'INVALID_PID' });
-        process.kill(pid, 0);
-      } catch (error) {
-        // A new owner may be between mkdir and writing its PID. Reclaim incomplete locks only after a grace period.
-        const incomplete = error.code === 'ENOENT' || error.code === 'INVALID_PID';
-        let stale = false;
-        try { stale = Date.now() - fs.statSync(lock).mtimeMs > 30000; } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
-        if (error.code === 'ESRCH' || (incomplete && stale)) { fs.rmSync(lock, { recursive: true, force: true }); continue; }
+      if (complete()) return null;
+      const previous = owner();
+      if (previous === null) continue;
+      const pid = Number(previous.split(':')[0]);
+      if (!Number.isSafeInteger(pid) || pid <= 0) throw Error('Invalid device lock at ' + lock);
+      try { process.kill(pid, 0); } catch (error) {
+        if (error.code === 'ESRCH' && owner() === previous) {
+          try { fs.unlinkSync(lock); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+          continue;
+        }
       }
       if (Date.now() > deadline) throw Error('Device operation is locked at ' + lock + '. Check the other installer before removing the lock.');
       await sleep(500);
@@ -72,7 +77,8 @@ async function install(name, version, entry) {
   if (complete()) return file;
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const lock = dir + '.lock';
-  if (!await acquireLock(lock, complete)) return file;
+  const release = await acquireLock(lock, complete);
+  if (!release) return file;
   let staging;
   try {
     if (complete()) return file;
@@ -86,7 +92,7 @@ async function install(name, version, entry) {
     return file;
   } finally {
     if (staging) fs.rmSync(staging, { recursive: true, force: true });
-    fs.rmSync(lock, { recursive: true, force: true });
+    release();
   }
 }
 (async () => {
@@ -104,7 +110,7 @@ async function install(name, version, entry) {
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   // Serialize starts and stops for this environment/host owner, including agent startup.
   const hostLock = path.join(state, 'runtime.lock');
-  await acquireLock(hostLock);
+  const releaseHost = await acquireLock(hostLock);
   try {
   const hubFile = path.join(state, 'hub.json');
   const daemonFile = path.join(state, 'daemon.json');
@@ -166,6 +172,6 @@ async function install(name, version, entry) {
   const optional = file => fs.existsSync(file) ? file : null;
   console.log(JSON.stringify({ nodePath: process.execPath, platforms, hubPort: hub.port, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
-  } finally { fs.rmSync(hostLock, { recursive: true, force: true }); }
+  } finally { releaseHost(); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });
 `;

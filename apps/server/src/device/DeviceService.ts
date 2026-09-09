@@ -894,7 +894,12 @@ export const make = Effect.gen(function* () {
       SshDeviceHost.probe(host).pipe(
         Effect.provide(probeContext),
         Effect.mapError(
-          (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
+          (error) =>
+            new DeviceOperationError({
+              operation: "probe host",
+              reason: "request_failed",
+              cause: error,
+            }),
         ),
       ),
     configureAgent,

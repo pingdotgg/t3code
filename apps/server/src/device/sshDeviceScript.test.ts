@@ -82,8 +82,7 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
         await NodeFSP.cp(hubDir, template, { recursive: true });
         await NodeFSP.rm(NodePath.join(hubDir, ".install-complete"));
         const installLock = hubDir + ".lock";
-        await NodeFSP.mkdir(installLock);
-        await NodeFSP.utimes(installLock, 1, 1);
+        await NodeFSP.symlink("2147483647:exited-installer", installLock);
         await NodeFSP.writeFile(
           NodePath.join(bin, "npm"),
           `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.cpSync(${JSON.stringify(template)},args[args.indexOf('--prefix')+1],{recursive:true});`,
