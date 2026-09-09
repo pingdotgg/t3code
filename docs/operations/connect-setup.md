@@ -74,6 +74,18 @@ Development uses `t3code-dev://app`; production uses `t3code://app`. Update the 
 The Clerk Electron integration handles token
 persistence and system-browser callback delivery.
 
+## Android native sign-in redirects
+
+Clerk's native Android SDK uses `clerk://<applicationId>.callback`. In the Clerk instance selected by the app's publishable key, add each supported package to **Native applications > Allowlist for mobile SSO redirect**:
+
+| Variant     | Callback                                      |
+| ----------- | --------------------------------------------- |
+| Development | `clerk://com.t3tools.t3code.dev.callback`     |
+| Preview     | `clerk://com.t3tools.t3code.preview.callback` |
+| Production  | `clerk://com.t3tools.t3code.callback`         |
+
+Preserve existing entries. These callbacks are separate from the `t3code-dev` / `t3code-preview` / `t3code` navigation schemes. A private development build using the production Clerk key still needs its development callback allowed by that instance's administrator; rebuilding the same package does not change the allowlist.
+
 ## Desktop passkeys
 
 For a production macOS app with bundle ID `com.t3tools.t3code`:
