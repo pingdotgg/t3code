@@ -1,4 +1,4 @@
-import { CursorRequestLifetime } from "../provider/CursorRequestLifetime.ts";
+import * as CursorRequestLifetime from "../provider/CursorRequestLifetime.ts";
 import type { AgentOptions, RunResult } from "@cursor/sdk";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -61,7 +61,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const ownerScope = yield* Effect.scope;
-  const lifetime = yield* CursorRequestLifetime;
+  const lifetime = yield* CursorRequestLifetime.CursorRequestLifetime;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>

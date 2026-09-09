@@ -10,7 +10,7 @@ export class CursorRequestLifetime extends Context.Service<
   }
 >()("t3/provider/CursorRequestLifetime") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   return {
     fork: <A, E>(effect: Effect.Effect<A, E>) =>
