@@ -58,28 +58,38 @@ export function PullRequestStackMenu({
   const unmerged = stack.layers.filter((layer) => layer.state !== "merged");
   const hasClosed = unmerged.some((layer) => layer.state !== "open");
   const position = stack.layers.findIndex((layer) => layer.number === reference.number) + 1;
+  const mergeLayers = stack.layers.slice(0, position).filter((layer) => layer.state !== "merged");
+  const selectedLayer = stack.layers[position - 1];
+  const mergeHasClosed = mergeLayers.some((layer) => layer.state !== "open");
   const expectedStackHeads = unmerged.flatMap((layer) =>
     layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
   );
   const hasUnknownHead = expectedStackHeads.length !== unmerged.length;
   const mergeDisabled =
     pending ||
-    hasUnknownHead ||
-    hasClosed ||
-    unmerged.length === 0 ||
-    unmerged.some((layer) => layer.isDraft);
+    selectedLayer?.state !== "open" ||
+    mergeLayers.some((layer) => !layer.headSha) ||
+    mergeHasClosed ||
+    mergeLayers.length === 0 ||
+    mergeLayers.some((layer) => layer.isDraft);
   const rebaseDisabled = pending || hasUnknownHead || hasClosed || unmerged.length === 0;
   const run = async () => {
-    if (pending || !confirmation || !top?.headSha || hasUnknownHead) return;
-    setPending(true);
+    if (pending || !confirmation || (confirmation === "merge" ? mergeDisabled : rebaseDisabled))
+      return;
     const action = confirmation;
+    const target = action === "merge" ? selectedLayer : top;
+    if (!target?.headSha) return;
+    const actionHeads = (action === "merge" ? mergeLayers : unmerged).flatMap((layer) =>
+      layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
+    );
+    setPending(true);
     const result = await runAction({
       environmentId,
       input: {
         ...reference,
-        number: top.number,
+        number: target.number,
         stackNumber: stack.number,
-        expectedStackHeads,
+        expectedStackHeads: actionHeads,
         action,
         ...(action === "merge" ? { mergeMethod } : { updateMethod: "rebase" }),
       },
@@ -104,6 +114,7 @@ export function PullRequestStackMenu({
       });
     }
   };
+  const confirmationLayers = confirmation === "merge" ? mergeLayers : unmerged;
   return (
     <>
       <Menu open={open} onOpenChange={setOpen}>
@@ -141,7 +152,7 @@ export function PullRequestStackMenu({
               {canMerge ? (
                 <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
                   <GitMergeIcon aria-hidden />
-                  Merge stack ({unmerged.length})
+                  Merge stack ({mergeLayers.length})
                 </MenuItem>
               ) : null}
               {canRebase ? (
@@ -153,15 +164,26 @@ export function PullRequestStackMenu({
                   Rebase stack
                 </MenuItem>
               ) : null}
-              {hasClosed || unmerged.some((layer) => layer.isDraft) ? (
+              {mergeHasClosed || mergeLayers.some((layer) => layer.isDraft) ? (
                 <p className="px-2 py-1 text-xs text-muted-foreground">
-                  Every unmerged layer must be open and ready for review before merging.
+                  Every layer being merged must be open and ready for review.
                 </p>
               ) : null}
             </>
           ) : null}
         </MenuPopup>
       </Menu>
+      {canMerge && selectedLayer?.state === "open" ? (
+        <Button
+          variant="ghost"
+          size="xs"
+          disabled={mergeDisabled}
+          onClick={() => setConfirmation("merge")}
+        >
+          <GitMergeIcon aria-hidden className="size-3.5" />
+          Merge stack
+        </Button>
+      ) : null}
       <Dialog
         open={confirmation !== null}
         onOpenChange={(value) => {
@@ -172,18 +194,18 @@ export function PullRequestStackMenu({
           <DialogHeader>
             <DialogTitle>
               {confirmation === "merge"
-                ? `Merge ${unmerged.length} pull requests?`
+                ? `Merge ${mergeLayers.length} pull requests?`
                 : `Rebase ${unmerged.length} pull requests?`}
             </DialogTitle>
             <DialogDescription>
               {confirmation === "merge"
-                ? `Merge the entire stack into ${stack.base} using ${mergeMethod}. GitHub checks every layer's rules before merging or queueing the stack.`
+                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`
                 : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="max-h-48 overflow-y-auto text-sm">
-              {unmerged.map((layer) => (
+              {confirmationLayers.map((layer) => (
                 <div key={layer.number}>
                   #{layer.number} {layer.title || layer.headBranch}
                 </div>

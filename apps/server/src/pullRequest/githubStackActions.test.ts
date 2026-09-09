@@ -101,6 +101,61 @@ it.effect("submits one atomic merge with the reviewed head and respects the merg
   }),
 );
 
+it.effect("merges through the selected layer without including later draft layers", () =>
+  Effect.gen(function* () {
+    const fiveLayers = [
+      {
+        ...stack[0],
+        pull_requests: Array.from({ length: 5 }, (_, index) => ({
+          number: index + 1,
+          head: { ref: `layer-${index + 1}`, sha: `sha-${index + 1}` },
+          state: "open",
+          draft: index >= 3,
+        })),
+      },
+    ];
+    const api = fake([fiveLayers, { status: "merged", details: {} }]);
+    yield* runGitHubStackAction(api.execute, {
+      ...input,
+      number: 3,
+      expectedStackHeads: [1, 2, 3].map((number) => ({ number, headSha: `sha-${number}` })),
+    });
+    expect(api.calls).toHaveLength(2);
+    expect(api.calls[1]).toContain("repos/acme/web/pulls/3/merge-async");
+    expect(api.calls[1]).toContain("sha=sha-3");
+    expect(api.calls[1]).toContain("merge_action=default");
+  }),
+);
+
+it.effect("rejects stale reviewed heads below a selected middle layer", () =>
+  Effect.gen(function* () {
+    const api = fake([stack]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      number: 2,
+      expectedStackHeads: [{ number: 2, headSha: "old-head" }],
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: "GitHubStackChangedError" } });
+    expect(api.calls).toHaveLength(1);
+  }),
+);
+
+it.effect("does not merge from an already merged layer", () =>
+  Effect.gen(function* () {
+    const api = fake([stack]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      number: 1,
+      expectedStackHeads: [],
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "GitHubStackUnsupportedError" },
+    });
+    expect(api.calls).toHaveLength(1);
+  }),
+);
+
 it.effect("polls an accepted merge and reports a later rule rejection", () =>
   Effect.gen(function* () {
     const api = fake([

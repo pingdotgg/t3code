@@ -119,8 +119,9 @@ out from the matching organization and repository.
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
-review to navigate its layers. **Merge stack** submits every unmerged layer to GitHub together,
-respecting branch rules and merge queues. The confirmation shows the scope and merge strategy.
+review to navigate its layers. **Merge stack** submits the selected pull request and every unmerged
+layer below it to GitHub together, respecting branch rules and merge queues. The confirmation shows
+the scope and merge strategy. GitHub rebases the remaining stack after merging.
 
 **Rebase stack** updates remote branches from bottom to top without changing your local checkout.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that

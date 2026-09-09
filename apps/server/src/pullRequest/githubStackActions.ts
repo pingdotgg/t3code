@@ -206,11 +206,20 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   if (Result.isFailure(decoded))
     return yield* new GitHubStackResponseInvalidError({ ...identity, cause: decoded.failure });
   const stack = decoded.success;
-  const top = stack?.layers.at(-1);
-  if (stack?.number !== input.stackNumber || top?.number !== input.number) {
+  const targetIndex = stack?.layers.findIndex((layer) => layer.number === input.number) ?? -1;
+  const target = stack?.layers[targetIndex];
+  if (
+    stack?.number !== input.stackNumber ||
+    target === undefined ||
+    (input.action === "update-branch" && targetIndex !== stack.layers.length - 1)
+  ) {
     return yield* new GitHubStackChangedError({ ...identity, number: input.number, completed: 0 });
   }
-  const open = stack.layers.filter((layer) => layer.state !== "merged");
+  const affectedLayers =
+    input.action === "merge" ? stack.layers.slice(0, targetIndex + 1) : stack.layers;
+  const open = affectedLayers.filter((layer) => layer.state !== "merged");
+  if (input.action === "merge" && target.state !== "open")
+    return yield* new GitHubStackUnsupportedError({ ...identity });
   if (
     !input.expectedStackHeads ||
     input.expectedStackHeads.length !== open.length ||
@@ -350,7 +359,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       "-f",
       "merge_action=default",
       "-f",
-      `sha=${top.headSha}`,
+      `sha=${target.headSha}`,
     ],
   });
   let result = yield* decode(request.stdout);
