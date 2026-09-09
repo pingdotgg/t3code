@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 /**
+ * Command-line interface for generating Effect API documentation.
+ *
  * @since 0.6.0
  */
 import * as Array from "effect/Array"
@@ -232,7 +234,9 @@ const command = docgenCommand.pipe(
 )
 
 /**
- * @category CLI
+ * Runs the docgen command-line program.
+ *
+ * @category running
  * @since 0.6.0
  */
 export const cli = Command.runWith(command, {

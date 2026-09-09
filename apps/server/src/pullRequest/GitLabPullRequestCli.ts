@@ -50,7 +50,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class GitLabMergeRequestReadError extends Schema.TaggedErrorClass<GitLabMergeRequestReadError>()(
+export class GitLabMergeRequestReadError extends Schema.TaggedError<GitLabMergeRequestReadError>()(
   "GitLabMergeRequestReadError",
   {
     command: Schema.Literal("glab"),
@@ -69,7 +69,7 @@ export class GitLabMergeRequestReadError extends Schema.TaggedErrorClass<GitLabM
 }
 
 /** Not a decode failure: glab answered, the account it answered for just has no username. */
-export class GitLabViewerUnavailableError extends Schema.TaggedErrorClass<GitLabViewerUnavailableError>()(
+export class GitLabViewerUnavailableError extends Schema.TaggedError<GitLabViewerUnavailableError>()(
   "GitLabViewerUnavailableError",
   {
     command: Schema.Literal("glab"),
@@ -87,7 +87,7 @@ export class GitLabViewerUnavailableError extends Schema.TaggedErrorClass<GitLab
 
 /** Not a decode failure: GitLab answered, the merge request just has no revisions to place a
  *  comment against. */
-export class GitLabDiffRefsUnavailableError extends Schema.TaggedErrorClass<GitLabDiffRefsUnavailableError>()(
+export class GitLabDiffRefsUnavailableError extends Schema.TaggedError<GitLabDiffRefsUnavailableError>()(
   "GitLabDiffRefsUnavailableError",
   {
     command: Schema.Literal("glab"),
@@ -105,7 +105,7 @@ export class GitLabDiffRefsUnavailableError extends Schema.TaggedErrorClass<GitL
 }
 
 /** Not a decode failure: the reader asked to carry on from a cursor this walk never handed out. */
-export class GitLabDiffCursorError extends Schema.TaggedErrorClass<GitLabDiffCursorError>()(
+export class GitLabDiffCursorError extends Schema.TaggedError<GitLabDiffCursorError>()(
   "GitLabDiffCursorError",
   {
     command: Schema.Literal("glab"),
@@ -122,7 +122,7 @@ export class GitLabDiffCursorError extends Schema.TaggedErrorClass<GitLabDiffCur
 }
 
 /** Not a decode failure: the reader named a commit that is not a sha this project could hold. */
-export class GitLabDiffCommitError extends Schema.TaggedErrorClass<GitLabDiffCommitError>()(
+export class GitLabDiffCommitError extends Schema.TaggedError<GitLabDiffCommitError>()(
   "GitLabDiffCommitError",
   {
     command: Schema.Literal("glab"),
@@ -139,7 +139,7 @@ export class GitLabDiffCommitError extends Schema.TaggedErrorClass<GitLabDiffCom
 }
 
 /** The commit exists and decoded, but it has no parent to use as the old revision. */
-export class GitLabDiffCommitParentUnavailableError extends Schema.TaggedErrorClass<GitLabDiffCommitParentUnavailableError>()(
+export class GitLabDiffCommitParentUnavailableError extends Schema.TaggedError<GitLabDiffCommitParentUnavailableError>()(
   "GitLabDiffCommitParentUnavailableError",
   {
     command: Schema.Literal("glab"),
@@ -157,7 +157,7 @@ export class GitLabDiffCommitParentUnavailableError extends Schema.TaggedErrorCl
 }
 
 /** A blob exists, but expanding it would be unsafe or would not produce text. */
-export class GitLabDiffFileContentsUnavailableError extends Schema.TaggedErrorClass<GitLabDiffFileContentsUnavailableError>()(
+export class GitLabDiffFileContentsUnavailableError extends Schema.TaggedError<GitLabDiffFileContentsUnavailableError>()(
   "GitLabDiffFileContentsUnavailableError",
   {
     command: Schema.Literal("glab"),
@@ -527,6 +527,7 @@ function actionArgs(
   }
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 

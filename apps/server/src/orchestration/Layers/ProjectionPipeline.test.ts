@@ -411,7 +411,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         FROM projection_state
         ORDER BY projector ASC
       `;
-      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length);
+      assert.equal(stateRows.length, Object.keys(ORCHESTRATION_PROJECTOR_NAMES).length + 1);
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
@@ -1164,14 +1164,18 @@ it.layer(
 
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
-      assert.deepEqual(
-        yield* projectionState.listAll(),
-        cursorsBeforeFailure.map((cursor) => ({
+      assert.deepEqual(yield* projectionState.listAll(), [
+        {
+          projector: "projection.attachment-cleanup",
+          lastAppliedSequence: pendingEvent.sequence,
+          updatedAt: pendingEvent.occurredAt,
+        },
+        ...cursorsBeforeFailure.map((cursor) => ({
           ...cursor,
           lastAppliedSequence: pendingEvent.sequence,
           updatedAt: pendingEvent.occurredAt,
         })),
-      );
+      ]);
       const replayedMessages = yield* sql<{ readonly text: string }>`
         SELECT text FROM projection_thread_messages WHERE message_id = 'message-rollback'
       `;
@@ -1364,10 +1368,53 @@ it.layer(
         },
       });
 
+      const answerKeepId = "thread-revert-files-00000000-0000-4000-8000-000000000006-txt";
+      const answerRemoveId = "thread-revert-files-00000000-0000-4000-8000-000000000007-txt";
+      for (const [id, turnId] of [
+        [answerKeepId, "turn-keep"],
+        [answerRemoveId, "turn-remove"],
+      ] as const) {
+        yield* appendAndProject({
+          type: "thread.activity-appended",
+          eventId: EventId.make(`answer-${id}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.make(`answer-${id}`),
+          causationEventId: null,
+          correlationId: CorrelationId.make(`answer-${id}`),
+          metadata: {},
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make(`answer-${id}`),
+              kind: "user-input.answer-submitted",
+              tone: "info",
+              summary: "Answer with file",
+              createdAt: now,
+              turnId: TurnId.make(turnId),
+              payload: {
+                requestId: ApprovalRequestId.make(id),
+                answers: { q: "See file" },
+                attachmentsByQuestionId: {
+                  q: [
+                    { type: "file", id, name: "answer.txt", mimeType: "text/plain", sizeBytes: 6 },
+                  ],
+                },
+              },
+            },
+          },
+        });
+      }
       const keepPath = path.join(attachmentsDir, `${keepAttachmentId}.png`);
       const keepFilePath = path.join(attachmentsDir, `${keepFileAttachmentId}.pdf`);
       const removePath = path.join(attachmentsDir, `${removeAttachmentId}.png`);
       yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(attachmentsDir, `${answerKeepId}.txt`), "answer");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
       yield* fileSystem.writeFileString(keepPath, "keep");
       yield* fileSystem.writeFileString(keepFilePath, "keep");
       yield* fileSystem.writeFileString(removePath, "remove");
@@ -1460,9 +1507,33 @@ it.layer(
 
       assert.isTrue(yield* exists(keepPath));
       assert.isTrue(yield* exists(keepFilePath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(laterPath));
       assert.isTrue(yield* exists(otherThreadPath));
+
+      // Replay message and activity history from different cursors, as during a projection rebuild.
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+      yield* sql`DELETE FROM projection_thread_activities WHERE thread_id = ${threadId}`;
+      yield* sql`UPDATE projection_state SET last_applied_sequence = 0
+        WHERE projector IN ('projection.thread-messages', 'projection.thread-activities', 'projection.threads')`;
+      yield* fileSystem.writeFileString(removePath, "remove");
+      yield* fileSystem.writeFileString(
+        path.join(attachmentsDir, `${answerRemoveId}.txt`),
+        "answer",
+      );
+      yield* sql`CREATE TRIGGER fail_bootstrap_thread BEFORE UPDATE ON projection_threads
+        BEGIN SELECT RAISE(FAIL, 'forced bootstrap failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      assert.isTrue(yield* exists(removePath));
+      yield* sql`DROP TRIGGER fail_bootstrap_thread`;
+      yield* projectionPipeline.bootstrap;
+      assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(laterPath));
+      assert.isTrue(yield* exists(path.join(attachmentsDir, `${answerKeepId}.txt`)));
+      assert.isFalse(yield* exists(removePath));
+      assert.isFalse(yield* exists(path.join(attachmentsDir, `${answerRemoveId}.txt`)));
     }),
   );
 });
@@ -1934,6 +2005,15 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         },
       });
 
+      yield* sql`CREATE TRIGGER fail_later_stream_projector BEFORE UPDATE ON projection_state
+        WHEN NEW.projector = 'projection.threads'
+        BEGIN SELECT RAISE(FAIL, 'forced later projector failure'); END`;
+      yield* projectionPipeline.bootstrap.pipe(Effect.flip);
+      const committedMessage = yield* sql<{ readonly text: string }>`
+        SELECT text FROM projection_thread_messages WHERE message_id = 'message-a'
+      `;
+      assert.deepEqual(committedMessage, [{ text: "hello world" }]);
+      yield* sql`DROP TRIGGER fail_later_stream_projector`;
       yield* projectionPipeline.bootstrap;
       yield* projectionPipeline.bootstrap;
 
@@ -3884,7 +3964,7 @@ const engineLayer = it.layer(
     Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provideMerge(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
@@ -4236,7 +4316,10 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         yield* readCursors,
         cursorsBeforeFailure.map((cursor) => ({
           ...cursor,
-          lastAppliedSequence: result.sequence,
+          lastAppliedSequence:
+            cursor.projector === "projection.attachment-cleanup"
+              ? cursor.lastAppliedSequence
+              : result.sequence,
         })),
       );
       assert.isFalse(yield* exists(attachmentPath));
@@ -4266,6 +4349,25 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         WHERE command_id = ${cleanupFailureCommandId}
       `;
       assert.deepEqual(cleanupFailureReceipts, [{ status: "accepted" }]);
+
+      const pipeline = yield* OrchestrationProjectionPipeline;
+      const cleanupCursor = sql<{ readonly lastAppliedSequence: number }>`
+        SELECT last_applied_sequence AS "lastAppliedSequence" FROM projection_state
+        WHERE projector = 'projection.attachment-cleanup'
+      `;
+      const cursorBeforeRetry = yield* cleanupCursor;
+      yield* pipeline.bootstrap;
+      assert.deepEqual(yield* cleanupCursor, cursorBeforeRetry);
+      assert.isTrue(yield* exists(blockedAttachmentPath));
+
+      yield* fileSystem.remove(blockedAttachmentPath, { recursive: true });
+      yield* fileSystem.writeFileString(blockedAttachmentPath, "retry this attachment");
+      yield* pipeline.bootstrap;
+      assert.isFalse(yield* exists(blockedAttachmentPath));
+      assert.isAbove(
+        (yield* cleanupCursor)[0]!.lastAppliedSequence,
+        cursorBeforeRetry[0]!.lastAppliedSequence,
+      );
     }),
   );
 });

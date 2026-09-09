@@ -71,7 +71,7 @@ export const ProviderInstallCancelInput = Schema.Struct({
 export type ProviderInstallCancelInput = typeof ProviderInstallCancelInput.Type;
 
 /** Safe setup failure text. Never include OAuth codes, URLs, or native token data. */
-export class ProviderSetupError extends Schema.TaggedErrorClass<ProviderSetupError>()(
+export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()(
   "ProviderSetupError",
   {
     instanceId: ProviderInstanceId,

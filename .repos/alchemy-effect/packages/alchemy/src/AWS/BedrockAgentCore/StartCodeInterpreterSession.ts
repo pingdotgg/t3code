@@ -24,9 +24,8 @@ export interface StartCodeInterpreterSessionRequest extends Omit<
  * `AgentCore.StartCodeInterpreterSessionHttp` on the Function effect to
  * implement the binding.
  *
- * @binding
- * @section Running Code
- * @example Start a Session, Execute Code, Stop
+ * ### Running Code
+ * **Example:** Start a Session, Execute Code, Stop
  * ```typescript
  * // init
  * const startSession = yield* AgentCore.StartCodeInterpreterSession(interpreter);
@@ -48,6 +47,8 @@ export interface StartCodeInterpreterSessionRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface StartCodeInterpreterSession extends Binding.Service<
   StartCodeInterpreterSession,

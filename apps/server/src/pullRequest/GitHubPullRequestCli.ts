@@ -101,7 +101,7 @@ import type { ProviderListCursor } from "./PullRequestProvider.ts";
  * Names the read that produced unusable output, so a failure reports the call it came from
  * rather than borrowing another operation's message.
  */
-export class GitHubPullRequestReadError extends Schema.TaggedErrorClass<GitHubPullRequestReadError>()(
+export class GitHubPullRequestReadError extends Schema.TaggedError<GitHubPullRequestReadError>()(
   "GitHubPullRequestReadError",
   {
     command: Schema.Literal("gh"),
@@ -120,7 +120,7 @@ export class GitHubPullRequestReadError extends Schema.TaggedErrorClass<GitHubPu
 }
 
 /** Not a decode failure: gh answered, the account it answered for just has no login. */
-export class GitHubViewerLoginUnavailableError extends Schema.TaggedErrorClass<GitHubViewerLoginUnavailableError>()(
+export class GitHubViewerLoginUnavailableError extends Schema.TaggedError<GitHubViewerLoginUnavailableError>()(
   "GitHubViewerLoginUnavailableError",
   {
     command: Schema.Literal("gh"),
@@ -137,7 +137,7 @@ export class GitHubViewerLoginUnavailableError extends Schema.TaggedErrorClass<G
 }
 
 /** Not a decode failure: gh answered, but the pull request carried no update time. */
-export class GitHubPullRequestUpdatedAtUnavailableError extends Schema.TaggedErrorClass<GitHubPullRequestUpdatedAtUnavailableError>()(
+export class GitHubPullRequestUpdatedAtUnavailableError extends Schema.TaggedError<GitHubPullRequestUpdatedAtUnavailableError>()(
   "GitHubPullRequestUpdatedAtUnavailableError",
   {
     command: Schema.Literal("gh"),
@@ -156,7 +156,7 @@ export class GitHubPullRequestUpdatedAtUnavailableError extends Schema.TaggedErr
 }
 
 /** Not a decode failure: the reader asked to carry on from a cursor this walk never handed out. */
-export class GitHubDiffCursorError extends Schema.TaggedErrorClass<GitHubDiffCursorError>()(
+export class GitHubDiffCursorError extends Schema.TaggedError<GitHubDiffCursorError>()(
   "GitHubDiffCursorError",
   {
     command: Schema.Literal("gh"),
@@ -173,7 +173,7 @@ export class GitHubDiffCursorError extends Schema.TaggedErrorClass<GitHubDiffCur
 }
 
 /** Not a decode failure: the reader named a commit that is not a sha this repository could hold. */
-export class GitHubDiffCommitError extends Schema.TaggedErrorClass<GitHubDiffCommitError>()(
+export class GitHubDiffCommitError extends Schema.TaggedError<GitHubDiffCommitError>()(
   "GitHubDiffCommitError",
   {
     command: Schema.Literal("gh"),
@@ -190,7 +190,7 @@ export class GitHubDiffCommitError extends Schema.TaggedErrorClass<GitHubDiffCom
 }
 
 /** The revisions read successfully, but cannot name both sides this file needs. */
-export class GitHubDiffRevisionsUnavailableError extends Schema.TaggedErrorClass<GitHubDiffRevisionsUnavailableError>()(
+export class GitHubDiffRevisionsUnavailableError extends Schema.TaggedError<GitHubDiffRevisionsUnavailableError>()(
   "GitHubDiffRevisionsUnavailableError",
   {
     command: Schema.Literal("gh"),
@@ -211,7 +211,7 @@ export class GitHubDiffRevisionsUnavailableError extends Schema.TaggedErrorClass
 }
 
 /** A blob exists, but expanding it would be unsafe or would not produce text. */
-export class GitHubDiffFileContentsUnavailableError extends Schema.TaggedErrorClass<GitHubDiffFileContentsUnavailableError>()(
+export class GitHubDiffFileContentsUnavailableError extends Schema.TaggedError<GitHubDiffFileContentsUnavailableError>()(
   "GitHubDiffFileContentsUnavailableError",
   {
     command: Schema.Literal("gh"),
@@ -237,7 +237,7 @@ export class GitHubDiffFileContentsUnavailableError extends Schema.TaggedErrorCl
  * name that is not one is refused here rather than escaped into something GitHub might read as a
  * qualifier of its own.
  */
-export class GitHubRepositorySelectorError extends Schema.TaggedErrorClass<GitHubRepositorySelectorError>()(
+export class GitHubRepositorySelectorError extends Schema.TaggedError<GitHubRepositorySelectorError>()(
   "GitHubRepositorySelectorError",
   {
     command: Schema.Literal("gh"),
@@ -255,7 +255,7 @@ export class GitHubRepositorySelectorError extends Schema.TaggedErrorClass<GitHu
 }
 
 /** Not a decode failure: the reader named a subject this pull request never handed out. */
-export class GitHubSubjectScopeError extends Schema.TaggedErrorClass<GitHubSubjectScopeError>()(
+export class GitHubSubjectScopeError extends Schema.TaggedError<GitHubSubjectScopeError>()(
   "GitHubSubjectScopeError",
   {
     command: Schema.Literal("gh"),
@@ -273,7 +273,7 @@ export class GitHubSubjectScopeError extends Schema.TaggedErrorClass<GitHubSubje
 }
 
 /** GitHub answered successfully, but approving every returned workflow would be unsafe. */
-export class GitHubWorkflowApprovalRefusedError extends Schema.TaggedErrorClass<GitHubWorkflowApprovalRefusedError>()(
+export class GitHubWorkflowApprovalRefusedError extends Schema.TaggedError<GitHubWorkflowApprovalRefusedError>()(
   "GitHubWorkflowApprovalRefusedError",
   {
     command: Schema.Literal("gh"),
@@ -300,7 +300,7 @@ export class GitHubWorkflowApprovalRefusedError extends Schema.TaggedErrorClass<
 }
 
 /** GitHub omitted the immutable head identity needed to scope an approval safely. */
-export class GitHubWorkflowApprovalHeadUnavailableError extends Schema.TaggedErrorClass<GitHubWorkflowApprovalHeadUnavailableError>()(
+export class GitHubWorkflowApprovalHeadUnavailableError extends Schema.TaggedError<GitHubWorkflowApprovalHeadUnavailableError>()(
   "GitHubWorkflowApprovalHeadUnavailableError",
   {
     command: Schema.Literal("gh"),
@@ -318,7 +318,7 @@ export class GitHubWorkflowApprovalHeadUnavailableError extends Schema.TaggedErr
 }
 
 /** The pull request moved after its approval candidates were read. */
-export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedErrorClass<GitHubWorkflowApprovalHeadChangedError>()(
+export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedError<GitHubWorkflowApprovalHeadChangedError>()(
   "GitHubWorkflowApprovalHeadChangedError",
   {
     command: Schema.Literal("gh"),
@@ -754,7 +754,7 @@ export class GitHubPullRequestCli extends Context.Service<
  * The host is not read off the identity: it travels alongside it, because the identity a
  * project records is the path below its host and never names the host itself.
  */
-export function parseRepositorySelector(value: string): {
+function parseRepositorySelector(value: string): {
   readonly owner: string;
   readonly name: string;
 } {
@@ -1020,6 +1020,7 @@ function actionArgs(
   }
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;

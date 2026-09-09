@@ -55,7 +55,7 @@ export interface DesktopSettingsChange {
   readonly changed: boolean;
 }
 
-export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const MIN_MAIN_WINDOW_SIZE = {
   width: 840,
   height: 620,
@@ -134,7 +134,7 @@ const DesktopSettingsWriteOperation = Schema.Literals([
 ]);
 type DesktopSettingsWriteOperation = typeof DesktopSettingsWriteOperation.Type;
 
-export class DesktopSettingsWriteError extends Schema.TaggedErrorClass<DesktopSettingsWriteError>()(
+export class DesktopSettingsWriteError extends Schema.TaggedError<DesktopSettingsWriteError>()(
   "DesktopSettingsWriteError",
   {
     operation: DesktopSettingsWriteOperation,
@@ -450,6 +450,7 @@ const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (inp
   );
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;

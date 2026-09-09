@@ -2367,6 +2367,139 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  const usageLimitMessage =
+    "Claude usage limit reached. Send the message again once the limit resets.";
+  const genericApiErrorMessage = "Claude gave up after repeated API errors.";
+  const rateLimitAssistant = {
+    type: "assistant",
+    session_id: "sdk-session-limit",
+    uuid: "assistant-limit",
+    parent_tool_use_id: null,
+    error: "rate_limit",
+    message: {
+      id: "assistant-message-limit",
+      model: "<synthetic>",
+      content: [{ type: "text", text: "You've hit your session limit" }],
+    },
+  };
+  const rateLimitResult = {
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    terminal_reason: "api_error",
+    session_id: "sdk-session-limit",
+    uuid: "result-limit",
+  };
+
+  it.effect.each([
+    {
+      name: "an assistant-only rate limit",
+      messages: [rateLimitAssistant],
+      expected: usageLimitMessage,
+    },
+    {
+      name: "a normal parent response after a rate limit",
+      messages: [rateLimitAssistant, { ...rateLimitAssistant, error: undefined }],
+      expected: genericApiErrorMessage,
+    },
+    {
+      name: "a server error after a rate limit",
+      messages: [rateLimitAssistant, { ...rateLimitAssistant, error: "server_error" }],
+      expected: genericApiErrorMessage,
+    },
+    {
+      name: "a subagent rate limit",
+      messages: [{ ...rateLimitAssistant, parent_tool_use_id: "nested-tool" }],
+      expected: genericApiErrorMessage,
+    },
+    {
+      name: "a subagent response after a parent rate limit",
+      messages: [
+        rateLimitAssistant,
+        { ...rateLimitAssistant, error: undefined, parent_tool_use_id: "nested-tool" },
+      ],
+      expected: usageLimitMessage,
+    },
+  ])("classifies the terminal API failure after $name", ({ messages, expected }) => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+      for (const [index, message] of messages.entries()) {
+        harness.query.emit({ ...message, uuid: `assistant-${index}` } as unknown as SDKMessage);
+      }
+      harness.query.emit(rateLimitResult as unknown as SDKMessage);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const errors = events.filter((event) => event.type === "runtime.error");
+      assert.equal(errors.length, 1);
+      assert.equal(errors[0]?.payload.message, expected);
+      assert.equal(completedTurn(events).state, "failed");
+      assert.equal(completedTurn(events).errorMessage, expected);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("names repeated usage limits without carrying them into a later turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      for (const [index, expected] of [
+        usageLimitMessage,
+        usageLimitMessage,
+        genericApiErrorMessage,
+      ].entries()) {
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.sendTurn({ threadId: session.threadId, input: "again", attachments: [] });
+        if (index === 0) {
+          harness.query.emit({
+            type: "rate_limit_event",
+            rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
+            session_id: "sdk-session-limit",
+            uuid: "limit-rejected",
+          } as unknown as SDKMessage);
+        }
+        if (index < 2) {
+          harness.query.emit({
+            ...rateLimitAssistant,
+            uuid: `assistant-limit-${index}`,
+          } as unknown as SDKMessage);
+        }
+        harness.query.emit({
+          ...rateLimitResult,
+          uuid: `result-limit-${index}`,
+        } as unknown as SDKMessage);
+        const payload = completedTurn(Array.from(yield* Fiber.join(eventsFiber)));
+        assert.equal(payload.state, "failed");
+        assert.equal(payload.errorMessage, expected);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect.each([
     {
       name: "listed error with api_error",
@@ -2418,6 +2551,43 @@ describe("ClaudeAdapterLive", () => {
       expected: /repeated API errors/,
       expectedState: "failed",
     },
+    {
+      name: "assistant rate limit followed by overload",
+      evidence: "assistant-rate-limit",
+      result: {
+        subtype: "success",
+        is_error: true,
+        terminal_reason: "api_error",
+        api_error_status: 529,
+        errors: [],
+      },
+      expected: /overloaded \(529\)/,
+      expectedState: "failed",
+    },
+    {
+      name: "assistant rate limit followed by a listed error",
+      evidence: "assistant-rate-limit",
+      result: {
+        subtype: "success",
+        is_error: true,
+        terminal_reason: "api_error",
+        errors: ["Tool execution failed: EACCES"],
+      },
+      expected: /EACCES/,
+      expectedState: "failed",
+    },
+    {
+      name: "assistant rate limit followed by an interrupt",
+      evidence: "assistant-rate-limit",
+      result: {
+        subtype: "error_during_execution",
+        is_error: true,
+        terminal_reason: "aborted_tools",
+        errors: [],
+      },
+      expected: undefined,
+      expectedState: "interrupted",
+    },
     ...[
       "recovered-missing-reset",
       "recovered-next-reset",
@@ -2465,7 +2635,9 @@ describe("ClaudeAdapterLive", () => {
           input: "synthetic hello",
           attachments: [],
         });
-        if (evidence === "auth" || evidence === "nested-auth") {
+        if (evidence === "assistant-rate-limit") {
+          harness.query.emit(rateLimitAssistant as unknown as SDKMessage);
+        } else if (evidence === "auth" || evidence === "nested-auth") {
           harness.query.emit({
             type: "assistant",
             session_id: "sdk-audit",

@@ -41,6 +41,10 @@ import * as Str from "./String.ts"
  * `value`. `Array` is an indexed container with a known `length` and may also
  * carry an optional co-located `value`.
  *
+ * Provider lookups return `undefined` when no node exists at the requested
+ * path. Within a node that was found, `value: undefined` has a narrower
+ * structural meaning: the container exists but has no co-located scalar value.
+ *
  * @see {@link makeValue} – construct a `Value` node
  * @see {@link makeRecord} – construct a `Record` node
  * @see {@link makeArray} – construct an `Array` node
@@ -81,11 +85,10 @@ export type Node =
  *
  * **Example** (Creating a value node)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { ConfigProvider } from "effect"
  *
- * const node = ConfigProvider.makeValue("3000")
- * // { _tag: "Value", value: "3000" }
+ * ConfigProvider.makeValue("3000") // => { _tag: "Value", value: "3000" }
  * ```
  *
  * @see {@link makeRecord} – for object-like containers
@@ -115,11 +118,15 @@ export function makeValue(value: string): Node {
  *
  * **Example** (Creating a record node)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { ConfigProvider } from "effect"
  *
  * const node = ConfigProvider.makeRecord(new Set(["host", "port"]))
- * // { _tag: "Record", keys: Set(["host", "port"]), value: undefined }
+ * node._tag // => "Record"
+ * if (node._tag === "Record") {
+ *   node.keys // => new Set(["host", "port"])
+ *   node.value // => undefined
+ * }
  * ```
  *
  * @see {@link makeValue} – for terminal leaves
@@ -148,11 +155,10 @@ export function makeRecord(keys: ReadonlySet<string>, value?: string): Node {
  *
  * **Example** (Creating an array node)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { ConfigProvider } from "effect"
  *
- * const node = ConfigProvider.makeArray(3)
- * // { _tag: "Array", length: 3, value: undefined }
+ * ConfigProvider.makeArray(3) // => { _tag: "Array", length: 3, value: undefined }
  * ```
  *
  * @see {@link makeValue} – for terminal leaves
@@ -180,7 +186,7 @@ export function makeArray(length: number, value?: string): Node {
  *
  * **Example** (Failing with a SourceError)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.make((_path) =>
@@ -188,12 +194,14 @@ export function makeArray(length: number, value?: string): Node {
  *     new ConfigProvider.SourceError({ message: "connection refused" })
  *   )
  * )
+ *
+ * Effect.runSync(Effect.flip(provider.load(["host"]))).message // => "connection refused"
  * ```
  *
  * @see {@link ConfigProvider} – the interface whose `load` may fail with this
  *   error
  *
- * @category models
+ * @category errors
  * @since 4.0.0
  */
 export class SourceError extends Data.TaggedError("SourceError")<{
@@ -213,10 +221,11 @@ export class SourceError extends Data.TaggedError("SourceError")<{
  *
  * **Example** (A typical config path)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import type { ConfigProvider } from "effect"
  *
  * const path: ConfigProvider.Path = ["database", "replicas", 0, "host"]
+ * path.join(".") // => "database.replicas.0.host"
  * ```
  *
  * @category models
@@ -236,29 +245,63 @@ export type Path = ReadonlyArray<string | number>
  *
  * `load(path)` is the semantic lookup operation used by the `Config` module.
  * It applies provider transformations and composition before consulting the
- * underlying source. `undefined` means "not found" and `SourceError` means the
- * source itself failed.
+ * underlying source. `undefined` means "not found", a `Node` means the path
+ * exists, and `SourceError` means the source itself failed.
+ *
+ * `mapInput(f)` is the provider's path-transformation capability. Keeping this
+ * capability on the provider allows source and composite providers to preserve
+ * their own lookup behavior without exposing an internal representation.
+ * Transformations compose in application order: `f` receives the path produced
+ * by earlier transformations.
+ *
+ * `load` deliberately accepts only a `Path`. Path transformation is modeled by
+ * returning another provider through `mapInput`, rather than by adding a
+ * transformation callback to every lookup. Custom implementations therefore
+ * expose lookup and transformation behavior, but no source or composition
+ * state.
  *
  * @see {@link make} – construct a provider from a lookup function
  * @see {@link orElse} – compose providers with fallback
  *
- * @category models
- * @since 2.0.0
+ * @category services
+ * @since 4.0.0
  */
 export interface ConfigProvider extends Pipeable {
   /**
-   * Returns the node found at `path`, or `undefined` if it does not exist.
-   * Fails with `SourceError` when the underlying source cannot be read.
+   * Returns a `Node` when `path` exists or `undefined` when it does not. Fails
+   * with `SourceError` when the underlying source cannot be read.
    *
    * **When to use**
    *
    * Use to resolve a path through this provider's path transformations before
    * reading the backing source.
+   *
+   * **Details**
+   *
+   * Lookup absence controls provider composition, such as whether
+   * {@link orElse} consults its fallback. An optional `value` inside a found
+   * `Record` or `Array` node remains `undefined` because it describes the shape
+   * of that node rather than the outcome of the lookup.
    */
   readonly load: (path: Path) => Effect.Effect<Node | undefined, SourceError>
 
-  /** @internal */
-  readonly state: ProviderState
+  /**
+   * Returns a provider that applies `f` to lookup paths after any existing path
+   * transformations.
+   *
+   * **When to use**
+   *
+   * Use to implement provider-specific path transformation behavior. Most
+   * callers should use the pipeable {@link mapInput} combinator.
+   *
+   * **Details**
+   *
+   * This capability is part of the provider interface so composite providers
+   * can distribute transformations to their operands while preserving each
+   * operand's behavior. Providers created with {@link make} implement it
+   * automatically.
+   */
+  readonly mapInput: (f: (path: Path) => Path) => ConfigProvider
 }
 
 /**
@@ -274,7 +317,7 @@ export interface ConfigProvider extends Pipeable {
  *
  * **Example** (Providing a custom provider)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.fromUnknown({ port: 8080 })
@@ -285,13 +328,15 @@ export interface ConfigProvider extends Pipeable {
  * }).pipe(
  *   Effect.provideService(ConfigProvider.ConfigProvider, provider)
  * )
+ *
+ * Effect.runSync(program) === provider // => true
  * ```
  *
  * @see {@link layer} – install a provider as a Layer
  * @see {@link layerAdd} – add a fallback provider as a Layer
  *
  * @category services
- * @since 2.0.0
+ * @since 4.0.0
  */
 export const ConfigProvider: Context.Reference<ConfigProvider> = Context.Reference<ConfigProvider>(
   "effect/ConfigProvider",
@@ -307,29 +352,15 @@ const Proto = {
   }
 }
 
-type SourceState = {
-  readonly _tag: "Source"
-  readonly get: (path: Path) => Effect.Effect<Node | undefined, SourceError>
-  readonly transform: (path: Path) => Path
-}
-
-type OrElseState = {
-  readonly _tag: "OrElse"
-  readonly first: ConfigProvider
-  readonly second: ConfigProvider
-}
-
-type ProviderState = SourceState | OrElseState
-
 const identityPath = (path: Path): Path => path
 
 function makeProvider(
-  state: ProviderState,
-  load: (path: Path) => Effect.Effect<Node | undefined, SourceError>
+  load: (path: Path) => Effect.Effect<Node | undefined, SourceError>,
+  mapInput: (f: (path: Path) => Path) => ConfigProvider
 ): ConfigProvider {
   const self = Object.create(Proto)
-  self.state = state
   self.load = load
+  self.mapInput = mapInput
   return self
 }
 
@@ -337,25 +368,21 @@ function makeSource(
   get: (path: Path) => Effect.Effect<Node | undefined, SourceError>,
   transform: (path: Path) => Path
 ): ConfigProvider {
-  const state: SourceState = {
-    _tag: "Source",
-    get,
-    transform
-  }
-  return makeProvider(state, (path) => state.get(state.transform(path)))
+  return makeProvider(
+    (path) => get(transform(path)),
+    (f) => makeSource(get, flow(transform, f))
+  )
 }
 
 function makeOrElse(first: ConfigProvider, second: ConfigProvider): ConfigProvider {
-  const state: OrElseState = {
-    _tag: "OrElse",
-    first,
-    second
-  }
-  return makeProvider(state, (path) =>
-    Effect.flatMap(
-      state.first.load(path),
-      (node) => node ? Effect.succeed(node) : state.second.load(path)
-    ))
+  return makeProvider(
+    (path) =>
+      Effect.flatMap(
+        first.load(path),
+        (node) => node !== undefined ? Effect.succeed(node) : second.load(path)
+      ),
+    (f) => makeOrElse(first.mapInput(f), second.mapInput(f))
+  )
 }
 
 /**
@@ -369,12 +396,17 @@ function makeOrElse(first: ConfigProvider, second: ConfigProvider): ConfigProvid
  * **Details**
  *
  * The `get` callback receives a `Path` and must return
- * `Effect<Node | undefined, SourceError>`. Return `undefined` when the path
- * does not exist; fail with `SourceError` only for actual I/O errors.
+ * `Effect<Node | undefined, SourceError>`. Return `undefined` when the path does
+ * not exist, a `Node` when it does, and fail with `SourceError` only when the
+ * source cannot be read.
+ *
+ * Providers created by `make` also implement the path-transformation
+ * capability used by {@link mapInput}, {@link constantCase}, and
+ * {@link nested}.
  *
  * **Example** (Creating a simple in-memory provider)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { ConfigProvider, Effect } from "effect"
  *
  * const data: Record<string, string> = {
@@ -389,13 +421,15 @@ function makeOrElse(first: ConfigProvider, second: ConfigProvider): ConfigProvid
  *     value !== undefined ? ConfigProvider.makeValue(value) : undefined
  *   )
  * })
+ *
+ * Effect.runSync(provider.load(["host"])) // => ConfigProvider.makeValue("localhost")
  * ```
  *
  * @see {@link fromEnv} – pre-built provider for environment variables
  * @see {@link fromUnknown} – pre-built provider for JSON objects
  *
  * @category constructors
- * @since 2.0.0
+ * @since 4.0.0
  */
 export function make(get: (path: Path) => Effect.Effect<Node | undefined, SourceError>): ConfigProvider {
   return makeSource(get, identityPath)
@@ -423,8 +457,8 @@ export function make(get: (path: Path) => Effect.Effect<Node | undefined, Source
  *
  * **Example** (Falling back to a default provider)
  *
- * ```ts
- * import { ConfigProvider } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect } from "effect"
  *
  * const envProvider = ConfigProvider.fromEnv({
  *   env: { HOST: "prod.example.com" }
@@ -432,6 +466,10 @@ export function make(get: (path: Path) => Effect.Effect<Node | undefined, Source
  * const defaults = ConfigProvider.fromUnknown({ HOST: "localhost", PORT: "3000" })
  *
  * const combined = ConfigProvider.orElse(envProvider, defaults)
+ *
+ * const host = Effect.runSync(combined.load(["HOST"]))
+ * const port = Effect.runSync(combined.load(["PORT"]))
+ * const values = [host?.value, port?.value] // => ["prod.example.com", "3000"]
  * ```
  *
  * @see {@link layerAdd} – install a fallback provider via a Layer
@@ -463,10 +501,14 @@ export const orElse: {
  * `f` runs. For providers composed with {@link orElse}, the transformation is
  * applied to each operand.
  *
+ * The combinator delegates transformation to the provider itself. Use
+ * {@link make} for custom sources so this capability is implemented
+ * automatically.
+ *
  * **Example** (Uppercasing path segments)
  *
- * ```ts
- * import { ConfigProvider } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: { APP_HOST: "localhost" }
@@ -477,6 +519,9 @@ export const orElse: {
  *     typeof seg === "string" ? seg.toUpperCase() : seg
  *   )
  * )
+ *
+ * const node = Effect.runSync(upper.load(["app_host"]))
+ * node?.value // => "localhost"
  * ```
  *
  * @see {@link constantCase} – a preset that converts to `CONSTANT_CASE`
@@ -490,15 +535,7 @@ export const mapInput: {
   (self: ConfigProvider, f: (path: Path) => Path): ConfigProvider
 } = dual(
   2,
-  (self: ConfigProvider, f: (path: Path) => Path): ConfigProvider => {
-    const state = self.state
-    switch (state._tag) {
-      case "Source":
-        return makeSource(state.get, flow(state.transform, f))
-      case "OrElse":
-        return makeOrElse(mapInput(state.first, f), mapInput(state.second, f))
-    }
-  }
+  (self: ConfigProvider, f: (path: Path) => Path): ConfigProvider => self.mapInput(f)
 )
 
 /**
@@ -517,14 +554,16 @@ export const mapInput: {
  *
  * **Example** (Resolving camelCase keys to env vars)
  *
- * ```ts
- * import { ConfigProvider } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: { DATABASE_HOST: "localhost" }
  * }).pipe(ConfigProvider.constantCase)
  *
  * // path ["databaseHost"] now resolves to env var DATABASE_HOST
+ * const node = Effect.runSync(provider.load(["databaseHost"]))
+ * node?.value // => "localhost"
  * ```
  *
  * @see {@link mapInput} – for arbitrary path transformations
@@ -560,8 +599,8 @@ export const constantCase: (self: ConfigProvider) => ConfigProvider = mapInput((
  *
  * **Example** (Nesting under a prefix)
  *
- * ```ts
- * import { ConfigProvider } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.fromEnv({
  *   env: { APP_HOST: "localhost", APP_PORT: "3000" }
@@ -569,6 +608,8 @@ export const constantCase: (self: ConfigProvider) => ConfigProvider = mapInput((
  *
  * // Lookups for ["HOST"] now resolve to ["APP", "HOST"]
  * const scoped = ConfigProvider.nested(provider, "APP")
+ * const node = Effect.runSync(scoped.load(["HOST"]))
+ * node?.value // => "localhost"
  * ```
  *
  * @see {@link mapInput} – for arbitrary path transformations
@@ -583,13 +624,7 @@ export const nested: {
   2,
   (self: ConfigProvider, prefix: string | Path): ConfigProvider => {
     const path = typeof prefix === "string" ? [prefix] : prefix
-    const state = self.state
-    switch (state._tag) {
-      case "Source":
-        return makeSource(state.get, flow(state.transform, (input) => [...path, ...input]))
-      case "OrElse":
-        return makeOrElse(nested(state.first, path), nested(state.second, path))
-    }
+    return mapInput(self, (input) => [...path, ...input])
   }
 )
 
@@ -608,7 +643,7 @@ export const nested: {
  *
  * **Example** (Reading config from a JSON object)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect, Layer } from "effect"
  *
  * const TestLayer = ConfigProvider.layer(
@@ -620,7 +655,7 @@ export const nested: {
  *   return port
  * })
  *
- * // Effect.runSync(Effect.provide(program, TestLayer)) // 8080
+ * Effect.runSync(Effect.provide(program, TestLayer)) // => 8080
  * ```
  *
  * @see {@link layerAdd} – add a provider without replacing the existing one
@@ -646,13 +681,13 @@ export const layer = <E = never, R = never>(
  * **Details**
  *
  * By default, the new provider acts as a fallback and is consulted only when
- * the current provider returns `undefined`. Set `asPrimary: true` to make the
- * new provider the primary source, with the existing one as fallback.
+ * the current provider returns `undefined`. Set `asPrimary: true` to make
+ * the new provider the primary source, with the existing one as fallback.
  *
  * **Example** (Adding default values)
  *
- * ```ts
- * import { ConfigProvider } from "effect"
+ * ```ts import.meta.vitest
+ * import { Config, ConfigProvider, Effect, Layer } from "effect"
  *
  * const defaults = ConfigProvider.fromUnknown({
  *   HOST: "localhost",
@@ -661,6 +696,11 @@ export const layer = <E = never, R = never>(
  *
  * // The current env provider is tried first; `defaults` is the fallback
  * const DefaultsLayer = ConfigProvider.layerAdd(defaults)
+ * const BaseLayer = ConfigProvider.layer(ConfigProvider.fromUnknown({}))
+ * const program = Config.string("HOST")
+ *
+ * const layer = Layer.provide(DefaultsLayer, BaseLayer)
+ * Effect.runSync(Effect.provide(program, layer)) // => "localhost"
  * ```
  *
  * @see {@link layer} – replace the provider entirely
@@ -695,8 +735,8 @@ export const layerAdd = <E = never, R = never>(
  * **Details**
  *
  * Path traversal follows standard JS rules: string segments index into object
- * keys, numeric segments index into arrays. Returns `undefined` for any path
- * that cannot be resolved. Never fails with `SourceError`.
+ * keys, numeric segments index into arrays. Returns `undefined` for any
+ * path that cannot be resolved. Never fails with `SourceError`.
  *
  * Primitive values (`number`, `boolean`, `bigint`) are stringified via
  * `String(...)`.
@@ -713,7 +753,7 @@ export const layerAdd = <E = never, R = never>(
  *
  * **Example** (Providing config from a plain object)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.fromUnknown({
@@ -727,13 +767,13 @@ export const layerAdd = <E = never, R = never>(
  *   provider.pipe(ConfigProvider.nested("database"))
  * )
  *
- * // Effect.runSync(host) // "localhost"
+ * Effect.runSync(host) // => "localhost"
  * ```
  *
  * @see {@link fromEnv} – for environment variables
  * @see {@link make} – for custom backing stores
  *
- * @category ConfigProviders
+ * @category constructors
  * @since 4.0.0
  */
 export function fromUnknown(root: unknown, options?: {
@@ -793,13 +833,49 @@ function emptyStringAsMissing(value: string | undefined, preserveEmptyStrings: b
 }
 
 /**
+ * Creates a `ConfigProvider` backed by an explicit environment record.
+ *
+ * **When to use**
+ *
+ * Use when a restricted runtime cannot evaluate the automatic environment
+ * detection performed by {@link fromEnv}, or whenever the environment record
+ * must be supplied explicitly.
+ *
+ * **Details**
+ *
+ * `undefined` values are ignored. Path lookup and child discovery otherwise
+ * use the same environment-variable semantics as {@link fromEnv}.
+ *
+ * Environment variable names are captured at construction time to establish
+ * record keys and array lengths. The supplied record remains live for value
+ * lookups, so updates to known paths are observed by later loads. Keys added
+ * after construction can be loaded directly, but do not appear in captured
+ * parent record keys or array lengths.
+ *
+ * Literal empty strings are treated as missing values by default. Pass
+ * `{ preserveEmptyStrings: true }` to keep empty strings as explicit values.
+ *
+ * @see {@link fromEnv} – automatically reads the runtime environment
+ *
+ * @category constructors
+ * @since 4.0.0
+ */
+export function fromEnvRecord(
+  env: Record<string, string | undefined>,
+  options?: { readonly preserveEmptyStrings?: boolean | undefined }
+): ConfigProvider {
+  const preserveEmptyStrings = options?.preserveEmptyStrings === true
+  const trie = buildEnvTrie(env)
+  return make((path) => Effect.succeed(nodeAtEnv(trie, env, path, preserveEmptyStrings)))
+}
+
+/**
  * Creates a `ConfigProvider` backed by environment variables.
  *
  * **When to use**
  *
  * Use to read configuration from `process.env`, which is the default when no
- * provider is explicitly set, or pass a custom env record for testing or
- * non-Node runtimes.
+ * provider is explicitly set, or pass a custom env record for testing.
  *
  * **Details**
  *
@@ -822,7 +898,7 @@ function emptyStringAsMissing(value: string | undefined, preserveEmptyStrings: b
  *
  * **Example** (Reading from a custom env record)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Config, ConfigProvider, Effect } from "effect"
  *
  * const provider = ConfigProvider.fromEnv({
@@ -836,13 +912,14 @@ function emptyStringAsMissing(value: string | undefined, preserveEmptyStrings: b
  *   provider.pipe(ConfigProvider.nested("DATABASE"))
  * )
  *
- * // Effect.runSync(host) // "localhost"
+ * Effect.runSync(host) // => "localhost"
  * ```
  *
  * @see {@link fromUnknown} – for JSON objects
+ * @see {@link fromEnvRecord} – for explicit records in restricted runtimes
  * @see {@link constantCase} – bridge camelCase keys to SCREAMING_SNAKE_CASE
  *
- * @category ConfigProviders
+ * @category constructors
  * @since 2.0.0
  */
 export function fromEnv(options?: {
@@ -850,13 +927,12 @@ export function fromEnv(options?: {
   readonly preserveEmptyStrings?: boolean | undefined
 }): ConfigProvider {
   const env: Record<string, string | undefined> = options?.env ?? {
-    ...globalThis?.process?.env,
+    ...(globalThis as {
+      readonly process?: { readonly env?: Record<string, string | undefined> }
+    }).process?.env,
     ...(import.meta as any)?.env
   }
-  const preserveEmptyStrings = options?.preserveEmptyStrings === true
-  const trie = buildEnvTrie(env)
-
-  return make((path) => Effect.succeed(nodeAtEnv(trie, env, path, preserveEmptyStrings)))
+  return fromEnvRecord(env, { preserveEmptyStrings: options?.preserveEmptyStrings })
 }
 
 type EnvTrieNode = {
@@ -942,12 +1018,12 @@ function trieNodeAt(root: EnvTrieNode, path: Path): EnvTrieNode | undefined {
  *
  * Parsing is based on the `dotenv` / `dotenv-expand` algorithm.
  *
- * Internally delegates to {@link fromEnv} with the parsed key-value pairs.
+ * Internally delegates to {@link fromEnvRecord} with the parsed key-value pairs.
  *
  * **Example** (Parsing .env contents)
  *
- * ```ts
- * import { ConfigProvider } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect } from "effect"
  *
  * const contents = `
  * HOST=localhost
@@ -956,12 +1032,15 @@ function trieNodeAt(root: EnvTrieNode, path: Path): EnvTrieNode | undefined {
  * `
  *
  * const provider = ConfigProvider.fromDotEnvContents(contents)
+ * const port = Effect.runSync(provider.load(["PORT"]))
+ * port?.value // => "3000"
  * ```
  *
  * @see {@link fromDotEnv} – loads a `.env` file from disk
+ * @see {@link fromEnvRecord} – for explicit environment records
  * @see {@link fromEnv} – for raw environment variable access
  *
- * @category ConfigProviders
+ * @category constructors
  * @since 4.0.0
  */
 export function fromDotEnvContents(lines: string, options?: {
@@ -972,7 +1051,7 @@ export function fromDotEnvContents(lines: string, options?: {
   if (options?.expandVariables) {
     env = dotEnvExpand(env)
   }
-  return fromEnv({ env, preserveEmptyStrings: options?.preserveEmptyStrings })
+  return fromEnvRecord(env, { preserveEmptyStrings: options?.preserveEmptyStrings })
 }
 
 const DOT_ENV_LINE =
@@ -1052,9 +1131,12 @@ function interpolate(envValue: string, parsed: Record<string, string>): string {
 
   if (match !== null) {
     const [_, group, variableName, defaultValue] = match
+    const value = Object.hasOwn(parsed, variableName) && parsed[variableName] !== ""
+      ? parsed[variableName]
+      : defaultValue ?? ""
 
     return interpolate(
-      envValue.replace(group, defaultValue || (Object.hasOwn(parsed, variableName) ? parsed[variableName] : "")),
+      envValue.replace(group, value),
       parsed
     )
   }
@@ -1092,19 +1174,28 @@ function searchLast(str: string, rgx: RegExp): number {
  *
  * **Example** (Loading a .env file)
  *
- * ```ts
- * import { ConfigProvider, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect, FileSystem } from "effect"
+ *
+ * const fileSystem = FileSystem.makeNoop({
+ *   readFileString: () => Effect.succeed("HOST=localhost")
+ * })
  *
  * const program = Effect.gen(function*() {
  *   const provider = yield* ConfigProvider.fromDotEnv()
- *   return provider
+ *   return yield* provider.load(["HOST"])
  * })
+ *
+ * const node = await Effect.runPromise(
+ *   Effect.provideService(program, FileSystem.FileSystem, fileSystem)
+ * )
+ * node?.value // => "localhost"
  * ```
  *
  * @see {@link fromDotEnvContents} – parse a `.env` string directly
  * @see {@link fromEnv} – read from the runtime environment
  *
- * @category ConfigProviders
+ * @category constructors
  * @since 4.0.0
  */
 export const fromDotEnv: (options?: {
@@ -1146,21 +1237,36 @@ export const fromDotEnv: (options?: {
  *
  * **Example** (Reading config from a directory)
  *
- * ```ts
- * import { ConfigProvider, Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { ConfigProvider, Effect, FileSystem, Path } from "effect"
+ *
+ * const fileSystem = FileSystem.makeNoop({
+ *   readFileString: (path) =>
+ *     path === "/etc/myapp/host"
+ *       ? Effect.succeed("localhost")
+ *       : Effect.die("unexpected path")
+ * })
  *
  * const program = Effect.gen(function*() {
  *   const provider = yield* ConfigProvider.fromDir({
  *     rootPath: "/etc/myapp"
  *   })
- *   return provider
+ *   return yield* provider.load(["host"])
  * })
+ *
+ * const node = await Effect.runPromise(
+ *   program.pipe(
+ *     Effect.provide(Path.layer),
+ *     Effect.provideService(FileSystem.FileSystem, fileSystem)
+ *   )
+ * )
+ * node?.value // => "localhost"
  * ```
  *
  * @see {@link fromEnv} – for environment variables
  * @see {@link fromDotEnv} – for `.env` files
  *
- * @category ConfigProviders
+ * @category constructors
  * @since 4.0.0
  */
 export const fromDir: (options?: {
