@@ -897,6 +897,30 @@ describe("native provider presentation in the v2 timeline", () => {
     item,
   });
 
+  it.each([
+    { outputIndicatesFailure: true },
+    { exitCode: 2 },
+    { output: "bash: foo: command not found" },
+  ])("keeps completed command failures visible without exposing output: %j", (result) => {
+    const item = {
+      ...base,
+      type: "command_execution" as const,
+      input: "foo",
+      ...result,
+    } satisfies OrchestrationV2TurnItem;
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    if (entry?.kind !== "work") throw new Error("Expected a command work entry");
+
+    expect(entry.entry.detail).toBeUndefined();
+    expect(entry.entry.command).toBe("foo");
+    expect(entry.entry.toolLifecycleStatus).toBe("completed");
+    expect(workEntryDisplayIndicatesToolFailure(entry.entry)).toBe(true);
+    expect(workEntryIndicatesToolSuccess(entry.entry)).toBe(false);
+  });
+
   it("keeps browser identity and its source on a completed tool row", () => {
     const item = {
       ...base,
