@@ -18,6 +18,14 @@ public struct FeatureThreadReceipt: Sendable, Equatable {
         self.source = source
     }
 
+    func relativeAge(at now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(receivedAt)))
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3_600 { return "\(seconds / 60)m" }
+        if seconds < 86_400 { return "\(seconds / 3_600)h" }
+        return "\(seconds / 86_400)d"
+    }
+
     func formattedTimestamp(locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         receivedAt.formatted(Date.FormatStyle(
             date: .numeric, time: .standard, locale: locale, timeZone: timeZone
