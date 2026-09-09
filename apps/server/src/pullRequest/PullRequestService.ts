@@ -1629,6 +1629,9 @@ export const make = Effect.gen(function* () {
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })
               .pipe(
+                // Once the authorized provider action starts, a failure may leave partial
+                // remote updates. Validation and permission failures above changed nothing.
+                Effect.ensuring(input.stackNumber === undefined ? Effect.void : refreshAfterTurn),
                 Effect.mapError(toPullRequestError("runAction")),
                 Effect.as(
                   project.api.kind === "azure-devops"
@@ -2671,9 +2674,7 @@ export const make = Effect.gen(function* () {
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
-    const repository = yield* runAction(input).pipe(
-      Effect.ensuring(input.stackNumber === undefined ? Effect.void : refreshAfterTurn),
-    );
+    const repository = yield* runAction(input);
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
     if (input.action === "merge") {

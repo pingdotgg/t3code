@@ -153,6 +153,9 @@ const decodeRebaseBranch = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
       data: Schema.Struct({
+        processed: Schema.optional(
+          Schema.Array(Schema.NullOr(Schema.Struct({ headRefOid: Schema.String }))),
+        ),
         repository: Schema.Struct({
           pullRequest: Schema.Struct({
             id: Schema.String,
@@ -274,6 +277,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
       })
     )
       return yield* new GitHubStackPermissionError({ ...identity });
+    const processed: Array<{ id: string; number: number; headSha: string }> = [];
     for (const [index, layer] of open.entries()) {
       yield* Effect.gen(function* () {
         const read = yield* github.execute({
@@ -292,21 +296,39 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
             "-f",
             `sha=${layer.headSha}`,
             "-f",
-            "query=query($owner:String!,$name:String!,$number:Int!,$sha:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid baseRef{compare(headRef:$sha){behindBy}}}}}",
+            `query=query($owner:String!,$name:String!,$number:Int!,$sha:String!){${
+              processed.length === 0
+                ? ""
+                : `processed:nodes(ids:${JSON.stringify(processed.map((head) => head.id))}){... on PullRequest{headRefOid}}`
+            } repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid baseRef{compare(headRef:$sha){behindBy}}}}}`,
           ],
         });
         const {
           data: {
+            processed: observed,
             repository: { pullRequest: pr },
           },
         } = yield* decodeRebaseBranch(read.stdout);
+        // A push to an earlier layer must not silently become the next layer's new base.
+        const changed = processed.find(
+          (head, index) => observed?.[index]?.headRefOid !== head.headSha,
+        );
+        if (changed !== undefined)
+          return yield* new GitHubStackChangedError({
+            ...identity,
+            number: changed.number,
+            completed: index,
+          });
         if (pr.headRefOid !== layer.headSha)
           return yield* new GitHubStackChangedError({
             ...identity,
             number: layer.number,
             completed: index,
           });
-        if (pr.baseRef.compare.behindBy === 0) return;
+        if (pr.baseRef.compare.behindBy === 0) {
+          processed.push({ id: pr.id, number: layer.number, headSha: pr.headRefOid });
+          return;
+        }
         // Pass the reviewed revision to GitHub, including when a push races this read.
         const updated = yield* github.execute({
           cwd: input.cwd,
@@ -323,7 +345,12 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
             "query=mutation($id:ID!,$sha:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$sha,updateMethod:REBASE}){pullRequest{headRefOid}}}",
           ],
         });
-        yield* decodeRebaseResponse(updated.stdout);
+        const response = yield* decodeRebaseResponse(updated.stdout);
+        processed.push({
+          id: pr.id,
+          number: layer.number,
+          headSha: response.data.updatePullRequestBranch.pullRequest.headRefOid,
+        });
       }).pipe(
         Effect.mapError((cause) =>
           cause._tag === "GitHubStackChangedError"

@@ -124,7 +124,7 @@ export {
 } from "@t3tools/shared/threadPullRequests";
 
 /** The glyph a row's badge wears: the layers icon for a stack, the pull-request one otherwise. */
-export function ThreadPullRequestBadgeIcon({
+function ThreadPullRequestBadgeIcon({
   icon,
   className,
 }: {
@@ -274,7 +274,7 @@ export function ThreadPullRequestsMiniList({
 }
 
 /** The ink each pull-request state wears in the sidebar, shared by the number and stack badges. */
-export const PR_STATE_COLOR_CLASS: Record<NonNullable<ThreadPr>["state"], string> = {
+const PR_STATE_COLOR_CLASS: Record<NonNullable<ThreadPr>["state"], string> = {
   open: "text-emerald-600 dark:text-emerald-300/90",
   merged: "text-violet-600 dark:text-violet-300/90",
   closed: "text-red-600 dark:text-red-300/90",

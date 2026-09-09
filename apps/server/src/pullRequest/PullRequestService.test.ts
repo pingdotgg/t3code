@@ -4042,6 +4042,8 @@ it.effect('resolves an author filter of "me" to the viewer before narrowing a ho
 it.effect("authorizes stack rebases independently of whether the selected layer is behind", () =>
   Effect.gen(function* () {
     let taken = 0;
+    let summaryReads = 0;
+    let mutationFails = false;
     let stackRebase = true;
     let stackActions = true;
     const capabilities = {
@@ -4072,9 +4074,15 @@ it.effect("authorizes stack rebases independently of whether the selected layer 
               verdicts: [],
               requestReviewers: false,
             }),
-          runAction: () =>
+          getChangeRequestSummary: () =>
             Effect.sync(() => {
+              summaryReads++;
+              return changeRequest(8, "2026-07-01T00:00:00Z");
+            }),
+          runAction: () =>
+            Effect.gen(function* () {
               taken++;
+              if (mutationFails) return yield* requestFailed;
             }),
         }),
       ],
@@ -4090,6 +4098,9 @@ it.effect("authorizes stack rebases independently of whether the selected layer 
     };
     yield* service.runAction(input);
     assert.strictEqual(taken, 1);
+    const unrelated = { ...input, number: 8 };
+    yield* service.summary(unrelated);
+    assert.strictEqual(summaryReads, 1);
     stackRebase = false;
     assert.strictEqual(
       (yield* Effect.flip(service.runAction(input)))._tag,
@@ -4102,6 +4113,14 @@ it.effect("authorizes stack rebases independently of whether the selected layer 
       "PullRequestOperationError",
     );
     assert.strictEqual(taken, 1);
+    yield* service.summary(unrelated);
+    assert.strictEqual(summaryReads, 1);
+    stackActions = true;
+    mutationFails = true;
+    yield* Effect.flip(service.runAction(input));
+    assert.strictEqual(taken, 2);
+    yield* service.summary(unrelated);
+    assert.strictEqual(summaryReads, 2);
   }),
 );
 

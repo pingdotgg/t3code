@@ -108,7 +108,14 @@ function EnabledPullRequestThreadLinks({
                 size="xs"
                 variant="ghost"
                 aria-label={linkedThreadsLabel}
-                onClick={() => openCommandPalette({ query: url })}
+                onClick={() =>
+                  openCommandPalette({
+                    query: url,
+                    ...((relations.data ?? lastRelations) === null
+                      ? {}
+                      : { linkedThreads: { environmentId, threads: linkedThreads } }),
+                  })
+                }
               >
                 <MessageSquareIcon aria-hidden className="size-3.5" />
                 <span aria-hidden>{linkedThreads.length || "?"}</span>

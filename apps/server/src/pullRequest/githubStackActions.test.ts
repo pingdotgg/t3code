@@ -57,8 +57,9 @@ const access = {
   },
 };
 
-const branch = (number: number, headRefOid: string, behindBy = 1) => ({
+const branch = (number: number, headRefOid: string, behindBy = 1, processed: string[] = []) => ({
   data: {
+    processed: processed.map((headRefOid) => ({ headRefOid })),
     repository: {
       pullRequest: { id: `PR_${number}`, headRefOid, baseRef: { compare: { behindBy } } },
     },
@@ -67,7 +68,7 @@ const branch = (number: number, headRefOid: string, behindBy = 1) => ({
 const rebased = {
   data: { updatePullRequestBranch: { pullRequest: { headRefOid: "rebased-sha" } } },
 };
-const rebaseResponses = [branch(2, "bbb"), rebased, branch(3, "ccc"), rebased];
+const rebaseResponses = [branch(2, "bbb"), rebased, branch(3, "ccc", 1, ["rebased-sha"]), rebased];
 
 function fake(responses: readonly unknown[]) {
   const calls: ReadonlyArray<string>[] = [];
@@ -330,7 +331,7 @@ it.effect("rejects a push after preflight without rebasing the new revision", ()
 
 it.effect("skips current layers without submitting a rebase mutation", () =>
   Effect.gen(function* () {
-    const api = fake([stack, access, branch(2, "bbb", 0), branch(3, "ccc", 0)]);
+    const api = fake([stack, access, branch(2, "bbb", 0), branch(3, "ccc", 0, ["bbb"])]);
     yield* runGitHubStackAction(api.execute, { ...input, action: "update-branch" });
     expect(api.calls.some((args) => args.some((arg) => arg.startsWith("query=mutation")))).toBe(
       false,
@@ -345,7 +346,7 @@ it.effect("keeps earlier progress and stops after a later layer fails", () =>
       access,
       branch(2, "bbb"),
       rebased,
-      branch(3, "ccc"),
+      branch(3, "ccc", 1, ["rebased-sha"]),
       { data: { updatePullRequestBranch: null } },
     ]);
     const result = yield* runGitHubStackAction(api.execute, {
@@ -361,7 +362,13 @@ it.effect("keeps earlier progress and stops after a later layer fails", () =>
 
 it.effect("reports partial progress when a later head changes during the rebase", () =>
   Effect.gen(function* () {
-    const api = fake([stack, access, branch(2, "bbb"), rebased, branch(3, "concurrent-head")]);
+    const api = fake([
+      stack,
+      access,
+      branch(2, "bbb"),
+      rebased,
+      branch(3, "concurrent-head", 1, ["rebased-sha"]),
+    ]);
     const result = yield* runGitHubStackAction(api.execute, {
       ...input,
       action: "update-branch",
@@ -376,5 +383,31 @@ it.effect("reports partial progress when a later head changes during the rebase"
     expect(
       api.calls.filter((args) => args.some((arg) => arg.startsWith("query=mutation"))),
     ).toHaveLength(1);
+  }),
+);
+
+it.effect.each([false, true])("rejects a push to a processed layer, rebased=%s", (rebasedParent) =>
+  Effect.gen(function* () {
+    const api = fake([
+      stack,
+      access,
+      branch(2, "bbb", rebasedParent ? 1 : 0),
+      ...(rebasedParent ? [rebased] : []),
+      branch(3, "ccc", 1, ["concurrent-parent-head"]),
+    ]);
+    const result = yield* runGitHubStackAction(api.execute, {
+      ...input,
+      action: "update-branch",
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "GitHubStackChangedError", number: 2, completed: 1 },
+    });
+    expect(api.calls.at(-1)?.some((arg) => arg.includes('processed:nodes(ids:["PR_2"])'))).toBe(
+      true,
+    );
+    expect(
+      api.calls.filter((args) => args.some((arg) => arg.startsWith("query=mutation"))),
+    ).toHaveLength(rebasedParent ? 1 : 0);
   }),
 );
