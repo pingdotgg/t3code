@@ -74,10 +74,9 @@ export function usePullRequestFilesViewed(options: {
   });
 
   // Presses waiting for the next flush, and, for every path a request is already carrying, which
-  // request that is. Requests overlap and run in the order they were made, so a path pressed
-  // again while an earlier one is still out belongs to the later request from that moment on, and
-  // the earlier one stops answering for it. Both are refs rather than state: nothing on screen
-  // reads them, and the flush must see the latest.
+  // request that is. A path pressed again while its request is out belongs to the later request
+  // from then on, and the earlier one stops answering for it. Both are refs rather than state:
+  // nothing on screen reads them, and the flush must see the latest.
   const queued = useRef<Map<string, boolean>>(new Map());
   const sentBy = useRef<Map<string, number>>(new Map());
   const requests = useRef(0);
