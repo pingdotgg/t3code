@@ -337,6 +337,11 @@ public struct ThreadDetailView: View {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             headerStatus(at: context.date)
                         }
+                    } else if !isCompacting,
+                              currentThread.homeStatus == .ready || currentThread.homeStatus == .done,
+                              let receipt = model.selectedThreadReceipt,
+                              receipt.threadID == currentThread.id {
+                        FeatureThreadReceiptView(receipt: receipt)
                     } else {
                         headerStatus(at: .now)
                     }

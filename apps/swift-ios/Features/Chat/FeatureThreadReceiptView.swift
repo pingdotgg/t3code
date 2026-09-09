@@ -1,49 +1,34 @@
 import SwiftUI
 
-/// A static receipt time stays honest when a connected thread is quiet.
+/// Receipt age shares the idle header row; recovery warnings remain near Retry.
 struct FeatureThreadReceiptView: View {
-    let receipt: FeatureThreadReceipt?
-    let connectionState: FeatureConnection.State?
-    let syncState: FeatureThreadSyncState?
+    let receipt: FeatureThreadReceipt
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            connectionLabel
-            if let receipt {
-                if receipt.source == .detailSnapshot {
-                    Text("Snapshot received \(receipt.formattedTimestamp())")
-                        .accessibilityLabel(Text("Thread snapshot received at \(receipt.formattedTimestamp())"))
-                } else {
-                    Text("Last update received \(receipt.formattedTimestamp())")
-                        .accessibilityLabel(Text("Last thread update received at \(receipt.formattedTimestamp())"))
-                }
-            } else {
-                Text("No receipt time available")
-            }
+        TimelineView(ReceiptAgeSchedule(receivedAt: receipt.receivedAt)) { context in
+            Text("Updated \(receipt.relativeAge(at: context.date)) ago")
+                .font(T3Typography.navigationMetadata)
+                .foregroundStyle(T3Colors.textTertiary)
+                .lineLimit(1)
+                .accessibilityLabel("Last thread update received at \(receipt.formattedTimestamp())")
         }
-        .font(T3Typography.supporting)
-        .foregroundStyle(T3Colors.textSecondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 6)
-        .background(T3Colors.background)
-        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("thread-receipt-status")
     }
+}
 
-    @ViewBuilder
-    private var connectionLabel: some View {
-        switch connectionState {
-        case .disconnected: Text("Disconnected")
-        case .connecting: Text("Connecting")
-        case .reconnecting: Text("Reconnecting")
-        case nil: Text("Connection status unavailable")
-        case .connected:
-            switch syncState {
-            case .reconnecting: Text("Connected · reconnecting thread updates")
-            case .catchingUp: Text("Connected · catching up")
-            case .failed: Text("Connected · thread updates unavailable")
-            case .live, nil: Text("Connected")
+/// Wake only at the next displayed second, minute, hour, or day boundary.
+private struct ReceiptAgeSchedule: TimelineSchedule {
+    let receivedAt: Date
+
+    func entries(from startDate: Date, mode: TimelineScheduleMode) -> AnySequence<Date> {
+        AnySequence {
+            var next = startDate
+            return AnyIterator<Date> {
+                let date = next
+                let age = max(0, date.timeIntervalSince(receivedAt))
+                let unit: TimeInterval = age < 60 ? 1 : age < 3_600 ? 60 : age < 86_400 ? 3_600 : 86_400
+                next = receivedAt.addingTimeInterval((floor(age / unit) + 1) * unit)
+                return date
             }
         }
     }

@@ -328,15 +328,6 @@ public struct WorkspaceView: View {
                 onNavigateBack: closeSelectedThread,
                 managesThreadPresentation: false
             )
-            .safeAreaInset(edge: .top, spacing: 0) {
-                FeatureThreadReceiptView(
-                    receipt: model.selectedThreadReceipt.flatMap { $0.threadID == id ? $0 : nil },
-                    connectionState: model.snapshot.environments.first {
-                        $0.id == thread.environmentID
-                    }?.connectionState,
-                    syncState: model.threadSyncStates[id]
-                )
-            }
             .id(id)
         } else {
             VStack(spacing: 14) {

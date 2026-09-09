@@ -3,6 +3,15 @@ import Testing
 @testable import T3Code
 
 struct FeatureThreadReceiptTests {
+    @Test func receiptAgeUsesElapsedUnitsAndClampsFutureClockSkew() {
+        let receivedAt = Date(timeIntervalSince1970: 1_000)
+        let receipt = FeatureThreadReceipt(threadID: "a", receivedAt: receivedAt, source: .detailEvent)
+        for (elapsed, expected) in [(-8, "0s"), (8, "8s"), (59, "59s"), (60, "1m"),
+                                    (3_599, "59m"), (3_600, "1h"), (86_400, "1d")] {
+            #expect(receipt.relativeAge(at: receivedAt.addingTimeInterval(Double(elapsed))) == expected)
+        }
+    }
+
     @Test func timestampIncludesSecondsAndUsesSelectedTimeZone() throws {
         let utc = try #require(TimeZone(secondsFromGMT: 0))
         let sydney = try #require(TimeZone(identifier: "Australia/Sydney"))
