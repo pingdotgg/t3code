@@ -212,22 +212,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }),
       };
   const state = yield* SubscriptionRef.make(initialState);
-  // A bounded socket fallback is safe only after this client has evidence that
-  // the thread's older history can be fetched over HTTP. Without that evidence
-  // (notably in WebSocket-only mode), request the legacy full snapshot.
+  // Paging support belongs to the client, even when the initial HTTP request
+  // fails. A bounded socket reset retains a cursor so history can be retried.
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
-  const initiallyAcceptsBoundedSnapshots =
-    canLoadHistory &&
-    ((Option.isSome(cached) &&
-      (cached.value.historyCursor !== undefined ||
-        cached.value.hasMoreHistory !== undefined ||
-        cached.value.latestLocalTurnOrdinal !== undefined)) ||
-      (retained !== undefined &&
-        (retained.acceptsBoundedSnapshots === true ||
-          retained.state.history.historyCursor !== null ||
-          retained.state.history.hasMoreHistory ||
-          retained.state.history.latestLocalTurnOrdinal !== null)));
-  const acceptsBoundedSocketSnapshots = yield* Ref.make(initiallyAcceptsBoundedSnapshots);
+  const acceptsBoundedSocketSnapshots = yield* Ref.make(canLoadHistory);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
   const initialSequence =
@@ -238,7 +226,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     state: initialState,
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
-    acceptsBoundedSnapshots: initiallyAcceptsBoundedSnapshots,
+    acceptsBoundedSnapshots: canLoadHistory,
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
