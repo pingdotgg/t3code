@@ -1,8 +1,13 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import { CommandId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
+import { threadEnvironment } from "../../state/threads";
 import {
   isJsonToolText,
   toolCallLines,
+  turnItemCanStopCommand,
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
   turnItemOutputImages,
@@ -11,10 +16,10 @@ import {
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon } from "lucide-react";
-import { memo, type ReactNode, Suspense, use } from "react";
+import { memo, type ReactNode, Suspense, use, useState } from "react";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
-import { cn } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { useTurnItemDetail } from "../../state/queries";
@@ -235,6 +240,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
     props.source,
     streamsOutput,
   );
+  const stopTool = useOrchestrationCommand(threadEnvironment.stopTool, "stop command");
+  const canStopTool = useAtomValue(threadEnvironment.stopTool.permissionAtom(props.environmentId));
+  const [stopBusy, setStopBusy] = useState(false);
+  const wireItem = props.projectedItem.item;
   const item = fetched.item;
   const outputState = fetched.output;
   return (
@@ -254,22 +263,50 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "command_execution" ? (
-        <ToolCallBody
-          command={item.input}
-          exitCode={item.exitCode}
-          {...outputState}
-          onImageExpand={props.onImageExpand}
-          outputSlot={
-            streamsOutput ? (
-              <CommandOutputPanel
-                environmentId={props.environmentId}
-                threadId={props.projectedItem.sourceThreadId}
-                itemId={props.projectedItem.sourceItemId}
-                source={props.source?.commandOutput}
-              />
-            ) : undefined
-          }
-        />
+        <>
+          {wireItem.type === "command_execution" && turnItemCanStopCommand(wireItem) ? (
+            <div className="flex justify-end">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!canStopTool || stopBusy || wireItem.stopRequested}
+                aria-label={
+                  wireItem.stopRequested ? "Command stop requested" : `Stop ${wireItem.input}`
+                }
+                onClick={() => {
+                  setStopBusy(true);
+                  void stopTool({
+                    environmentId: props.environmentId,
+                    input: {
+                      type: "thread.tool.stop",
+                      commandId: CommandId.make(randomUUID()),
+                      threadId: props.projectedItem.sourceThreadId,
+                      itemId: props.projectedItem.sourceItemId,
+                    },
+                  }).finally(() => setStopBusy(false));
+                }}
+              >
+                {wireItem.stopRequested ? "Stop requested" : "Stop command"}
+              </Button>
+            </div>
+          ) : null}
+          <ToolCallBody
+            command={item.input}
+            exitCode={item.exitCode}
+            {...outputState}
+            onImageExpand={props.onImageExpand}
+            outputSlot={
+              streamsOutput ? (
+                <CommandOutputPanel
+                  environmentId={props.environmentId}
+                  threadId={props.projectedItem.sourceThreadId}
+                  itemId={props.projectedItem.sourceItemId}
+                  source={props.source?.commandOutput}
+                />
+              ) : undefined
+            }
+          />
+        </>
       ) : null}
 
       {item.type === "file_change" ? (

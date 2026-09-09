@@ -1,4 +1,7 @@
 import { Button } from "../../components/ui/Button";
+import { CommandId, type OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import { turnItemCanStopCommand } from "@t3tools/client-runtime/work-log/item-detail";
+import { uuidv4 } from "../../lib/uuid";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import {
@@ -909,6 +912,42 @@ function ToolCodeText({
   );
 }
 
+function StopCommandButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+}) {
+  const stop = useAtomCommand(threadEnvironment.stopTool, "stop command");
+  const canStop = useAtomValue(threadEnvironment.stopTool.permissionAtom(props.environmentId));
+  const [busy, setBusy] = useState(false);
+  const item = props.projectedItem.item;
+  if (item.type !== "command_execution" || !turnItemCanStopCommand(item)) return null;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={item.stopRequested ? "Command stop requested" : `Stop ${item.input}`}
+      accessibilityState={{ disabled: !canStop || busy || item.stopRequested }}
+      disabled={!canStop || busy || item.stopRequested}
+      className="ml-7 mb-2 min-h-11 self-start justify-center rounded-full border border-border px-4"
+      onPress={() => {
+        setBusy(true);
+        void stop({
+          environmentId: props.environmentId,
+          input: {
+            type: "thread.tool.stop",
+            commandId: CommandId.make(uuidv4()),
+            threadId: props.projectedItem.sourceThreadId,
+            itemId: props.projectedItem.sourceItemId,
+          },
+        }).finally(() => setBusy(false));
+      }}
+    >
+      <Text className="text-sm text-foreground">
+        {item.stopRequested ? "Stop requested" : "Stop command"}
+      </Text>
+    </Pressable>
+  );
+}
+
 const ThreadWorkLogRow = function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
@@ -1217,6 +1256,10 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           layout={WORK_LOG_LAYOUT_TRANSITION}
           className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
         >
+          <StopCommandButton
+            environmentId={props.environmentId}
+            projectedItem={row.projectedItem}
+          />
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
               environmentId={props.environmentId}

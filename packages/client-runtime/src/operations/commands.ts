@@ -33,7 +33,7 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
-import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { getInitialServerConfig, request, requestGuarded } from "../rpc/client.ts";
 
 interface CommandMetadata {
   readonly commandId?: CommandId;
@@ -192,6 +192,10 @@ export interface InterruptThreadTurnInput extends ThreadCommandInput {
   readonly subagentId?: NodeId;
   readonly turnId?: string;
 }
+export type StopThreadToolInput = Extract<
+  OrchestrationV2Command,
+  { readonly type: "thread.tool.stop" }
+>;
 
 export interface RespondToThreadApprovalInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
@@ -783,6 +787,12 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     ...(requestedMode !== "queue" ? { deliveryIntent: requestedMode } : {}),
     dispatchMode,
   });
+});
+
+export const stopThreadTool = Effect.fn("EnvironmentCommands.stopThreadTool")(function* (
+  input: StopThreadToolInput,
+) {
+  return yield* requestGuarded(ORCHESTRATION_V2_WS_METHODS.stopTool, input);
 });
 
 export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThreadTurn")(function* (

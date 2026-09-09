@@ -4,6 +4,16 @@ import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
 
+/** Only Codex command handles can stop one process without interrupting the turn. */
+export function turnItemCanStopCommand(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "command_execution" &&
+    Boolean(item.processId?.trim()) &&
+    item.nativeItemRef?.driver === "codex" &&
+    ["pending", "running", "waiting"].includes(item.status)
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

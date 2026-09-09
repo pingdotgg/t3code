@@ -2040,6 +2040,19 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [ORCHESTRATION_V2_WS_METHODS.stopTool]: (command) =>
+          startup.enqueueCommand(threadManagement.dispatch(command)).pipe(
+            Effect.map((result) => ({ sequence: result.sequence })),
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2DispatchCommandError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  message: "Failed to stop command",
+                  cause,
+                }),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
