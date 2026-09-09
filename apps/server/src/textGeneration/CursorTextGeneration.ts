@@ -100,18 +100,18 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
       const apiKey = yield* resolveCursorApiKey(operation);
       const promptResult = yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
-          const metadataWorkspace = yield* fileSystem
-            .makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new TextGenerationError({
-                    operation,
-                    detail: "Failed to create an isolated Cursor metadata workspace.",
-                    cause,
-                  }),
-              ),
-            );
+          const metadataWorkspace = yield* restore(
+            fileSystem.makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX }),
+          ).pipe(
+            Effect.mapError(
+              (cause) =>
+                new TextGenerationError({
+                  operation,
+                  detail: "Failed to create an isolated Cursor metadata workspace.",
+                  cause,
+                }),
+            ),
+          );
           const metadataPrompt = [
             "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
             "Return only the requested JSON object.",

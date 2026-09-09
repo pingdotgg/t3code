@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -153,6 +154,45 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
       expect(error.detail).toBe("Cursor SDK request failed.");
       expect(metadataWorkspace).toBeDefined();
       expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(false);
+    }),
+  );
+
+  it.effect("times out while workspace creation is stalled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const started = yield* Deferred.make<void>();
+      let interrupted = false;
+      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          makeTempDirectory: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interrupted = true;
+                }),
+              ),
+            ),
+        }),
+      );
+      const request = yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/stalled-workspace",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("180 seconds");
+      const error = yield* Fiber.join(request);
+      expect(error.detail).toContain("timed out");
+      expect(interrupted).toBe(true);
+      expect(cursorSdkMock.create).not.toHaveBeenCalled();
     }),
   );
 
