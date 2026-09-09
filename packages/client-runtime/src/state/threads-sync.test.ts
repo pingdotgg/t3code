@@ -22,7 +22,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -36,7 +36,10 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
-import { threadHistoryControllerLayer } from "./threadHistoryController.ts";
+import {
+  ThreadHistoryController,
+  threadHistoryControllerLayer,
+} from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
@@ -110,6 +113,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly loadCached?: Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
+  readonly historyHttpClient?: HttpClient.HttpClient;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -226,12 +230,18 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     makeThreadState = makeThreadState.pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("Unexpected history HTTP request")),
+        options?.historyHttpClient ??
+          HttpClient.make(() => Effect.die("Unexpected history HTTP request")),
       ),
     );
   }
+  const historyController = yield* ThreadHistoryController.pipe(
+    Effect.provide(threadHistoryControllerLayer),
+  );
   if (options?.historyPaging !== "no-controller") {
-    makeThreadState = makeThreadState.pipe(Effect.provide(threadHistoryControllerLayer));
+    makeThreadState = makeThreadState.pipe(
+      Effect.provideService(ThreadHistoryController, historyController),
+    );
   }
   const threadState = yield* makeThreadState;
   yield* SubscriptionRef.changes(threadState).pipe(
@@ -243,6 +253,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
 
   return {
     threadState,
+    loadEarlier: () => historyController.loadEarlier(TARGET.environmentId, THREAD_ID),
     inputs,
     observed,
     latest,
@@ -500,6 +511,9 @@ describe("EnvironmentThreads", () => {
         {
           projection: BASE_PROJECTION,
           snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+          historyCursor: null,
+          hasMoreHistory: false,
+          latestLocalTurnOrdinal: null,
         },
       ]);
     }),
@@ -683,7 +697,50 @@ describe("EnvironmentThreads", () => {
 
   it.effect("keeps progressive history metadata from a bounded socket fallback", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const olderItem = {
+        id: "item:older",
+        threadId: THREAD_ID,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: "2026-06-20T00:00:00.000Z",
+        completedAt: "2026-06-20T00:00:00.000Z",
+        updatedAt: "2026-06-20T00:00:00.000Z",
+        type: "command_execution",
+        input: "pwd",
+        output: "older history",
+        exitCode: 0,
+      };
+      const harness = yield* makeHarness({
+        historyHttpClient: HttpClient.make((request, url) => {
+          expect(url.searchParams.get("cursor")).toBe("socket-history-cursor");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                snapshotSequence: 14,
+                items: [
+                  {
+                    position: 0,
+                    visibility: "local",
+                    sourceThreadId: THREAD_ID,
+                    sourceItemId: olderItem.id,
+                    item: olderItem,
+                  },
+                ],
+                nextCursor: null,
+                hasMoreHistory: false,
+              }),
+            ),
+          );
+        }),
+      });
       yield* Queue.offer(harness.inputs, {
         kind: "snapshot",
         snapshotSequence: 14,
@@ -707,10 +764,10 @@ describe("EnvironmentThreads", () => {
         expanded: false,
         latestLocalTurnOrdinal: 47,
       });
-      // HTTP was unavailable, so the request preserves the legacy full-snapshot
-      // fallback even though the client can defensively decode bounded metadata.
+      // A transient cold HTTP failure still requests a bounded socket snapshot.
+      // Its cursor remains available for a later history request.
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
-      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBeUndefined();
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
 
       yield* TestClock.adjust("500 millis");
       yield* Effect.yieldNow;
@@ -720,6 +777,12 @@ describe("EnvironmentThreads", () => {
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 47,
       });
+      expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+      const expanded = yield* SubscriptionRef.get(harness.threadState);
+      expect(
+        Option.getOrThrow(expanded.data).turnItems.some((item) => item.id === olderItem.id),
+      ).toBe(true);
+      expect(expanded.history.hasMoreHistory).toBe(false);
     }),
   );
 
@@ -752,7 +815,7 @@ describe("EnvironmentThreads", () => {
       // resumed from that snapshot's sequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
-      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBeUndefined();
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
     }),
   );
 
