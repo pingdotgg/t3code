@@ -14,8 +14,15 @@ import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hook
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
-import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
-import { Dialog } from "../ui/dialog";
+import { Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
