@@ -10,11 +10,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
@@ -37,7 +37,6 @@ export interface ProviderRuntimeRecoverySummary {
   readonly closedRequests: number;
   readonly retiredEffects: number;
   readonly requeuedEffects: number;
-  readonly executedEffects: number;
 }
 
 export interface ProviderRuntimeReconciliationSummary {
@@ -59,7 +58,7 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
 
-function nonterminalRuns(projection: OrchestrationV2ThreadProjection) {
+function nonterminalRuns(projection: ProjectionRuntimeRecoveryState) {
   return projection.runs.filter((run) => {
     const status: string = run.status;
     return (
@@ -102,7 +101,7 @@ function providerThreadHasPendingBackgroundTasks(
  */
 function resolveStaleBackgroundItemProviderInstanceId(
   item: OrchestrationV2ThreadProjection["turnItems"][number],
-  projection: OrchestrationV2ThreadProjection,
+  projection: ProjectionRuntimeRecoveryState,
 ): OrchestrationV2ThreadProjection["thread"]["providerInstanceId"] {
   if (item.runId !== null) {
     const run = projection.runs.find((candidate) => candidate.id === item.runId);
@@ -129,11 +128,10 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
-  const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
-      projection: OrchestrationV2ThreadProjection,
+      projection: ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
     ) {
@@ -540,7 +538,7 @@ export const make = Effect.gen(function* () {
       let closedRequests = 0;
       let retiredEffects = 0;
       for (const threadId of threadIds) {
-        const projection = yield* projections.getThreadProjection(threadId).pipe(
+        const projection = yield* projections.getRuntimeRecoveryProjection(threadId).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderRuntimeRecoveryError({
@@ -581,7 +579,7 @@ export const make = Effect.gen(function* () {
     if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
-      const projection = yield* projections.getThreadProjection(threadId);
+      const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
       const run = restartContinuationRun(projection);
       if (!run) continue;
       const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
@@ -603,18 +601,7 @@ export const make = Effect.gen(function* () {
   );
 
   const recover = Effect.gen(function* () {
-    const reconciliation = yield* reconcile("startup");
-    let executedEffects = 0;
-    while (
-      yield* worker.runRecoveryOnce.pipe(
-        Effect.mapError(
-          (cause) => new ProviderRuntimeRecoveryError({ operation: "drain-outbox", cause }),
-        ),
-      )
-    ) {
-      executedEffects += 1;
-    }
-    return { ...reconciliation, executedEffects } satisfies ProviderRuntimeRecoverySummary;
+    return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
   });
 
   return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });

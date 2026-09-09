@@ -2321,7 +2321,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
               ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
               Layer.mock(ProjectionStoreV2)({
                 getRecoveryThreadIds: () => Effect.succeed([threadId]),
-                getThreadProjection: () => Effect.succeed(projection),
+                getRuntimeRecoveryProjection: () => Effect.succeed(projection),
               }),
               Layer.mock(OrchestrationEffectWorkerV2)({}),
             ),
