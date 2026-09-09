@@ -162,8 +162,9 @@ function headRevision(rest: string): string | null {
  *
  * Keyed the way the client names files: the head's name for it, except for a deletion, where the
  * head has no name and the one it had is what is on screen. An entry the patch gives no `index`
- * line for, one Bitbucket excluded by pattern most often, is left out. Left out reads the same
- * way when a file is ticked and when the tick is read back, so the mark still holds.
+ * line for, one Bitbucket excluded by pattern most often, is left out. The caller turns that into
+ * the empty revision where it holds the whole patch and keeps it out where the patch was cut, on
+ * the tick and on the read back alike, so the mark holds either way.
  */
 export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
   const revisions = new Map<string, string>();
