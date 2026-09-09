@@ -44,6 +44,32 @@ export function composerSubmissionIntentForEnter(input: {
   return background && input.isDraftThread ? "background" : "foreground";
 }
 
+export type ComposerEnterCommandAction =
+  | { kind: "submit"; intent: ComposerSubmissionIntent }
+  | { kind: "select-menu" };
+
+/** Unmodified Enter confirms a completion. Modified Enter is a send chord. */
+export function composerEnterCommandAction(input: {
+  menuCanSelect: boolean;
+  isMobileViewport: boolean;
+  sendKey: ComposerSendKey;
+  shiftKey: boolean;
+  modifierKey: boolean;
+  isDraftThread: boolean;
+}): ComposerEnterCommandAction | null {
+  const intent = composerSubmissionIntentForEnter(input);
+  if (intent && input.modifierKey) {
+    return { kind: "submit", intent };
+  }
+  if (input.menuCanSelect) {
+    return { kind: "select-menu" };
+  }
+  if (intent) {
+    return { kind: "submit", intent };
+  }
+  return null;
+}
+
 const isInlineTokenSegment = (segment: ComposerPromptSegment): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {

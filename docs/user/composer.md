@@ -63,7 +63,7 @@ The quoted text and comment count toward the message limit.
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
-## Require Cmd+Enter to send
+## Require Cmd/Ctrl+Enter to send
 
 On web and desktop, Enter sends the prompt and Shift+Enter starts a new line. If
 you keep sending drafts early, switch Settings → General → Behavior →

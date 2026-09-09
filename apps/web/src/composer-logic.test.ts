@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerEnterCommandAction,
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -165,6 +166,70 @@ describe("composerSubmissionIntentForEnter", () => {
         }),
       ).toBe("foreground");
     });
+  });
+});
+
+describe("composerEnterCommandAction", () => {
+  const desktop = { isMobileViewport: false, isDraftThread: true } as const;
+
+  it("lets the completion menu consume unmodified Enter", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "enter",
+        shiftKey: false,
+        modifierKey: false,
+      }),
+    ).toEqual({ kind: "select-menu" });
+  });
+
+  it("sends with Mod+Enter even when the completion menu is open", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "mod-enter",
+        shiftKey: false,
+        modifierKey: true,
+      }),
+    ).toEqual({ kind: "submit", intent: "foreground" });
+  });
+
+  it("starts a background draft with Shift+Mod+Enter while the menu is open", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "mod-enter",
+        shiftKey: true,
+        modifierKey: true,
+      }),
+    ).toEqual({ kind: "submit", intent: "background" });
+  });
+
+  it("still lets the menu consume Enter when send is Mod+Enter", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "mod-enter",
+        shiftKey: false,
+        modifierKey: false,
+      }),
+    ).toEqual({ kind: "select-menu" });
+  });
+
+  it("submits Mod+Enter as a background draft when send is Enter", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "enter",
+        shiftKey: false,
+        modifierKey: true,
+      }),
+    ).toEqual({ kind: "submit", intent: "background" });
   });
 });
 
