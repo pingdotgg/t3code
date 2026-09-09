@@ -482,6 +482,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
+        } else if (detail.query !== undefined) {
+          dispatch({ _tag: "OpenSearch", query: detail.query });
         } else {
           setOpen(true);
         }
@@ -573,7 +575,7 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(openIntent?.kind === "search" ? openIntent.query : "");
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
@@ -1496,6 +1498,15 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
     startAddProjectSourceSelection,
   ]);
+
+  useLayoutEffect(() => {
+    if (openIntent?.kind !== "search") return;
+    browseNavigation.invalidate();
+    setAddProjectCloneFlow(null);
+    setViewStack([]);
+    setQuery(openIntent.query);
+    clearOpenIntent();
+  }, [browseNavigation, clearOpenIntent, openIntent]);
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {

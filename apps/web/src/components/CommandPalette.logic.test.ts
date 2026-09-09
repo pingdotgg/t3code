@@ -47,6 +47,32 @@ describe("reduceCommandPaletteUiState", () => {
     );
   });
 
+  it("opens PR search from another overlay and replaces an earlier search", () => {
+    const first = reduceCommandPaletteUiState(
+      { open: true, mode: "files", openIntent: null },
+      {
+        _tag: "OpenSearch",
+        query: "https://github.com/acme/web/pull/7",
+      },
+    );
+    expect(first).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "search", query: "https://github.com/acme/web/pull/7" },
+    });
+    const second = reduceCommandPaletteUiState(first, {
+      _tag: "OpenSearch",
+      query: "https://github.com/acme/web/pull/8",
+    });
+    expect(second.openIntent).toEqual({
+      kind: "search",
+      query: "https://github.com/acme/web/pull/8",
+    });
+    expect(
+      reduceCommandPaletteUiState(second, { _tag: "SetOpen", open: false }).openIntent,
+    ).toBeNull();
+  });
+
   it("routes open intents to command mode", () => {
     const filesOpen = reduceCommandPaletteUiState(closedState, {
       _tag: "ToggleMode",
