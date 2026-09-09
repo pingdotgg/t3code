@@ -230,6 +230,84 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const kind of ["permission", "question"] as const) {
+    it.effect(`cancels an undelivered ${kind} reply at its deadline`, () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const called = promiseGate<void>();
+        let signal: AbortSignal | undefined;
+        let deliver = false;
+        const harness = yield* makeOpenCodeRuntimeHarness(`reply-${kind}`, "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async () => ({ data: true }),
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+          [kind]: {
+            reply: async (_input: unknown, options: { signal: AbortSignal }) => {
+              if (deliver) return { data: true };
+              signal = options.signal;
+              called.resolve();
+              return new Promise(() => {});
+            },
+          },
+        });
+        yield* harness.startTurn();
+        const received = yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "runtime_request.updated"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: `${kind}.asked`,
+            properties:
+              kind === "permission"
+                ? {
+                    id: "request",
+                    sessionID: "root",
+                    permission: "bash",
+                    patterns: ["*"],
+                    always: [],
+                    metadata: {},
+                  }
+                : {
+                    id: "request",
+                    sessionID: "root",
+                    questions: [
+                      {
+                        header: "Choice",
+                        question: "Which?",
+                        options: [{ label: "Yes", description: "Proceed" }],
+                      },
+                    ],
+                  },
+          }),
+        );
+        const request = (yield* Fiber.join(received))[0]!.runtimeRequest;
+        const response = {
+          requestId: request.id,
+          ...(kind === "permission"
+            ? { decision: "accept" as const }
+            : { answers: { Choice: "Yes" } }),
+        };
+        const reply = yield* harness.runtime
+          .respondToRuntimeRequest(response)
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Effect.promise(() => called.promise);
+        yield* TestClock.adjust("10 seconds");
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(reply)));
+        assert.isTrue(signal?.aborted);
+        deliver = true;
+        // Failed delivery leaves the request available for an explicit retry.
+        yield* harness.runtime.respondToRuntimeRequest(response);
+      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    );
+  }
+
   it.effect("fails an active turn when the event stream reaches unexpected clean EOF", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
