@@ -203,6 +203,17 @@ export type ProjectionPendingUserInputs = Pick<
   "runtimeRequests" | "nodes" | "turnItems"
 >;
 
+export type ProjectionThreadProviderContext = Pick<
+  OrchestrationV2ThreadProjection,
+  "thread" | "providerSessions" | "providerThreads"
+>;
+export interface ProjectionRuntimeResponseContext {
+  readonly request: OrchestrationV2ThreadProjection["runtimeRequests"][number] | undefined;
+  readonly node: OrchestrationV2ThreadProjection["nodes"][number] | undefined;
+  readonly item: OrchestrationV2ThreadProjection["turnItems"][number] | undefined;
+  readonly session: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
+}
+
 export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -241,6 +252,20 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     target: ProjectionProviderControlTarget,
   ) => Effect.Effect<ProjectionProviderControlContext, ProjectionStoreV2Error>;
+  readonly getRunningTurnContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Pick<ProjectionProviderControlContext, "run" | "providerThread" | "providerTurn">,
+    ProjectionStoreV2Error
+  >;
+  readonly getThreadProviderContext: (
+    threadId: ThreadId,
+    targetInstanceId?: ProviderInstanceId,
+  ) => Effect.Effect<ProjectionThreadProviderContext, ProjectionStoreV2Error>;
+  readonly getRuntimeResponseContext: (
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+  ) => Effect.Effect<ProjectionRuntimeResponseContext, ProjectionStoreV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, ProjectionStoreV2Error>;
@@ -3500,6 +3525,127 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getRunningTurnContext: ProjectionStoreV2Shape["getRunningTurnContext"] = (threadId) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const rows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+          WHERE thread_id = ${threadId} AND status = 'running' ORDER BY ordinal ASC LIMIT 1`;
+            const run =
+              rows[0] === undefined ? undefined : yield* decodeRunPayload(rows[0].payload_json);
+            if (run === undefined)
+              return { run, providerThread: undefined, providerTurn: undefined };
+            const threadRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads WHERE provider_thread_id = ${run.providerThreadId}`;
+            const turnRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
+          WHERE provider_turn_id = (
+            SELECT provider_turn_id FROM orchestration_v2_projection_run_attempts WHERE attempt_id = ${run.activeAttemptId}
+          ) AND status = 'running'`;
+            return {
+              run,
+              providerThread:
+                threadRows[0] === undefined
+                  ? undefined
+                  : yield* decodeProviderThreadPayload(threadRows[0].payload_json),
+              providerTurn:
+                turnRows[0] === undefined
+                  ? undefined
+                  : yield* decodeProviderTurnPayload(turnRows[0].payload_json),
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getThreadProviderContext: ProjectionStoreV2Shape["getThreadProviderContext"] = (
+      threadId,
+      targetInstanceId,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const thread = yield* getThread(threadId);
+            const sessionRows = yield* sql<PayloadRow>`
+          SELECT session.payload_json FROM orchestration_v2_projection_provider_sessions AS session
+          JOIN orchestration_v2_projection_provider_session_bindings AS binding
+            ON binding.provider_session_id = session.provider_session_id
+          WHERE binding.thread_id = ${threadId}
+          ORDER BY session.updated_at ASC, session.provider_session_id ASC
+        `;
+            const threadRows =
+              targetInstanceId === undefined
+                ? []
+                : yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_provider_threads
+          WHERE provider_thread_id = ${thread.activeProviderThreadId}
+             OR provider_thread_id = (
+               SELECT provider_thread_id FROM orchestration_v2_projection_provider_threads
+               WHERE thread_id = ${threadId} AND owner_node_id IS NULL
+                 AND provider_instance_id = ${targetInstanceId}
+               ORDER BY updated_at DESC, provider_thread_id ASC LIMIT 1
+             )
+          ORDER BY updated_at ASC, provider_thread_id ASC
+        `;
+            return {
+              thread,
+              providerSessions: yield* decodeRows(
+                decodeProviderSessionPayload,
+                threadId,
+              )(sessionRows),
+              providerThreads: yield* decodeRows(decodeProviderThreadPayload, threadId)(threadRows),
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getRuntimeResponseContext: ProjectionStoreV2Shape["getRuntimeResponseContext"] = (
+      threadId,
+      requestId,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const request = yield* getRuntimeRequest(threadId, requestId);
+            if (request === undefined)
+              return { request, node: undefined, item: undefined, session: undefined };
+            const nodeRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
+          WHERE thread_id = ${threadId} AND node_id = ${request.nodeId}`;
+            const itemRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND node_id = ${request.nodeId} AND type IN ('approval_request', 'user_input_request')
+            AND json_extract(payload_json, '$.requestId') = ${requestId}
+          ORDER BY ordinal ASC LIMIT 1`;
+            const sessionRows =
+              request.responseCapability.type !== "live"
+                ? []
+                : yield* sql<PayloadRow>`
+          SELECT session.payload_json FROM orchestration_v2_projection_provider_sessions AS session
+          JOIN orchestration_v2_projection_provider_session_bindings AS binding
+            ON binding.provider_session_id = session.provider_session_id
+          WHERE binding.thread_id = ${threadId} AND session.provider_session_id = ${request.responseCapability.providerSessionId}`;
+            return {
+              request,
+              node:
+                nodeRows[0] === undefined
+                  ? undefined
+                  : yield* decodeNodePayload(nodeRows[0].payload_json),
+              item:
+                itemRows[0] === undefined
+                  ? undefined
+                  : yield* decodeTurnItemPayload(itemRows[0].payload_json),
+              session:
+                sessionRows[0] === undefined
+                  ? undefined
+                  : yield* decodeProviderSessionPayload(sessionRows[0].payload_json),
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
       sql
         .withTransaction(
@@ -4218,6 +4364,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSettlementCandidates,
       getThreadProjection,
       getRuntimeRecoveryProjection,
+      getRunningTurnContext,
+      getThreadProviderContext,
+      getRuntimeResponseContext,
       getCheckpointContext,
       getPendingNativeUserInputs,
       getRuntimeRequest,
@@ -4387,6 +4536,77 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               target.messageId === undefined || providerTurn === undefined
                 ? undefined
                 : projection.runs.find((run) => run.activeAttemptId === providerTurn.runAttemptId),
+          };
+        }),
+      getRunningTurnContext: (threadId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          const run = projection.runs.find((run) => run.status === "running");
+          const attempt = projection.attempts.find(
+            (attempt) => attempt.id === run?.activeAttemptId,
+          );
+          return {
+            run,
+            providerThread: projection.providerThreads.find(
+              (thread) => thread.id === run?.providerThreadId,
+            ),
+            providerTurn: projection.providerTurns.find(
+              (turn) => turn.id === attempt?.providerTurnId && turn.status === "running",
+            ),
+          };
+        }),
+      getThreadProviderContext: (threadId, targetInstanceId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          const target = projection.providerThreads
+            .filter(
+              (thread) =>
+                thread.appThreadId === threadId &&
+                thread.ownerNodeId === null &&
+                thread.providerInstanceId === targetInstanceId,
+            )
+            .toSorted(
+              (a, b) =>
+                DateTime.toEpochMillis(b.updatedAt) - DateTime.toEpochMillis(a.updatedAt) ||
+                a.id.localeCompare(b.id),
+            )[0];
+          return {
+            thread: projection.thread,
+            providerSessions: projection.providerSessions,
+            providerThreads:
+              targetInstanceId === undefined
+                ? []
+                : projection.providerThreads.filter(
+                    (thread) =>
+                      thread.id === projection.thread.activeProviderThreadId ||
+                      thread.id === target?.id,
+                  ),
+          };
+        }),
+      getRuntimeResponseContext: (threadId, requestId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          const request = projection.runtimeRequests.find((request) => request.id === requestId);
+          return {
+            request,
+            node: projection.nodes.find((node) => node.id === request?.nodeId),
+            item: projection.turnItems.find(
+              (item) =>
+                item.nodeId === request?.nodeId &&
+                (item.type === "approval_request" || item.type === "user_input_request") &&
+                item.requestId === requestId,
+            ),
+            session: projection.providerSessions.find(
+              (session) =>
+                request?.responseCapability.type === "live" &&
+                session.id === request.responseCapability.providerSessionId,
+            ),
           };
         }),
       getCheckpointContext: (threadId) =>
