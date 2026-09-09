@@ -10,6 +10,7 @@ import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
 import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { buildThreadRouteParams } from "~/threadRoutes";
 import { Button } from "../ui/button";
 import { Command, CommandInput, CommandItem, CommandList } from "../ui/command";
@@ -82,7 +83,11 @@ function EnabledPullRequestThreadLinks({
     } finally {
       setPending(false);
     }
-    relations.refresh();
+    if (linking.mode === "multiple") {
+      appAtomRegistry.refresh(
+        pullRequestEnvironment.linkedThreads({ environmentId, input: { ...reference, ...parsed } }),
+      );
+    }
     onPickerOpenChange?.(false);
   };
 
