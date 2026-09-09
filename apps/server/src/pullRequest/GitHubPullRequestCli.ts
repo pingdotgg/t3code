@@ -1028,15 +1028,26 @@ export const make = Effect.gen(function* () {
   /**
    * The pull request's own node id, which is what a mutation against the pull request itself is
    * addressed by: a reaction on its description, or a rewrite of its words.
+   *
+   * A pull request keeps its node id for life, so it is remembered rather than re-read: a reader
+   * ticking files viewed would otherwise pay a GraphQL round trip per press. Bounded and
+   * oldest-first, since a long-lived server sees far more pull requests than a reader ever has
+   * open.
    */
+  const NODE_ID_CACHE_CAPACITY = 128;
+  const nodeIds = new Map<string, string>();
+
   const pullRequestNodeId = (input: {
     readonly cwd: string;
     readonly repository: string;
     readonly host: string;
     readonly number: number;
     readonly operation: string;
-  }) => {
+  }): Effect.Effect<string, GitHubPullRequestCliError> => {
     const { owner, name } = parseRepositorySelector(input.repository);
+    const key = `${input.host} ${owner}/${name} ${input.number}`;
+    const held = nodeIds.get(key);
+    if (held !== undefined) return Effect.succeed(held);
     return graphqlRead({
       cwd: input.cwd,
       host: input.host,
@@ -1049,7 +1060,17 @@ export const make = Effect.gen(function* () {
       ],
       query: PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
       decode: decodePullRequestNodeIdJson,
-    });
+    }).pipe(
+      Effect.tap((nodeId) =>
+        Effect.sync(() => {
+          if (nodeIds.size >= NODE_ID_CACHE_CAPACITY) {
+            const oldest = nodeIds.keys().next().value;
+            if (oldest !== undefined) nodeIds.delete(oldest);
+          }
+          nodeIds.set(key, nodeId);
+        }),
+      ),
+    );
   };
 
   /**
