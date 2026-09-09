@@ -36,10 +36,8 @@ export function shouldUseRestingComposerLayout(input: {
   // line and overlays its actions; non-image attachment and context
   // rows keep their natural height above it while image previews move inline.
   // Banners and the tasks badge dock above the surface, so they are absent
-  // too. Whether the context strip can host the relocated controls is
-  // deliberately absent here: resting reclaims vertical space at every
-  // desktop width, and where the strip is missing or too narrow the controls
-  // simply return when the composer is focused.
+  // too. The context strip is optional: collapsed controls use it when
+  // present and otherwise occupy a compact row inside the composer.
   //
   // Only a timeline scroll rests the composer: the user asked for it with the
   // gesture, and it lifts on the next composer interaction. Losing focus never
