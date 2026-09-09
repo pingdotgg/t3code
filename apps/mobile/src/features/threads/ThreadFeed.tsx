@@ -165,6 +165,7 @@ import {
   THREAD_DISCLOSURE_TRANSITION_MS,
   ThreadWorkGroupToggle,
   ThreadThinkingRow,
+  ShimmeringWorkContent,
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
@@ -1523,6 +1524,10 @@ function renderFeedEntry(
 
   if (entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) {
     const label = entry.activities[0]!.summary;
+    const active =
+      props.unsettledTurnId !== null &&
+      entry.runId === props.unsettledTurnId &&
+      entry.activities[0]!.projectedItem.item.status === "running";
     return (
       <View
         accessible
@@ -1537,7 +1542,19 @@ function renderFeedEntry(
             tintColor={iconSubtleColor}
             type="monochrome"
           />
-          <Text className="font-t3-medium text-xs text-foreground-muted">{label}</Text>
+          {active ? (
+            <ShimmeringWorkContent
+              className="flex-none"
+              textClassName="font-t3-medium"
+              compact
+              icon="brain"
+              iconSubtleColor={iconSubtleColor}
+              label={label}
+              showIcon={false}
+            />
+          ) : (
+            <Text className="font-t3-medium text-xs text-foreground-muted">{label}</Text>
+          )}
         </View>
         <View className="h-px flex-1 bg-adaptive-neutral-200-a80-white-a8" />
       </View>

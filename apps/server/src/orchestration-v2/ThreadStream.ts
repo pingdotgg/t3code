@@ -1,8 +1,28 @@
+import type {
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadStreamItem,
+} from "@t3tools/contracts";
+
+import { buildBoundedThreadProjection } from "./threadHistoryPaging.ts";
+import { projectThreadProjectionForWire } from "./WireProjection.ts";
+
 /** Maximum number of reducer applications allowed during a thread resume. */
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
 
 /** Maximum encoded event JSON allowed during a thread resume. */
 export const THREAD_RESUME_MAX_REPLAY_ENCODED_BYTES = 1_048_576;
+
+/**
+ * Maximum aggregate persisted payload JSON decoded for one thread resume.
+ * Keep the original preflight budget: decoded objects and temporary strings
+ * cost more than their stored JSON, even if wire projection shrinks them later.
+ */
+export const THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES = 1_048_576;
+
+/** Resource-safety check applied before persisted replay payloads are decoded. */
+export function isThreadReplayRawPayloadSafe(rawPayloadBytes: number): boolean {
+  return rawPayloadBytes <= THREAD_RESUME_MAX_RAW_PAYLOAD_BYTES;
+}
 
 /** Encoded payload cost after events have been projected for the wire. */
 export function threadReplayEncodedBytes(items: ReadonlyArray<unknown>): number {
@@ -12,6 +32,31 @@ export function threadReplayEncodedBytes(items: ReadonlyArray<unknown>): number 
     total += Buffer.byteLength(encoded ?? "", "utf8");
   }
   return total;
+}
+
+type ThreadSnapshotStreamItem = Extract<
+  OrchestrationV2ThreadStreamItem,
+  { readonly kind: "snapshot" }
+>;
+
+/** Build the same bounded, wire-projected snapshot for every socket fallback path. */
+export function buildBoundedThreadStreamSnapshot(input: {
+  readonly snapshotSequence: number;
+  readonly projection: OrchestrationV2ThreadProjection;
+}): ThreadSnapshotStreamItem {
+  const bounded = buildBoundedThreadProjection({
+    snapshotSequence: input.snapshotSequence,
+    projection: projectThreadProjectionForWire(input.projection),
+  });
+  return {
+    kind: "snapshot",
+    snapshotSequence: input.snapshotSequence,
+    projection: bounded.projection,
+    historyCursor: bounded.historyCursor,
+    hasMoreHistory: bounded.hasMoreHistory,
+    latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+    payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+  };
 }
 
 export type ThreadResumePlan =

@@ -15,6 +15,9 @@ export const THREAD_HISTORY_PAGE_POLICY = {
   maxEncodedBytes: 1_048_576,
 } as const;
 
+/** Extra rows let the projection query retain an inclusive cursor and prove another page exists. */
+export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
+
 /** Reject absurd cursors before base64 work or JSON parse. */
 export const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
 

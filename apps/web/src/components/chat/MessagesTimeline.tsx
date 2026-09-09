@@ -17,6 +17,7 @@ import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   resolveWorkEntryToolPresentation,
+  toolItemForDisplay,
   resolveViewedImageAsset,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
@@ -841,17 +842,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
     ],
   );
+  const compactionAwaitingRow =
+    isCompacting && !rows.some((row) => row.kind === "context-compaction" && row.active);
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
-      isCompacting,
+      isCompacting: compactionAwaitingRow,
       isRevertingCheckpoint,
       activeTurnInProgress,
       isPreparingWorktree,
       latestRunId: latestRun?.runId ?? null,
     }),
     [
-      isCompacting,
+      compactionAwaitingRow,
       activeTurnInProgress,
       isPreparingWorktree,
       isRevertingCheckpoint,
@@ -1396,9 +1399,22 @@ function ContextCompactionTimelineRow({
       className="mx-auto flex w-full max-w-3xl items-center gap-3 py-1 text-muted-foreground text-xs"
     >
       <span className="h-px flex-1 bg-border/70" />
-      <span className="flex shrink-0 items-center gap-1.5">
-        <Minimize2Icon aria-hidden="true" className="size-3" />
-        {row.label}
+      <span
+        ref={row.active ? observeVisibleAnimation : undefined}
+        className="relative shrink-0 overflow-hidden"
+      >
+        <span className="flex items-center gap-1.5">
+          <Minimize2Icon aria-hidden="true" className="size-3" />
+          {row.label}
+        </span>
+        {row.active ? (
+          <ActivityShimmerOverlay>
+            <span className="flex items-center gap-1.5">
+              <Minimize2Icon aria-hidden="true" className="size-3" />
+              {row.label}
+            </span>
+          </ActivityShimmerOverlay>
+        ) : null}
       </span>
       <span className="h-px flex-1 bg-border/70" />
     </div>
@@ -3613,7 +3629,15 @@ function buildToolCallExpandedBody(
     blocks.push(text);
   };
   if (workEntry.itemType === "dynamic_tool" && workEntry.toolData !== undefined) {
-    addBlock(`Tool call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
+    const input =
+      workEntry.structuredPayload?.type === "dynamic_tool"
+        ? workEntry.structuredPayload.input
+        : workEntry.toolData !== null &&
+            typeof workEntry.toolData === "object" &&
+            "input" in workEntry.toolData
+          ? workEntry.toolData.input
+          : undefined;
+    if (input !== undefined) addBlock(`Tool input\n${JSON.stringify(input, null, 2)}`);
   }
   const command = workEntry.command?.trim();
   const raw = workEntryRawCommand(workEntry);
@@ -3644,7 +3668,7 @@ function buildToolCallExpandedBody(
     addBlock([...new Set(changedFiles)].join("\n"));
   }
   if (workEntry.structuredPayload !== undefined) {
-    const structured = JSON.stringify(workEntry.structuredPayload, null, 2);
+    const structured = JSON.stringify(toolItemForDisplay(workEntry.structuredPayload), null, 2);
     if (structured && !blocks.includes(structured)) {
       blocks.push(structured);
     }

@@ -13,6 +13,8 @@ import {
   type T3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { formatTokens } from "@t3tools/shared/usageFormat";
+import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import { classifyMarkdownImageSource } from "../markdownImages.ts";
 import { resolveMediaSource } from "../mediaSource.ts";
@@ -23,6 +25,36 @@ import {
 } from "@t3tools/client-runtime/t3ToolSummary";
 
 export type WorkLogToolLifecycleStatus = RuntimeItemStatus | "stopped" | "idle";
+
+/** Inspection and copying omit raw outputs, including values from older caches. */
+export function toolItemForDisplay(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  switch (item.type) {
+    case "command_execution":
+    case "dynamic_tool": {
+      const { output: _output, ...displayItem } = item;
+      return displayItem;
+    }
+    case "file_change": {
+      const { diffStr: _diffStr, oldStr: _oldStr, newStr: _newStr, ...displayItem } = item;
+      return displayItem;
+    }
+    default:
+      return item;
+  }
+}
+
+export function contextCompactionLabel(
+  item: Pick<
+    Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
+    "status" | "beforeTokenCount" | "afterTokenCount"
+  >,
+): string {
+  if (item.status === "running") return "Compacting context";
+  if (item.beforeTokenCount !== undefined && item.afterTokenCount !== undefined) {
+    return `Context compacted ${formatTokens(item.beforeTokenCount)} → ${formatTokens(item.afterTokenCount)} tokens`;
+  }
+  return "Context compacted";
+}
 
 export interface WorkLogPresentationEntry {
   readonly id: string;
@@ -320,27 +352,6 @@ function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
 }
 
-// Some providers report completion even when the output describes a failure.
-function toolDetailTextLooksLikeFailure(text: string): boolean {
-  const normalized = text.toLowerCase();
-  return (
-    normalized.includes("file not found") ||
-    normalized.includes("no files found") ||
-    normalized.includes("enoent") ||
-    normalized.includes("no such file or directory") ||
-    normalized.includes("no such file") ||
-    normalized.includes("commandnotfoundexception") ||
-    normalized.includes("command not found") ||
-    (normalized.includes("cannot find path") && normalized.includes("because it does not exist")) ||
-    (normalized.includes("is not recognized") && normalized.includes("the term '")) ||
-    normalized.includes("is not recognized as the name of a cmdlet") ||
-    normalized.includes("a parameter cannot be found that matches parameter name") ||
-    /<exited with exit code\s+[1-9]\d*\s*>/i.test(text) ||
-    /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
-    /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)
-  );
-}
-
 function workEntryIndicatesToolFailureFromOutput(
   entry: WorkLogPresentationEntry,
   includeCommand: boolean,
@@ -353,10 +364,21 @@ function workEntryIndicatesToolFailureFromOutput(
     return true;
   }
   if (!workLogEntryIsToolLike(entry)) return false;
+  const item = entry.structuredPayload;
+  if (item?.type === "command_execution") {
+    if (item.outputIndicatesFailure || (item.exitCode !== undefined && item.exitCode !== 0)) {
+      return true;
+    }
+    // Older servers/caches can still carry output. Read only the previous
+    // preview-sized prefix for status, without exposing it in the row detail.
+    if (item.output && toolOutputIndicatesFailure(item.output.slice(0, 32_768))) {
+      return true;
+    }
+  }
   const output = includeCommand
     ? [entry.detail, entry.command].filter(Boolean).join("\n")
     : (entry.detail ?? "");
-  return output.length > 0 && toolDetailTextLooksLikeFailure(output);
+  return output.length > 0 && toolOutputIndicatesFailure(output);
 }
 
 /** Includes legacy activities that stored error output in the command field. */

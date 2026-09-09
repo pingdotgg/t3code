@@ -120,6 +120,41 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("omits cached tool output and patch bodies from expanded and copied activity", () => {
+    const rawOutput = "RAW_TOOL_OUTPUT";
+    const items: OrchestrationV2TurnItem[] = [
+      { ...command(), output: rawOutput },
+      {
+        ...base("dynamic-output", "2026-06-20T00:00:03.000Z", 2),
+        type: "dynamic_tool",
+        toolName: "example",
+        input: { query: "keep input" },
+        output: { text: rawOutput },
+      },
+      {
+        ...base("file-output", "2026-06-20T00:00:04.000Z", 3),
+        type: "file_change",
+        fileName: "src/example.ts",
+        diffStr: rawOutput,
+        oldStr: rawOutput,
+        newStr: rawOutput,
+      },
+    ];
+    const activities = buildThreadFeed(items.map((item, index) => projected(item, index))).flatMap(
+      (entry) => (entry.type === "activity-group" ? entry.activities : []),
+    );
+    expect(activities).toHaveLength(3);
+    for (const activity of activities) {
+      expect(activity.workEntry.detail).toBeUndefined();
+      expect(activity.getFullDetail()).not.toContain(rawOutput);
+      expect(activity.getCopyText()).not.toContain(rawOutput);
+    }
+    expect(activities[0]?.detail).toBe("vp check");
+    expect(activities[1]?.getFullDetail()).toContain("keep input");
+    expect(activities[2]?.detail).toBe("src/example.ts");
+    expect(items[0]).toMatchObject({ output: rawOutput });
+  });
+
   it("recognizes automation attribution after projecting a user message", () => {
     const feed = buildThreadFeed([
       projected(
@@ -1016,6 +1051,49 @@ describe("retained v2 feed presentation", () => {
     expect(afterPresentation[0]).toBe(beforePresentation[0]);
     expect(afterPresentation[1]).toBe(beforePresentation[1]);
   });
+
+  it.each(["running", "completed", "interrupted"] as const)(
+    "uses the compaction row as the live activity only while %s",
+    (status) => {
+      const compact = projected(
+        {
+          ...base("compacted", "2026-06-20T00:00:02.000Z", 1),
+          type: "compaction",
+          status,
+          driver: null,
+          beforeTokenCount: 899_000,
+          ...(status === "completed" ? { afterTokenCount: 19_000 } : {}),
+        },
+        1,
+      );
+      const latestRun = {
+        runId,
+        status: "running" as const,
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: null,
+      };
+      const rows = deriveThreadFeedPresentation(
+        buildThreadFeed([projected(userMessage(), 0), compact]),
+        latestRun,
+        new Set(),
+        new Set(),
+        latestRun.startedAt,
+      );
+      expect(rows.some((row) => row.type === "thinking")).toBe(status !== "running");
+      expect(rows.find((row) => row.type === "activity-group")).toMatchObject({
+        activities: [
+          {
+            summary:
+              status === "running"
+                ? "Compacting context"
+                : status === "completed"
+                  ? "Context compacted 899K → 19K tokens"
+                  : "Context compacted",
+          },
+        ],
+      });
+    },
+  );
 
   it("keeps a standalone compaction visible and folds it with other completed work", () => {
     const compact = projected(
