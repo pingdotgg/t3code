@@ -2270,6 +2270,89 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
   );
 
+  it.effect("retains image preview paths on Claude Read tool completion", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-read-images"),
+          text: "Read the files",
+          attachments: [],
+        }),
+      );
+      const tools = [
+        { id: "image", name: "Read", input: { file_path: " /workspace/reference.png " } },
+        { id: "text", name: "Read", input: { file_path: "/workspace/README.md" } },
+        {
+          id: "write",
+          name: "Write",
+          input: { file_path: "/workspace/output.png", content: "text" },
+        },
+      ];
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000000601",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "msg_image_reads",
+            model: "claude-sonnet-4-6",
+            type: "message",
+            role: "assistant",
+            content: tools.map((tool) => ({ type: "tool_use", ...tool })),
+            stop_reason: "tool_use",
+            stop_sequence: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "user",
+          uuid: "00000000-0000-4000-8000-000000000602",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            role: "user",
+            content: tools.map((tool) => ({
+              type: "tool_result",
+              tool_use_id: tool.id,
+              content: "ok",
+            })),
+          },
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000603", result: "Read files" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.status === "completed"
+          ? [event.turnItem]
+          : [],
+      );
+      const image = items.find((item) => item.nativeItemRef?.nativeId === "image");
+      assert.equal(image?.type, "dynamic_tool");
+      if (image?.type === "dynamic_tool")
+        assert.equal(image.viewedImagePath, "/workspace/reference.png");
+      for (const item of items.filter((item) => item.nativeItemRef?.nativeId !== "image"))
+        assert.notProperty(item, "viewedImagePath");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+  );
+
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
     Effect.scoped(
       Effect.gen(function* () {
