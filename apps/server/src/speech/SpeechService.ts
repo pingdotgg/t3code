@@ -15,7 +15,7 @@ import {
 } from "./model.ts";
 
 const SAMPLE_RATE = 16_000;
-export const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
+const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
 export const MAX_SPEECH_BYTES =
   SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * MAX_SPEECH_DURATION_SECONDS;
 const MIN_CAPTURE_RMS = 0.0005;
@@ -110,6 +110,7 @@ function supported(platform: string, architecture: string): string | null {
     : `voice transcription is not available on ${tuple}`;
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;

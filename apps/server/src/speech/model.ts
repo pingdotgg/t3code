@@ -26,7 +26,7 @@ async function hasExpectedModel(path: string): Promise<boolean> {
   }
 }
 
-export function speechModelPath(directory: string): string {
+function speechModelPath(directory: string): string {
   return NodePath.join(directory, SPEECH_MODEL.filename);
 }
 
