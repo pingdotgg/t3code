@@ -754,6 +754,7 @@ export function BranchToolbarBranchSelector({
         data-composer-context-control
       >
         <ThreadPullRequestBadgeControl
+          variant="ghost"
           badge={prBadge}
           number={prNumber}
           url={prUrl}

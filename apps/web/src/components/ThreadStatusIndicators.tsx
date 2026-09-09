@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
 import { useMemo, type MouseEvent } from "react";
-import { InlineButton } from "./ui/button";
+import { buttonVariants, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -137,6 +137,7 @@ export function ThreadPullRequestBadgeIcon({
 
 /** The complete linked-PR control shared by the sidebar and composer footer. */
 export function ThreadPullRequestBadgeControl({
+  variant,
   badge,
   number,
   url,
@@ -144,6 +145,7 @@ export function ThreadPullRequestBadgeControl({
   onOpenStack,
   onOpenPullRequest,
 }: {
+  variant: "underline" | "ghost";
   badge: ThreadPullRequestBadge | null;
   number?: number | undefined;
   url?: string | undefined;
@@ -161,7 +163,12 @@ export function ThreadPullRequestBadgeControl({
           : ""
       }`;
   const className = cn(
-    "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent text-xs tabular-nums hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+    variant === "ghost"
+      ? buttonVariants({ variant: "ghost", size: "xs" })
+      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+    "text-xs tabular-nums",
+    variant === "ghost" &&
+      "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
     isStack ? PR_STATE_COLOR_CLASS[badge.state] : (status?.colorClass ?? "text-muted-foreground"),
   );
   const content = (
