@@ -176,9 +176,10 @@ export function countTimelineMessagesBelow(
       }
     | undefined,
   composerInset: number,
+  headerSize = 0,
 ): number {
   if (state?.scroll === undefined || state.scrollLength === undefined) return 0;
-  const visibleBottom = state.scroll + state.scrollLength - Math.max(0, composerInset);
+  const visibleBottom = state.scroll + state.scrollLength - Math.max(0, composerInset) - headerSize;
   // Cached row positions are ordered, so only log(n) lookups are needed per scroll.
   let low = 0;
   let high = messageRowIndices.length;

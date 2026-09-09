@@ -33,6 +33,14 @@ describe("countTimelineMessagesBelow", () => {
     expect(countTimelineMessagesBelow([0, 1, 2], state, 250)).toBe(2);
   });
 
+  it("accounts for the header and actual overlay rather than reserved footer space", () => {
+    const indices = [0, 1, 2, 3];
+    expect(countTimelineMessagesBelow(indices, state, 110, 24)).toBe(2);
+    expect(countTimelineMessagesBelow(indices, { ...state, scroll: 35 }, 110, 24)).toBe(1);
+    // A collapsed composer leaves reserved scroll space, but no longer obscures that area.
+    expect(countTimelineMessagesBelow(indices, state, 204, 24)).toBe(3);
+  });
+
   it("does not count blank end space or an empty timeline", () => {
     expect(countTimelineMessagesBelow([0, 1], { ...state, scroll: 500 }, 100)).toBe(0);
     expect(countTimelineMessagesBelow([], state, 100)).toBe(0);
