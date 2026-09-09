@@ -59,7 +59,7 @@ function activityFor(item: OrchestrationV2TurnItem): ThreadFeedActivity {
 }
 
 describe("buildThreadActivityInspector", () => {
-  it("presents command lifecycle, execution support, output, and exit state", () => {
+  it("presents command lifecycle and exit state without cached raw output", () => {
     const item: OrchestrationV2TurnItem = {
       ...itemBase("command"),
       type: "command_execution",
@@ -105,11 +105,12 @@ describe("buildThreadActivityInspector", () => {
     expect(model.blocks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Command", value: "vp check" }),
-        expect.objectContaining({ label: "Output", value: "all checks passed" }),
         expect.objectContaining({ label: "Exit", value: "Process exited with code 0" }),
         expect.objectContaining({ label: "Attempt history" }),
       ]),
     );
+    expect(model.blocks.some((block) => block.label === "Output")).toBe(false);
+    expect(model.structuredDetails).not.toContain("all checks passed");
   });
 
   it("exposes file and web result provenance plus dynamic structured data", () => {
@@ -169,10 +170,30 @@ describe("buildThreadActivityInspector", () => {
     expect(dynamicModel.blocks).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ label: "Input", value: expect.stringContaining('"nested"') }),
-        expect.objectContaining({ label: "Output", value: expect.stringContaining('"ok"') }),
       ]),
     );
     expect(dynamicModel.structuredDetails).toContain('"type": "dynamic_tool"');
+    expect(dynamicModel.blocks.some((block) => block.label === "Output")).toBe(false);
+    expect(dynamicModel.structuredDetails).not.toContain('"output"');
+  });
+
+  it("keeps file links and change counts without cached patch bodies", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...itemBase("file"),
+      type: "file_change",
+      fileName: "src/example.ts",
+      additions: 2,
+      deletions: 1,
+      diffStr: "RAW_PATCH",
+      oldStr: "RAW_BEFORE",
+      newStr: "RAW_AFTER",
+    };
+    const model = buildThreadActivityInspector(activityFor(item), EMPTY_V2_ITEM_SUPPORT, threadId);
+    expect(model.fileLinks).toEqual([{ label: item.fileName, path: item.fileName }]);
+    expect(model.fields).toContainEqual({ label: "Changes", value: "+2 −1" });
+    expect(model.blocks).toEqual([]);
+    expect(model.structuredDetails).not.toContain("RAW_");
+    expect(model.structuredDetails).toContain(item.fileName);
   });
 
   it("enables rollback only for the matching ready checkpoint", () => {

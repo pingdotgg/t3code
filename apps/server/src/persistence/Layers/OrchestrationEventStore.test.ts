@@ -360,12 +360,12 @@ layer("OrchestrationEventStore", (it) => {
       const range = { threadId, afterSequence: baseline, throughSequence: head, maxEvents: 128 };
       assert.deepEqual(yield* store.getAgentReplayStats(range), {
         eventCount: 2,
-        payloadBytes: Buffer.byteLength(unicodePayload) + Buffer.byteLength(oversizedPayload),
+        rawPayloadBytes: Buffer.byteLength(unicodePayload) + Buffer.byteLength(oversizedPayload),
         hasCreateEvent: true,
       });
       assert.deepEqual(yield* store.getAgentReplayStats({ ...range, afterSequence: first }), {
         eventCount: 1,
-        payloadBytes: Buffer.byteLength(oversizedPayload),
+        rawPayloadBytes: Buffer.byteLength(oversizedPayload),
         hasCreateEvent: false,
       });
       assert.equal(
@@ -375,7 +375,7 @@ layer("OrchestrationEventStore", (it) => {
       );
       assert.deepEqual(yield* store.getAgentReplayStats({ ...range, afterSequence: later }), {
         eventCount: 0,
-        payloadBytes: 0,
+        rawPayloadBytes: 0,
         hasCreateEvent: false,
       });
     }),

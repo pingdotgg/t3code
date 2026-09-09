@@ -355,6 +355,8 @@ describe("V2 session presentation", () => {
     if (commandEntry?.kind === "work") {
       expect(commandEntry.entry.projectedItem).toBe(visibleTurnItems[2]);
       expect(commandEntry.entry.structuredPayload).toBe(commandItem);
+      expect(commandEntry.entry.command).toBe(commandItem.input);
+      expect(commandEntry.entry.detail).toBeUndefined();
     }
     const errorEntry = entries[4];
     expect(errorEntry?.kind).toBe("work");
@@ -727,7 +729,8 @@ describe("V2 session presentation", () => {
     }
     expect(entries[1]?.kind).toBe("work");
     if (entries[1]?.kind === "work") {
-      expect(entries[1].entry.detail).toBe(fileItem.newStr);
+      expect(entries[1].entry.detail).toBeUndefined();
+      expect(entries[1].entry.changedFiles).toEqual([fileItem.fileName]);
     }
   });
 

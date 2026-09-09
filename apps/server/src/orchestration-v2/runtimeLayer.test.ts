@@ -3,6 +3,8 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   type ApplicationStoredEvent,
+  CheckpointId,
+  CheckpointRef,
   CommandId,
   ContextTransferId,
   EventId,
@@ -15,6 +17,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -55,9 +58,11 @@ import {
   OrchestratorV2,
 } from "./Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import {
   OrchestrationV2EventSinkLayerLive,
   OrchestrationV2LayerLive,
@@ -79,6 +84,7 @@ const modelSelection = {
   instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5.4",
 } satisfies ModelSelection;
+const alternateInstanceId = ProviderInstanceId.make("codex_alternate");
 
 const VcsDriverRegistryTestLayer = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
@@ -118,11 +124,28 @@ const providerInstance = {
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
+const alternateProviderInstance = {
+  ...providerInstance,
+  instanceId: alternateInstanceId,
+  continuationIdentity: {
+    driverKind: driver,
+    continuationKey: "codex:test:alternate",
+  },
+  displayName: "Codex alternate test",
+  orchestrationAdapter: {
+    ...orchestrationAdapter,
+    instanceId: alternateInstanceId,
+  },
+} satisfies ProviderInstance;
 
 const TestProviderInstanceRegistry = Layer.succeed(ProviderInstanceRegistry, {
   getInstance: (instanceId) =>
-    Effect.succeed(instanceId === providerInstance.instanceId ? providerInstance : undefined),
-  listInstances: Effect.succeed([providerInstance]),
+    Effect.succeed(
+      [providerInstance, alternateProviderInstance].find(
+        (instance) => instanceId === instance.instanceId,
+      ),
+    ),
+  listInstances: Effect.succeed([providerInstance, alternateProviderInstance]),
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
@@ -132,6 +155,7 @@ const TestLayer = Layer.mergeAll(
   OrchestrationV2LayerLive,
   OrchestrationV2EventSinkLayerLive,
   ProjectionProjectRepositoryLive,
+  effectOutboxLayer,
 ).pipe(
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
@@ -358,6 +382,323 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
       assert.equal(projection.thread.projectId, projectId);
       assert.equal(projection.thread.providerInstanceId, "codex");
       assert.deepEqual(projection.runs, []);
+    }),
+  );
+
+  it.effect("emits model updates separately from provider switches", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-model-selection-events");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-model-selection-events-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-model-selection-events-project"),
+        title: "Model selection events",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+
+      const sameInstance = yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("runtime-layer-model-selection-events-update"),
+        threadId,
+        modelSelection: { ...modelSelection, model: "gpt-5.5" },
+      });
+      assert.deepEqual(
+        sameInstance.storedEvents.map((stored) => stored.event.type),
+        ["thread.model-selection-updated"],
+      );
+
+      const differentInstance = yield* orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("runtime-layer-model-selection-events-switch"),
+        threadId,
+        modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" },
+      });
+      assert.deepEqual(
+        differentInstance.storedEvents.map((stored) => stored.event.type),
+        ["thread.provider-switched"],
+      );
+    }),
+  );
+
+  it.effect("rejects non-ready rollback targets before persisting events or effects", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const outbox = yield* EffectOutboxV2;
+      const threadId = ThreadId.make("runtime-rollback-readiness");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-rollback-readiness-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-rollback-readiness-project"),
+        title: "Rollback readiness",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-rollback-readiness-message"),
+        threadId,
+        messageId: MessageId.make("runtime-rollback-readiness-message"),
+        text: "Create the provider thread and checkpoint scope.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const scope = projection.checkpointScopes[0]!;
+      const now = yield* DateTime.now;
+
+      for (const status of ["missing", "error", "stale", "ready"] as const) {
+        const checkpointId = CheckpointId.make("runtime-rollback-checkpoint");
+        const commandId = CommandId.make(`runtime-rollback-${status}`);
+        yield* eventSink.write({
+          commandId: CommandId.make(`runtime-rollback-${status}-seed`),
+          events: [
+            {
+              id: EventId.make(`runtime-rollback-${status}-event`),
+              type: "checkpoint.captured",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: checkpointId,
+                threadId,
+                scopeId: scope.id,
+                runId: null,
+                nodeId: scope.nodeId,
+                parentCheckpointId: null,
+                ordinalWithinScope: 0,
+                appRunOrdinal: null,
+                ref: CheckpointRef.make(`refs/t3/runtime-rollback-${status}`),
+                status,
+                files: [],
+                capturedAt: now,
+              },
+            },
+          ],
+        });
+        const previousSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        const rollback = orchestrator.dispatch({
+          type: "checkpoint.rollback",
+          commandId,
+          threadId,
+          checkpointId,
+          scopeId: scope.id,
+        });
+
+        if (status === "ready") {
+          const accepted = yield* rollback;
+          assert.deepEqual(
+            accepted.storedEvents.map((stored) => stored.event.type),
+            ["checkpoint.rollback-requested"],
+          );
+          assert.deepEqual(
+            (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
+            ["provider-thread.rollback"],
+          );
+        } else {
+          const error = yield* rollback.pipe(Effect.flip);
+          assert.instanceOf(error, OrchestratorDispatchError);
+          assert.equal(
+            error.cause,
+            `Checkpoint ${checkpointId} is ${status} and cannot be restored.`,
+          );
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), previousSequence);
+          assert.deepEqual(
+            yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect),
+            [],
+          );
+          assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+        }
+      }
+    }),
+  );
+
+  it.effect("resolves delivery intent against the active run and starts after it completes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const eventSink = yield* EventSinkV2;
+      const outbox = yield* EffectOutboxV2;
+      const sessions = yield* ProviderSessionManagerV2;
+      const threadId = ThreadId.make("runtime-delivery-intent");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-delivery-intent-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-delivery-intent-project"),
+        title: "Delivery intent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-delivery-intent-first"),
+        threadId,
+        messageId: MessageId.make("runtime-delivery-intent-first"),
+        text: "Start work.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+      });
+      const initial = yield* orchestrator.getThreadProjection(threadId);
+      const run = initial.runs[0]!;
+      const providerThread = initial.providerThreads[0]!;
+      const now = yield* DateTime.now;
+      const providerSession = {
+        id: providerThread.providerSessionId!,
+        driver,
+        providerInstanceId: modelSelection.instanceId,
+        status: "running" as const,
+        cwd: process.cwd(),
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      };
+      const providerTurn = {
+        id: ProviderTurnId.make("runtime-delivery-intent-turn"),
+        providerThreadId: providerThread.id,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running" as const,
+        startedAt: now,
+        completedAt: null,
+      };
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-delivery-intent-running"),
+        events: [
+          {
+            id: EventId.make("runtime-delivery-intent-run-event"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "running", startedAt: now },
+          },
+          {
+            id: EventId.make("runtime-delivery-intent-session-event"),
+            type: "provider-session.attached",
+            threadId,
+            occurredAt: now,
+            payload: providerSession,
+          },
+          {
+            id: EventId.make("runtime-delivery-intent-turn-event"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: providerTurn,
+          },
+        ],
+      });
+      const sessionSpy = vi
+        .spyOn(sessions, "get")
+        .mockReturnValue(
+          Effect.succeed(Option.some({ providerSession } as ProviderAdapterV2SessionRuntime)),
+        );
+      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+
+      const steerCommandId = CommandId.make("runtime-delivery-intent-auto");
+      const steerMessageId = MessageId.make("runtime-delivery-intent-auto");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: steerCommandId,
+        threadId,
+        messageId: steerMessageId,
+        text: "Include this in the active work.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
+      });
+      const steered = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(steered.runs, 1);
+      assert.equal(
+        steered.messages.find((message) => message.id === steerMessageId)?.runId,
+        run.id,
+      );
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(steerCommandId)).map((effect) => effect.request),
+        [
+          {
+            type: "provider-turn.steer",
+            providerSessionId: providerSession.id,
+            providerThreadId: providerThread.id,
+            providerTurnId: providerTurn.id,
+            messageId: steerMessageId,
+          },
+        ],
+      );
+
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-delivery-intent-completed"),
+        events: [
+          {
+            id: EventId.make("runtime-delivery-intent-run-completed"),
+            type: "run.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+          {
+            id: EventId.make("runtime-delivery-intent-turn-completed"),
+            type: "provider-turn.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...providerTurn, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      const nextCommandId = CommandId.make("runtime-delivery-intent-next");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: nextCommandId,
+        threadId,
+        messageId: MessageId.make("runtime-delivery-intent-next"),
+        text: "The previous run finished before this arrived.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "restart",
+      });
+      const restarted = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        restarted.runs.map((candidate) => candidate.status),
+        ["completed", "starting"],
+      );
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(nextCommandId)).map((effect) => effect.request.type),
+        ["provider-turn.start"],
+      );
     }),
   );
 

@@ -13,6 +13,7 @@ import {
   type ToolActivitySource,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import { contextCompactionLabel } from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type {
   ThreadPendingApproval,
@@ -482,7 +483,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "compaction":
       return {
         ...common,
-        label: item.status === "running" ? "Compacting context" : "Context compacted",
+        label: contextCompactionLabel(item),
         sourceActivityKind: "context-compaction",
         ...(item.summary ? { detail: item.summary } : {}),
       };
@@ -498,17 +499,14 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         label: title ?? "Ran command",
         command: item.input,
         rawCommand: item.input,
-        ...(item.output ? { detail: item.output } : {}),
         toolTitle: title ?? "Command",
         toolData: item,
       };
     case "file_change": {
-      const detail = item.diffStr ?? item.newStr;
       return {
         ...common,
         label: title ?? `Changed ${item.fileName}`,
         changedFiles: [item.fileName],
-        ...(detail ? { detail } : {}),
         toolTitle: title ?? "File change",
         toolData: item,
       };
