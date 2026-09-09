@@ -54,6 +54,10 @@ type ProjectionMetadataRow = {
   readonly last_sequence: number;
 };
 
+const encodeEntityKey = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.NullOr(Schema.String)])),
+);
+
 export const layer: Layer.Layer<
   ProjectionMaintenanceV2,
   never,
@@ -227,137 +231,134 @@ export const layer: Layer.Layer<
       "thread.marked-unread",
     ];
 
-    const chunksOf = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> => {
-      const out: Array<ReadonlyArray<A>> = [];
-      for (let index = 0; index < items.length; index += size) {
-        out.push(items.slice(index, index + size));
-      }
-      return out;
-    };
-
-    // The sqlite driver is synchronous: one statement over millions of rows
-    // would pin the event loop for its whole duration. Small auto-committed
-    // batches with a yield between them keep the server responsive and bound
-    // WAL growth; each batch is independently durable, so a crash mid-way
-    // just leaves less garbage for the next run.
-    const COMPACTION_DELETE_BATCH_SIZE = 2_000;
-    const deleteRowsBatched = (input: {
-      readonly table: "orchestration_events" | "orchestration_command_receipts";
-      readonly keys: ReadonlyArray<number | string>;
-    }) =>
-      Effect.gen(function* () {
-        let deleted = 0;
-        for (const batch of chunksOf(input.keys, COMPACTION_DELETE_BATCH_SIZE)) {
-          if (input.table === "orchestration_events") {
-            yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(batch)}`;
-          } else {
-            yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(batch)}`;
-          }
-          deleted += batch.length;
-          yield* Effect.yieldNow;
-        }
-        return deleted;
-      });
+    const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
+    const COMPACTION_PAGE_SIZE = 500;
 
     /**
-     * Full event-store compaction. Projections are the working state (startup
-     * verifies rather than replays), so events only serve afterSequence
-     * catch-up and disaster-recovery rebuild — and for full-payload "state of
-     * the entity" events, anything but the newest per entity is dead weight
-     * in both. Three passes:
-     *
-     * 1. Superseded thread-state events (visits alone accumulate at multiple
-     *    per minute while a thread is open).
-     * 2. Superseded message.updated / node.updated events per entity id —
-     *    streaming rewrites the same message many times. turn-item.updated is
-     *    deliberately NOT compacted: rebuild derives turn_item_positions from
-     *    those events with first-write-wins semantics, so keep-latest would
-     *    change replay outcomes for reordered items.
-     * 3. Legacy v1 thread events and their pre-migration command receipts for
-     *    threads whose v2 import completed — the v1 store is only read to
-     *    import from, and imports never re-run once transcript_imported_at is
-     *    set.
-     *
-     * VACUUM is deliberately not run here: on the synchronous driver it would
-     * block every query for minutes on a multi-GB file. The reclaimable page
-     * count is reported so the caller can surface a hint instead; freed pages
-     * are reused, so the file stops growing either way.
+     * Scan newest first to retain the newest state for each entity.
+     * Page every event, including non-candidates: filtering before LIMIT could
+     * still scan the entire history when superseded events are sparse.
+     * turn-item.updated stays intact because replay assigns positions on first write.
      */
     const compactEventStore = Effect.gen(function* () {
-      const supersededThreadStateRows = yield* sql<{ readonly sequence: number }>`
-        SELECT sequence
-        FROM orchestration_events
-        WHERE application_event_version = 2
-          AND aggregate_kind = 'thread'
-          AND event_type IN ${sql.in(SUPERSEDABLE_THREAD_EVENT_TYPES)}
-          AND sequence NOT IN (
-            SELECT MAX(sequence)
-            FROM orchestration_events
-            WHERE application_event_version = 2
-              AND aggregate_kind = 'thread'
-              AND event_type IN ${sql.in(SUPERSEDABLE_THREAD_EVENT_TYPES)}
-            GROUP BY stream_id
-          )
-      `;
-
-      const supersededEntityRows = (eventType: "message.updated" | "node.updated") => sql<{
-        readonly sequence: number;
+      const bounds = yield* sql<{
+        readonly event_sequence: number;
+        readonly receipt_row_id: number;
       }>`
-        SELECT sequence
-        FROM orchestration_events
-        WHERE application_event_version = 2
-          AND event_type = ${eventType}
-          AND sequence NOT IN (
-            SELECT MAX(sequence)
-            FROM orchestration_events
-            WHERE application_event_version = 2
-              AND event_type = ${eventType}
-            GROUP BY stream_id, json_extract(payload_json, '$.id')
-          )
+        SELECT
+          COALESCE((SELECT MAX(sequence) FROM orchestration_events), 0) AS event_sequence,
+          COALESCE((SELECT MAX(rowid) FROM orchestration_command_receipts), 0) AS receipt_row_id
       `;
-      const supersededMessageRows = yield* supersededEntityRows("message.updated");
-      const supersededNodeRows = yield* supersededEntityRows("node.updated");
+      let throughSequence = bounds[0]?.event_sequence ?? 0;
+      let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
+      const retainedThreadIds = new Set<string>();
+      const retainedEntityKeys = new Set<string>();
+      let deletedEventCount = 0;
+      let deletedReceiptCount = 0;
 
-      const importedLegacyEventRows = yield* sql<{ readonly sequence: number }>`
-        SELECT sequence
-        FROM orchestration_events
-        WHERE application_event_version = 1
-          AND aggregate_kind = 'thread'
-          AND stream_id IN (
-            SELECT thread_id
-            FROM orchestration_v2_legacy_imports
-            WHERE transcript_imported_at IS NOT NULL
-          )
-      `;
+      while (throughSequence > 0) {
+        const rows = yield* sql<{
+          readonly sequence: number;
+          readonly application_event_version: number;
+          readonly aggregate_kind: string;
+          readonly stream_id: string;
+          readonly event_type: string;
+          readonly entity_id: string | null;
+          readonly imported_legacy_thread: number;
+        }>`
+          SELECT
+            event.sequence,
+            event.application_event_version,
+            event.aggregate_kind,
+            event.stream_id,
+            event.event_type,
+            CASE
+              WHEN event.application_event_version = 2
+                AND event.event_type IN ('message.updated', 'node.updated')
+              THEN json_extract(event.payload_json, '$.id')
+              ELSE NULL
+            END AS entity_id,
+            CASE
+              WHEN event.application_event_version = 1 AND event.aggregate_kind = 'thread'
+              THEN EXISTS (
+                SELECT 1 FROM orchestration_v2_legacy_imports AS legacy_import
+                WHERE legacy_import.thread_id = event.stream_id
+                  AND legacy_import.transcript_imported_at IS NOT NULL
+              )
+              ELSE 0
+            END AS imported_legacy_thread
+          FROM orchestration_events AS event
+          WHERE event.sequence <= ${throughSequence}
+          ORDER BY event.sequence DESC
+          LIMIT ${COMPACTION_PAGE_SIZE}
+        `;
+        const obsolete: number[] = [];
+        for (const row of rows) {
+          if (row.imported_legacy_thread === 1) {
+            obsolete.push(row.sequence);
+          } else if (row.application_event_version === 2) {
+            if (
+              row.aggregate_kind === "thread" &&
+              supersedableThreadEventTypes.has(row.event_type)
+            ) {
+              if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
+              else retainedThreadIds.add(row.stream_id);
+            } else if (row.event_type === "message.updated" || row.event_type === "node.updated") {
+              const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
+              if (retainedEntityKeys.has(key)) obsolete.push(row.sequence);
+              else retainedEntityKeys.add(key);
+            }
+          }
+        }
+        // Both discovery and deletion use the synchronous connection. Yield even
+        // when this page has nothing to delete so startup and requests can progress.
+        yield* Effect.yieldNow;
+        if (obsolete.length > 0) {
+          yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
+          deletedEventCount += obsolete.length;
+          yield* Effect.yieldNow;
+        }
+        throughSequence = (rows.at(-1)?.sequence ?? 1) - 1;
+        if (rows.length < COMPACTION_PAGE_SIZE) break;
+      }
 
-      const deletedEventCount = yield* deleteRowsBatched({
-        table: "orchestration_events",
-        keys: [
-          ...supersededThreadStateRows,
-          ...supersededMessageRows,
-          ...supersededNodeRows,
-          ...importedLegacyEventRows,
-        ].map((row) => row.sequence),
-      });
-
-      // Receipts written before the command_type column existed default to
-      // 'legacy'; for fully imported v1 threads they guard idempotency of
-      // commands that can no longer be re-sent.
-      const legacyReceiptRows = yield* sql<{ readonly command_id: string }>`
-        SELECT command_id
-        FROM orchestration_command_receipts
-        WHERE command_type = 'legacy'
-          AND aggregate_kind = 'thread'
-          AND aggregate_id IN (
-            SELECT thread_id
-            FROM orchestration_v2_legacy_imports
-            WHERE transcript_imported_at IS NOT NULL
-          )
-      `;
-      const deletedReceiptCount = yield* deleteRowsBatched({
-        table: "orchestration_command_receipts",
-        keys: legacyReceiptRows.map((row) => row.command_id),
-      });
+      // Legacy receipts are removable only after their thread's v1 import finishes.
+      // Page by rowid before checking eligibility, as with event discovery above.
+      while (throughReceiptRowId > 0) {
+        const rows = yield* sql<{
+          readonly row_id: number;
+          readonly command_id: string;
+          readonly imported_legacy_thread: number;
+        }>`
+          SELECT
+            receipt.rowid AS row_id,
+            receipt.command_id,
+            CASE
+              WHEN receipt.command_type = 'legacy' AND receipt.aggregate_kind = 'thread'
+              THEN EXISTS (
+                SELECT 1 FROM orchestration_v2_legacy_imports AS legacy_import
+                WHERE legacy_import.thread_id = receipt.aggregate_id
+                  AND legacy_import.transcript_imported_at IS NOT NULL
+              )
+              ELSE 0
+            END AS imported_legacy_thread
+          FROM orchestration_command_receipts AS receipt
+          WHERE receipt.rowid <= ${throughReceiptRowId}
+          ORDER BY receipt.rowid DESC
+          LIMIT ${COMPACTION_PAGE_SIZE}
+        `;
+        const obsolete = rows
+          .filter((row) => row.imported_legacy_thread === 1)
+          .map((row) => row.command_id);
+        yield* Effect.yieldNow;
+        if (obsolete.length > 0) {
+          yield* sql`DELETE FROM orchestration_command_receipts WHERE command_id IN ${sql.in(obsolete)}`;
+          deletedReceiptCount += obsolete.length;
+          yield* Effect.yieldNow;
+        }
+        throughReceiptRowId = (rows.at(-1)?.row_id ?? 1) - 1;
+        if (rows.length < COMPACTION_PAGE_SIZE) break;
+      }
 
       const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
       const pageSizeRows = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;

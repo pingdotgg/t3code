@@ -85,7 +85,8 @@ export interface OrchestrationEventStoreShape {
   }) => Effect.Effect<
     {
       readonly eventCount: number;
-      readonly payloadBytes: number;
+      /** UTF-8 bytes in persisted payload JSON before decoding or wire projection. */
+      readonly rawPayloadBytes: number;
       readonly hasCreateEvent: boolean;
     },
     OrchestrationEventStoreError

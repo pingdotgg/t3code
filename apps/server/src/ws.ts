@@ -112,10 +112,13 @@ import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/P
 import { bufferLiveStream } from "./orchestration/LiveStreamBudget.ts";
 import { coalesceThreadLiveStream } from "./orchestration-v2/ThreadLiveEventCoalescer.ts";
 import {
+  buildBoundedThreadStreamSnapshot,
   decideThreadResume,
+  isThreadReplayRawPayloadSafe,
   threadReplayEncodedBytes,
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./orchestration-v2/ThreadStream.ts";
+import { THREAD_HISTORY_SNAPSHOT_ROW_LIMIT } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
   projectThreadProjectionForWire,
@@ -453,6 +456,12 @@ export function hasCompatibleOrchestrationProtocol(url: URL): boolean {
     url.searchParams.get(ORCHESTRATION_PROTOCOL_QUERY_PARAM) ===
     String(ORCHESTRATION_PROTOCOL_VERSION)
   );
+}
+
+export function shouldUseBoundedThreadSnapshot(input: {
+  readonly acceptBoundedSnapshot?: boolean;
+}): boolean {
+  return input.acceptBoundedSnapshot === true;
 }
 
 // Optional client identity announced on the /ws upgrade URL next to wsTicket.
@@ -817,6 +826,7 @@ const makeWsRpcLayer = (
           readonly threadId: ThreadId;
           readonly afterSequence?: number;
           readonly requestCompletionMarker?: boolean;
+          readonly acceptBoundedSnapshot?: boolean;
         }) {
           yield* Effect.annotateCurrentSpan({
             "orchestration_v2.thread_id": input.threadId,
@@ -888,7 +898,14 @@ const makeWsRpcLayer = (
 
           const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(
             function* () {
-              const snapshot = yield* threadManagement.getThreadSnapshot(input.threadId).pipe(
+              const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
+              const snapshot = yield* (
+                useBoundedSnapshot
+                  ? threadManagement.getThreadSnapshotWindow(input.threadId, {
+                      rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                    })
+                  : threadManagement.getThreadSnapshot(input.threadId)
+              ).pipe(
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationV2GetThreadProjectionError({
@@ -899,16 +916,15 @@ const makeWsRpcLayer = (
                 ),
               );
               const { snapshotSequence } = snapshot;
-              const projection = projectThreadProjectionForWire(snapshot.projection);
-              return Stream.concat(
-                Stream.concat(
-                  Stream.make({
+              const snapshotItem = useBoundedSnapshot
+                ? buildBoundedThreadStreamSnapshot(snapshot)
+                : {
                     kind: "snapshot" as const,
                     snapshotSequence,
-                    projection,
-                  }),
-                  completionMarker,
-                ),
+                    projection: projectThreadProjectionForWire(snapshot.projection),
+                  };
+              return Stream.concat(
+                Stream.concat(Stream.make(snapshotItem), completionMarker),
                 eventStreamFrom(snapshotSequence),
               );
             },
@@ -952,13 +968,11 @@ const makeWsRpcLayer = (
                     }),
                 ),
               );
+            // Bound stored JSON before decoding, then check projected event
+            // size separately. Neither byte count is a bound on process memory.
             if (
-              decideThreadResume({
-                afterSequence: input.afterSequence,
-                highWater,
-                replayEventCount: stats.eventCount,
-                replayEncodedBytes: stats.payloadBytes,
-              }).mode === "snapshot"
+              stats.eventCount > THREAD_RESUME_MAX_REPLAY_EVENTS ||
+              !isThreadReplayRawPayloadSafe(stats.rawPayloadBytes)
             ) {
               return yield* snapshotThenLive();
             }
