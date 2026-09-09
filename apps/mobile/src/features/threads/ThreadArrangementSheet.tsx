@@ -28,7 +28,7 @@ import {
 } from "./threadOrder";
 import { getThreadListV2OrderedSection } from "./threadListV2";
 
-const ROW_HEIGHT = 72;
+const ROW_HEIGHT = 56;
 const HEADER_HEIGHT = 48;
 const keyOf = (thread: EnvironmentThreadShell) => scopedThreadKey(thread.environmentId, thread.id);
 type Section = "pinned" | "active" | "snoozed" | "settled";
@@ -486,7 +486,10 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                 className="absolute left-5 right-5 justify-center rounded-xl border border-border bg-screen px-4"
                 style={{ top: 0, height: ROW_HEIGHT, transform: [{ translateY }] }}
               >
-                <Text numberOfLines={2} className="text-base font-t3-medium">
+                <Text
+                  numberOfLines={visiblePreview.destination?.section ? 1 : 2}
+                  className="text-base font-t3-medium"
+                >
                   {visiblePreview.thread.title}
                 </Text>
                 {visiblePreview.destination?.section ? (
