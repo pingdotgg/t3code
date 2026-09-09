@@ -69,9 +69,11 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
 
 class NodePtyProcess implements PtyAdapter.PtyProcess {
   private readonly process: import("node-pty").IPty;
+  private readonly platform: NodeJS.Platform;
 
-  constructor(process: import("node-pty").IPty) {
+  constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
+    this.platform = platform;
   }
 
   get pid(): number {
@@ -87,7 +89,8 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 
   kill(signal?: string): void {
-    this.process.kill(signal);
+    // node-pty terminates the Windows process tree without a POSIX signal.
+    this.process.kill(this.platform === "win32" ? undefined : signal);
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -164,7 +167,7 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* (
             cause,
           }),
       });
-      return new NodePtyProcess(ptyProcess);
+      return new NodePtyProcess(ptyProcess, platform);
     }),
   });
 });
