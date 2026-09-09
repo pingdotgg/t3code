@@ -58,20 +58,25 @@ const args=process.argv.slice(2);
 const state=process.env.AGENT_DEVICE_STATE_DIR || args[args.indexOf('--state-dir')+1];
 const file=path.join(state,'daemon.json');
 if(args[0]==='daemon') { const data=JSON.parse(fs.readFileSync(file,'utf8')); fs.writeFileSync(path.join(state,'stopped-agent'),String(data.pid)); try {process.kill(data.pid,'SIGTERM')} catch {} }
-else if(args[0]==='serve') { const server=http.createServer((req,res)=>res.end('ok')); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token:'test'}));process.send?.('ready');process.disconnect?.();}); }
+else if(args[0]==='serve') { const server=http.createServer((req,res)=>{res.statusCode=fs.existsSync(path.join(state,'unhealthy-agent-'+process.pid))?503:200;res.end('ok');}); server.listen(0,'127.0.0.1',()=>{fs.writeFileSync(file,JSON.stringify({httpPort:server.address().port,pid:process.pid,token:'test'}));process.send?.('ready');process.disconnect?.();}); }
 else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:true,stdio:['ignore','ignore','ignore','ipc'],env:process.env});await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);});child.unref(); }
 `,
         );
+        const nextHubVersion = DEVICE_HUB_VERSION + "-upgrade";
+        const nextAgentVersion = AGENT_DEVICE_VERSION + "-upgrade";
         let invocation = 0;
         const invoke = async (
           owner: string,
           mode: "start" | "agent-start" | "stop-agent" | "stop",
+          upgraded = false,
         ) => {
           const file = NodePath.join(home, `${owner}-${mode}-${invocation++}.cjs`);
           await NodeFSP.writeFile(
             file,
             `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
-              remoteDeviceScript(owner, mode),
+              remoteDeviceScript(owner, mode)
+                .replace(DEVICE_HUB_VERSION, upgraded ? nextHubVersion : DEVICE_HUB_VERSION)
+                .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
           const result = await exec(process.execPath, [file], {
             env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
@@ -119,13 +124,44 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
             await NodeFSP.readFile(NodePath.join(root, "hosts/two/hub.json"), "utf8"),
           );
           await NodeFSP.writeFile(NodePath.join(root, `hosts/one/unhealthy-${firstHub.pid}`), "");
-          const repaired = await invoke("one", "agent-start");
+          let repaired = await invoke("one", "agent-start");
           expect(repaired.hubPort).not.toBe(first.hubPort);
           const stopped = (await NodeFSP.readFile(NodePath.join(home, "stops"), "utf8"))
             .trim()
             .split("\n");
           expect(stopped).toContain(String(firstHub.pid));
           expect(stopped).not.toContain(String(secondHub.pid));
+          const previousDaemon = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/daemon.json"), "utf8"),
+          );
+          for (const [source, name, version] of [
+            [hubDir, "expo-device-hub", nextHubVersion],
+            [agentDir, "agent-device", nextAgentVersion],
+          ]) {
+            const destination = NodePath.join(root, `tools/${name}@${version}`);
+            await NodeFSP.cp(source!, destination, { recursive: true });
+            await NodeFSP.writeFile(NodePath.join(destination, ".install-complete"), version!);
+          }
+          const upgraded = await invoke("one", "agent-start", true);
+          expect(upgraded.entryPath).toContain(nextAgentVersion);
+          const upgradedHub = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/hub.json"), "utf8"),
+          );
+          expect(upgradedHub.entryPath).toContain(nextHubVersion);
+          const upgradedDaemon = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/daemon.json"), "utf8"),
+          );
+          expect(upgradedDaemon.pid).not.toBe(previousDaemon.pid);
+          expect(await invoke("one", "agent-start", true)).toEqual(upgraded);
+          await NodeFSP.writeFile(
+            NodePath.join(root, `hosts/one/unhealthy-agent-${upgradedDaemon.pid}`),
+            "",
+          );
+          repaired = await invoke("one", "agent-start", true);
+          expect(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/stopped-agent"), "utf8"),
+          ).toBe(String(upgradedDaemon.pid));
+          expect(repaired.daemonPort).not.toBe(upgraded.daemonPort);
           // Stop still uses the recorded entry when a future pinned package is not installed yet.
           const originalScript = remoteDeviceScript("one", "stop-agent");
           const upgradedStop = NodePath.join(home, "upgraded-stop.cjs");

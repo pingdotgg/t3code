@@ -129,7 +129,7 @@ async function install(name, version, entry) {
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || !await healthy(hub.port, '/readyz')) {
+  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
@@ -158,9 +158,15 @@ async function install(name, version, entry) {
   let agentResult = {};
   if (mode === 'agent-start') {
   const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
-  write(agentFile, { entryPath: agentEntry });
+  const previousAgent = read(agentFile)?.entryPath;
   let daemon = read(daemonFile);
-  if (!daemon || !await healthy(daemon.httpPort, '/health')) {
+  if (daemon && (previousAgent !== agentEntry || !await healthy(daemon.httpPort, '/health'))) {
+    const stopped = run(process.execPath, [previousAgent || agentEntry, 'daemon', 'stop', '--state-dir', state]);
+    if (stopped.status !== 0) throw Error('Could not stop the previous agent-device version.');
+    fs.rmSync(daemonFile, { force: true });
+    daemon = null;
+  }
+  if (!daemon) {
     fs.rmSync(daemonFile, { force: true });
     const env = { ...process.env, AGENT_DEVICE_STATE_DIR: state, AGENT_DEVICE_DAEMON_SERVER_MODE: 'http', AGENT_DEVICE_DAEMON_IDLE_TIMEOUT_MS: '0', AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' };
     delete env.AGENT_DEVICE_DAEMON_BASE_URL; delete env.AGENT_DEVICE_DAEMON_AUTH_TOKEN; delete env.AGENT_DEVICE_CONFIG;
@@ -168,6 +174,7 @@ async function install(name, version, entry) {
     daemon = read(daemonFile);
   }
   if (!daemon || !await healthy(daemon.httpPort, '/health')) throw Error('agent-device daemon did not become ready in ' + state);
+  write(agentFile, { entryPath: agentEntry });
   agentResult = { daemonPort: daemon.httpPort, token: daemon.token, entryPath: agentEntry };
   }
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
