@@ -252,7 +252,13 @@ export function FileTreeBrowser(props: {
       maxToRenderPerBatch={FILE_TREE_RENDER_BATCH_SIZE}
       updateCellsBatchingPeriod={16}
       windowSize={5}
-      contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      contentContainerStyle={{
+        paddingTop: 8,
+        // With automatic content insets iOS already reserves the bottom safe
+        // area; Android and pre-glass iOS (`"never"` above) get nothing from
+        // that prop and need the inset here.
+        paddingBottom: NATIVE_LIQUID_GLASS_SUPPORTED ? 8 : Math.max(insets.bottom, 8) + 8,
+      }}
       refreshControl={<RefreshControl refreshing={props.isPending} onRefresh={props.onRefresh} />}
       renderItem={renderItem}
       ListEmptyComponent={
