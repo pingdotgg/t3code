@@ -81,7 +81,7 @@ function toSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
       : new PersistenceSqlError({ operation: sqlOperation, cause });
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const listRows = SqlSchema.findAll({
