@@ -9,6 +9,7 @@ import {
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
+import { threadRuntimeCanArchive, type ThreadRuntimeSummary } from "./models.ts";
 
 const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
 
@@ -110,5 +111,36 @@ describe("thread execution presentation", () => {
     };
 
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
+  });
+});
+
+describe("threadRuntimeCanArchive", () => {
+  const runtime = (
+    status: ThreadRuntimeSummary["status"],
+    activeRunId: ThreadRuntimeSummary["activeRunId"],
+  ): ThreadRuntimeSummary => ({
+    status,
+    activeRunId,
+    providerInstanceId: v2Projection.thread.providerInstanceId,
+    providerName: null,
+    lastError: null,
+    updatedAt: DateTime.formatIso(now),
+  });
+
+  it.each(["preparing", "starting", "running"] as const)(
+    "blocks archive while a provider is %s",
+    (status) => {
+      expect(threadRuntimeCanArchive(runtime(status, RunId.make(`run-${status}`)))).toBe(false);
+    },
+  );
+
+  it("only blocks a queued runtime when a provider run remains attached", () => {
+    expect(threadRuntimeCanArchive(runtime("queued", RunId.make("run-queued")))).toBe(false);
+    expect(threadRuntimeCanArchive(runtime("queued", null))).toBe(true);
+  });
+
+  it("allows waiting and idle threads", () => {
+    expect(threadRuntimeCanArchive(runtime("waiting", RunId.make("run-finished")))).toBe(true);
+    expect(threadRuntimeCanArchive(runtime("idle", null))).toBe(true);
   });
 });

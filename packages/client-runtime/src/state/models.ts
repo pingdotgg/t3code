@@ -56,6 +56,17 @@ export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | und
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+/** Archiving may discard queued work, but it must not detach a provider that
+ * is preparing, starting, or running a turn. */
+export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
+  if (runtime?.status === "queued") return runtime.activeRunId === null;
+  return (
+    runtime?.status !== "preparing" &&
+    runtime?.status !== "starting" &&
+    runtime?.status !== "running"
+  );
+}
+
 function threadRunStatusIsActive(status: ThreadRuntimeSummary["status"]): boolean {
   return (
     status === "preparing" ||
