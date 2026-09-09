@@ -173,7 +173,10 @@ it.effect("preserves the typed missing-baseline-ref error contract", () => {
   const layer = makeLayer({
     projection: Effect.succeed({
       ...projection,
-      checkpointScopes: projection.checkpointScopes.filter((scope) => scope.id !== firstScopeId),
+      checkpointScopes: projection.checkpointScopes.map((scope) => ({
+        ...scope,
+        kind: "tool" as const,
+      })),
     }),
   });
 
