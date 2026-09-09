@@ -66,6 +66,7 @@ import {
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
+import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
@@ -172,7 +173,12 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
+    readonly turnStartAcknowledgementDispatchFailures?: number;
+    readonly startupTurnStartFailureDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly turnStartBeforeStart?: "one" | "two";
+    readonly failPendingTurnStartSnapshot?: boolean;
+    readonly turnStartDuringPendingSnapshot?: boolean;
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -182,6 +188,7 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    readonly awaitCheckpointSequenceEffect?: (sequence: number) => Effect.Effect<void>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -412,7 +419,49 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const reactorProjectionSnapshotLayer = Layer.effect(
+      ProjectionSnapshotQuery,
+      Effect.gen(function* () {
+        const query = yield* ProjectionSnapshotQuery;
+        const engine = yield* OrchestrationEngineService;
+        return {
+          ...query,
+          listPendingTurnStarts: (throughSequence) => {
+            if (input?.failPendingTurnStartSnapshot === true) {
+              return Effect.die(new Error("Injected pending turn-start snapshot failure"));
+            }
+            return (query.listPendingTurnStarts?.(throughSequence) ?? Effect.succeed([])).pipe(
+              Effect.tap(() =>
+                input?.turnStartDuringPendingSnapshot === true
+                  ? engine
+                      .dispatch({
+                        type: "thread.turn.start",
+                        commandId: CommandId.make("cmd-turn-start-during-pending-snapshot"),
+                        threadId: ThreadId.make("thread-1"),
+                        message: {
+                          messageId: MessageId.make("message-turn-start-during-pending-snapshot"),
+                          role: "user",
+                          text: "Retain the turn committed during reactor startup",
+                          attachments: [],
+                        },
+                        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+                        runtimeMode: "approval-required",
+                        createdAt: now,
+                      })
+                      .pipe(Effect.orDie)
+                  : Effect.void,
+              ),
+            );
+          },
+        } satisfies ProjectionSnapshotQuery["Service"];
+      }),
+    ).pipe(Layer.provide(projectionSnapshotLayer), Layer.provide(orchestrationLayer));
+    const awaitCheckpointSequence = vi.fn(
+      (sequence: number) => input?.awaitCheckpointSequenceEffect?.(sequence) ?? Effect.void,
+    );
     let titleRegenerationCompletionDispatchAttempts = 0;
+    let turnStartAcknowledgementDispatchAttempts = 0;
+    let startupTurnStartFailureDispatchAttempts = 0;
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
       Effect.gen(function* () {
@@ -422,6 +471,30 @@ describe("ProviderCommandReactor", () => {
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
+            if (command.type === "thread.turn.start.acknowledge") {
+              return Effect.suspend(() => {
+                turnStartAcknowledgementDispatchAttempts += 1;
+                if (
+                  turnStartAcknowledgementDispatchAttempts <=
+                  (input?.turnStartAcknowledgementDispatchFailures ?? 0)
+                ) {
+                  return Effect.die(new Error("Injected turn start acknowledgement failure"));
+                }
+                return engine.dispatch(command);
+              });
+            }
+            if (
+              command.type === "thread.activity.append" &&
+              command.activity.kind === "provider.turn.start.failed"
+            ) {
+              startupTurnStartFailureDispatchAttempts += 1;
+              if (
+                startupTurnStartFailureDispatchAttempts <=
+                (input?.startupTurnStartFailureDispatchFailures ?? 0)
+              ) {
+                return Effect.die(new Error("Injected startup turn failure dispatch failure"));
+              }
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -447,7 +520,7 @@ describe("ProviderCommandReactor", () => {
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
-      Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(reactorProjectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
@@ -476,6 +549,13 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        Layer.succeed(CheckpointReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+          awaitDomainSequence: awaitCheckpointSequence,
+        }),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -565,6 +645,27 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }
+    const pendingTurnStartCount = input?.turnStartBeforeStart === "two" ? 2 : 1;
+    if (input?.turnStartBeforeStart !== undefined) {
+      for (let index = 1; index <= pendingTurnStartCount; index += 1) {
+        await runEffect(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-turn-start-before-reactor-start-${index}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: MessageId.make(`message-turn-start-before-reactor-start-${index}`),
+              role: "user",
+              text: `This start cannot be replayed after restart (${index})`,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now,
+          }),
+        );
+      }
+    }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(
@@ -592,6 +693,18 @@ describe("ProviderCommandReactor", () => {
             `;
           }),
         ),
+      readTurnStartPlaceholders: () =>
+        runtime!.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            return yield* sql<{ readonly messageId: string; readonly state: string }>`
+              SELECT pending_message_id AS "messageId", state
+              FROM projection_turns
+              WHERE turn_id IS NULL
+              ORDER BY row_id ASC
+            `;
+          }),
+        ),
       tryHandlePromptCommand,
       startSession,
       sendTurn,
@@ -610,11 +723,228 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
       runEffect,
+      awaitCheckpointSequence,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
+      get turnStartAcknowledgementDispatchAttempts() {
+        return turnStartAcknowledgementDispatchAttempts;
+      },
+      get startupTurnStartFailureDispatchAttempts() {
+        return startupTurnStartFailureDispatchAttempts;
+      },
     };
   }
+
+  effectIt.effect("waits for checkpoint side effects before starting a later provider turn", () =>
+    Effect.gen(function* () {
+      let barrierPassed = false;
+      const barrierEntered = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          awaitCheckpointSequenceEffect: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(barrierEntered, undefined);
+              barrierPassed = true;
+            }),
+        }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-after-checkpoint-side-effects"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-after-checkpoint-side-effects"),
+          role: "user",
+          text: "Continue after revert",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Deferred.await(barrierEntered);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.awaitCheckpointSequence).toHaveBeenCalledTimes(1);
+      expect(harness.awaitCheckpointSequence).toHaveBeenCalledWith(expect.any(Number));
+      expect(barrierPassed).toBe(true);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
+
+  effectIt.effect("retries an accepted turn until its acknowledgement is durable", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ turnStartAcknowledgementDispatchFailures: 2 }),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-with-retried-acknowledgement"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-turn-with-retried-acknowledgement"),
+          role: "user",
+          text: "Keep the accepted provider turn durable",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      yield* Effect.promise(() =>
+        waitFor(() => harness.turnStartAcknowledgementDispatchAttempts === 3),
+      );
+      yield* Effect.promise(() =>
+        waitFor(async () => {
+          const placeholders = await harness.readTurnStartPlaceholders();
+          return placeholders[0]?.state === "submitted";
+        }),
+      );
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([
+        { messageId: "message-turn-with-retried-acknowledgement", state: "submitted" },
+      ]);
+    }),
+  );
+
+  effectIt.effect("starts a turn accepted while an earlier checkpoint revert completes", () =>
+    Effect.gen(function* () {
+      const barrier = yield* Deferred.make<void>();
+      const barrierEntered = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          awaitCheckpointSequenceEffect: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(barrierEntered, undefined);
+              yield* Deferred.await(barrier);
+            }),
+        }),
+      );
+      const messageId = MessageId.make("message-accepted-during-checkpoint-revert");
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-accepted-during-checkpoint-revert"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId,
+          role: "user",
+          text: "Continue after revert",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Deferred.await(barrierEntered);
+
+      yield* harness.engine.dispatch({
+        type: "thread.revert.complete",
+        commandId: CommandId.make("cmd-complete-earlier-checkpoint-revert"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 0,
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+      yield* Deferred.succeed(barrier, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads[0]?.messages.some((message) => message.id === messageId)).toBe(true);
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("does not replay a successful steering send after the active turn finishes", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-first-successful-send"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-first-successful-send"),
+          role: "user",
+          text: "Start the turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() =>
+        waitFor(() => harness.awaitCheckpointSequence.mock.calls.length === 1),
+      );
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-first-send-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:02.000Z",
+        },
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-successful-steering-send"),
+        threadId,
+        message: {
+          messageId: MessageId.make("message-successful-steering-send"),
+          role: "user",
+          text: "Steer the active turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+      yield* Effect.promise(() =>
+        waitFor(() => harness.awaitCheckpointSequence.mock.calls.length === 2),
+      );
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      yield* Effect.promise(() =>
+        waitFor(async () => (await harness.readTurnStartPlaceholders()).length === 0),
+      );
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([]);
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-steered-turn-ready"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:04.000Z",
+        },
+        createdAt: "2026-01-01T00:00:04.000Z",
+      });
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([]);
+    }),
+  );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
@@ -1041,8 +1371,13 @@ describe("ProviderCommandReactor", () => {
         }),
       );
       expect(harness.sendTurn).toHaveBeenCalledTimes(1);
-      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([
-        { threadId: "thread-1" },
+      // The original send was accepted but has not received a correlated
+      // provider turn, while the compact request has not been submitted yet.
+      // Keep both durable with their distinct states; the later user turn was
+      // rejected while compaction was restoring the session and adds no row.
+      expect(yield* Effect.promise(() => harness.readTurnStartPlaceholders())).toEqual([
+        { messageId: "user-message-before-blocked-compact", state: "submitted" },
+        { messageId: "user-message-blocked-compact", state: "pending" },
       ]);
 
       yield* Deferred.succeed(releaseReadyDispatch, undefined);
@@ -1668,6 +2003,88 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Thread");
     expect(thread?.titleRegeneration).toBeNull();
+  });
+
+  it("marks every turn start left pending across reactor startup as failed", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: "two" });
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(await harness.readPendingTurnStarts()).toEqual([]);
+    const readModel = await harness.readModel();
+    const startupFailures = readModel.threads[0]?.activities.filter(
+      (activity) => activity.kind === "provider.turn.start.failed",
+    );
+    expect(
+      startupFailures
+        ?.flatMap((activity) =>
+          typeof activity.payload === "object" &&
+          activity.payload !== null &&
+          "requestId" in activity.payload &&
+          typeof activity.payload.requestId === "string"
+            ? [activity.payload.requestId]
+            : [],
+        )
+        .toSorted(),
+    ).toEqual([
+      "message-turn-start-before-reactor-start-1",
+      "message-turn-start-before-reactor-start-2",
+    ]);
+    expect(
+      startupFailures?.every(
+        (activity) =>
+          typeof activity.payload === "object" &&
+          activity.payload !== null &&
+          "detail" in activity.payload &&
+          typeof activity.payload.detail === "string" &&
+          activity.payload.detail.includes("server restarted"),
+      ),
+    ).toBe(true);
+  });
+
+  it("continues clearing startup turn starts after one failure dispatch fails", async () => {
+    const harness = await createHarness({
+      turnStartBeforeStart: "two",
+      startupTurnStartFailureDispatchFailures: 1,
+    });
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(harness.startupTurnStartFailureDispatchAttempts).toBe(2);
+    expect(await harness.readTurnStartPlaceholders()).toEqual([
+      { messageId: "message-turn-start-before-reactor-start-1", state: "pending" },
+    ]);
+    const readModel = await harness.readModel();
+    expect(
+      readModel.threads[0]?.activities.flatMap((activity) =>
+        activity.kind === "provider.turn.start.failed" &&
+        typeof activity.payload === "object" &&
+        activity.payload !== null &&
+        "requestId" in activity.payload &&
+        typeof activity.payload.requestId === "string"
+          ? [activity.payload.requestId]
+          : [],
+      ),
+    ).toEqual(["message-turn-start-before-reactor-start-2"]);
+  });
+
+  it("fails reactor startup when pending turn starts cannot be read", async () => {
+    await expect(createHarness({ failPendingTurnStartSnapshot: true })).rejects.toThrow(
+      "Injected pending turn-start snapshot failure",
+    );
+  });
+
+  it("processes a turn committed during the startup snapshot handoff", async () => {
+    const harness = await createHarness({ turnStartDuringPendingSnapshot: true });
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(async () => (await harness.readPendingTurnStarts()).length === 0);
+    await harness.drain();
+
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      input: "Retain the turn committed during reactor startup",
+    });
+    expect(await harness.readPendingTurnStarts()).toEqual([]);
   });
 
   it("continues clearing startup title regeneration state after one completion fails", async () => {

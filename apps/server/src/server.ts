@@ -67,8 +67,8 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
-import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor.ts";
-import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.ts";
+import * as ProviderCommandReactor from "./orchestration/Layers/ProviderCommandReactor.ts";
+import * as CheckpointReactor from "./orchestration/Layers/CheckpointReactor.ts";
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
 import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
@@ -273,11 +273,15 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+const CheckpointAndProviderCommandReactorsLive =
+  ProviderCommandReactor.ProviderCommandReactorLive.pipe(
+    Layer.provideMerge(CheckpointReactor.CheckpointReactorLive),
+  );
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(CheckpointAndProviderCommandReactorsLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),

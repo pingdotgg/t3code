@@ -96,11 +96,26 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
   return requests;
 }
 
-/** Apply the shared shell-level rule to the detailed command read model. */
+/** Prefer the event-ordered pending identity, with the timestamp rule only as
+ * a compatibility fallback for read models projected before the field existed. */
 function hasQueuedTurnStartForThread(
-  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
+  thread: Pick<
+    OrchestrationThread,
+    | "messages"
+    | "latestTurn"
+    | "session"
+    | "pendingTurnStartMessageId"
+    | "submittedTurnStarts"
+    | "turnStartSubmissionRendezvous"
+  >,
   now: string,
 ): boolean {
+  if (
+    thread.pendingTurnStartMessageId != null ||
+    (thread.submittedTurnStarts?.length ?? 0) > 0 ||
+    (thread.turnStartSubmissionRendezvous?.requests.length ?? 0) > 0
+  )
+    return true;
   let latestUserMessageAt: string | null = null;
   let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
   for (const message of thread.messages) {
@@ -1002,6 +1017,33 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.turn.start.acknowledge": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          turnStartAcknowledged: {
+            messageId: command.messageId,
+            turnId: command.turnId,
+          },
+          // Submission state must not reorder the thread in clients.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.runtime-mode.set": {
       yield* requireThread({
         readModel,
@@ -1116,6 +1158,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.message.messageId,
+          expectsTurnStartAcknowledgement: true,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
             : {}),
@@ -1420,11 +1463,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.latestTurn?.state === "running" ||
+        thread.pendingTurnStartMessageId != null ||
+        (thread.submittedTurnStarts?.length ?? 0) > 0 ||
+        (thread.turnStartSubmissionRendezvous?.requests.length ?? 0) > 0
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Interrupt the current turn before reverting checkpoints.",
+          }),
+        );
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1722,7 +1780,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.revert.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
@@ -1738,6 +1796,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
+          preservedMessageIds:
+            thread.pendingCheckpointRevertMessageIds ??
+            (thread.pendingTurnStartMessageId == null ? [] : [thread.pendingTurnStartMessageId]),
         },
       };
     }

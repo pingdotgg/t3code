@@ -6,11 +6,13 @@ import {
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { it as effectIt } from "@effect/vitest";
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
+import { decideOrchestrationCommand } from "./decider.ts";
 
 function makeEvent(input: {
   sequence: number;
@@ -530,6 +532,663 @@ describe("orchestration projector", () => {
             : "completed",
         );
       }),
+  );
+
+  effectIt.effect("does not let a stale terminal session clear a newer pending turn", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-07T23:00:00.000Z";
+      const threadId = "thread-stale-terminal";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `stale-terminal-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Stale terminal",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const [index, messageId] of ["older-request", "newer-request"].entries()) {
+        model = yield* projectEvent(
+          model,
+          event(index + 2, "thread.turn-start-requested", {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(4, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: "older request failed",
+            updatedAt: now,
+          },
+        }),
+      );
+
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+    }),
+  );
+
+  effectIt.effect("keeps acknowledged starts guarded until their provider turn is running", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-07T23:30:00.000Z";
+      const threadId = "thread-correlated-start-acknowledgement";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `correlated-start-acknowledgement-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Correlated acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "newer-request",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(3, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "older-request",
+            turnId: "turn-provider-acknowledged",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        {
+          messageId: "older-request",
+          turnId: "turn-provider-acknowledged",
+        },
+      ]);
+
+      model = yield* projectEvent(
+        model,
+        event(4, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "newer-request",
+            turnId: "turn-provider-acknowledged",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        {
+          messageId: "older-request",
+          turnId: "turn-provider-acknowledged",
+        },
+        {
+          messageId: "newer-request",
+          turnId: "turn-provider-acknowledged",
+        },
+      ]);
+
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-provider-acknowledged",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.turn-start-requested", {
+          threadId,
+          messageId: "steering-request",
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(8, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: {
+            messageId: "steering-request",
+            turnId: "turn-provider-acknowledged",
+          },
+          updatedAt: now,
+        }),
+      );
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+    }),
+  );
+
+  effectIt.effect("does not re-guard a turn acknowledged after its lifecycle was observed", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T01:50:00.000Z";
+      const threadId = "thread-late-start-acknowledgement";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `late-start-acknowledgement-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Late start acknowledgement",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(2, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-a",
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      for (const [sequence, status, activeTurnId] of [
+        [3, "running", "turn-a"],
+        [4, "ready", null],
+      ] as const) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.session-set", {
+            threadId,
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: now,
+            },
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(5, "thread.turn-start-requested", {
+          threadId,
+          messageId: "request-b",
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: now,
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-b",
+            lastError: null,
+            updatedAt: now,
+          },
+        }),
+      );
+      model = yield* projectEvent(
+        model,
+        event(7, "thread.meta-updated", {
+          threadId,
+          turnStartAcknowledged: { messageId: "request-a", turnId: "turn-a" },
+          updatedAt: now,
+        }),
+      );
+
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toEqual({
+        requests: [{ messageId: "request-b", observedTurnIds: ["turn-b"] }],
+      });
+      model = yield* projectEvent(
+        model,
+        event(8, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "request-b-failed",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { requestId: "request-b" },
+            turnId: null,
+            createdAt: now,
+          },
+        }),
+      );
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+    }),
+  );
+
+  effectIt.effect("clears only the submitted start correlated to a provider failure", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T04:30:00.000Z";
+      const threadId = "thread-correlated-submitted-failure";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `correlated-submitted-failure-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Correlated submitted failure",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const [sequence, messageId, turnId] of [
+        [2, "request-a", "turn-a"],
+        [3, "request-b", "turn-b"],
+      ] as const) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.meta-updated", {
+            threadId,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: now,
+          }),
+        );
+      }
+
+      model = yield* projectEvent(
+        model,
+        event(4, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "request-a-failed",
+            tone: "error",
+            kind: "provider.turn.start.failed",
+            summary: "Provider turn start failed",
+            payload: { requestId: "request-a" },
+            turnId: "turn-a",
+            createdAt: now,
+          },
+        }),
+      );
+
+      expect(model.threads[0]?.submittedTurnStarts).toEqual([
+        { messageId: "request-b", turnId: "turn-b" },
+      ]);
+    }),
+  );
+
+  effectIt.effect("does not enroll legacy turn history in submission rendezvous state", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T01:55:00.000Z";
+      const threadId = "thread-legacy-start-history";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `legacy-start-history-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Legacy start history",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (let turn = 1; turn <= 3; turn += 1) {
+        const baseSequence = turn * 3 - 1;
+        model = yield* projectEvent(
+          model,
+          event(baseSequence, "thread.turn-start-requested", {
+            threadId,
+            messageId: `legacy-request-${turn}`,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+        for (const [offset, status, activeTurnId] of [
+          [1, "running", `legacy-turn-${turn}`],
+          [2, "ready", null],
+        ] as const) {
+          model = yield* projectEvent(
+            model,
+            event(baseSequence + offset, "thread.session-set", {
+              threadId,
+              session: {
+                threadId,
+                status,
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId,
+                lastError: null,
+                updatedAt: now,
+              },
+            }),
+          );
+        }
+      }
+
+      expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+    }),
+  );
+
+  effectIt.effect(
+    "matches every acknowledgement when concurrent starts share a provider turn",
+    () =>
+      Effect.gen(function* () {
+        const now = "2026-09-08T02:30:00.000Z";
+        const threadId = "thread-shared-provider-turn";
+        const providerTurnId = "turn-shared-provider";
+        const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+          makeEvent({
+            sequence,
+            type,
+            payload,
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: `shared-provider-turn-${sequence}`,
+          });
+        type Step = "request-a" | "request-b" | "ack-a" | "ack-b" | "running" | "terminal";
+        const permutations = (steps: readonly Step[]): Step[][] =>
+          steps.length === 0
+            ? [[]]
+            : steps.flatMap((step, index) =>
+                permutations(steps.filter((_, candidateIndex) => candidateIndex !== index)).map(
+                  (tail) => [step, ...tail],
+                ),
+              );
+        const orders = permutations([
+          "request-a",
+          "request-b",
+          "ack-a",
+          "ack-b",
+          "running",
+          "terminal",
+        ]).filter(
+          (order) =>
+            order.indexOf("request-a") < order.indexOf("ack-a") &&
+            order.indexOf("request-b") < order.indexOf("ack-b") &&
+            order.indexOf("running") < order.indexOf("terminal") &&
+            order.indexOf("request-a") < order.indexOf("terminal") &&
+            order.indexOf("request-b") < order.indexOf("terminal"),
+        );
+        expect(orders).toHaveLength(66);
+
+        for (const [caseIndex, order] of orders.entries()) {
+          let sequence = 1;
+          let model = yield* projectEvent(
+            createEmptyReadModel(now),
+            event(sequence, "thread.created", {
+              threadId,
+              projectId: "project-1",
+              title: "Shared provider turn",
+              modelSelection: { instanceId: "claude", model: "test" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt: now,
+              updatedAt: now,
+            }),
+          );
+          for (const [stepIndex, step] of order.entries()) {
+            sequence += 1;
+            if (step === "request-a" || step === "request-b") {
+              const messageId = step === "request-a" ? "request-a" : "request-b";
+              model = yield* projectEvent(
+                model,
+                event(sequence, "thread.turn-start-requested", {
+                  threadId,
+                  messageId,
+                  expectsTurnStartAcknowledgement: true,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  createdAt: now,
+                }),
+              );
+            } else if (step === "ack-a" || step === "ack-b") {
+              const messageId = step === "ack-a" ? "request-a" : "request-b";
+              model = yield* projectEvent(
+                model,
+                event(sequence, "thread.meta-updated", {
+                  threadId,
+                  turnStartAcknowledged: { messageId, turnId: providerTurnId },
+                  updatedAt: now,
+                }),
+              );
+            } else {
+              const running = step === "running";
+              model = yield* projectEvent(
+                model,
+                event(sequence, "thread.session-set", {
+                  threadId,
+                  session: {
+                    threadId,
+                    status: running ? "running" : "ready",
+                    providerName: "claude",
+                    runtimeMode: "full-access",
+                    activeTurnId: running ? providerTurnId : null,
+                    lastError: null,
+                    updatedAt: now,
+                  },
+                }),
+              );
+            }
+
+            const revert = decideOrchestrationCommand({
+              command: {
+                type: "thread.checkpoint.revert",
+                commandId: CommandId.make(`shared-turn-revert-${caseIndex}-${sequence}`),
+                threadId: ThreadId.make(threadId),
+                turnCount: 0,
+                createdAt: now,
+              },
+              readModel: model,
+            }).pipe(Effect.provide(NodeServices.layer));
+            if (stepIndex < order.length - 1) {
+              const error = yield* revert.pipe(Effect.flip);
+              expect(error._tag).toBe("OrchestrationCommandInvariantError");
+            } else {
+              const result = yield* revert;
+              const events = Array.isArray(result) ? result : [result];
+              expect(events[0]?.type).toBe("thread.checkpoint-revert-requested");
+            }
+          }
+
+          expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
+          expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
+          expect(model.threads[0]?.turnStartSubmissionRendezvous).toBeNull();
+        }
+      }),
+  );
+
+  effectIt.effect("keeps queued messages reserved when one of consecutive reverts fails", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T00:00:00.000Z";
+      const threadId = "thread-consecutive-revert-failure";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `consecutive-revert-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Consecutive revert failure",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const sequence of [2, 3]) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.checkpoint-revert-requested", {
+            threadId,
+            turnCount: 0,
+            createdAt: now,
+          }),
+        );
+      }
+      for (const [index, messageId] of ["queued-1", "queued-2"].entries()) {
+        model = yield* projectEvent(
+          model,
+          event(index + 4, "thread.turn-start-requested", {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "revert-failed-1",
+            kind: "checkpoint.revert.failed",
+            summary: "Checkpoint revert failed",
+            tone: "error",
+            turnId: null,
+            createdAt: now,
+            payload: { detail: "first revert failed" },
+          },
+        }),
+      );
+
+      expect(model.threads[0]?.pendingCheckpointRevertCount).toBe(1);
+      expect(model.threads[0]?.pendingCheckpointRevertMessageIds).toEqual(["queued-1", "queued-2"]);
+    }),
   );
 
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {

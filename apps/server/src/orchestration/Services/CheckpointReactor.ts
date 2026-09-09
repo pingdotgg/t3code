@@ -30,6 +30,9 @@ export interface CheckpointReactorShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /** Wait until checkpoint side effects have processed through a domain event sequence. */
+  readonly awaitDomainSequence: (sequence: number) => Effect.Effect<void>;
 }
 
 /**

@@ -653,6 +653,42 @@ export const OrchestrationThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // The accepted user message waiting for a provider turn to adopt it. Kept
+  // explicitly so command admission and revert completion never infer queue
+  // order from clocks on remote clients.
+  pendingTurnStartMessageId: Schema.optional(Schema.NullOr(MessageId)),
+  // Provider-accepted starts that have not yet been matched to a running
+  // lifecycle event. Revert admission keeps these starts quiescent even when
+  // overlapping session events clear the single UI-facing pending identity.
+  submittedTurnStarts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        messageId: MessageId,
+        turnId: TurnId,
+      }),
+    ),
+  ),
+  // Request-scoped rendezvous for provider lifecycles that can race their
+  // durable submission acknowledgement. Legacy event history never enrolls,
+  // so replay cannot accumulate old turn ids in this pending-only state.
+  turnStartSubmissionRendezvous: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        requests: Schema.Array(
+          Schema.Struct({
+            messageId: MessageId,
+            observedTurnIds: Schema.Array(TurnId),
+          }),
+        ),
+      }),
+    ),
+  ),
+  // User messages accepted after a checkpoint revert begins. The server uses
+  // this pending-only list to preserve every queued start when the revert lands.
+  pendingCheckpointRevertMessageIds: Schema.optional(Schema.NullOr(Schema.Array(MessageId))),
+  // Number of checkpoint reverts still in flight for this thread. Consecutive
+  // requests share the preservation list until their final completion lands.
+  pendingCheckpointRevertCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -1329,6 +1365,14 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnStartAcknowledgeCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.start.acknowledge"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  turnId: TurnId,
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1364,6 +1408,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
+  ThreadTurnStartAcknowledgeCommand,
   ThreadTitleRegenerationCompleteCommand,
   ThreadPullRequestSyncCommand,
 ]);
@@ -1538,6 +1583,14 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   previousTitle: Schema.optional(TrimmedNonEmptyString),
   /** Pending state shared with clients. Null clears a matching request. */
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  /** Successful provider submission correlated to both the accepted message and provider turn.
+      Carried on the existing metadata event for compatibility with older clients. */
+  turnStartAcknowledged: Schema.optional(
+    Schema.Struct({
+      messageId: MessageId,
+      turnId: TurnId,
+    }),
+  ),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1575,6 +1628,9 @@ export const ThreadMessageSentPayload = Schema.Struct({
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
+  // Optional for event compatibility. New starts opt into the correlated
+  // acknowledgement rendezvous; historical starts replay without it.
+  expectsTurnStartAcknowledgement: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
@@ -1615,6 +1671,7 @@ export const ThreadCheckpointRevertRequestedPayload = Schema.Struct({
 export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  preservedMessageIds: Schema.optional(Schema.Array(MessageId)),
 });
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({

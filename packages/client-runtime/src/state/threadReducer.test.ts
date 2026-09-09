@@ -10,7 +10,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationThread } from "@t3tools/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 
@@ -404,6 +404,480 @@ describe("applyThreadDetailEvent", () => {
         }
       },
     );
+  });
+
+  describe("pending turn start", () => {
+    it("tracks the accepted message until a provider turn adopts it", () => {
+      const messageId = MessageId.make("message-pending-turn-start");
+      const requested = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T04:55:00.000Z",
+        },
+      });
+      expect(requested.kind).toBe("updated");
+      if (requested.kind !== "updated") return;
+      expect(requested.thread.pendingTurnStartMessageId).toBe(messageId);
+
+      const adopted = applyThreadDetailEvent(requested.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: baseThread.id,
+          session: {
+            threadId: baseThread.id,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("turn-pending-turn-start"),
+            lastError: null,
+            updatedAt: "2026-04-01T05:00:01.000Z",
+          },
+        },
+      });
+      expect(adopted.kind).toBe("updated");
+      if (adopted.kind === "updated") {
+        expect(adopted.thread.pendingTurnStartMessageId).toBeNull();
+      }
+    });
+
+    it("does not let a stale terminal session clear a newer pending turn", () => {
+      const newerMessageId = MessageId.make("message-newer-pending-turn-start");
+      const pendingThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: newerMessageId,
+      };
+      const result = applyThreadDetailEvent(pendingThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: baseThread.id,
+          session: {
+            threadId: baseThread.id,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: "older request failed",
+            updatedAt: "2026-04-01T05:00:01.000Z",
+          },
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.pendingTurnStartMessageId).toBe(newerMessageId);
+      }
+    });
+
+    it("keeps acknowledged starts guarded until their provider turn is running", () => {
+      const newerMessageId = MessageId.make("message-newer-pending-turn-start");
+      const pendingThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: newerMessageId,
+      };
+      const acknowledge = (messageId: MessageId, thread = pendingThread) =>
+        applyThreadDetailEvent(thread, {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T05:00:01.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated" as const,
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: {
+              messageId,
+              turnId: TurnId.make("turn-provider-acknowledged"),
+            },
+            updatedAt: thread.updatedAt,
+          },
+        });
+
+      const stale = acknowledge(MessageId.make("message-older-pending-turn-start"));
+      expect(stale.kind).toBe("updated");
+      if (stale.kind === "updated") {
+        expect(stale.thread.pendingTurnStartMessageId).toBe(newerMessageId);
+      }
+
+      const current = acknowledge(newerMessageId);
+      expect(current.kind).toBe("updated");
+      if (current.kind === "updated") {
+        expect(current.thread.pendingTurnStartMessageId).toBe(newerMessageId);
+        expect(current.thread.submittedTurnStarts).toEqual([
+          {
+            messageId: newerMessageId,
+            turnId: TurnId.make("turn-provider-acknowledged"),
+          },
+        ]);
+      }
+
+      const running = acknowledge(newerMessageId, {
+        ...pendingThread,
+        session: {
+          threadId: pendingThread.id,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-provider-acknowledged"),
+          lastError: null,
+          updatedAt: pendingThread.updatedAt,
+        },
+      });
+      expect(running.kind).toBe("updated");
+      if (running.kind === "updated") {
+        expect(running.thread.pendingTurnStartMessageId).toBeNull();
+        expect(running.thread.submittedTurnStarts).toEqual([]);
+      }
+    });
+
+    it("does not re-guard a turn acknowledged after its lifecycle was observed", () => {
+      const requestA = MessageId.make("message-late-ack-a");
+      const turnA = TurnId.make("turn-late-ack-a");
+      const turnB = TurnId.make("turn-late-ack-b");
+      const withEvent = (thread: typeof baseThread, event: OrchestrationEvent) => {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        return result.kind === "updated" ? result.thread : thread;
+      };
+      let thread = withEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId: requestA,
+          expectsTurnStartAcknowledgement: true,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T05:00:01.000Z",
+        },
+      });
+      for (const [sequence, status, activeTurnId] of [
+        [7, "running", turnA],
+        [8, "ready", null],
+        [9, "running", turnB],
+      ] as const) {
+        thread = withEvent(thread, {
+          ...baseEventFields,
+          sequence,
+          occurredAt: `2026-04-01T05:00:0${sequence - 5}.000Z`,
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId,
+              lastError: null,
+              updatedAt: `2026-04-01T05:00:0${sequence - 5}.000Z`,
+            },
+          },
+        });
+      }
+      thread = withEvent(thread, {
+        ...baseEventFields,
+        sequence: 10,
+        occurredAt: "2026-04-01T05:00:05.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: baseThread.id,
+          turnStartAcknowledged: { messageId: requestA, turnId: turnA },
+          updatedAt: thread.updatedAt,
+        },
+      });
+
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+      expect(thread.turnStartSubmissionRendezvous).toBeNull();
+    });
+
+    it("clears only the submitted start correlated to a provider failure", () => {
+      const messageA = MessageId.make("message-submitted-failure-a");
+      const messageB = MessageId.make("message-submitted-failure-b");
+      const result = applyThreadDetailEvent(
+        {
+          ...baseThread,
+          submittedTurnStarts: [
+            { messageId: messageA, turnId: TurnId.make("turn-submitted-failure-a") },
+            { messageId: messageB, turnId: TurnId.make("turn-submitted-failure-b") },
+          ],
+        },
+        {
+          ...baseEventFields,
+          sequence: 11,
+          occurredAt: "2026-04-01T05:15:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.activity-appended",
+          payload: {
+            threadId: baseThread.id,
+            activity: {
+              id: EventId.make("activity-submitted-failure-a"),
+              tone: "error",
+              kind: "provider.turn.start.failed",
+              summary: "Provider turn start failed",
+              payload: { requestId: messageA },
+              turnId: TurnId.make("turn-submitted-failure-a"),
+              createdAt: "2026-04-01T05:15:00.000Z",
+            },
+          },
+        },
+      );
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.submittedTurnStarts).toEqual([
+          { messageId: messageB, turnId: TurnId.make("turn-submitted-failure-b") },
+        ]);
+      }
+    });
+
+    it("recognizes a reused running turn when its steering acknowledgement is late", () => {
+      const turnId = TurnId.make("turn-steering-late-ack");
+      const messageId = MessageId.make("message-steering-late-ack");
+      let thread: OrchestrationThread = {
+        ...baseThread,
+        session: {
+          threadId: baseThread.id,
+          status: "running",
+          providerName: "claude",
+          runtimeMode: "full-access",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: "2026-04-01T05:30:00.000Z",
+        },
+      };
+      for (const event of [
+        {
+          ...baseEventFields,
+          sequence: 6,
+          occurredAt: "2026-04-01T05:30:01.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.turn-start-requested" as const,
+          payload: {
+            threadId: baseThread.id,
+            messageId,
+            expectsTurnStartAcknowledgement: true as const,
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            createdAt: "2026-04-01T05:30:01.000Z",
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 7,
+          occurredAt: "2026-04-01T05:30:02.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.session-set" as const,
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "ready" as const,
+              providerName: "claude",
+              runtimeMode: "full-access" as const,
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-04-01T05:30:02.000Z",
+            },
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 8,
+          occurredAt: "2026-04-01T05:30:03.000Z",
+          aggregateKind: "thread" as const,
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated" as const,
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId, turnId },
+            updatedAt: "2026-04-01T05:30:00.000Z",
+          },
+        },
+      ]) {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") thread = result.thread;
+      }
+
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+      expect(thread.turnStartSubmissionRendezvous).toBeNull();
+    });
+
+    it("does not enroll legacy turn history in submission rendezvous state", () => {
+      const requested = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId: MessageId.make("legacy-message"),
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T05:00:01.000Z",
+        },
+      });
+      expect(requested.kind).toBe("updated");
+      if (requested.kind !== "updated") return;
+      const running = applyThreadDetailEvent(requested.thread, {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: "2026-04-01T05:00:02.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: baseThread.id,
+          session: {
+            threadId: baseThread.id,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("legacy-turn"),
+            lastError: null,
+            updatedAt: "2026-04-01T05:00:02.000Z",
+          },
+        },
+      });
+      expect(running.kind).toBe("updated");
+      if (running.kind === "updated") {
+        expect(running.thread.turnStartSubmissionRendezvous).toBeNull();
+      }
+    });
+
+    it("matches every acknowledgement when concurrent starts share a provider turn", () => {
+      const messageA = MessageId.make("message-shared-turn-a");
+      const messageB = MessageId.make("message-shared-turn-b");
+      const turnId = TurnId.make("turn-shared-provider");
+      let thread = baseThread;
+      const events: OrchestrationEvent[] = [
+        ...[messageA, messageB].map((messageId, index): OrchestrationEvent => ({
+          ...baseEventFields,
+          sequence: index + 6,
+          occurredAt: "2026-04-01T05:45:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.turn-start-requested",
+          payload: {
+            threadId: baseThread.id,
+            messageId,
+            expectsTurnStartAcknowledgement: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-04-01T05:45:00.000Z",
+          },
+        })),
+        {
+          ...baseEventFields,
+          sequence: 8,
+          occurredAt: "2026-04-01T05:45:01.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "running",
+              providerName: "claude",
+              runtimeMode: "full-access",
+              activeTurnId: turnId,
+              lastError: null,
+              updatedAt: "2026-04-01T05:45:01.000Z",
+            },
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 9,
+          occurredAt: "2026-04-01T05:45:02.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId: messageA, turnId },
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 10,
+          occurredAt: "2026-04-01T05:45:02.500Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.session-set",
+          payload: {
+            threadId: baseThread.id,
+            session: {
+              threadId: baseThread.id,
+              status: "ready",
+              providerName: "claude",
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-04-01T05:45:02.500Z",
+            },
+          },
+        },
+        {
+          ...baseEventFields,
+          sequence: 11,
+          occurredAt: "2026-04-01T05:45:03.000Z",
+          aggregateKind: "thread",
+          aggregateId: baseThread.id,
+          type: "thread.meta-updated",
+          payload: {
+            threadId: baseThread.id,
+            turnStartAcknowledged: { messageId: messageB, turnId },
+            updatedAt: baseThread.updatedAt,
+          },
+        },
+      ];
+      for (const event of events) {
+        const result = applyThreadDetailEvent(thread, event);
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") thread = result.thread;
+      }
+
+      expect(thread.pendingTurnStartMessageId).toBeNull();
+      expect(thread.submittedTurnStarts).toEqual([]);
+      expect(thread.turnStartSubmissionRendezvous).toBeNull();
+    });
   });
 
   describe("thread.message-sent", () => {
@@ -1316,6 +1790,52 @@ describe("applyThreadDetailEvent", () => {
           "Imported prompt",
           "Imported answer",
         ]);
+      }
+    });
+
+    it("keeps a user message accepted after the revert was requested", () => {
+      const pendingMessageId = MessageId.make("message-accepted-during-revert");
+      const threadWithPendingMessage: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("reverted-user-message"),
+            role: "user",
+            text: "Discard this turn",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt: "2026-04-01T01:00:00.000Z",
+          },
+          {
+            id: pendingMessageId,
+            role: "user",
+            text: "Continue after revert",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T02:00:00.000Z",
+            updatedAt: "2026-04-01T02:00:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithPendingMessage, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T02:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          preservedMessageIds: [pendingMessageId],
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual([pendingMessageId]);
       }
     });
 

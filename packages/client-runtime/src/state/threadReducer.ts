@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import * as Predicate from "effect/Predicate";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -45,6 +46,28 @@ const activityIdIndex = new WeakMap<
   ReadonlyArray<OrchestrationThreadActivity>,
   Set<OrchestrationThreadActivity["id"]>
 >();
+
+function turnStartRequestIdClearedByActivity(activity: OrchestrationThreadActivity): string | null {
+  if (
+    (activity.kind !== "context-compaction" &&
+      activity.kind !== "provider.turn.start.failed" &&
+      activity.kind !== "provider.auth.signed-out") ||
+    !Predicate.isObject(activity.payload)
+  ) {
+    return null;
+  }
+  return typeof activity.payload.requestId === "string" ? activity.payload.requestId : null;
+}
+
+function activityClearsPendingTurnStart(
+  thread: OrchestrationThread,
+  activity: OrchestrationThreadActivity,
+): boolean {
+  return (
+    thread.pendingTurnStartMessageId != null &&
+    turnStartRequestIdClearedByActivity(activity) === thread.pendingTurnStartMessageId
+  );
+}
 
 /**
  * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
@@ -224,7 +247,28 @@ export function applyThreadDetailEvent(
       };
 
     // ── Thread metadata ─────────────────────────────────────────────
-    case "thread.meta-updated":
+    case "thread.meta-updated": {
+      const acknowledgement = event.payload.turnStartAcknowledged;
+      const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+      const acknowledgedRequest =
+        acknowledgement === undefined
+          ? undefined
+          : rendezvous?.requests.find((request) => request.messageId === acknowledgement.messageId);
+      const acknowledgedTurnAlreadyRunning =
+        acknowledgement !== undefined &&
+        thread.session?.status === "running" &&
+        thread.session.activeTurnId === acknowledgement.turnId;
+      const acknowledgedTurnAlreadyObserved =
+        acknowledgement !== undefined &&
+        (acknowledgedRequest?.observedTurnIds ?? []).includes(acknowledgement.turnId);
+      const acknowledgementAlreadyAdopted =
+        acknowledgedTurnAlreadyRunning || acknowledgedTurnAlreadyObserved;
+      const remainingRequests =
+        acknowledgement === undefined
+          ? (rendezvous?.requests ?? [])
+          : (rendezvous?.requests ?? []).filter(
+              (request) => request.messageId !== acknowledgement.messageId,
+            );
       return {
         kind: "updated",
         thread: {
@@ -249,9 +293,35 @@ export function applyThreadDetailEvent(
           ...(event.payload.activeOrderKey !== undefined
             ? { activeOrderKey: event.payload.activeOrderKey }
             : {}),
+          ...(acknowledgement !== undefined
+            ? {
+                pendingTurnStartMessageId:
+                  acknowledgement.messageId === thread.pendingTurnStartMessageId &&
+                  acknowledgementAlreadyAdopted
+                    ? null
+                    : (thread.pendingTurnStartMessageId ?? null),
+                submittedTurnStarts: acknowledgementAlreadyAdopted
+                  ? (thread.submittedTurnStarts ?? []).filter(
+                      (entry) => entry.turnId !== acknowledgement.turnId,
+                    )
+                  : [
+                      ...(thread.submittedTurnStarts ?? []).filter(
+                        (entry) => entry.messageId !== acknowledgement.messageId,
+                      ),
+                      acknowledgement,
+                    ],
+                turnStartSubmissionRendezvous:
+                  remainingRequests.length === 0
+                    ? null
+                    : {
+                        requests: remainingRequests,
+                      },
+              }
+            : {}),
           updatedAt: event.payload.updatedAt,
         },
       };
+    }
 
     case "thread.runtime-mode-set":
       return {
@@ -274,7 +344,9 @@ export function applyThreadDetailEvent(
       };
 
     // ── Turn lifecycle ──────────────────────────────────────────────
-    case "thread.turn-start-requested":
+    case "thread.turn-start-requested": {
+      const activeTurnId =
+        thread.session?.status === "running" ? thread.session.activeTurnId : null;
       return {
         kind: "updated",
         thread: {
@@ -284,9 +356,26 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          pendingTurnStartMessageId: event.payload.messageId,
+          ...(event.payload.expectsTurnStartAcknowledgement === true
+            ? {
+                turnStartSubmissionRendezvous: {
+                  requests: [
+                    ...(thread.turnStartSubmissionRendezvous?.requests ?? []).filter(
+                      (request) => request.messageId !== event.payload.messageId,
+                    ),
+                    {
+                      messageId: event.payload.messageId,
+                      observedTurnIds: activeTurnId === null ? [] : [activeTurnId],
+                    },
+                  ],
+                },
+              }
+            : {}),
           updatedAt: event.occurredAt,
         },
       };
+    }
 
     case "thread.turn-interrupt-requested": {
       if (event.payload.turnId === undefined) {
@@ -418,6 +507,9 @@ export function applyThreadDetailEvent(
       // Leaving the "running" session status is the turn-end signal: settle a
       // still-running latest turn so its duration reflects the whole turn.
       const settledTurnState = settledTurnStateForSessionStatus(event.payload.session.status);
+      const activeTurnId =
+        event.payload.session.status === "running" ? event.payload.session.activeTurnId : null;
+      const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
       const latestTurn = reuseLatestTurn(
         thread.latestTurn,
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
@@ -457,6 +549,27 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           session: event.payload.session,
+          pendingTurnStartMessageId:
+            event.payload.session.status === "running" &&
+            event.payload.session.activeTurnId !== null
+              ? null
+              : (thread.pendingTurnStartMessageId ?? null),
+          submittedTurnStarts:
+            activeTurnId !== null
+              ? (thread.submittedTurnStarts ?? []).filter((entry) => entry.turnId !== activeTurnId)
+              : (thread.submittedTurnStarts ?? []),
+          turnStartSubmissionRendezvous:
+            activeTurnId === null || rendezvous === null || rendezvous.requests.length === 0
+              ? rendezvous
+              : {
+                  requests: rendezvous.requests.map((request) => ({
+                    ...request,
+                    observedTurnIds: [
+                      ...request.observedTurnIds.filter((turnId) => turnId !== activeTurnId),
+                      activeTurnId,
+                    ],
+                  })),
+                },
           latestTurn,
           updatedAt: event.occurredAt,
         },
@@ -566,6 +679,7 @@ export function applyThreadDetailEvent(
         thread.messages,
         retainedTurnIds,
         event.payload.turnCount,
+        new Set(event.payload.preservedMessageIds ?? []),
       );
       const proposedPlans = pipe(
         thread.proposedPlans,
@@ -615,6 +729,29 @@ export function applyThreadDetailEvent(
       // thread.reverted that discards turns can still resolve a value from
       // the turns that survive.
       const supersedesContextWindow = isResolvableContextWindowActivity(activity);
+      const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, activity)
+        ? null
+        : (thread.pendingTurnStartMessageId ?? null);
+      const clearedRequestId = turnStartRequestIdClearedByActivity(activity);
+      const submittedTurnStarts =
+        clearedRequestId === null
+          ? (thread.submittedTurnStarts ?? [])
+          : (thread.submittedTurnStarts ?? []).filter(
+              (entry) => entry.messageId !== clearedRequestId,
+            );
+      const rendezvous = thread.turnStartSubmissionRendezvous ?? null;
+      const remainingRequests =
+        clearedRequestId === null
+          ? (rendezvous?.requests ?? [])
+          : (rendezvous?.requests ?? []).filter(
+              (request) => request.messageId !== clearedRequestId,
+            );
+      const turnStartSubmissionRendezvous =
+        rendezvous === null
+          ? null
+          : remainingRequests.length === 0
+            ? null
+            : { requests: remainingRequests };
       // Live streams append in order: an unseen id sorting at/after the tail
       // of a known-sorted array appends without re-filtering and re-sorting
       // the whole history on every event. The id set moves forward to the new
@@ -636,6 +773,9 @@ export function applyThreadDetailEvent(
           thread: {
             ...thread,
             activities,
+            pendingTurnStartMessageId,
+            submittedTurnStarts,
+            turnStartSubmissionRendezvous,
             updatedAt: event.occurredAt,
           },
         };
@@ -658,7 +798,14 @@ export function applyThreadDetailEvent(
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: {
+          ...thread,
+          activities,
+          pendingTurnStartMessageId,
+          submittedTurnStarts,
+          turnStartSubmissionRendezvous,
+          updatedAt: event.occurredAt,
+        },
       };
     }
 
@@ -760,8 +907,9 @@ function retainMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
+  preservedMessageIds: ReadonlySet<string>,
 ): OrchestrationMessage[] {
-  const retainedMessageIds = new Set<string>();
+  const retainedMessageIds = new Set(preservedMessageIds);
   for (const message of messages) {
     if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);

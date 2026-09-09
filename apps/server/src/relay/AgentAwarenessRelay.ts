@@ -79,6 +79,8 @@ export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boo
       // before the real running state arrives. Provider lifecycle events publish
       // the authoritative starting/running state instead.
       return false;
+    case "thread.meta-updated":
+      return event.payload.turnStartAcknowledged === undefined;
     case "thread.proposed-plan-upserted":
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":

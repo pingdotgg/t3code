@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -33,6 +34,7 @@ function makeReadModel(
     readonly snoozedUntil?: string | null;
     readonly snoozedAt?: string | null;
   } = {},
+  latestTurn: OrchestrationThread["latestTurn"] = null,
 ): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -47,7 +49,7 @@ function makeReadModel(
         interactionMode: "default",
         branch: null,
         worktreePath: null,
-        latestTurn: null,
+        latestTurn,
         createdAt: NOW,
         updatedAt: NOW,
         archivedAt,
@@ -79,6 +81,35 @@ function makeSession(status: OrchestrationSession["status"]): OrchestrationSessi
     updatedAt: NOW,
   };
 }
+
+const projectQueuedTurnStart = Effect.fn("projectQueuedTurnStart")(function* (
+  messageId: MessageId,
+  createdAt: string,
+) {
+  let readModel = makeReadModel(null);
+  const result = yield* decideOrchestrationCommand({
+    command: {
+      type: "thread.turn.start",
+      commandId: CommandId.make(`cmd-start-${messageId}`),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId,
+        role: "user",
+        text: "Continue",
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt,
+    },
+    readModel,
+  });
+  const events = Array.isArray(result) ? result : [result];
+  for (const [index, event] of events.entries()) {
+    readModel = yield* projectEvent(readModel, { ...event, sequence: index + 1 });
+  }
+  return readModel;
+});
 
 it.layer(NodeServices.layer)("settled thread decider", (it) => {
   it.effect("preserves the activity stamp when automatically settling", () =>
@@ -847,6 +878,150 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       expect(unconditionalEvents.map((event) => event.type)).toEqual([
         "thread.session-stop-requested",
       ]);
+    }),
+  );
+
+  it.effect("rejects checkpoint reverts while a turn is active or queued", () =>
+    Effect.gen(function* () {
+      for (const status of ["starting", "running"] as const) {
+        const error = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.checkpoint.revert",
+            commandId: CommandId.make(`cmd-revert-${status}`),
+            threadId: ThreadId.make("thread-1"),
+            turnCount: 0,
+            createdAt: NOW,
+          },
+          readModel: makeReadModel(null, null, makeSession(status)),
+        }).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "OrchestrationCommandInvariantError",
+          detail: "Interrupt the current turn before reverting checkpoints.",
+        });
+      }
+
+      const latestTurnError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-active-turn"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(
+          null,
+          null,
+          makeSession("ready"),
+          [],
+          [],
+          {},
+          {
+            turnId: TurnId.make("turn-1"),
+            state: "running",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+        ),
+      }).pipe(Effect.flip);
+      expect(latestTurnError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const pendingMessageId = MessageId.make("message-revert-queued");
+      const queuedReadModel = yield* projectQueuedTurnStart(
+        pendingMessageId,
+        "2025-12-31T23:55:00.000Z",
+      );
+      const queuedError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-queued-turn"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: NOW,
+        },
+        readModel: queuedReadModel,
+      }).pipe(Effect.flip);
+      expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const acknowledgement = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start.acknowledge",
+          commandId: CommandId.make("cmd-acknowledge-queued-turn"),
+          threadId: ThreadId.make("thread-1"),
+          messageId: pendingMessageId,
+          turnId: TurnId.make("turn-acknowledged-before-running"),
+        },
+        readModel: queuedReadModel,
+      });
+      let acknowledgedReadModel = yield* projectEvent(queuedReadModel, {
+        ...(Array.isArray(acknowledgement) ? acknowledgement[0]! : acknowledgement),
+        sequence: queuedReadModel.snapshotSequence + 1,
+      });
+      for (const [status, activeTurnId] of [
+        ["running", TurnId.make("turn-unrelated-running")],
+        ["ready", null],
+      ] as const) {
+        const sessionSet = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.make(`cmd-session-${status}-after-acknowledgement`),
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              ...makeSession(status),
+              activeTurnId,
+            },
+            createdAt: NOW,
+          },
+          readModel: acknowledgedReadModel,
+        });
+        for (const event of Array.isArray(sessionSet) ? sessionSet : [sessionSet]) {
+          acknowledgedReadModel = yield* projectEvent(acknowledgedReadModel, {
+            ...event,
+            sequence: acknowledgedReadModel.snapshotSequence + 1,
+          });
+        }
+      }
+      expect(acknowledgedReadModel.threads[0]?.pendingTurnStartMessageId).toBeNull();
+      expect(acknowledgedReadModel.threads[0]?.submittedTurnStarts).toEqual([
+        {
+          messageId: pendingMessageId,
+          turnId: TurnId.make("turn-acknowledged-before-running"),
+        },
+      ]);
+      const acknowledgedError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-acknowledged-before-running"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: NOW,
+        },
+        readModel: acknowledgedReadModel,
+      }).pipe(Effect.flip);
+      expect(acknowledgedError._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("preserves a pending turn start when its client clock is behind", () =>
+    Effect.gen(function* () {
+      const pendingMessageId = MessageId.make("message-revert-clock-skew");
+      const readModel = yield* projectQueuedTurnStart(pendingMessageId, "2025-12-31T23:55:00.000Z");
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.revert.complete",
+          commandId: CommandId.make("cmd-revert-complete-clock-skew"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: "2026-01-01T00:00:13.000Z",
+        },
+        readModel,
+      });
+
+      expect(result).toMatchObject({
+        type: "thread.reverted",
+        payload: { preservedMessageIds: [pendingMessageId] },
+      });
     }),
   );
 });

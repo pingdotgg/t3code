@@ -23,9 +23,10 @@ export const makeOrchestrationReactor = Effect.gen(function* () {
   const agentAwarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
 
   const start: OrchestrationReactorShape["start"] = Effect.fn("start")(function* () {
+    // Subscribe the checkpoint barrier before either provider path can emit work.
+    yield* checkpointReactor.start();
     yield* providerRuntimeIngestion.start();
     yield* providerCommandReactor.start();
-    yield* checkpointReactor.start();
     yield* threadDeletionReactor.start();
     yield* threadPullRequestReactor.start();
     yield* threadSettlementReactor.start();
