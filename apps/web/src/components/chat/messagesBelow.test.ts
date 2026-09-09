@@ -69,6 +69,32 @@ describe("countTimelineMessagesBelow", () => {
     ).toBe(4);
   });
 
+  it.each([undefined, NaN, Infinity, -Infinity])(
+    "falls back to the next row for an invalid height: %s",
+    (height) => {
+      const unmeasured = {
+        ...state,
+        positionAtIndex: (index: number) => 200 + index * 100,
+        sizeAtIndex: () => height,
+      };
+      expect(countTimelineMessagesBelow([0], unmeasured, 150)).toBe(1);
+      expect(countTimelineMessagesBelow([0], { ...unmeasured, scroll: 100 }, 150)).toBe(0);
+    },
+  );
+
+  it.each([undefined, NaN, Infinity, -Infinity])(
+    "falls back to the row top when the next position is invalid: %s",
+    (nextPosition) => {
+      const unmeasured = {
+        ...state,
+        positionAtIndex: (index: number) => (index === 0 ? 300 : nextPosition),
+        sizeAtIndex: () => NaN,
+      };
+      expect(countTimelineMessagesBelow([0], unmeasured, 150)).toBe(1);
+      expect(countTimelineMessagesBelow([0], { ...unmeasured, scroll: 100 }, 150)).toBe(0);
+    },
+  );
+
   it("uses logarithmic cached position reads for long histories", () => {
     const indices = Array.from({ length: 10_000 }, (_, index) => index);
     const positionAtIndex = vi.fn(state.positionAtIndex);

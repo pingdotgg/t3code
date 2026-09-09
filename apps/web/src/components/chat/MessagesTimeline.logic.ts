@@ -191,8 +191,13 @@ export function countTimelineMessagesBelow(
     // Offscreen rows can have an estimated position without a measured size.
     // Their top alone is sufficient when the whole row is below the viewport.
     const height = state.sizeAtIndex?.(rowIndex);
-    const bottom =
-      height !== undefined ? top + height : (state.positionAtIndex?.(rowIndex + 1) ?? top);
+    let bottom = top;
+    if (height !== undefined && Number.isFinite(height)) {
+      bottom = top + height;
+    } else {
+      const nextTop = state.positionAtIndex?.(rowIndex + 1);
+      if (nextTop !== undefined && Number.isFinite(nextTop)) bottom = nextTop;
+    }
     if (top > visibleBottom + 1 || bottom > visibleBottom + 1) {
       high = middle;
     } else {
