@@ -12,24 +12,42 @@ client can produce reassuring timings while missing the active transport path.
 
 The v2 checks pin these invariants:
 
-- Client cold opens use a recent timeline window capped at 75 rows and about 1 MiB of encoded
-  timeline data.
+- Client cold opens target 75 recent timeline rows and about 1 MiB of encoded data. Required
+  control records and the at-least-one-row rule can exceed the byte target; it is not a hard cap.
 - The bounded snapshot does not retain the full duplicate conversation-message table.
 - Older activity is fetched in bounded HTTP pages and merged without disturbing the live scroll
   window.
-- Resume catch-up replays at most 128 thread events and 1 MiB of projected event JSON before
-  replacing stale state with a current snapshot.
-- Oversized dynamic-tool results and detail strings are reduced only at the wire boundary; the
-  persisted event remains complete.
+- Clients with confirmed history paging opt into socket snapshot fallbacks that use the same
+  bounded recent-history window and carry the cursor needed to fetch older history. Older clients
+  and WebSocket-only starts retain the compatible full-snapshot fallback.
+- Snapshot queries bound timeline reads per fork ancestor, not total rows: dependency and
+  control records still accompany the window. Smaller socket frames alone do not establish a
+  whole-server memory reduction.
+- Resume catch-up checks the original 1 MiB persisted-payload budget before decoding, then
+  replays at most 128 thread events and 1 MiB of projected event JSON before falling back to a
+  snapshot. Raw JSON bytes are not a heap-memory cap. Raising this budget merely because output
+  projects small can increase server allocations on repeated large tool updates.
+- Raw command output, dynamic-tool result bodies, and inline file-change bodies are omitted at
+  the wire boundary, including small outputs. Explicit failure flags and bounded result IDs
+  preserve status and grouped action counts without shipping those bodies. Persisted events
+  remain complete; the existing diff endpoints still provide file content when requested.
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
   and thread snapshot.
-- Known idle sends and interrupts do not fetch a full thread projection before dispatch.
+- Auto, steer, and restart sends resolve delivery from authoritative state inside the
+  server's per-thread dispatch lock. Model selection and identified-checkpoint rollback also
+  dispatch without first fetching a full thread projection when the server advertises support.
+  Older servers retain projection-based validation. Explicit start sends already skipped that
+  read, so this saving does not apply to every client send path.
 
 When changing projection schemas, paging, shell synchronization, or thread state, run this command
-alongside the focused package typechecks and a real-client pass on every affected surface. Payload
-budgets belong in these tests rather than logs or one-off recordings so regressions fail locally.
+alongside the focused package typechecks and a real-client pass on every affected surface. The
+transport performance fixtures validate contract encoding and compare pre-compression RPC JSON
+for the same synthetic workload, preserving historical application-object counts separately.
+These are neither compressed WebSocket captures nor measurements of server RSS, and command
+fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
+these tests so regressions fail locally.
 
 ## Event store and startup
 

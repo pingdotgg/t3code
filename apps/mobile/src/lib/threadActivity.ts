@@ -7,6 +7,8 @@ import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/tu
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  contextCompactionLabel,
+  toolItemForDisplay,
   workEntryDisplayIndicatesToolFailure,
   liveActivityToolStatus,
   toolGroupAction,
@@ -433,6 +435,7 @@ function itemSummary(
   toolPresentation: T3McpToolPresentation | null = null,
 ): string {
   if (item.type === "system_notice") return item.message;
+  if (item.type === "compaction") return contextCompactionLabel(item);
   const title = item.title?.trim();
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
@@ -458,8 +461,6 @@ function itemSummary(
       return "Run interrupted";
     case "error":
       return "Provider error";
-    case "compaction":
-      return "Context compacted";
     case "handoff":
       return "Context handed off";
     case "fork":
@@ -553,7 +554,6 @@ function toWorkLogEntry(
         ...common,
         command: item.input,
         rawCommand: item.input,
-        ...(item.output ? { detail: item.output } : {}),
         toolTitle: title ?? "Command",
         toolData: item,
       };
@@ -561,7 +561,6 @@ function toWorkLogEntry(
       return {
         ...common,
         changedFiles: [item.fileName],
-        ...((item.diffStr ?? item.newStr) ? { detail: item.diffStr ?? item.newStr } : {}),
         toolTitle: title ?? "File change",
         toolData: item,
       };
@@ -615,7 +614,7 @@ function toFeedActivity(
         visibility: row.visibility,
         sourceThreadId: row.sourceThreadId,
         sourceItemId: row.sourceItemId,
-        item,
+        item: toolItemForDisplay(item),
       },
       null,
       2,
@@ -643,7 +642,7 @@ function toFeedActivity(
     logo: toolPresentation?.logo ?? null,
     toolLike: itemIsToolLike(item),
     prominent: itemIsProminent(item),
-    status: itemStatus(item),
+    status: workEntryDisplayIndicatesToolFailure(workEntry) ? "failure" : itemStatus(item),
     lifecycleStatus: itemLifecycleStatus(item),
     workEntry,
     projectedItem: row,
@@ -962,7 +961,14 @@ export function deriveThreadFeedPresentation(
   // carry it yet (or the latest call failed), the slot reads "Thinking".
   if (
     activeWorkStartedAt !== null &&
-    !result.some((row) => row.type === "work-toggle" && row.shimmer)
+    !result.some(
+      (row) =>
+        (row.type === "work-toggle" && row.shimmer) ||
+        (row.type === "activity-group" &&
+          isContextCompactionActivityGroup(row) &&
+          row.runId === activeRunId &&
+          row.activities[0]?.projectedItem.item.status === "running"),
+    )
   ) {
     result.push(thinkingRow(activeWorkStartedAt, activeRunId));
   }

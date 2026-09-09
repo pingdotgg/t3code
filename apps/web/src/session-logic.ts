@@ -13,6 +13,10 @@ import {
   type ToolActivitySource,
 } from "@t3tools/contracts";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import {
+  contextCompactionLabel,
+  workEntryIndicatesToolFailure,
+} from "@t3tools/client-runtime/work-log/presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import type {
   ThreadPendingApproval,
@@ -34,6 +38,10 @@ import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 
 export { formatDuration } from "@t3tools/shared/orchestrationTiming";
+export {
+  workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolFailure,
+} from "@t3tools/client-runtime/work-log/presentation";
 
 export type WorkLogToolLifecycleStatus =
   | "idle"
@@ -137,90 +145,6 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
     entry.command !== undefined ||
     entry.requestKind !== undefined
   );
-}
-
-/** Heuristic: providers often emit successful item status while error text lives in `detail` / `command`. */
-function toolDetailTextLooksLikeFailure(text: string): boolean {
-  const t = text.toLowerCase();
-  if (t.includes("file not found")) {
-    return true;
-  }
-  if (t.includes("no files found")) {
-    return true;
-  }
-  if (
-    t.includes("enoent") ||
-    t.includes("no such file or directory") ||
-    t.includes("no such file")
-  ) {
-    return true;
-  }
-  if (t.includes("cannot find path") && t.includes("because it does not exist")) {
-    return true;
-  }
-  if (t.includes("commandnotfoundexception")) {
-    return true;
-  }
-  if (t.includes("is not recognized as the name of a cmdlet")) {
-    return true;
-  }
-  if (t.includes("is not recognized") && t.includes("the term '")) {
-    return true;
-  }
-  if (t.includes("a parameter cannot be found that matches parameter name")) {
-    return true;
-  }
-  if (t.includes("command not found")) {
-    return true;
-  }
-  if (/<exited with exit code\s+[1-9]\d*\s*>/i.test(text)) {
-    return true;
-  }
-  if (/exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text)) {
-    return true;
-  }
-  if (/exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)) {
-    return true;
-  }
-  return false;
-}
-
-function workEntryIndicatesToolFailureFromOutput(
-  entry: WorkLogEntry,
-  includeCommand: boolean,
-): boolean {
-  if (entry.tone === "error") {
-    return true;
-  }
-  const ls = entry.toolLifecycleStatus;
-  if (ls === "failed" || ls === "declined") {
-    return true;
-  }
-  if (!workLogEntryIsToolLike(entry)) {
-    return false;
-  }
-  const parts: string[] = [];
-  if (entry.detail) {
-    parts.push(entry.detail);
-  }
-  if (includeCommand && entry.command) {
-    parts.push(entry.command);
-  }
-  const blob = parts.join("\n");
-  if (blob.length === 0) {
-    return false;
-  }
-  return toolDetailTextLooksLikeFailure(blob);
-}
-
-/** True when a tool failed, including providers that put error output in `command`. */
-export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, true);
-}
-
-/** True when the rendered result indicates failure. The command itself is user intent, not output. */
-export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, false);
 }
 
 /** Severe failures keep the red treatment ordinary tool failures lost: provider
@@ -482,7 +406,7 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "compaction":
       return {
         ...common,
-        label: item.status === "running" ? "Compacting context" : "Context compacted",
+        label: contextCompactionLabel(item),
         sourceActivityKind: "context-compaction",
         ...(item.summary ? { detail: item.summary } : {}),
       };
@@ -498,17 +422,14 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         label: title ?? "Ran command",
         command: item.input,
         rawCommand: item.input,
-        ...(item.output ? { detail: item.output } : {}),
         toolTitle: title ?? "Command",
         toolData: item,
       };
     case "file_change": {
-      const detail = item.diffStr ?? item.newStr;
       return {
         ...common,
         label: title ?? `Changed ${item.fileName}`,
         changedFiles: [item.fileName],
-        ...(detail ? { detail } : {}),
         toolTitle: title ?? "File change",
         toolData: item,
       };

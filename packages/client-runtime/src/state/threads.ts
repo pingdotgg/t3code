@@ -92,10 +92,11 @@ function snapshotToPersist(
   snapshotSequence: number,
   projection: OrchestrationV2ThreadProjection,
   history: ThreadHistoryMeta,
+  acceptsBoundedSnapshots: boolean,
 ): OrchestrationV2ThreadDetailSnapshot {
-  // Persist progressive meta with the bounded window so warm resume restores the
-  // history cursor instead of looking like a complete full-projection cache hit.
-  if (history.hasMoreHistory || history.historyCursor !== null) {
+  // A complete bounded snapshot still proves paging support. Retain that evidence
+  // so a thread that grows while closed can resume with a bounded fallback.
+  if (acceptsBoundedSnapshots || history.hasMoreHistory || history.historyCursor !== null) {
     return {
       snapshotSequence,
       projection,
@@ -125,6 +126,7 @@ interface ThreadResumeSnapshot {
   readonly state: EnvironmentThreadState;
   readonly sequence: number;
   readonly persisted: boolean;
+  readonly acceptsBoundedSnapshots?: boolean;
 }
 
 interface ThreadResumeCache {
@@ -210,6 +212,22 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }),
       };
   const state = yield* SubscriptionRef.make(initialState);
+  // A bounded socket fallback is safe only after this client has evidence that
+  // the thread's older history can be fetched over HTTP. Without that evidence
+  // (notably in WebSocket-only mode), request the legacy full snapshot.
+  const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
+  const initiallyAcceptsBoundedSnapshots =
+    canLoadHistory &&
+    ((Option.isSome(cached) &&
+      (cached.value.historyCursor !== undefined ||
+        cached.value.hasMoreHistory !== undefined ||
+        cached.value.latestLocalTurnOrdinal !== undefined)) ||
+      (retained !== undefined &&
+        (retained.acceptsBoundedSnapshots === true ||
+          retained.state.history.historyCursor !== null ||
+          retained.state.history.hasMoreHistory ||
+          retained.state.history.latestLocalTurnOrdinal !== null)));
+  const acceptsBoundedSocketSnapshots = yield* Ref.make(initiallyAcceptsBoundedSnapshots);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
   const initialSequence =
@@ -220,6 +238,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     state: initialState,
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
+    acceptsBoundedSnapshots: initiallyAcceptsBoundedSnapshots,
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
@@ -232,6 +251,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     committed = {
       state: current,
       sequence,
+      acceptsBoundedSnapshots: yield* Ref.get(acceptsBoundedSocketSnapshots),
       persisted:
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
@@ -366,7 +386,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // streaming path. Progressive meta rides along when the window is incomplete.
     if (shouldPersistThread(thread, next.history)) {
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
-      yield* Queue.offer(persistence, snapshotToPersist(snapshotSequence, thread, next.history));
+      yield* Queue.offer(
+        persistence,
+        snapshotToPersist(
+          snapshotSequence,
+          thread,
+          next.history,
+          yield* Ref.get(acceptsBoundedSocketSnapshots),
+        ),
+      );
     }
   });
 
@@ -414,10 +442,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
-      // True socket/full snapshots replace the full timeline; progressive cursor
-      // state from a prior bounded window must not stick around. Bounded HTTP
-      // installs call setThread with explicit history and never route here.
-      yield* setThread(item.projection, { resetHistory: true });
+      const hasProgressiveHistory =
+        item.historyCursor !== undefined ||
+        item.hasMoreHistory !== undefined ||
+        item.latestLocalTurnOrdinal !== undefined;
+      // Bounded socket fallbacks carry their cursor. Legacy-compatible full
+      // snapshots omit these fields and still replace progressive state.
+      yield* setThread(
+        item.projection,
+        hasProgressiveHistory
+          ? {
+              history: {
+                historyCursor: item.historyCursor ?? null,
+                hasMoreHistory: item.hasMoreHistory ?? false,
+                loading: false,
+                error: null,
+                expanded: false,
+                latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null,
+              },
+            }
+          : { resetHistory: true },
+      );
       return;
     }
 
@@ -502,7 +547,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       const snapshotSequence = yield* SubscriptionRef.get(lastSequence);
       yield* Queue.offer(
         persistence,
-        snapshotToPersist(snapshotSequence, result.projection, result.history),
+        snapshotToPersist(
+          snapshotSequence,
+          result.projection,
+          result.history,
+          yield* Ref.get(acceptsBoundedSocketSnapshots),
+        ),
       );
     }
   });
@@ -738,6 +788,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           );
           switch (httpResult._tag) {
             case "present": {
+              if (canLoadHistory && httpResult.history !== undefined) {
+                yield* Ref.set(acceptsBoundedSocketSnapshots, true);
+              }
               // Atomic projection + progressive meta so a settled bounded window
               // never persists as a complete full-timeline cache entry. Socket
               // snapshots still go through applyItem (resetHistory).
@@ -777,6 +830,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
         const canResume = Option.isSome(current.data);
+        const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
         if (!supportsCompletionMarker && canResume) {
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
@@ -789,6 +843,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          ...(acceptBoundedSnapshot ? { acceptBoundedSnapshot: true as const } : {}),
         };
       }),
       {
@@ -807,7 +862,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onNone: () => Effect.void,
         onSome: (projection) =>
           shouldPersistThread(projection, current.history)
-            ? persist(snapshotToPersist(snapshotSequence, projection, current.history))
+            ? persist(
+                snapshotToPersist(
+                  snapshotSequence,
+                  projection,
+                  current.history,
+                  committed.acceptsBoundedSnapshots === true,
+                ),
+              )
             : Effect.void,
       });
     }),

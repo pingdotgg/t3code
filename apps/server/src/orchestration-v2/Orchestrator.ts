@@ -42,7 +42,7 @@ import * as Stream from "effect/Stream";
 
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
-import { CommandPolicyV2 } from "./CommandPolicy.ts";
+import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
@@ -1883,7 +1883,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.interaction-mode.set":
           return "thread.interaction-mode-updated" as const;
         case "thread.model-selection.set":
-          return "thread.model-selection-updated" as const;
+          return thread.providerInstanceId === command.modelSelection.instanceId
+            ? ("thread.model-selection-updated" as const)
+            : ("thread.provider-switched" as const);
         case "provider.switch":
           return "thread.provider-switched" as const;
       }
@@ -3080,7 +3082,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-      let dispatchMode = command.dispatchMode;
+      let dispatchMode = resolveMessageDispatchIntent(
+        projection,
+        command.dispatchMode,
+        command.deliveryIntent,
+      );
       if (dispatchMode.type === "steer_active") {
         const targetRunId = dispatchMode.targetRunId;
         const target = projection.runs.find((run) => run.id === targetRunId);
@@ -6410,6 +6416,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           commandType: command.type,
           cause: `Checkpoint ${command.checkpointId} was not found.`,
+        });
+      }
+      if (targetCheckpoint.status !== "ready") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Checkpoint ${command.checkpointId} is ${targetCheckpoint.status} and cannot be restored.`,
         });
       }
       const targetScope = projection.checkpointScopes.find(
