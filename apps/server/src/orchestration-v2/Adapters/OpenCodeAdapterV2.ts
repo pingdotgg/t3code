@@ -49,6 +49,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -869,6 +870,46 @@ function isMessageAbortedError(event: Extract<OpenCodeEvent, { type: "session.er
   return event.properties.error?.name === "MessageAbortedError";
 }
 
+function isOpenCodeNotFound(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  const queue: Array<unknown> = [cause];
+  for (let steps = 0; queue.length > 0 && steps < 32; steps += 1) {
+    const node = queue.shift();
+    if (node === null || typeof node !== "object" || seen.has(node)) {
+      continue;
+    }
+    seen.add(node);
+    const record = node as Record<string, unknown>;
+
+    const response = record.response;
+    const statuses = [
+      record.status,
+      record.statusCode,
+      response !== null && typeof response === "object"
+        ? (response as { readonly status?: unknown }).status
+        : undefined,
+    ].filter((status): status is number => typeof status === "number");
+    if (statuses.includes(404)) {
+      return true;
+    }
+    if (statuses.length > 0) {
+      continue;
+    }
+
+    const name = record.name;
+    if (typeof name === "string" && name.toLowerCase() === "notfounderror") {
+      return true;
+    }
+
+    for (const key of ["cause", "body", "error", "data"] as const) {
+      if (record[key] !== undefined) {
+        queue.push(record[key]);
+      }
+    }
+  }
+  return false;
+}
+
 function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNullable<A> {
   if (result.data === undefined) {
     throw new OpenCodeRuntimeError({
@@ -989,6 +1030,51 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               }),
             ),
           );
+
+        const abortDescendants = (rootId: string) =>
+          Effect.gen(function* () {
+            const visited = new Set([rootId]);
+            const semaphore = Semaphore.makeUnsafe(8);
+            const visit = (
+              sessionId: string,
+              abort: boolean,
+            ): Effect.Effect<OpenCodeRuntimeError | undefined> =>
+              Effect.gen(function* () {
+                const abortResult = abort
+                  ? yield* sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+                      client.session.abort({ sessionID: sessionId }, { signal }),
+                    ).pipe(
+                      semaphore.withPermit,
+                      Effect.catchIf(isOpenCodeNotFound, () => Effect.void),
+                      Effect.result,
+                    )
+                  : undefined;
+                const childrenResult = yield* sdkCall(
+                  "session.children",
+                  { sessionID: sessionId },
+                  (signal) => client.session.children({ sessionID: sessionId }, { signal }),
+                ).pipe(
+                  semaphore.withPermit,
+                  Effect.catchIf(isOpenCodeNotFound, () => Effect.void),
+                  Effect.result,
+                );
+                const firstFailure =
+                  abortResult?._tag === "Failure" ? abortResult.failure : undefined;
+                if (childrenResult._tag === "Failure")
+                  return firstFailure ?? childrenResult.failure;
+                const fresh = (childrenResult.success?.data ?? []).filter((child) => {
+                  if (visited.has(child.id)) return false;
+                  visited.add(child.id);
+                  return true;
+                });
+                const failures = yield* Effect.forEach(fresh, (child) => visit(child.id, true), {
+                  concurrency: 8,
+                });
+                return firstFailure ?? failures.find((failure) => failure !== undefined);
+              });
+            const failure = yield* visit(rootId, false);
+            if (failure) return yield* Effect.fail(failure);
+          }).pipe(Effect.timeout("15 seconds"));
 
         const updateProviderSession = (
           status: OrchestrationV2ProviderSession["status"],
@@ -3112,8 +3198,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   Effect.ignore,
                 );
               }
-              yield* sdkCall("session.abort", { sessionID: sessionId }, () =>
-                client.session.abort({ sessionID: sessionId }),
+              yield* sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+                client.session.abort({ sessionID: sessionId }, { signal }),
               ).pipe(
                 Effect.timeout("10 seconds"),
                 // The turn can settle while the abort is in flight, and
@@ -3129,36 +3215,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                       }),
                 ),
               );
-              // Child agents run in their own sessions and outlive a root
-              // abort (#9005). Best-effort: walk session.children and abort
-              // each descendant; the root abort above already settled the
-              // interrupt contract.
-              yield* Effect.gen(function* () {
-                const visited = new Set([sessionId]);
-                const abortDescendants = (parentId: string): Effect.Effect<void> =>
-                  Effect.gen(function* () {
-                    const children = yield* sdkCall(
-                      "session.children",
-                      { sessionID: parentId },
-                      () => client.session.children({ sessionID: parentId }),
-                    ).pipe(Effect.option);
-                    const rows = Option.isSome(children) ? (children.value.data ?? []) : [];
-                    const fresh = rows.filter((child) => {
-                      if (visited.has(child.id)) return false;
-                      visited.add(child.id);
-                      return true;
-                    });
-                    yield* Effect.forEach(
-                      fresh,
-                      (child) =>
-                        sdkCall("session.abort", { sessionID: child.id }, () =>
-                          client.session.abort({ sessionID: child.id }),
-                        ).pipe(Effect.ignore, Effect.andThen(abortDescendants(child.id))),
-                      { concurrency: 8, discard: true },
-                    );
-                  });
-                yield* abortDescendants(sessionId);
-              }).pipe(Effect.timeout("15 seconds"), Effect.ignore);
+              // Root abort does not stop child sessions. Report incomplete cleanup
+              // even if the root has already emitted its terminal event.
+              yield* abortDescendants(sessionId);
             }).pipe(
               Effect.mapError(
                 (cause) =>
