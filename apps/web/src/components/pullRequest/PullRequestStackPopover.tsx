@@ -5,36 +5,42 @@ import { useState } from "react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } from "../ui/menu";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
+import { PullRequestStackHeader } from "./PullRequestStackHeader";
 
 /** Mounted only while the menu is open, so list rows do not each fetch a stack. */
 function StackBody({
   environmentId,
   reference,
   onSelect,
+  stackNumber,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   onSelect: (reference: PullRequestRef) => void;
+  stackNumber: number;
 }) {
   const query = usePullRequestStack(environmentId, reference);
   if (query.data !== null) {
     return (
       <>
-        {query.notice ? (
-          <p role="status" className="px-2 py-1 text-xs text-muted-foreground">
-            {query.notice}
-          </p>
-        ) : null}
+        <PullRequestStackHeader
+          number={query.data.number}
+          notice={query.notice}
+          stale={!!query.error}
+        />
         {query.error ? <MenuItem onClick={query.refresh}>Retry stack refresh</MenuItem> : null}
         <PullRequestStackLayers stack={query.data} reference={reference} onSelect={onSelect} />
       </>
     );
   }
   return (
-    <MenuGroupLabel>
-      {query.error ??
-        (query.isPending ? "Loading stack…" : "This pull request is no longer in a stack.")}
-    </MenuGroupLabel>
+    <>
+      <PullRequestStackHeader number={stackNumber} />
+      <MenuGroupLabel>
+        {query.error ??
+          (query.isPending ? "Loading stack…" : "This pull request is no longer in a stack.")}
+      </MenuGroupLabel>
+    </>
   );
 }
 
@@ -84,11 +90,11 @@ export function PullRequestStackPopover({
         onKeyDown={(event) => event.stopPropagation()}
       >
         <MenuGroup>
-          <MenuGroupLabel>Stack #{membership.number}</MenuGroupLabel>
           {open ? (
             <StackBody
               environmentId={environmentId}
               reference={reference}
+              stackNumber={membership.number}
               onSelect={(target) => {
                 setOpen(false);
                 onSelect(target);
