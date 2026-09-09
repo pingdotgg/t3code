@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type {
   EnvironmentId,
   PullRequestRef,
@@ -118,17 +119,26 @@ export function PullRequestStackMenu({
   return (
     <>
       <Menu open={open} onOpenChange={setOpen}>
-        <MenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="xs"
-              aria-label={`Stack ${stack.number}, layer ${position} of ${stack.layers.length}`}
-            />
-          }
-        >
-          <LayersIcon aria-hidden className="size-3.5" /> {position}/{stack.layers.length}
-        </MenuTrigger>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    aria-label={`Stack ${stack.number}, layer ${position} of ${stack.layers.length}`}
+                  />
+                }
+              >
+                <LayersIcon aria-hidden className="size-3.5" /> {position}/{stack.layers.length}
+              </MenuTrigger>
+            }
+          />
+          <TooltipPopup>
+            View stack #{stack.number}, layer {position} of {stack.layers.length}
+          </TooltipPopup>
+        </Tooltip>
         <MenuPopup align="start" className="w-96 max-w-[calc(100vw-2rem)]">
           <MenuGroup>
             <MenuGroupLabel>Stack #{stack.number}</MenuGroupLabel>
@@ -174,15 +184,27 @@ export function PullRequestStackMenu({
         </MenuPopup>
       </Menu>
       {canMerge && selectedLayer?.state === "open" ? (
-        <Button
-          variant="ghost"
-          size="xs"
-          disabled={mergeDisabled}
-          onClick={() => setConfirmation("merge")}
-        >
-          <GitMergeIcon aria-hidden className="size-3.5" />
-          Merge stack
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={mergeDisabled}
+                  onClick={() => setConfirmation("merge")}
+                >
+                  <GitMergeIcon aria-hidden className="size-3.5" />
+                  Merge stack
+                </Button>
+              </span>
+            }
+          />
+          <TooltipPopup>
+            Merge stack through #{reference.number} into {stack.base} ({mergeLayers.length}{" "}
+            {mergeLayers.length === 1 ? "pull request" : "pull requests"})
+          </TooltipPopup>
+        </Tooltip>
       ) : null}
       <Dialog
         open={confirmation !== null}

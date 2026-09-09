@@ -1,3 +1,4 @@
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { CheckIcon, LinkIcon, MessageSquareIcon, UnlinkIcon } from "lucide-react";
@@ -100,16 +101,22 @@ function EnabledPullRequestThreadLinks({
   return (
     <>
       {display === "count" && (linkedThreads.length > 0 || relations.error !== null) ? (
-        <Button
-          size="xs"
-          variant="ghost"
-          aria-label={linkedThreadsLabel}
-          title={linkedThreadsLabel}
-          onClick={() => openCommandPalette({ query: url })}
-        >
-          <MessageSquareIcon aria-hidden className="size-3.5" />
-          <span aria-hidden>{linkedThreads.length || "?"}</span>
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="xs"
+                variant="ghost"
+                aria-label={linkedThreadsLabel}
+                onClick={() => openCommandPalette({ query: url })}
+              >
+                <MessageSquareIcon aria-hidden className="size-3.5" />
+                <span aria-hidden>{linkedThreads.length || "?"}</span>
+              </Button>
+            }
+          />
+          <TooltipPopup>{linkedThreadsLabel}. Search in the command palette.</TooltipPopup>
+        </Tooltip>
       ) : null}
       {display === "menu-item" ? (
         <MenuItem
