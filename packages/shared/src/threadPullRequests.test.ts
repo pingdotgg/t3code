@@ -374,7 +374,12 @@ describe("threadPullRequestSearchTerms", () => {
 });
 
 it("searches the legacy projection when old environments decode to an empty links list", () => {
-  const linkedPullRequest = legacyLinkedPullRequestOf([link(12)], ProjectId.make("project"));
+  const linkedPullRequest = {
+    projectId: ProjectId.make("project"),
+    repository: "pingdotgg/t3code",
+    number: 12,
+    url: "https://github.com/pingdotgg/t3code/pull/12",
+  };
   expect(threadPullRequestSearchTerms({ pullRequests: [], linkedPullRequest })).toContain("#12");
   expect(
     threadPullRequestSearchTerms({ pullRequests: [link(34)], linkedPullRequest }),
