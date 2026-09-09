@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "deploy": "node -- scripts/deploy.ts",
+    "push:android:smoke": "node scripts/android-push-smoke.ts",
+    "push:android:watch": "node scripts/android-push-watch.ts",
     "destroy": "alchemy destroy",
     "test": "vp test run",
     "typecheck": "tsc --noEmit"
