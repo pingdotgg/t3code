@@ -68,6 +68,60 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Logical commit plan
+// ---------------------------------------------------------------------------
+
+export interface CommitPlanPromptInput {
+  branch: string | null;
+  changeUnitSummary: string;
+  annotatedPatch: string;
+  policy?: TextGenerationPolicy | undefined;
+}
+
+export function buildCommitPlanPrompt(input: CommitPlanPromptInput) {
+  const prompt = [
+    "You split a staged working tree into logical git commits.",
+    "Return a JSON object with a commits array. Each commit has subject, body, and hunkIds.",
+    "Rules:",
+    "- use every ID from Available change units exactly once",
+    "- copy hunk IDs exactly; do not invent, omit, or duplicate IDs",
+    "- hunks from the same file may be assigned to different commits when they represent separate concerns",
+    "- keep implementation, tests, schemas, and supporting changes together when they form one concern",
+    "- separate independently reviewable and reversible concerns",
+    "- order prerequisite commits before commits that depend on them",
+    "- return one commit when the changes form one coherent concern",
+    "- subject must be imperative, <= 72 chars, and have no trailing period",
+    "- body can be an empty string or short bullet points",
+    ...policyInstruction(input.policy?.commitInstructions),
+    "",
+    `Branch: ${input.branch ?? "(detached)"}`,
+    "",
+    "Available change units:",
+    limitSection(input.changeUnitSummary, 20_000),
+    "",
+    "Detailed change units:",
+    limitSection(input.annotatedPatch, 40_000),
+  ].join("\n");
+
+  return {
+    prompt,
+    outputSchema: Schema.Struct({
+      commits: Schema.Array(
+        Schema.Struct({
+          subject: Schema.String,
+          body: Schema.String,
+          hunkIds: Schema.Array(Schema.String),
+        }),
+      ),
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Change request content
+// ---------------------------------------------------------------------------
+
 export interface PrContentPromptInput {
   baseBranch: string;
   headBranch: string;

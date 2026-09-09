@@ -279,6 +279,19 @@ function createTextGeneration(
         body: "",
         ...(input.includeBranch ? { branch: "feature/implement-stacked-git-actions" } : {}),
       }),
+    generateCommitPlan: (input) =>
+      Effect.succeed({
+        commits: [
+          {
+            subject: "Implement stacked git actions",
+            body: "",
+            hunkIds: input.changeUnitSummary
+              .split(/\r?\n/g)
+              .map((line) => line.split("\t").at(0)?.trim() ?? "")
+              .filter((hunkId) => hunkId.length > 0),
+          },
+        ],
+      }),
     generatePrContent: () =>
       Effect.succeed({
         title: "Add stacked git actions",
@@ -305,6 +318,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateCommitMessage",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateCommitPlan: (input) =>
+      implementation.generateCommitPlan(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateCommitPlan",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

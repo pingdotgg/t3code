@@ -29,11 +29,13 @@ import {
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildCommitPlanPrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "@t3tools/provider-core/server/textGenerationPrompts";
 import {
   sanitizeCommitSubject,
+  sanitizeCommitPlan,
   sanitizePrTitle,
   sanitizeThreadTitle,
   toJsonSchemaObject,
@@ -320,6 +322,16 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
         : {}),
     };
   });
+  const generateCommitPlan: ProviderTextGeneration["generateCommitPlan"] = Effect.fn(
+    "MuseTextGeneration.generateCommitPlan",
+  )(function* (input) {
+    const generated = yield* runMuseJson({
+      operation: "generateCommitPlan",
+      ...buildCommitPlanPrompt(input),
+      modelSelection: input.modelSelection,
+    });
+    return { commits: sanitizeCommitPlan(generated.commits) };
+  });
   const generatePrContent: ProviderTextGeneration["generatePrContent"] = Effect.fn(
     "MuseTextGeneration.generatePrContent",
   )(function* (input) {
@@ -363,6 +375,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
   return {
     generateCommitMessage,
+    generateCommitPlan,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,

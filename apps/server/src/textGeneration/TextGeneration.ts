@@ -26,6 +26,8 @@ export type {
   BranchNameGenerationInput,
   BranchNameGenerationResult,
   CommitMessageGenerationInput,
+  CommitPlanGenerationInput,
+  CommitPlanGenerationResult,
   CommitMessageGenerationResult,
   PrContentGenerationInput,
   PrContentGenerationResult,
@@ -135,6 +137,11 @@ export const make = Effect.gen(function* () {
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
       return generate("generateCommitMessage", input.modelSelection, (service, modelSelection) =>
         service.generateCommitMessage({ ...input, modelSelection }),
+      );
+    }),
+    generateCommitPlan: Effect.fn("TextGeneration.generateCommitPlan")(function (input) {
+      return generate("generateCommitPlan", input.modelSelection, (service, modelSelection) =>
+        service.generateCommitPlan({ ...input, modelSelection }),
       );
     }),
     generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function (input) {

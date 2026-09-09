@@ -26,6 +26,25 @@ export interface CommitMessageGenerationResult {
   branch?: string | undefined;
 }
 
+export interface CommitPlanGenerationInput {
+  cwd: string;
+  branch: string | null;
+  changeUnitSummary: string;
+  annotatedPatch: string;
+  /** Optional repository-specific instructions for generated commit text. */
+  policy?: TextGenerationPolicy | undefined;
+  /** What model and provider to use for generation. */
+  modelSelection: ModelSelection;
+}
+
+export interface CommitPlanGenerationResult {
+  commits: Array<{
+    subject: string;
+    body: string;
+    hunkIds: string[];
+  }>;
+}
+
 export interface PrContentGenerationInput {
   cwd: string;
   baseBranch: string;
@@ -115,6 +134,11 @@ export interface ProviderTextGeneration {
   readonly generateCommitMessage: (
     input: CommitMessageGenerationInput,
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
+
+  /** Partition staged changes into ordered, logical commits. */
+  readonly generateCommitPlan: (
+    input: CommitPlanGenerationInput,
+  ) => Effect.Effect<CommitPlanGenerationResult, TextGenerationError>;
 
   readonly generatePrContent: (
     input: PrContentGenerationInput,
