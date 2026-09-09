@@ -508,3 +508,45 @@ describe("filterPinnedBrowseEntries", () => {
     });
   });
 });
+
+it.each([
+  "#10839",
+  "10839",
+  "pingdotgg/t3code#10839",
+  "https://github.com/pingdotgg/t3code/pull/10839",
+])("finds linked threads from PR query %s", (query) => {
+  const items = buildThreadActionItems({
+    threads: [
+      makeThread({
+        title: "Implementation",
+        pullRequests: [
+          {
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 10839,
+            url: "https://github.com/pingdotgg/t3code/pull/10839",
+            source: "manual",
+            linkedAt: "2026-09-08T00:00:00Z",
+            snapshot: null,
+            stack: null,
+          },
+        ],
+      }),
+      makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
+    ],
+    projectTitleById: new Map(),
+    sortOrder: "updated_at",
+    icon: null,
+    runThread: async () => undefined,
+  });
+  const groups = filterCommandPaletteGroups({
+    activeGroups: [],
+    query,
+    isInSubmenu: false,
+    projectSearchItems: [],
+    threadSearchItems: items,
+  });
+  expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+    "Implementation",
+  ]);
+});

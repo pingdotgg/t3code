@@ -1,3 +1,4 @@
+import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
@@ -311,6 +312,9 @@ export function buildHomeThreadGroups(input: {
       : group.threads.filter(
           (thread) =>
             thread.title.toLocaleLowerCase().includes(query) ||
+            threadPullRequestSearchTerms(thread).some((term) =>
+              term.toLocaleLowerCase().includes(query),
+            ) ||
             input.matchedThreadKeys?.has(
               threadSearchMatchKey({
                 environmentId: thread.environmentId,
