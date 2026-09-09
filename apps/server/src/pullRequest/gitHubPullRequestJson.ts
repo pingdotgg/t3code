@@ -2445,3 +2445,69 @@ export function decodePullRequestFilesJson(
     omittedFileStats,
   });
 }
+
+/** One pull request as the stacks API lists it: a number, a head, and whether it is done. */
+const RawStackPullRequestSchema = Schema.Struct({
+  number: Schema.Int,
+  head: Schema.Struct({ ref: Schema.String }),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_at: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * A stack as `GET /repos/{owner}/{repo}/stacks` answers it, in a public preview whose shape may
+ * still move. Only what a stack is made of is required — where it lives, what it stands on, and
+ * its pull requests — and `base` is accepted both as the ref object the preview sends today and
+ * as the bare branch name it started out as.
+ */
+const RawStackSchema = Schema.Struct({
+  id: Schema.optional(Schema.NullOr(Schema.Union([Schema.Int, Schema.String]))),
+  number: Schema.Int,
+  node_id: Schema.optional(Schema.NullOr(Schema.String)),
+  url: Schema.String,
+  html_url: Schema.optional(Schema.NullOr(Schema.String)),
+  base: Schema.Union([Schema.String, Schema.Struct({ ref: Schema.String })]),
+  pull_requests: Schema.Array(RawStackPullRequestSchema),
+});
+
+const decodeStacks = decodeJsonResult(Schema.Array(RawStackSchema));
+
+export interface GitHubPullRequestStackLayer {
+  readonly number: number;
+  readonly headBranch: string;
+  readonly state: PullRequestState;
+}
+
+export interface GitHubPullRequestStack {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly base: string;
+  /** Bottom to top, which is the order GitHub lists them in. */
+  readonly layers: ReadonlyArray<GitHubPullRequestStackLayer>;
+}
+
+/**
+ * The first stack of a `?pull_request=` listing, or null for an empty one: a pull request is in
+ * at most one stack, so the array is GitHub's way of saying "none" rather than a page.
+ */
+export function decodePullRequestStacksJson(
+  raw: string,
+): Result.Result<GitHubPullRequestStack | null, DecodeFailure> {
+  const decoded = decodeStacks(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const stack = decoded.success[0];
+  if (stack === undefined) return Result.succeed(null);
+  return Result.succeed({
+    id: stack.id == null ? (trimmed(stack.node_id) ?? String(stack.number)) : String(stack.id),
+    number: stack.number,
+    // The page a person opens where the preview reports one; the API URL is what it always has.
+    url: trimmed(stack.html_url) ?? stack.url,
+    base: typeof stack.base === "string" ? stack.base : stack.base.ref,
+    layers: stack.pull_requests.map((pullRequest) => ({
+      number: pullRequest.number,
+      headBranch: pullRequest.head.ref,
+      state: toState({ state: pullRequest.state, mergedAt: pullRequest.merged_at }),
+    })),
+  });
+}

@@ -47,6 +47,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
+  stacks: true,
   labels: true,
 };
 
@@ -292,7 +293,20 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail("listChangeRequestStats"))),
 
     getChangeRequestSummary: (input) =>
-      cli.getPullRequestSummary(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+      cli.getPullRequestSummary(input).pipe(
+        // `gh pr view` names the author without an avatar; the login-shaped URL every user
+        // has stands in, without the second request the listing spends on it.
+        Effect.map((summary) => ({
+          ...summary,
+          ...(summary.author === undefined
+            ? {}
+            : { author: withAvatar(summary.author, new Map(), input.host) }),
+        })),
+        Effect.mapError(fail("getChangeRequestSummary")),
+      ),
+
+    getChangeRequestStack: (input) =>
+      cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
     getChangeRequest: (input) =>
       Effect.all(

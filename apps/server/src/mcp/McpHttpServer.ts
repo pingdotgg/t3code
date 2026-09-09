@@ -28,6 +28,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
+import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -437,6 +439,10 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
+export const PullRequestsToolkitRegistrationLive = McpServer.toolkit(PullRequestsToolkit).pipe(
+  Layer.provide(PullRequestsToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -444,4 +450,7 @@ const McpTransportLive = McpServer.layerHttp({
   protocols: [McpProtocol.v2025_06_18],
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));
+export const layer = Layer.mergeAll(
+  PreviewToolkitRegistrationLive,
+  PullRequestsToolkitRegistrationLive,
+).pipe(Layer.provideMerge(McpTransportLive));

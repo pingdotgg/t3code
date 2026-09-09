@@ -353,6 +353,7 @@ export function buildLocalDraftThread(
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
     checkpoints: [],
+    pullRequests: [],
     activities: [],
     proposedPlans: [],
   };

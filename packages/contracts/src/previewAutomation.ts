@@ -633,14 +633,31 @@ export const PreviewAutomationResponse = Schema.Struct({
 });
 export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
+const McpCapabilityErrorFields = {
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  providerSessionId: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+};
+
 export class PreviewAutomationUnavailableError extends Schema.TaggedError<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
   {
     capability: Schema.Literal("preview"),
-    environmentId: EnvironmentId,
-    threadId: ThreadId,
-    providerSessionId: TrimmedNonEmptyString,
-    providerInstanceId: ProviderInstanceId,
+    ...McpCapabilityErrorFields,
+  },
+) {
+  override get message(): string {
+    return `MCP credential does not grant the ${this.capability} capability.`;
+  }
+}
+
+/** A `t3-code` MCP tool was called with a credential that does not carry its capability. */
+export class McpCapabilityUnavailableError extends Schema.TaggedError<McpCapabilityUnavailableError>()(
+  "McpCapabilityUnavailableError",
+  {
+    capability: TrimmedNonEmptyString,
+    ...McpCapabilityErrorFields,
   },
 ) {
   override get message(): string {

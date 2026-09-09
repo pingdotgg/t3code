@@ -45,3 +45,11 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Checkpoint          | A saved workspace state used for diffs and restore, stored as a hidden Git ref.                              |
 | Checkpoint baseline | The workspace state captured before the work being compared.                                                 |
 | Turn diff           | The workspace changes attributed to one turn.                                                                |
+
+## Pull requests
+
+| Term                 | Meaning                                                                                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                        |
+| Pull request sync    | The reactor that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.               |
+| Current pull request | The link used by single-review controls and older clients. Open work takes precedence; a completed single chain points at its top layer. Unrelated terminal links use the latest update. |

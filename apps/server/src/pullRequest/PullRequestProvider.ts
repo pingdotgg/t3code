@@ -103,6 +103,34 @@ export interface ProviderChangeRequestSummary {
   readonly closedAt?: string | null;
   readonly mergedAt?: string | null;
   readonly updatedAt: string;
+  /** Overview fields, present where the host's single read returns them at no extra cost. */
+  readonly author?: PullRequestActor | null | undefined;
+  readonly additions?: number | undefined;
+  readonly deletions?: number | undefined;
+  readonly changedFiles?: number | undefined;
+  readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
+  readonly checksState?: PullRequestChecksState | null | undefined;
+  readonly mergeability?: PullRequestMergeability | undefined;
+}
+
+/** One layer of a host-native stack, bottom to top order is the array's. */
+export interface ProviderChangeRequestStackLayer {
+  readonly number: number;
+  readonly headBranch: string;
+  readonly state: PullRequestState;
+}
+
+/**
+ * A host-native stack: an ordered set of change requests the host itself merges and retargets as
+ * a unit. Only GitHub offers one today; the neutral shape lets the sync reactor and the UI stay
+ * ignorant of which host said so.
+ */
+export interface ProviderChangeRequestStack {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly base: string;
+  readonly layers: ReadonlyArray<ProviderChangeRequestStackLayer>;
 }
 
 export interface ProviderChangeRequestPage {
@@ -330,6 +358,14 @@ export interface PullRequestProviderApi {
   readonly getChangeRequestSummary?: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
+
+  /**
+   * The host-native stack a change request belongs to, or null when it is not stacked. Optional
+   * because most hosts have no such object; the service derives chains from base branches there.
+   */
+  readonly getChangeRequestStack?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestStack | null, PullRequestProviderError>;
 
   /** Comments, line threads, and commits, kept off the critical path for the core detail. */
   readonly getChangeRequestActivity: (

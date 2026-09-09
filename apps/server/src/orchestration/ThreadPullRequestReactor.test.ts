@@ -87,6 +87,7 @@ function thread(
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
     runtimeMode: "full-access",
     interactionMode: "default",
+    pullRequests: [],
     branch: "feature",
     worktreePath: null,
     latestTurn: null,

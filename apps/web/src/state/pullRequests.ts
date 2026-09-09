@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
+  createPullRequestStackAtomFamily,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type {
   EnvironmentId,
@@ -58,6 +59,7 @@ export function useSharedPullRequestSummary(
       : JSON.stringify([
           environmentId,
           reference.projectId,
+          reference.host?.toLowerCase() ?? null,
           reference.repository.toLowerCase(),
           reference.number,
         ]);
@@ -72,6 +74,7 @@ export function useSharedPullRequestSummary(
   }, [atom, current, environmentId]);
   return newestPullRequestSummary(current, observed);
 }
+export const pullRequestStackAtom = createPullRequestStackAtomFamily(connectionAtomRuntime);
 
 export interface EnvironmentQueryTarget<Input> {
   readonly environmentId: EnvironmentId;

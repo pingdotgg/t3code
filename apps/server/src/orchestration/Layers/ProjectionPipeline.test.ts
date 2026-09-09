@@ -8,6 +8,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  type ThreadPullRequestSnapshot,
   ThreadLinkedPullRequest,
   TurnId,
   ProviderInstanceId,
@@ -681,6 +682,242 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
             sizeBytes: 5,
           },
         ]);
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-pull-requests-")))(
+  "OrchestrationProjectionPipeline pull request links",
+  (it) => {
+    it.effect("projects link, sync, unlink, legacy replay and delete into the link table", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-pr");
+        const projectId = ProjectId.make("project-pr");
+        const t0 = "2026-01-01T00:00:00.000Z";
+        let counter = 0;
+        const base = (occurredAt: string) => {
+          counter += 1;
+          return {
+            eventId: EventId.make(`evt-pr-${counter}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt,
+            commandId: CommandId.make(`cmd-pr-${counter}`),
+            causationEventId: null,
+            correlationId: CommandId.make(`cmd-pr-${counter}`),
+            metadata: {},
+          } as const;
+        };
+        const readLinks = () =>
+          sql<{
+            readonly host: string;
+            readonly repository: string;
+            readonly number: number;
+            readonly source: string;
+            readonly linkedAt: string;
+            readonly snapshotJson: string | null;
+            readonly stackJson: string | null;
+          }>`
+            SELECT
+              host,
+              repository,
+              number,
+              source,
+              linked_at AS "linkedAt",
+              snapshot_json AS "snapshotJson",
+              stack_json AS "stackJson"
+            FROM projection_thread_pull_requests
+            WHERE thread_id = ${threadId}
+            ORDER BY number ASC
+          `;
+        const readThreadUpdatedAt = () =>
+          sql<{ readonly updatedAt: string }>`
+            SELECT updated_at AS "updatedAt" FROM projection_threads WHERE thread_id = ${threadId}
+          `;
+
+        yield* eventStore.append({
+          ...base(t0),
+          type: "thread.created",
+          payload: {
+            threadId,
+            projectId,
+            title: "Thread PR",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: t0,
+            updatedAt: t0,
+          },
+        });
+
+        // Legacy single-link event replays into a manual row with the URL host.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:01.000Z"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId,
+            linkedPullRequest: {
+              projectId,
+              repository: "web",
+              number: 41,
+              url: "https://org-a.visualstudio.com/DefaultCollection/project/_git/web/pullrequest/41",
+            },
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:02.000Z"),
+          type: "thread.pull-request-linked",
+          payload: {
+            threadId,
+            link: {
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 42,
+              url: "https://github.com/pingdotgg/t3code/pull/42",
+              source: "created",
+              linkedAt: "2026-01-01T00:00:02.000Z",
+              snapshot: null,
+              stack: null,
+            },
+            updatedAt: "2026-01-01T00:00:02.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        assert.deepEqual(yield* readLinks(), [
+          {
+            host: "dev.azure.com",
+            repository: "org-a/project/_git/web",
+            number: 41,
+            source: "manual",
+            linkedAt: "2026-01-01T00:00:01.000Z",
+            snapshotJson: null,
+            stackJson: null,
+          },
+          {
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 42,
+            source: "created",
+            linkedAt: "2026-01-01T00:00:02.000Z",
+            snapshotJson: null,
+            stackJson: null,
+          },
+        ]);
+        assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:02.000Z" }]);
+
+        // Sync fills snapshot/stack on the matching row; a sync for an unknown
+        // link is ignored.
+        const snapshot: ThreadPullRequestSnapshot = {
+          state: "open",
+          title: "Add links",
+          headBranch: "feat/links",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: "2026-01-01T00:00:02.500Z",
+          syncedAt: "2026-01-01T00:00:03.000Z",
+        };
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:03.000Z"),
+          type: "thread.pull-request-synced",
+          payload: {
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 42,
+            snapshot,
+            stack: null,
+            updatedAt: "2026-01-01T00:00:03.000Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:03.500Z"),
+          type: "thread.pull-request-synced",
+          payload: {
+            threadId,
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 99,
+            snapshot,
+            stack: null,
+            updatedAt: "2026-01-01T00:00:03.500Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        const synced = yield* readLinks();
+        assert.equal(synced.length, 2);
+        assert.equal(synced[0]?.snapshotJson, null);
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        assert.deepEqual(JSON.parse(synced[1]?.snapshotJson ?? "null"), snapshot);
+        assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:03.000Z" }]);
+
+        // A legacy null clears only the manual row; created/agent/stack rows stay.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:04.000Z"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId,
+            linkedPullRequest: null,
+            updatedAt: "2026-01-01T00:00:04.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(
+          (yield* readLinks()).map((row) => row.number),
+          [42],
+        );
+
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:05.000Z"),
+          type: "thread.pull-request-unlinked",
+          payload: {
+            threadId,
+            host: "GitHub.COM",
+            repository: "PingDotGG/T3Code",
+            number: 42,
+            updatedAt: "2026-01-01T00:00:05.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(yield* readLinks(), []);
+        assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:05.000Z" }]);
+
+        // Deleting the thread clears whatever links it still had.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:06.000Z"),
+          type: "thread.pull-request-linked",
+          payload: {
+            threadId,
+            link: {
+              host: "github.com",
+              repository: "pingdotgg/t3code",
+              number: 43,
+              url: "https://github.com/pingdotgg/t3code/pull/43",
+              source: "agent",
+              linkedAt: "2026-01-01T00:00:06.000Z",
+              snapshot: null,
+              stack: null,
+            },
+            updatedAt: "2026-01-01T00:00:06.000Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:07.000Z"),
+          type: "thread.deleted",
+          payload: {
+            threadId,
+            deletedAt: "2026-01-01T00:00:07.000Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(yield* readLinks(), []);
       }),
     );
   },

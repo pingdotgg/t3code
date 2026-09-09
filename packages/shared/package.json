@@ -175,6 +175,14 @@
       "types": "./src/threadReference.ts",
       "import": "./src/threadReference.ts"
     },
+    "./threadPullRequests": {
+      "types": "./src/threadPullRequests.ts",
+      "import": "./src/threadPullRequests.ts"
+    },
+    "./changeRequestUrl": {
+      "types": "./src/changeRequestUrl.ts",
+      "import": "./src/changeRequestUrl.ts"
+    },
     "./composerTrigger": {
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"

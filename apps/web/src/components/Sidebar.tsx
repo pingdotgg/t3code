@@ -1,3 +1,9 @@
+import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { LinkBranchPullRequestButton } from "./pullRequest/LinkBranchPullRequestButton";
+import {
+  resolveThreadCurrentPullRequestLink,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -70,6 +76,7 @@ import {
 } from "react";
 import { useParams, useRouter } from "@tanstack/react-router";
 
+import { useRightPanelStore } from "../rightPanelStore";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -185,8 +192,12 @@ import {
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
+  PR_STATE_COLOR_CLASS,
+  ThreadPullRequestBadgeIcon,
+  ThreadPullRequestsMiniList,
   ThreadWorktreeIndicator,
   prStatusIndicator,
+  resolveThreadPullRequestBadge,
   settledPrHoverColorClass,
   terminalStatusFromRunningIds,
   type TerminalStatusIndicator,
@@ -209,7 +220,7 @@ import {
 } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { Button } from "./ui/button";
+import { Button, InlineButton } from "./ui/button";
 import { Input } from "./ui/input";
 import {
   Combobox,
@@ -330,6 +341,7 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   return (
     <TooltipPopup
       side="right"
@@ -411,6 +423,11 @@ function SidebarThreadTooltip({
             </div>
           ) : null}
         </div>
+        {supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
+          <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
+            <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
+          </div>
+        ) : null}
       </div>
     </TooltipPopup>
   );
@@ -1047,8 +1064,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const gitCwd = thread.worktreePath ?? props.project?.workspaceRoot ?? null;
   const linkedPullRequestStatus = useLinkedThreadPullRequest(
     thread.environmentId,
-    thread.linkedPullRequest ?? thread.branchPullRequest,
+    thread.linkedPullRequest,
     leaseLiveStatus,
+    thread.pullRequests,
+    thread.branchPullRequest,
   );
   const gitStatus = useEnvironmentQuery(
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
@@ -1063,6 +1082,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     gitStatus.data,
   );
   const pr = linkedPullRequestStatus?.pr ?? null;
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const currentLinkedPr = supportsMultiplePullRequests
+    ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
+    : null;
 
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
@@ -1339,17 +1362,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }, [showSnoozeButton]);
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      if (!pr?.url) return;
+      const url = pr?.url ?? currentLinkedPr?.url;
+      if (!url) return;
       const openedInRightPanel = openPrLink(
         event,
-        pr.url,
+        url,
         openPullRequestsInRightPanel ? threadRef : undefined,
       );
       if (openedInRightPanel && openPullRequestsInRightPanel && !props.isActive) {
         onThreadActivate(threadRef);
       }
     },
-    [onThreadActivate, openPrLink, openPullRequestsInRightPanel, pr, props.isActive, threadRef],
+    [
+      onThreadActivate,
+      openPrLink,
+      openPullRequestsInRightPanel,
+      pr,
+      currentLinkedPr,
+      props.isActive,
+      threadRef,
+    ],
   );
 
   // All sidebar rows share one surface model. Live threads used to look
@@ -1456,10 +1488,43 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     </span>
   );
 
-  // A real link so cmd/ctrl+click and middle-click open the host in the
-  // browser. A plain click still opens T3's pull request view.
+  // One badge shape for every thread: the glyph says stack or not, the number is the current
+  // pull request, and "+N" counts the others behind it. A real link so cmd/ctrl+click and
+  // middle-click open the host in the browser; a plain click opens T3's pull request view.
+  const prBadgeShape = supportsMultiplePullRequests
+    ? resolveThreadPullRequestBadge(thread.pullRequests)
+    : null;
+  const prBadgeClassName = (state: "open" | "merged" | "closed", colorClass: string) =>
+    cn(
+      // Sidebar chrome follows the interface font; tabular digits keep the number from
+      // reflowing as PR states stream in. A border rather than text-decoration, so the line
+      // runs under the glyph as well as the number.
+      "text-xs tabular-nums",
+      variant === "slim" && variantAction === "unsettle"
+        ? props.isActive
+          ? "text-secondary-label"
+          : cn("text-secondary-label transition-colors", settledPrHoverColorClass(state))
+        : colorClass,
+    );
+  const handlePrStackClick = useCallback(() => {
+    useRightPanelStore.getState().open(threadRef, "pull-requests");
+    if (!props.isActive) onThreadActivate(threadRef);
+  }, [onThreadActivate, props.isActive, threadRef]);
   const prBadge =
-    prStatus && pr ? (
+    prBadgeShape?.kind === "stack" ? (
+      // A stack is one thing with N layers; naming one of them would misrepresent it, so the
+      // badge counts layers and opens the thread's pull-requests surface.
+      <InlineButton
+        underline
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={handlePrStackClick}
+        className={prBadgeClassName(prBadgeShape.state, PR_STATE_COLOR_CLASS[prBadgeShape.state])}
+        aria-label={`Stack of ${prBadgeShape.layers} pull requests, ${prBadgeShape.state}`}
+      >
+        <ThreadPullRequestBadgeIcon icon="stack" />
+        {prBadgeShape.layers}
+      </InlineButton>
+    ) : prStatus && pr ? (
       <a
         href={pr.url}
         target="_blank"
@@ -1469,14 +1534,38 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className={cn(
           // Sidebar chrome follows the interface font; tabular digits keep the
           // number from reflowing as PR states stream in.
-          "shrink-0 text-xs tabular-nums hover:underline",
+          "inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-xs tabular-nums hover:underline",
           variant === "slim" && variantAction === "unsettle"
             ? cn("text-secondary-label transition-colors", settledPrHoverClass)
             : prStatus.colorClass,
         )}
-        aria-label={prStatus.tooltip}
+        aria-label={
+          prBadgeShape && prBadgeShape.kind === "pull-request" && prBadgeShape.others > 0
+            ? `${prStatus.tooltip}, and ${prBadgeShape.others} more linked`
+            : prStatus.tooltip
+        }
       >
-        #{pr.number}
+        <ThreadPullRequestBadgeIcon icon="pull-request" />
+        {pr.number}
+        {prBadgeShape && prBadgeShape.others > 0 ? (
+          <span className="opacity-70">+{prBadgeShape.others}</span>
+        ) : null}
+      </a>
+    ) : currentLinkedPr ? (
+      <a
+        href={currentLinkedPr.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={handlePrClick}
+        className="inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums text-muted-foreground hover:underline"
+        aria-label={`PR #${currentLinkedPr.number}, status pending`}
+      >
+        <ThreadPullRequestBadgeIcon icon="pull-request" />
+        {currentLinkedPr.number}
+        {prBadgeShape?.kind === "pull-request" && prBadgeShape.others > 0 ? (
+          <span>+{prBadgeShape.others}</span>
+        ) : null}
       </a>
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
@@ -1589,6 +1678,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
+            {prBadge &&
+            pr &&
+            (supportsMultiplePullRequests
+              ? visibleThreadPullRequests(thread.pullRequests).length === 0
+              : thread.linkedPullRequest == null) ? (
+              <LinkBranchPullRequestButton threadRef={threadRef} url={pr.url} />
+            ) : null}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1889,6 +1985,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               )}
               {terminalStatusIcon}
               {prBadge}
+              {prBadge &&
+              pr &&
+              (supportsMultiplePullRequests
+                ? visibleThreadPullRequests(thread.pullRequests).length === 0
+                : thread.linkedPullRequest == null) ? (
+                <LinkBranchPullRequestButton threadRef={threadRef} url={pr.url} />
+              ) : null}
               {diff ? (
                 <span className="shrink-0 font-mono">
                   <span className="text-emerald-600 dark:text-emerald-400">+{diff.insertions}</span>{" "}

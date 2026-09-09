@@ -183,20 +183,37 @@ afterEach(() => {
 });
 
 layer("GitHubPullRequestCli.layer", (it) => {
-  it.effect("reads linked pull request status through one narrow request", () =>
+  it.effect("reads linked pull request status with the overview fields in one request", () =>
     Effect.gen(function* () {
-      mockedGetPullRequest.mockReturnValueOnce(
-        Effect.succeed({
-          number: 7,
-          title: "Reuse the summary",
-          url: "https://github.com/acme/web/pull/7",
-          baseRefName: "main",
-          headRefName: "feat/summary",
-          state: "merged",
-          closedAt: "2026-08-23T10:00:00Z",
-          mergedAt: "2026-08-23T10:00:00Z",
-          updatedAt: "2026-08-24T12:34:56.000Z",
-        }),
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              number: 7,
+              title: "Reuse the summary",
+              url: "https://github.com/acme/web/pull/7",
+              author: { login: "octocat", name: "Octo Cat" },
+              baseRefName: "main",
+              headRefName: "feat/summary",
+              state: "OPEN",
+              isDraft: false,
+              mergeable: "MERGEABLE",
+              reviewDecision: "APPROVED",
+              additions: 12,
+              deletions: 3,
+              changedFiles: 2,
+              createdAt: "2026-08-20T00:00:00.000Z",
+              updatedAt: "2026-08-24T12:34:56.000Z",
+              reviewRequests: [],
+              labels: [],
+              statusCheckRollup: [
+                { __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "ci" },
+              ],
+              body: "",
+            }),
+          ),
+        ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
@@ -207,23 +224,207 @@ layer("GitHubPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      assert.deepStrictEqual(summary, {
-        number: 7,
-        title: "Reuse the summary",
-        url: "https://github.com/acme/web/pull/7",
-        headBranch: "feat/summary",
-        baseBranch: "main",
-        state: "merged",
-        closedAt: "2026-08-23T10:00:00Z",
-        mergedAt: "2026-08-23T10:00:00Z",
-        updatedAt: "2026-08-24T12:34:56.000Z",
-      });
-      expect(mockedGetPullRequest).toHaveBeenCalledOnce();
-      expect(mockedGetPullRequest).toHaveBeenCalledWith({
+      assert.deepStrictEqual(
+        {
+          number: summary.number,
+          state: summary.state,
+          headBranch: summary.headBranch,
+          isDraft: summary.isDraft,
+          author: summary.author?.login,
+          additions: summary.additions,
+          deletions: summary.deletions,
+          changedFiles: summary.changedFiles,
+          reviewDecision: summary.reviewDecision,
+          checksState: summary.checksState,
+          mergeability: summary.mergeability,
+        },
+        {
+          number: 7,
+          state: "open",
+          headBranch: "feat/summary",
+          isDraft: false,
+          author: "octocat",
+          additions: 12,
+          deletions: 3,
+          changedFiles: 2,
+          reviewDecision: "approved",
+          checksState: "passing",
+          mergeability: "mergeable",
+        },
+      );
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(mockedExecute.mock.calls[0]?.[0]?.args).toEqual([
+        "pr",
+        "view",
+        "7",
+        "--repo",
+        "github.com/acme/web",
+        "--json",
+        expect.stringContaining("statusCheckRollup"),
+      ]);
+      expect(mockedGetPullRequest).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("reads the stack a pull request is in through the stacks preview, on its host", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                id: 42,
+                number: 3,
+                url: "https://api.github.com/repos/acme/web/stacks/3",
+                base: { ref: "main" },
+                pull_requests: [
+                  {
+                    number: 6,
+                    head: { ref: "feat/one" },
+                    state: "closed",
+                    merged_at: "2026-09-02",
+                  },
+                  { number: 7, head: { ref: "feat/two" }, state: "open", merged_at: null },
+                ],
+              },
+            ]),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const stack = yield* cli.getPullRequestStack({
         cwd: "/w",
-        reference: "https://github.com/acme/web/pull/7",
+        repository: "acme/web",
+        host: "ghe.example.com",
+        number: 7,
       });
-      expect(mockedExecute).not.toHaveBeenCalled();
+
+      assert.deepStrictEqual(stack, {
+        id: "42",
+        number: 3,
+        url: "https://api.github.com/repos/acme/web/stacks/3",
+        base: "main",
+        layers: [
+          { number: 6, headBranch: "feat/one", state: "merged" },
+          { number: 7, headBranch: "feat/two", state: "open" },
+        ],
+      });
+      assert.deepStrictEqual(callAt(0).args, [
+        "api",
+        "--hostname",
+        "ghe.example.com",
+        "repos/acme/web/stacks?pull_request=7",
+      ]);
+    }),
+  );
+
+  it.effect("reads an empty stacks listing as not stacked", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("[]")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const stack = yield* cli.getPullRequestStack({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.isNull(stack);
+    }),
+  );
+
+  it.effect("reads a host that refuses the stacks preview as not stacked", () =>
+    Effect.gen(function* () {
+      // The CLI classifies a missing preview endpoint as not found.
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubPullRequestNotFoundError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error("HTTP 404: Not Found (https://api.github.com/repos/acme/web/stacks)"),
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const stack = yield* cli.getPullRequestStack({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+
+      assert.isNull(stack);
+    }),
+  );
+
+  it.effect("does not read a signed-out gh as an unstacked pull request", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubCli.GitHubCliAuthenticationError({
+            command: "gh",
+            cwd: "/w",
+            cause: new Error("gh auth login"),
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubCliAuthenticationError");
+    }),
+  );
+
+  it.effect("preserves transient stack failures instead of reporting no stack", () =>
+    Effect.gen(function* () {
+      const failure = new GitHubCli.GitHubCliCommandError({
+        command: "gh",
+        cwd: "/w",
+        cause: new Error("HTTP 503"),
+      });
+      mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+      assert.strictEqual(error, failure);
+    }),
+  );
+
+  it.effect("reports a stacks answer it cannot read against the stack read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output('[{"id":42}]')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getPullRequestStack({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+        }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+      if (error._tag !== "GitHubPullRequestReadError") return;
+      assert.strictEqual(error.operation, "getPullRequestStack");
     }),
   );
 

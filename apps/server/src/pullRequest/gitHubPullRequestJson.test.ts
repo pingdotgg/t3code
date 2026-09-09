@@ -11,6 +11,7 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodePullRequestStacksJson,
   decodeLabelCandidatesJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
@@ -1498,5 +1499,83 @@ describe("how far a branch trails its base", () => {
 
   it("refuses a body that is not the answer to this question", () => {
     expect(Result.isSuccess(decodeBaseComparisonJson("{"))).toBe(false);
+  });
+});
+
+describe("host-native stack decoding", () => {
+  /** A stack as the preview lists it, bottom to top, with the fields it answers today. */
+  function stack(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 42,
+      number: 3,
+      node_id: "STK_kwDO",
+      url: "https://api.github.com/repos/acme/web/stacks/3",
+      base: { ref: "main", sha: "abc" },
+      open: true,
+      created_at: "2026-09-01T00:00:00Z",
+      pull_requests: [
+        {
+          number: 10,
+          head: { ref: "feat/one" },
+          state: "closed",
+          merged_at: "2026-09-02T00:00:00Z",
+        },
+        { number: 11, head: { ref: "feat/two" }, state: "open", merged_at: null },
+        { number: 12, head: { ref: "feat/three" }, state: "closed", merged_at: null },
+      ],
+      ...overrides,
+    };
+  }
+
+  /** The one stack a listing answered with, which these reads all expect to find. */
+  function expectStack(overrides: Record<string, unknown> = {}) {
+    const decoded = expectSuccess(decodePullRequestStacksJson(JSON.stringify([stack(overrides)])));
+    if (decoded === null) throw new Error("expected a stack");
+    return decoded;
+  }
+
+  it("reads the first stack, bottom to top, with merged_at outranking state", () => {
+    expect(expectStack()).toEqual({
+      id: "42",
+      number: 3,
+      url: "https://api.github.com/repos/acme/web/stacks/3",
+      base: "main",
+      layers: [
+        { number: 10, headBranch: "feat/one", state: "merged" },
+        { number: 11, headBranch: "feat/two", state: "open" },
+        { number: 12, headBranch: "feat/three", state: "closed" },
+      ],
+    });
+  });
+
+  it("accepts a base named as a bare branch, which is what the preview started out sending", () => {
+    expect(expectStack({ base: "develop" }).base).toBe("develop");
+  });
+
+  it("prefers the page a person opens over the API URL, where the host reports one", () => {
+    expect(expectStack({ html_url: "https://github.com/acme/web/stacks/3" }).url).toBe(
+      "https://github.com/acme/web/stacks/3",
+    );
+  });
+
+  it("falls back to the node id, then the number, for a stack without an id", () => {
+    expect(expectStack({ id: undefined }).id).toBe("STK_kwDO");
+    expect(expectStack({ id: null, node_id: null }).id).toBe("3");
+  });
+
+  it("reads an empty listing as not stacked", () => {
+    expect(expectSuccess(decodePullRequestStacksJson("[]"))).toBeNull();
+  });
+
+  it("refuses a stack without a number or without its pull requests", () => {
+    expect(
+      Result.isSuccess(decodePullRequestStacksJson(JSON.stringify([stack({ number: undefined })]))),
+    ).toBe(false);
+    expect(
+      Result.isSuccess(
+        decodePullRequestStacksJson(JSON.stringify([stack({ pull_requests: undefined })])),
+      ),
+    ).toBe(false);
+    expect(Result.isSuccess(decodePullRequestStacksJson("{"))).toBe(false);
   });
 });
