@@ -142,7 +142,7 @@ for (const enabled of [false, true]) {
             ServerSettings.layerTest({ continueThreadsAfterServerUpdate: enabled }),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({
               getRecoveryThreadIds: () => Effect.succeed([threadId]),
-              getThreadProjection: () => Effect.succeed(makeProjection()),
+              getRuntimeRecoveryProjection: () => Effect.succeed(makeProjection()),
             }),
             Layer.mock(EventSink.EventSinkV2)({
               commitCommand: (input) => {
@@ -236,7 +236,7 @@ it.effect("does not cancel or resume a run that completes while shutdown intent 
           ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
-            getThreadProjection: () => Effect.sync(() => projection),
+            getRuntimeRecoveryProjection: () => Effect.sync(() => projection),
           }),
           Layer.mock(EventSink.EventSinkV2)({
             writeWithEffects: (input) =>
