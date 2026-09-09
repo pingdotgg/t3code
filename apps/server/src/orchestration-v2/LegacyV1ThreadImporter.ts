@@ -26,6 +26,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import { randomUuidV4 } from "./RandomUuid.ts";
 
 const IMPORT_EVENT_PREFIX = "migration:v1";
 const TRANSCRIPT_EVENT_BATCH_SIZE = 100;
@@ -461,10 +462,14 @@ const make = Effect.gen(function* () {
         activeOrderKey:
           current.activeOrderKey === undefined ? legacy.activeOrderKey : current.activeOrderKey,
       };
+      // Later schema additions can require another repair for the same thread.
+      const repairId = yield* randomUuidV4;
       yield* eventSink.write({
         events: [
           {
-            id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${row.thread_id}:metadata-repair`),
+            id: EventId.make(
+              `${IMPORT_EVENT_PREFIX}:thread:${row.thread_id}:metadata-repair:${repairId}`,
+            ),
             type: "thread.metadata-updated",
             threadId: repaired.id,
             providerInstanceId: repaired.providerInstanceId,

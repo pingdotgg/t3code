@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   commandDetailRepeatsCommand,
@@ -10,6 +11,7 @@ import {
   summarizeToolGroup,
   toolGroupAction,
   toolGroupSummaryKind,
+  toolItemForDisplay,
   type WorkLogPresentationEntry,
   type WorkLogToolLifecycleStatus,
   workEntryViewedImagePath,
@@ -18,12 +20,61 @@ import {
   workEntryIndicatesToolSuccess,
 } from "./presentation.js";
 
+function commandItem(
+  fields: Partial<Extract<OrchestrationV2TurnItem, { type: "command_execution" }>> = {},
+): OrchestrationV2TurnItem {
+  return {
+    id: TurnItemId.make("command"),
+    threadId: ThreadId.make("thread"),
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-09-08T00:00:00.000Z"),
+    type: "command_execution",
+    input: 'rg "command not found"',
+    exitCode: 0,
+    ...fields,
+  };
+}
+
 describe("workEntryIndicatesToolFailure", () => {
   const base = {
     id: "w1",
     createdAt: "2026-01-01T00:00:00.000Z",
     label: "Read",
   };
+
+  it.each([
+    [{ outputIndicatesFailure: true }, true],
+    [{ exitCode: 2 }, true],
+    [{ output: "sh: missing-command: command not found" }, true],
+    [{ output: "Found 3 matches" }, false],
+    [{ output: `${"x".repeat(32_768)} command not found` }, false],
+    [{}, false],
+  ] as const)(
+    "preserves command failure state after removing displayed output: %j",
+    (fields, failed) => {
+      const structuredPayload = commandItem(fields);
+      const entry: WorkLogPresentationEntry = {
+        ...base,
+        tone: "tool",
+        itemType: "command_execution",
+        toolLifecycleStatus: "completed",
+        structuredPayload,
+      };
+      expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(failed);
+      expect(workEntryIndicatesToolSuccess(entry)).toBe(!failed);
+      expect(JSON.stringify(toolItemForDisplay(structuredPayload))).not.toContain('"output":');
+    },
+  );
 
   it("is true for error tone", () => {
     expect(
