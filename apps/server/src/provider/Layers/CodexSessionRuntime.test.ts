@@ -179,6 +179,26 @@ describe("buildTurnStartParams", () => {
     });
   });
 
+  it.effect("preserves a non-default reasoning effort in collaboration mode", () =>
+    Effect.gen(function* () {
+      const params = yield* buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "full-access",
+        prompt: "Continue the task",
+        model: "gpt-5.3-codex",
+        effort: "high",
+        interactionMode: "default",
+      });
+
+      NodeAssert.equal(params.effort, "high");
+      NodeAssert.equal(params.collaborationMode?.settings.reasoning_effort, "high");
+      NodeAssert.match(
+        params.collaborationMode?.settings.developer_instructions ?? "",
+        /with high reasoning effort/,
+      );
+    }),
+  );
+
   it("reports the same fallback model and effort in settings and instructions", () => {
     const params = Effect.runSync(
       buildTurnStartParams({

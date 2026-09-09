@@ -694,6 +694,7 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               ...(capabilities.promptlessTurnContinuation === true
                 ? { continuation: true }
                 : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+              modelSelection: thread.modelSelection,
               interactionMode: thread.interactionMode,
             });
           });

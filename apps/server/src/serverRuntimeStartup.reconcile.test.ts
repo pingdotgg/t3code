@@ -41,6 +41,11 @@ const makeThread = (
   id: ThreadId.make(id),
   archivedAt,
   deletedAt,
+  modelSelection: {
+    instanceId: providerInstanceId,
+    model: "gpt-5.3-codex",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  },
   interactionMode: "default" as const,
   session: {
     threadId: ThreadId.make(id),
@@ -304,10 +309,16 @@ it.effect.each(
           String(left.threadId).localeCompare(String(right.threadId)),
         ),
         [
-          { threadId: codex.id, continuation: true, interactionMode: "default" },
+          {
+            threadId: codex.id,
+            continuation: true,
+            modelSelection: codex.modelSelection,
+            interactionMode: "default",
+          },
           {
             threadId: fallback.id,
             input: "Continue where you left off.",
+            modelSelection: fallback.modelSelection,
             interactionMode: "default",
           },
         ],
@@ -906,7 +917,12 @@ for (const preparedStatus of [
       yield* runReconciliation(input);
       yield* Deferred.await(cleared);
       assert.deepStrictEqual(sends, [
-        { threadId: thread.id, continuation: true, interactionMode: "default" },
+        {
+          threadId: thread.id,
+          continuation: true,
+          modelSelection: thread.modelSelection,
+          interactionMode: "default",
+        },
       ]);
       assert.deepStrictEqual(binding.runtimePayload, {
         activeTurnId: null,

@@ -374,6 +374,11 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
       const activeTurnId = TurnId.make("turn-started-after-original-send");
       const originalTurnId = TurnId.make("turn-from-original-send");
       const sent = yield* Deferred.make<ProviderSendTurnInput>();
+      const modelSelection = {
+        instanceId: providerInstanceId,
+        model: "gpt-5",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
 
       yield* Effect.gen(function* () {
         const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -384,7 +389,7 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
           projectId,
           title: "Restart continuation",
           workspaceRoot: "/tmp/startup-orphan-project",
-          defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+          defaultModelSelection: modelSelection,
           createdAt,
         });
         yield* engine.dispatch({
@@ -393,7 +398,7 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
           threadId,
           projectId,
           title: "Newer running turn",
-          modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+          modelSelection,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "full-access",
           branch: null,
@@ -469,6 +474,7 @@ it.effect.each(["opt-in desktop restart", "marked remote update"] as const)(
         assert.deepStrictEqual(yield* Deferred.await(sent), {
           threadId,
           continuation: true,
+          modelSelection,
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         });
       }).pipe(
