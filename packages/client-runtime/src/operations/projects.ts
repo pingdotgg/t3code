@@ -147,12 +147,22 @@ export function isCompleteAddProjectRepositoryInput(
   const trimmed = input.trim();
   if (trimmed.length === 0) return false;
   if (source !== "github") return true;
-  if (trimmed.includes("://") || trimmed.startsWith("git@")) return true;
-  return GITHUB_REPOSITORY_SHORTHAND.test(trimmed);
+  return (
+    GITHUB_REPOSITORY_SHORTHAND.test(trimmed) ||
+    GITHUB_REPOSITORY_HTTPS_URL.test(trimmed) ||
+    GITHUB_REPOSITORY_SCP_URL.test(trimmed) ||
+    GITHUB_REPOSITORY_SSH_URL.test(trimmed)
+  );
 }
 
 const GITHUB_REPOSITORY_SHORTHAND =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
+const GITHUB_REPOSITORY_HTTPS_URL =
+  /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?\/?$/i;
+const GITHUB_REPOSITORY_SCP_URL =
+  /^git@github\.com:[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/i;
+const GITHUB_REPOSITORY_SSH_URL =
+  /^ssh:\/\/git@github\.com(?::\d+)?\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?\/?$/i;
 
 /** Treat the common owner/repository shorthand as a public GitHub HTTPS URL. */
 export function normalizePastedCloneUrl(input: string): string {

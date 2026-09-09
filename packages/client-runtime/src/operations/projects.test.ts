@@ -70,13 +70,26 @@ describe("add project shared logic", () => {
   it("keeps complete GitHub clone inputs while blocking incomplete shorthand", () => {
     for (const input of [
       "https://github.com/owner/repo/",
+      "https://github.com/owner/repo.git",
       "git@github.com:owner/repo.git",
       "ssh://git@github.com/owner/repo.git",
+      "ssh://git@github.com:22/owner/repo.git",
       "owner/repo",
     ]) {
       expect(isCompleteAddProjectRepositoryInput("github", input)).toBe(true);
     }
-    for (const input of ["", "owner", "owner/", "owner//"]) {
+    for (const input of [
+      "",
+      "owner",
+      "owner/",
+      "owner//",
+      "http://github.com/owner/repo",
+      "https://gitlab.com/owner/repo",
+      "https://github.com/owner/repo/tree/main",
+      "git@gitlab.com:owner/repo.git",
+      "ssh://git@gitlab.com/owner/repo.git",
+      "ftp://github.com/owner/repo",
+    ]) {
       expect(isCompleteAddProjectRepositoryInput("github", input)).toBe(false);
     }
   });

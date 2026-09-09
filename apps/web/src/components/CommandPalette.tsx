@@ -49,6 +49,7 @@ import {
   LinkIcon,
   MessageSquareIcon,
   PaletteIcon,
+  RefreshCwIcon,
   SettingsIcon,
   SquarePenIcon,
   TextSearchIcon,
@@ -2215,8 +2216,30 @@ function OpenCommandPaletteDialog(props: {
     repositorySuggestions,
     query,
   );
-  const repositorySuggestionGroups: CommandPaletteView["groups"] =
-    matchingRepositorySuggestions.length === 0
+  const repositorySuggestionGroups: CommandPaletteView["groups"] = [
+    ...(repositorySuggestionsQuery.error === null
+      ? []
+      : [
+          {
+            value: "github-repository-suggestions-error",
+            label: "GitHub repositories",
+            items: [
+              {
+                kind: "action" as const,
+                value: "retry-github-repository-suggestions",
+                searchTerms: [],
+                title: "Retry loading repositories",
+                description: repositorySuggestionsQuery.error,
+                icon: <RefreshCwIcon className={ITEM_ICON_CLASS} />,
+                keepOpen: true,
+                run: async () => {
+                  repositorySuggestionsQuery.refresh();
+                },
+              },
+            ],
+          },
+        ]),
+    ...(matchingRepositorySuggestions.length === 0
       ? []
       : [
           {
@@ -2235,7 +2258,8 @@ function OpenCommandPaletteDialog(props: {
               },
             })),
           },
-        ];
+        ]),
+  ];
 
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (addProjectCloneFlow?.step === "repository") {
