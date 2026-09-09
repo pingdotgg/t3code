@@ -1,9 +1,7 @@
-import { BlurView } from "expo-blur";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import { useContext, type ReactNode, type Ref, type RefObject } from "react";
+import type { ReactNode, Ref, RefObject } from "react";
 import {
   Platform,
-  StyleSheet,
   useColorScheme,
   View,
   type ColorValue,
@@ -13,8 +11,7 @@ import {
 import { withUniwind } from "uniwind";
 
 import { cn } from "../lib/cn";
-import { GlassBlurTargetContext } from "../lib/glassBlurTarget";
-import { themeColorWithAlpha } from "../lib/mobileTheme";
+import { GlassBackdrop } from "./GlassBackdrop";
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
 const ThemedGlassView = withUniwind(GlassView, {
@@ -51,13 +48,6 @@ export function GlassSurface({
   ...props
 }: GlassSurfaceProps) {
   const isDarkMode = useColorScheme() === "dark";
-  const inheritedBlurTarget = useContext(GlassBlurTargetContext);
-  const target = blurTarget ?? inheritedBlurTarget;
-  const supportsBlur =
-    Platform.OS === "ios" ||
-    (Platform.OS === "android" && Platform.Version >= 31 && target !== undefined);
-  const backgroundColor =
-    fallbackColor === undefined ? undefined : themeColorWithAlpha(String(fallbackColor), 1);
   const supportsGlass = Platform.OS === "ios" && isGlassEffectAPIAvailable();
   const surfaceStyle: ViewStyle = {
     borderRadius: 32,
@@ -113,21 +103,7 @@ export function GlassSurface({
       )}
       style={[surfaceStyle, style]}
     >
-      {supportsBlur ? (
-        <BlurView
-          pointerEvents="none"
-          blurTarget={target}
-          blurMethod="dimezisBlurViewSdk31Plus"
-          intensity={80}
-          tint={isDarkMode ? "dark" : "default"}
-          style={StyleSheet.absoluteFill}
-        />
-      ) : null}
-      <View
-        pointerEvents="none"
-        className="absolute inset-0 bg-card"
-        style={{ backgroundColor, opacity: supportsBlur ? (isDarkMode ? 0.25 : 0.55) : 1 }}
-      />
+      <GlassBackdrop blurTarget={blurTarget} fallbackColor={fallbackColor} />
       {children}
     </View>
   );
