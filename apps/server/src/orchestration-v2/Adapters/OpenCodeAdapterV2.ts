@@ -2685,6 +2685,31 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           );
         }
 
+        if (connection.external) {
+          yield* Scope.addFinalizer(
+            scope,
+            Effect.suspend(() =>
+              Effect.forEach(
+                Array.from(threads.values()).filter((state) => state.parentSubagent === null),
+                (state) =>
+                  sdkCall("session.abort", { sessionID: state.nativeSessionId }, (signal) =>
+                    client.session.abort({ sessionID: state.nativeSessionId }, { signal }),
+                  ).pipe(
+                    Effect.timeout("1 second"),
+                    Effect.ignore({ log: true }),
+                    Effect.andThen(
+                      abortDescendants(state.nativeSessionId).pipe(
+                        Effect.timeout("1 second"),
+                        Effect.ignore({ log: true }),
+                      ),
+                    ),
+                  ),
+                { concurrency: 8, discard: true },
+              ),
+            ),
+          );
+        }
+
         const registerThread = (
           nativeSession: OpenCodeSession,
           providerThread: OrchestrationV2ProviderThread,

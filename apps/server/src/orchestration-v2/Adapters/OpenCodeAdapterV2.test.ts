@@ -21,6 +21,7 @@ import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -226,6 +227,44 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect("aborts external root and descendants before closing the event stream", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const nativeEvents = asyncEventStream();
+      const calls: string[] = [];
+      yield* makeOpenCodeRuntimeHarness("release", "root", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal: AbortSignal }) => {
+            options.signal.addEventListener("abort", () => {
+              calls.push("stream.close");
+              nativeEvents.close();
+            });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          abort: async ({ sessionID }: { sessionID: string }) => {
+            calls.push(`abort:${sessionID}`);
+            return { data: true };
+          },
+          children: async ({ sessionID }: { sessionID: string }) => {
+            calls.push(`children:${sessionID}`);
+            return { data: sessionID === "root" ? [{ id: "child" }] : [] };
+          },
+        },
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(calls, [
+        "abort:root",
+        "children:root",
+        "abort:child",
+        "children:child",
+        "stream.close",
+      ]);
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   for (const failure of ["enumeration", "abort", "not-found", "timeout"] as const) {
     it.effect(`reports descendant cleanup ${failure}`, () =>
       Effect.gen(function* () {
@@ -248,9 +287,12 @@ describe("OpenCodeAdapterV2", () => {
               options: { signal: AbortSignal },
             ) => {
               if (sessionID === "root") return { data: true };
+              if (failure === "timeout" && childSignal?.aborted) return { data: true };
               childSignal = options.signal;
               called.resolve();
-              if (failure === "timeout") return new Promise(() => {});
+              if (failure === "timeout") {
+                return new Promise(() => {});
+              }
               if (failure === "not-found") throw { status: 404 };
               throw new Error("child abort failed");
             },
