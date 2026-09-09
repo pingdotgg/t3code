@@ -643,21 +643,43 @@ function ThreadRouteContent(
   const handleOpenConnectionEditor = () => {
     void navigation.navigate("Connections");
   };
-  const handleStopThread = () => {
+  const interruptKey =
+    selectedThread && composer.interruptibleRunId
+      ? `${selectedThread.environmentId}:${selectedThread.id}:${composer.interruptibleRunId}`
+      : null;
+  const interruptRequestedKeyRef = useRef<string | null>(null);
+  const [interruptRequestedKey, setInterruptRequestedKey] = useState<string | null>(null);
+  const isInterruptPending = interruptKey !== null && interruptRequestedKey === interruptKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- release the stop-request latch when the active run changes
+  useEffect(() => {
+    if (interruptRequestedKeyRef.current !== interruptKey) {
+      interruptRequestedKeyRef.current = null;
+      setInterruptRequestedKey(null);
+    }
+  }, [interruptKey]);
+  const handleStopThread = async () => {
     if (
       !selectedThread ||
       !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) ||
-      composer.interruptibleRunId === null
+      composer.interruptibleRunId === null ||
+      interruptKey === null ||
+      interruptRequestedKeyRef.current === interruptKey
     ) {
       return;
     }
-    return interruptThreadTurn({
+    interruptRequestedKeyRef.current = interruptKey;
+    setInterruptRequestedKey(interruptKey);
+    const result = await interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
         runId: composer.interruptibleRunId,
       },
     });
+    if (result._tag === "Failure" && interruptRequestedKeyRef.current === interruptKey) {
+      interruptRequestedKeyRef.current = null;
+      setInterruptRequestedKey(null);
+    }
   };
 
   const handleResumeQueue = async () => {
@@ -1028,6 +1050,7 @@ function ThreadRouteContent(
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
+          isInterruptPending={isInterruptPending}
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
           followUpBehavior={composer.followUpBehavior}

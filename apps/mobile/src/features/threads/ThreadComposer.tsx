@@ -223,6 +223,7 @@ export interface ThreadComposerProps {
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
+  readonly isInterruptPending: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   readonly sendBlockedReason?: string | null;
@@ -1105,10 +1106,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={props.isInterruptPending ? "Stop requested" : "Stop agent"}
                     icon="stop.fill"
                     variant="danger"
-                    disabled={!props.canOperateThread}
+                    disabled={!props.canOperateThread || props.isInterruptPending}
                     onPress={props.onStopThread}
                   />
                 ) : showResumeAction ? (
@@ -1173,10 +1174,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   {showStopAction ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={
+                        props.isInterruptPending ? "Stop requested" : "Stop agent"
+                      }
                       icon="stop.fill"
                       variant="danger"
-                      disabled={!props.canOperateThread}
+                      disabled={!props.canOperateThread || props.isInterruptPending}
                       onPress={props.onStopThread}
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (

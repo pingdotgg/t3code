@@ -376,6 +376,7 @@ export interface ChatComposerProps {
 
   phase: SessionPhase;
   canInterrupt: boolean;
+  isInterruptPending: boolean;
   isSendBusy: boolean;
   canResume: boolean;
   isRevertingCheckpoint?: boolean;
@@ -533,6 +534,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectSelectionRequired,
     phase,
     canInterrupt,
+    isInterruptPending,
     isSendBusy,
     canResume,
     isRevertingCheckpoint = false,
@@ -3379,15 +3381,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   type="button"
                   data-chat-composer-transition-actions="true"
                   className="flex size-8 shrink-0 items-center justify-center rounded-full bg-message-action text-message-action-foreground hover:bg-message-action-hover disabled:opacity-64"
-                  disabled={collapsedComposerPrimaryActionDisabled}
-                  aria-label={collapsedComposerPrimaryActionLabel}
+                  disabled={isInterruptPending || collapsedComposerPrimaryActionDisabled}
+                  aria-label={
+                    isInterruptPending ? "Stop requested" : collapsedComposerPrimaryActionLabel
+                  }
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
                     if (canInterrupt) handleInterruptPrimaryAction();
                     else if (showResumeAction) onResume();
                     // Compacting first is only sent from the labeled button, so expand to show it.
-                    else if (props.resumeCompactionTokens !== null && !props.keepFullHistory) expandMobileComposer();
+                    else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
+                      expandMobileComposer();
                     else submitComposer();
                   }}
                 >
@@ -3639,6 +3644,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     canInterrupt={canInterrupt}
+                    isInterruptPending={isInterruptPending}
                     followUpBehavior={followUpBehavior}
                     canSteer={!isCompacting}
                     alternateShortcutLabel={shortcutLabelForCommand(

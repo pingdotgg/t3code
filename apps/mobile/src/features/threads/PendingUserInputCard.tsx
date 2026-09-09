@@ -38,6 +38,7 @@ export interface PendingUserInputCardProps {
   readonly collapsed: boolean;
   readonly onToggleCollapsed: () => void;
   readonly onStopThread?: () => void;
+  readonly isInterruptPending?: boolean;
   readonly cardProgress: SharedValue<number>;
   readonly cardCoverage: SharedValue<number>;
   readonly onInputFocusChange?: (focused: boolean) => void;
@@ -171,11 +172,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       </Pressable>
       {props.onStopThread ? (
         <ControlPill
-          accessibilityLabel="Stop"
+          accessibilityLabel={props.isInterruptPending ? "Stop requested" : "Stop"}
           icon="stop.fill"
           variant="danger"
           className="h-9 w-9"
-          disabled={!props.canOperateThread}
+          disabled={!props.canOperateThread || props.isInterruptPending}
           onPress={props.onStopThread}
         />
       ) : null}

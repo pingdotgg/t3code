@@ -1817,16 +1817,38 @@ export default function ChatView(props: ChatViewProps) {
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
     canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+  const interruptKey =
+    canInterruptRunningThread && activeThread
+      ? `${environmentId}:${activeThread.id}:${activeRuntime?.activeRunId ?? "starting"}`
+      : null;
+  const interruptRequestedKeyRef = useRef<string | null>(null);
+  const [interruptRequestedKey, setInterruptRequestedKey] = useState<string | null>(null);
+  const isInterruptPending = interruptKey !== null && interruptRequestedKey === interruptKey;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- release the stop-request latch when the active run changes
+  useEffect(() => {
+    if (interruptRequestedKeyRef.current !== interruptKey) {
+      interruptRequestedKeyRef.current = null;
+      setInterruptRequestedKey(null);
+    }
+  }, [interruptKey]);
   const onInterrupt = async () => {
     if (
       !activeThread ||
+      interruptKey === null ||
+      interruptRequestedKeyRef.current === interruptKey ||
       !readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
     )
       return;
+    interruptRequestedKeyRef.current = interruptKey;
+    setInterruptRequestedKey(interruptKey);
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
     });
+    if (result._tag === "Failure" && interruptRequestedKeyRef.current === interruptKey) {
+      interruptRequestedKeyRef.current = null;
+      setInterruptRequestedKey(null);
+    }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setThreadError(
@@ -3641,6 +3663,7 @@ export default function ChatView(props: ChatViewProps) {
                                 phase={phase}
                                 isCompacting={isCompacting}
                                 canInterrupt={canInterruptRunningThread}
+                                isInterruptPending={isInterruptPending}
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||
                                   (setupQueueSendThreadKey !== null &&

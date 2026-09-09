@@ -263,6 +263,7 @@ export interface ThreadDetailScreenProps {
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
+  readonly isInterruptPending: boolean;
   readonly queuedRunEdit: QueuedRunEdit | null;
   readonly composerDraftKey: string | null;
   readonly followUpBehavior: FollowUpBehavior;
@@ -1794,6 +1795,7 @@ function ThreadDetailBody(
                             collapsed={userInputCollapsed}
                             onToggleCollapsed={handleToggleUserInputCollapsed}
                             onStopThread={props.onStopThread}
+                            isInterruptPending={props.isInterruptPending}
                             cardProgress={userInputCardProgress}
                             cardCoverage={userInputCardCoverage}
                             onInputFocusChange={handleOwnedInputFocusChange}
@@ -1891,6 +1893,7 @@ function ThreadDetailBody(
                         queueCount={props.selectedThreadQueueCount}
                         activeThreadBusy={props.activeThreadBusy}
                         canStopThread={props.canStopThread}
+                        isInterruptPending={props.isInterruptPending}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
                         // Keep follow-ups in the draft until server creation succeeds, or rejection strands them in the outbox.
@@ -1929,6 +1932,7 @@ function ThreadDetailBody(
                         onNativePasteText={props.onNativePasteText}
                         onRemoveDraftImage={props.onRemoveDraftImage}
                         onStopThread={props.onStopThread}
+                        isInterruptPending={props.isInterruptPending}
                         onResumeQueue={props.onResumeQueue}
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}
