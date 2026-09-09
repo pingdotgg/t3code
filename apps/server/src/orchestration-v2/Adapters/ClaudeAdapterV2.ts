@@ -1,3 +1,4 @@
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
@@ -3129,6 +3130,16 @@ export function makeClaudeAdapterV2(
             | "completedAt"
             | "updatedAt"
           >;
+          const readPath = ["read", "read file"].includes(input.classification.normalizedName)
+            ? firstStringInputField(input.toolInput, ["file_path", "path"])?.trim()
+            : undefined;
+          const viewedImagePath =
+            readPath &&
+            readPath.length <= 4096 &&
+            !/[\r\n]/.test(readPath) &&
+            isWorkspaceImagePreviewPath(readPath)
+              ? readPath
+              : undefined;
           const itemType = input.classification.itemType;
           const webSearchPatterns = webSearchPatternsFromClaudeTool({
             toolInput: input.toolInput,
@@ -3165,6 +3176,7 @@ export function makeClaudeAdapterV2(
                       ...itemBase,
                       type: "dynamic_tool",
                       toolName: input.toolName,
+                      ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
                       input: claudeNativeToolInputValue(input.toolInput),
                       ...(outputValue === undefined ? {} : { output: outputValue }),
                     };
