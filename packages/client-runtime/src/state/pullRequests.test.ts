@@ -41,6 +41,93 @@ function session(client: WsRpcProtocolClient): RpcSession {
   };
 }
 
+const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (client: WsRpcProtocolClient) {
+  const connectionState: SupervisorConnectionState = {
+    ...AVAILABLE_CONNECTION_STATE,
+    desired: true,
+    network: "online",
+    phase: "connected",
+    attempt: 1,
+    generation: 1,
+  };
+  const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target: TARGET,
+    state: yield* SubscriptionRef.make(connectionState),
+    session: yield* SubscriptionRef.make(Option.some(session(client))),
+    prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+  const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+    run: (_environmentId, effect) =>
+      Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    runStream: (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    followStream: (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+  } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+  const runtime = Atom.runtime(
+    Layer.merge(
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      Layer.succeed(
+        PullRequestDiffLoader,
+        PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
+      ),
+    ),
+  );
+  const atoms = createPullRequestEnvironmentAtoms(runtime);
+  const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+    Effect.sync(() => registry.dispose()),
+  );
+  return { atoms, registry };
+});
+
+it.effect("keeps concurrent diff file reads on different hosts separate", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const release = yield* Latch.make();
+      const started = yield* Latch.make();
+      const calls: string[] = [];
+      const client = {
+        [WS_METHODS.pullRequestsDiffFileContents]: (input: { readonly host: string }) =>
+          Effect.gen(function* () {
+            calls.push(input.host);
+            yield* started.open;
+            yield* release.await;
+            return { oldContents: "", newContents: input.host };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const input = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 1,
+        changeType: "change",
+        oldPath: "src/app.ts",
+        newPath: "src/app.ts",
+      } as const;
+      const first = atoms.diffFileContents.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...input, host: "github.com" },
+      });
+      yield* started.await;
+      const second = atoms.diffFileContents.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { ...input, host: "github.example.com" },
+      });
+      yield* release.open;
+
+      const results = yield* Effect.promise(() => Promise.all([first, second]));
+      expect(results).toMatchObject([
+        { _tag: "Success", value: { newContents: "github.com" } },
+        { _tag: "Success", value: { newContents: "github.example.com" } },
+      ]);
+      expect(calls).toEqual(["github.com", "github.example.com"]);
+    }),
+  ),
+);
+
 it.effect("refreshes pull request activity after a comment is updated", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -76,46 +163,10 @@ it.effect("refreshes pull request activity after a comment is updated", () =>
             commentBody = input.body;
           }),
       } as unknown as WsRpcProtocolClient;
-      const connectionState: SupervisorConnectionState = {
-        ...AVAILABLE_CONNECTION_STATE,
-        desired: true,
-        network: "online",
-        phase: "connected",
-        attempt: 1,
-        generation: 1,
-      };
-      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-        target: TARGET,
-        state: yield* SubscriptionRef.make(connectionState),
-        session: yield* SubscriptionRef.make(Option.some(session(client))),
-        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
-        connect: Effect.void,
-        disconnect: Effect.void,
-        retryNow: Effect.void,
-      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
-        run: (_environmentId, effect) =>
-          Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        runStream: (_environmentId, stream) =>
-          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        followStream: (_environmentId, stream) =>
-          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-      } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
-      const runtime = Atom.runtime(
-        Layer.merge(
-          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-          Layer.succeed(
-            PullRequestDiffLoader,
-            PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
-          ),
-        ),
-      );
-      const atoms = createPullRequestEnvironmentAtoms(runtime);
-      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
-        Effect.sync(() => registry.dispose()),
-      );
+      const { atoms, registry } = yield* makeTestRuntime(client);
       const reference = {
         projectId: ProjectId.make("project-1"),
+        host: "github.example.com",
         repository: "acme/web",
         number: 1,
       } as const;
