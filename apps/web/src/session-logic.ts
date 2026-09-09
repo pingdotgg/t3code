@@ -298,12 +298,10 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "subagent",
-  "thread_created",
 ]);
 
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "fork",
-  "subagent",
   "thread_created",
 ]);
 
@@ -347,6 +345,7 @@ function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["to
     case "web_search":
     case "dynamic_tool":
     case "subagent":
+    case "thread_created":
     case "user_input_request":
       return "tool";
     default:
@@ -403,6 +402,11 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
   } as const;
 
   switch (item.type) {
+    case "thread_created":
+      return {
+        ...common,
+        label: "Created thread",
+      };
     case "compaction":
       return {
         ...common,

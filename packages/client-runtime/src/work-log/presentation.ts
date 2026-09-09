@@ -81,6 +81,7 @@ export type ToolGroupAction =
   | "read"
   | "edit"
   | "command"
+  | "thread-create"
   | "browser"
   | "code-search"
   | "search"
@@ -412,6 +413,7 @@ function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean
 }
 
 export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
+  if (entry.itemType === "thread_created") return "thread-create";
   if (resolveWorkEntryToolPresentation(entry)?.icon === "browser") return "browser";
   if (entry.requestKind === "file-read" || entry.viewedImagePath !== undefined) return "read";
   if (
@@ -501,6 +503,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Changed ${count} ${count === 1 ? "file" : "files"}`;
     case "command":
       return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
+    case "thread-create":
+      return `Created ${count} ${count === 1 ? "thread" : "threads"}`;
     case "browser":
       return `Used browser ${count} ${count === 1 ? "time" : "times"}`;
     case "search":

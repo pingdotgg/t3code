@@ -60,7 +60,6 @@ import {
   resolveSendEnvMode,
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
-  shouldShowComposerContextStrip,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
   toolGroupConsumesUpwardNavigation,
@@ -355,56 +354,6 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
   });
 });
 
-describe("shouldShowComposerContextStrip", () => {
-  it("shows git context while composing a new thread", () => {
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: true,
-        isGitRepo: true,
-        hasActiveProject: true,
-        persistInActiveThreads: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("keeps git context in an active thread only when requested", () => {
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: false,
-        isGitRepo: true,
-        hasActiveProject: true,
-        persistInActiveThreads: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: false,
-        isGitRepo: true,
-        hasActiveProject: true,
-        persistInActiveThreads: false,
-      }),
-    ).toBe(false);
-  });
-
-  it("hides git context without a git-backed project", () => {
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: true,
-        isGitRepo: false,
-        hasActiveProject: true,
-        persistInActiveThreads: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldShowComposerContextStrip({
-        isDraftHeroState: true,
-        isGitRepo: true,
-        hasActiveProject: false,
-        persistInActiveThreads: true,
-      }),
-    ).toBe(false);
-  });
-});
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
     const state = deriveComposerSendState({
