@@ -55,7 +55,10 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import type { SourceControlProvider, SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -3801,6 +3804,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".t3code"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".t3code", "change-request.md"),
+        "Include a rollout section when relevant.\n",
+      );
       yield* runGit(repoDir, ["checkout", "-b", "feature/thread-context"]);
       NodeFS.writeFileSync(NodePath.join(repoDir, "thread-context.txt"), "context\n");
       yield* runGit(repoDir, ["add", "thread-context.txt"]);
@@ -3843,6 +3851,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         completedAt: createdAt,
         updatedAt: createdAt,
       });
+      let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"];
       let generatedThreadContext: string | undefined;
       let generatedPrompt = "";
       const writer = fromRunner("test", (request) => {
@@ -3851,8 +3860,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "custom",
+            customInstructions: "Lead with user impact.",
+          },
+        },
         textGeneration: {
           generatePrContent: (input) => {
+            generatedPolicy = input.policy;
             generatedThreadContext = input.threadContext;
             return writer.generatePrContent(input);
           },
@@ -3958,6 +3974,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         threadId,
       });
 
+      expect(generatedPolicy).toMatchObject({
+        changeRequestInstructions:
+          "Lead with user impact.\n\nInclude a rollout section when relevant.",
+      });
       expect(generatedPrompt).toContain("Command: vp test run\nExit code: 0");
       expect(generatedPrompt).toContain("Tests 12 passed");
       expect(generatedPrompt).toContain("Make the PR writer see the thread");

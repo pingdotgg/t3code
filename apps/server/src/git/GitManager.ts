@@ -2340,7 +2340,22 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings);
+    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
+    const repositoryChangeRequestInstructions = yield* readRepositoryInstructions(
+      cwd,
+      ".t3code/change-request.md",
+    );
+    const policy = repositoryChangeRequestInstructions
+      ? {
+          ...stylePolicy,
+          changeRequestInstructions: [
+            stylePolicy.changeRequestInstructions,
+            repositoryChangeRequestInstructions,
+          ]
+            .filter((instructions): instructions is string => Boolean(instructions))
+            .join("\n\n"),
+        }
+      : stylePolicy;
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(
