@@ -239,7 +239,12 @@ export interface ProviderFilesViewed {
  *
  * A path is absent only when the read could not say: a host that answered for part of the change
  * must leave the rest out rather than report it as deleted, or a file past the cut would be
- * cleared once and cleared for good.
+ * cleared once and cleared for good. So a provider converts its host's own absences on the way
+ * here: a path the read reached and found no version for arrives as the empty string rather
+ * than as a gap.
+ *
+ * The whole path a version travels, and the three senses of null along it, are in
+ * `docs/internals/pull-request-file-revisions.md`.
  */
 export interface ProviderFileRevisions {
   readonly revisions: ReadonlyMap<string, string>;

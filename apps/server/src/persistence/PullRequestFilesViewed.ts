@@ -42,6 +42,9 @@ export const PullRequestFileViewedMark = Schema.Struct({
    * deleted. Null where the host could not say at all, which is no baseline rather than an empty
    * one: stamping such a mark with the empty revision would report the file as changed the moment
    * anything did answer, so a mark with no baseline stays cleared until a press replaces it.
+   *
+   * This null is the only one this environment invents; the other two are in
+   * `docs/internals/pull-request-file-revisions.md`.
    */
   revision: Schema.NullOr(Schema.String),
 });
