@@ -92,11 +92,8 @@ If the connection fails or the app cannot confirm the outcome, it shows **Stop u
 **Retry stop** checks the computer’s current thread status before sending another request. Some
 background work does not report a turn outcome, so its stop may remain unconfirmed.
 
-The thread header shows the last update received on this device, with a local date and time.
-Connection status appears separately: **Connected** does not mean a new message has arrived.
-The receipt time stays unchanged while the thread is quiet. Refreshing cached content does not
-create a new receipt.
-A received thread snapshot is labeled separately from a new update.
+While the agent works, its activity row shows how long ago the last message was sent, such as
+**Last message · 5m ago**. The age advances while the thread is open.
 
 ## Tool activity
 

@@ -1794,6 +1794,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
         private var currentDetailRevision: UInt64?
         private var currentDynamicTypeSize: DynamicTypeSize?
         private var currentCodeSizeSteps = 0
+        private var currentLastMessageAt: Date?
         private var currentIsWorking = false
         private var currentIsCompacting = false
         private var currentActiveSubagentCount = 0
@@ -1845,6 +1846,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 if messageID == FeatureTranscriptCollectionView.workingIndicatorID {
                     cell.contentConfiguration = UIHostingConfiguration {
                         FeatureThreadWorkingIndicator(
+                            lastMessageAt: self?.currentLastMessageAt,
                             isCompacting: self?.currentIsCompacting == true,
                             activeSubagentCount: self?.currentActiveSubagentCount ?? 0,
                             backgroundWorkIsActive: self?.currentBackgroundWorkIsActive == true,
@@ -1925,7 +1927,9 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
                 || currentCodeSizeSteps != codeSizeSteps
             let revisionChanged = currentDetailRevision != renderUpdate?.revision
             let workingChanged = currentIsWorking != isWorking
-            let workingDetailChanged = currentIsCompacting != isCompacting
+            let lastMessageAt = FeatureMessageAge.lastMessageDate(in: messages)
+            let workingDetailChanged = currentLastMessageAt != lastMessageAt
+                || currentIsCompacting != isCompacting
                 || currentActiveSubagentCount != activeSubagentCount
                 || currentBackgroundWorkIsActive != backgroundWorkIsActive
                 || currentIsMonitoring != isMonitoring
@@ -1951,6 +1955,7 @@ private struct FeatureTranscriptCollectionView: UIViewRepresentable {
             currentDetailRevision = renderUpdate?.revision
             currentDynamicTypeSize = dynamicTypeSize
             currentCodeSizeSteps = codeSizeSteps
+            currentLastMessageAt = lastMessageAt
             currentIsWorking = isWorking
             currentIsCompacting = isCompacting
             currentActiveSubagentCount = activeSubagentCount
@@ -2329,6 +2334,7 @@ private struct FeatureLoadEarlierTurnsButton: View {
 }
 
 private struct FeatureThreadWorkingIndicator: View {
+    let lastMessageAt: Date?
     let isCompacting: Bool
     let activeSubagentCount: Int
     let backgroundWorkIsActive: Bool
@@ -2365,7 +2371,9 @@ private struct FeatureThreadWorkingIndicator: View {
                 Text(title)
                     .font(T3Typography.supportingStrong)
                     .foregroundStyle(T3Colors.statusRunning)
-                if let detail {
+                if let lastMessageAt {
+                    FeatureMessageAgeView(sentAt: lastMessageAt)
+                } else if let detail {
                     Text(detail)
                         .font(T3Typography.supporting)
                         .foregroundStyle(T3Colors.textTertiary)
@@ -2375,7 +2383,7 @@ private struct FeatureThreadWorkingIndicator: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(detail.map { "\(title). \($0)." } ?? "\(title).")
+
     }
 }
 
