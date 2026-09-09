@@ -29,6 +29,31 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect.each([
+    ["open", "opened"],
+    ["closed", "closed"],
+    ["merged", "merged"],
+    ["all", "all"],
+  ] as const)("maps the %s state to the GitLab API %s state", (state, expectedState) =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.listMergeRequests({
+        cwd: "/repo",
+        headSelector: "feature/mr-list",
+        state,
+        limit: 7,
+      });
+
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.arrayContaining([`state=${expectedState}`, "per_page=7"]),
+        }),
+      );
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
@@ -217,15 +242,20 @@ layer("GitLabCli.layer", (it) => {
           command: "glab",
           cwd: "/repo",
           args: [
-            "mr",
-            "list",
-            "--source-branch",
-            "feature/mr-list",
-            "--all",
-            "--per-page",
-            "20",
-            "--output",
-            "json",
+            "api",
+            "--method",
+            "GET",
+            "projects/:fullpath/merge_requests",
+            "--raw-field",
+            "source_branch=feature/mr-list",
+            "--raw-field",
+            "state=all",
+            "--raw-field",
+            "per_page=20",
+            "--raw-field",
+            "order_by=updated_at",
+            "--raw-field",
+            "sort=desc",
           ],
         }),
       );
