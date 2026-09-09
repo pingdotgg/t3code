@@ -84,6 +84,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThemeEditor.command, "themeEditor.toggle");
 
+    const parsedComposerFocus = yield* decode(KeybindingRule, {
+      key: "mod+shift+i",
+      command: "composer.focus",
+    });
+    assert.strictEqual(parsedComposerFocus.command, "composer.focus");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
