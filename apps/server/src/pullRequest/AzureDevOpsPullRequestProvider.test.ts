@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
-import { make } from "./AzureDevOpsPullRequestProvider.ts";
+import { make, MAX_DIFF_SPAWNS } from "./AzureDevOpsPullRequestProvider.ts";
 import { MAX_DIFF_SLICE_BYTES, MAX_FILE_DIFF_EDITS } from "./azureDevOpsDiff.ts";
 import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
 
@@ -125,6 +125,46 @@ function patchedPaths(patch: string): ReadonlyArray<string> {
 }
 
 describe("getDiff reads", () => {
+  it.effect("holds every reader together to one request's worth of processes", () =>
+    Effect.gen(function* () {
+      // The fan-out inside a read bounds one Code tab. Two people opening two Azure reviews at
+      // once are two reads, so without a ceiling above them both they are twice a request's
+      // processes, each paying a Python interpreter's start-up on the same machine.
+      const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
+      let inFlight = 0;
+      let peakInFlight = 0;
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({ changes: paths.map((path) => change(path)), truncated: false }),
+            readItemContent: () =>
+              Effect.gen(function* () {
+                inFlight += 1;
+                peakInFlight = Math.max(peakInFlight, inFlight);
+                // Suspends before answering, as a subprocess would, so what is out at once is the
+                // scheduler's answer rather than an artefact of resolving inline.
+                yield* Effect.yieldNow;
+                yield* Effect.yieldNow;
+                inFlight -= 1;
+                return { contents: side("new", 2, 4), isBinary: false };
+              }),
+          }),
+        ),
+      );
+
+      const readDiff = (number: number) =>
+        provider.getDiff({ cwd: "/w", repository: "acme/web", host: "dev.azure.com", number });
+
+      yield* Effect.all([readDiff(7), readDiff(8)], { concurrency: 2 });
+
+      expect(peakInFlight).toBeLessThanOrEqual(MAX_DIFF_SPAWNS);
+    }),
+  );
+
   it.effect("asks for both sides of several files at once rather than one side at a time", () =>
     Effect.gen(function* () {
       // Each file is two `az` invocations, each paying a Python interpreter's start-up, so a

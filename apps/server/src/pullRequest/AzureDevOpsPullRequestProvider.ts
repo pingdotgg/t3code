@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
@@ -38,6 +39,14 @@ import type {
  * per-file stats with here, and low enough not to swamp the host's throttling or the machine.
  */
 const DIFF_FILE_CONCURRENCY = 4;
+
+/**
+ * How many `az` processes this build will have out at once, counted across every reader rather
+ * than per request. The fan-out above bounds one Code tab, so two people opening two Azure reviews
+ * had sixteen Python interpreters starting at once and nothing above them. Held at what one
+ * request at full width spends, so a second reader waits behind the first instead of adding to it.
+ */
+export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 
 const CAPABILITIES: PullRequestCapabilities = {
   // Azure serves no patch of its own, so the one the Code tab reads is built here out of the
@@ -134,6 +143,11 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
 
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+  // Made once with the provider, which the registry builds once, so this is the whole build's
+  // allowance rather than one request's.
+  const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
+  const readItemContent = (input: Parameters<typeof cli.readItemContent>[0]) =>
+    diffSpawns.withPermits(1)(cli.readItemContent(input));
 
   const fail =
     (operation: string) => (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
@@ -224,7 +238,7 @@ export const make = Effect.gen(function* () {
       [
         input.change.changeKind === "new"
           ? Effect.succeed(EMPTY_ITEM)
-          : cli.readItemContent({
+          : readItemContent({
               cwd: input.cwd,
               location: input.location,
               path: input.change.oldPath,
@@ -232,7 +246,7 @@ export const make = Effect.gen(function* () {
             }),
         input.change.changeKind === "deleted"
           ? Effect.succeed(EMPTY_ITEM)
-          : cli.readItemContent({
+          : readItemContent({
               cwd: input.cwd,
               location: input.location,
               path: input.change.path,
