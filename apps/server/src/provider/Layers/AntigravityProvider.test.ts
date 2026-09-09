@@ -743,4 +743,46 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
       }),
     ),
   );
+
+  it.effect("does not restore usageLimits if signed out before quota probe completes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const quotaGate = yield* Deferred.make<void>();
+        const quotaContinue = yield* Deferred.make<void>();
+        const quotaDone = yield* Deferred.make<void>();
+
+        let gateArmed = false;
+        const harness = yield* makeHarness({
+          usageLimits: Effect.gen(function* () {
+            if (!gateArmed) {
+              return undefined;
+            }
+            yield* Deferred.succeed(quotaGate, undefined);
+            yield* Deferred.await(quotaContinue);
+            yield* Deferred.succeed(quotaDone, undefined);
+            return {
+              checkedAt: "2026-09-09T03:00:00.000Z",
+              windows: [{ id: "stale_quota", kind: "session", label: "Stale", usedPercent: 50 }],
+            };
+          }),
+        });
+        yield* harness.initialize;
+        gateArmed = true;
+
+        yield* harness.provider.onSessionStarted(started);
+        yield* Deferred.await(quotaGate);
+
+        // Sign out while quota probe is still running in background
+        yield* harness.provider.onSignedOut;
+
+        // Release the deferred quota effect
+        yield* Deferred.succeed(quotaContinue, undefined);
+        yield* Deferred.await(quotaDone);
+
+        const finalSnapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(finalSnapshot.auth.status).toBe("unauthenticated");
+        expect(finalSnapshot.usageLimits).toBeUndefined();
+      }),
+    ),
+  );
 });

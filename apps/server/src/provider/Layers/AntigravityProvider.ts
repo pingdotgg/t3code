@@ -270,47 +270,51 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(metadata, (state) => {
+    const updatedRevision = yield* SubscriptionRef.modify(metadata, (state) => {
       if (state.authRevision !== before.authRevision) {
-        return state;
+        return [Option.none<number>(), state] as const;
       }
+      const newRevision = state.authRevision + 1;
       const { message: _previousMessage, ...draft } = state.draft;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
-      return {
-        authRevision: state.authRevision + 1,
-        draft: {
-          ...draft,
-          installed: true,
-          status: settings.enabled ? "ready" : "disabled",
-          version: started.initializeResult.agentInfo?.version || draft.version,
-          auth: {
-            status: "authenticated",
-            type: options.auth?.type ?? "oauth-personal",
-            label: options.auth?.label ?? "Google account",
+      return [
+        Option.some(newRevision),
+        {
+          authRevision: newRevision,
+          draft: {
+            ...draft,
+            installed: true,
+            status: settings.enabled ? "ready" : "disabled",
+            version: started.initializeResult.agentInfo?.version || draft.version,
+            auth: {
+              status: "authenticated",
+              type: options.auth?.type ?? "oauth-personal",
+              label: options.auth?.label ?? "Google account",
+            },
+            checkedAt: updatedAt,
+            models: buildAntigravityModelsFromSession(started.sessionSetupResult),
+            supportsTextGeneration,
+            ...(cwd
+              ? {
+                  workspaceSnapshots: [
+                    ...workspaces.filter((entry) => entry.cwd !== cwd),
+                    {
+                      cwd,
+                      checkedAt: updatedAt,
+                      slashCommands: workspace?.slashCommands ?? draft.slashCommands,
+                      skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
+                    },
+                  ].slice(-MAX_WORKSPACE_SNAPSHOTS),
+                }
+              : {}),
           },
-          checkedAt: updatedAt,
-          models: buildAntigravityModelsFromSession(started.sessionSetupResult),
-          supportsTextGeneration,
-          ...(cwd
-            ? {
-                workspaceSnapshots: [
-                  ...workspaces.filter((entry) => entry.cwd !== cwd),
-                  {
-                    cwd,
-                    checkedAt: updatedAt,
-                    slashCommands: workspace?.slashCommands ?? draft.slashCommands,
-                    skills: workspace?.skills ?? discoveredSkills.get(cwd) ?? [],
-                  },
-                ].slice(-MAX_WORKSPACE_SNAPSHOTS),
-              }
-            : {}),
-        },
-      } satisfies AntigravityProviderState;
+        } satisfies AntigravityProviderState,
+      ] as const;
     });
 
-    const revision = (yield* SubscriptionRef.get(metadata)).authRevision;
-    if (options.usageLimits) {
+    if (Option.isSome(updatedRevision) && options.usageLimits) {
+      const revision = updatedRevision.value;
       yield* options.usageLimits.pipe(
         Effect.catchCause(() => Effect.succeed(undefined)),
         Effect.flatMap((usageLimits) =>
