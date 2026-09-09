@@ -92,6 +92,8 @@ Required `production` environment variables:
 Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
+- `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
+  `off`.
 
 Required `production` environment secrets:
 
@@ -110,6 +112,53 @@ Developers deploy personal stages locally rather than through pull-request autom
 ```sh
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
+
+### Managed tunnel cleanup rollout
+
+Keep `RELAY_TUNNEL_CLEANUP_MODE=off` for the first production deploy. That deploy applies the
+nullable allocation migration and adds the recovery endpoints. Web and mobile clients need no
+coordinated release. CLI and desktop server builds must reach users before cleanup is enabled,
+because those builds register recovery and replace a deleted tunnel after wake.
+
+1. Deploy the relay and migration with cleanup `off`.
+2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
+   legacy and are never candidates.
+3. Set `dry-run`, deploy, and read the sweep counters (`scanned`, `wouldDelete`, `skippedLegacy`,
+   `failed`, `truncated`) across several sweeps.
+4. Run the disposable-host canary below.
+5. Set `enabled` only after the canary recovers without a server restart.
+
+The job runs every five minutes with a five-minute grace period, so a candidate is usually removed
+five to ten minutes after it goes down. One sweep attempts at most 100 deletions, so a backlog takes
+longer.
+
+To roll back, set cleanup to `off` and deploy the relay before downgrading any host. Keep the
+recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
+
+### Disposable-host canary
+
+This test has not been run against a real Cloudflare account. Run it against a disposable relay
+stage, test Cloudflare account, disposable host, and disposable T3 home. Keep production cleanup at
+`off` or `dry-run` until it passes. Do not stop a daily-use T3 server.
+
+1. Deploy the disposable stage with cleanup `dry-run`. Link a first disposable environment through
+   web or mobile settings and confirm its tunnel is healthy and recovery is registered.
+2. Stop that host and restart the same T3 home on a different local port. Confirm the public
+   hostname reaches the new port and sends nothing to the old one.
+3. Link a second disposable environment with a server build that predates recovery registration.
+   Capture its managed `cloudflared` child PID, confirm it belongs to that host, and pause only that
+   child with `kill -STOP <legacy-pid>`. Wait until Cloudflare reports it down for over five minutes.
+4. Capture the first environment's `cloudflared` child PID from its server logs, confirm ownership,
+   and pause it with `kill -STOP <first-pid>`. Wait until Cloudflare reports it down for over five
+   minutes.
+5. Confirm dry-run counts the first tunnel in `wouldDelete` and the second in `skippedLegacy`.
+6. Set cleanup `enabled` on the disposable stage and deploy. Confirm in the test Cloudflare account
+   that the first tunnel is deleted and the legacy tunnel still exists.
+7. Resume the first child with `kill -CONT <first-pid>`. Confirm the running server detects the
+   repeated rejection, requests recovery, and becomes reachable at the same hostname without a
+   restart.
+8. Resume the legacy child with `kill -CONT <legacy-pid>` and confirm its tunnel reconnects.
+9. Repeat with a physical sleep and wake cycle on a disposable laptop before broad rollout.
 
 ## Marketing site deployment
 
