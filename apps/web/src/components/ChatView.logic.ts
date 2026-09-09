@@ -646,19 +646,6 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
-export function shouldShowComposerContextStrip(input: {
-  isDraftHeroState: boolean;
-  isGitRepo: boolean;
-  hasActiveProject: boolean;
-  persistInActiveThreads: boolean;
-}): boolean {
-  return (
-    input.isGitRepo &&
-    input.hasActiveProject &&
-    (input.isDraftHeroState || input.persistInActiveThreads)
-  );
-}
-
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
   branch: string | null;
