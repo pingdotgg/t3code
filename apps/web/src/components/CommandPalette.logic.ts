@@ -39,9 +39,9 @@ export function browseInputEndPaddingClass(input: {
  */
 export type SearchOverlayMode = "command" | "files" | "content";
 
-export type CommandPaletteOpenIntent =
-  | { readonly kind: "add-project" | "new-thread-in" }
-  | { readonly kind: "search"; readonly query: string };
+export interface CommandPaletteOpenIntent {
+  readonly kind: "add-project" | "new-thread-in";
+}
 
 export interface CommandPaletteUiState {
   readonly open: boolean;
@@ -52,7 +52,6 @@ export interface CommandPaletteUiState {
 export type CommandPaletteUiAction =
   | { readonly _tag: "SetOpen"; readonly open: boolean }
   | { readonly _tag: "ToggleMode"; readonly mode: SearchOverlayMode }
-  | { readonly _tag: "OpenSearch"; readonly query: string }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "ClearOpenIntent" };
@@ -70,8 +69,6 @@ export function reduceCommandPaletteUiState(
       return state.open && state.mode === action.mode
         ? { ...state, open: false, openIntent: null }
         : { open: true, mode: action.mode, openIntent: null };
-    case "OpenSearch":
-      return { open: true, mode: "command", openIntent: { kind: "search", query: action.query } };
     case "OpenAddProject":
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":

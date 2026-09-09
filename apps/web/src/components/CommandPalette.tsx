@@ -482,8 +482,6 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
           openAddProject();
-        } else if (detail.query !== undefined) {
-          dispatch({ _tag: "OpenSearch", query: detail.query });
         } else {
           setOpen(true);
         }
@@ -1498,13 +1496,6 @@ function OpenCommandPaletteDialog(props: {
     pushPaletteView,
     startAddProjectSourceSelection,
   ]);
-
-  useLayoutEffect(() => {
-    if (openIntent?.kind !== "search") return;
-    setViewStack([]);
-    setQuery(openIntent.query);
-    clearOpenIntent();
-  }, [clearOpenIntent, openIntent]);
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {
