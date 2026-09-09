@@ -102,3 +102,36 @@ export const createHostRuntimeContext =
       })),
     } satisfies HostRuntimeContext;
   };
+
+/**
+ * Host runtime context for container platforms (`AWS.ECS.Task`,
+ * `AWS.ECS.Service`, `Docker.Service`): extends the shared process host
+ * context so an impl shape's `run` effect is registered as a one-shot runner
+ * (the container exits when it completes) and the HTTP server only boots when
+ * the impl actually declares a `fetch` handler.
+ */
+export const createContainerRuntimeContext =
+  (type: string) =>
+  (id: string): HostRuntimeContext => {
+    const base = createHostRuntimeContext(type)(id);
+    // Capture the host serve BEFORE Object.assign overwrites `base.serve`
+    // with the wrapper below — calling `base.serve` inside the wrapper would
+    // resolve to the wrapper itself (property lookup happens at call time)
+    // and recurse without bound the moment an impl declares `fetch`.
+    const serveBase = base.serve;
+    const serve: HostRuntimeContext["serve"] = (handler, options) =>
+      Effect.gen(function* () {
+        const shape = options?.shape;
+        const run = shape?.run;
+        if (Effect.isEffect(run)) {
+          yield* base.run(run as Effect.Effect<void, never, any>);
+        }
+        // Boot the HTTP server only for an impl that declared `fetch` — a
+        // pure one-shot `{ run }` program must exit when `run` completes
+        // rather than parking behind the 404 fallback server forever.
+        if (shape === undefined || shape.fetch !== undefined) {
+          yield* serveBase(handler, options);
+        }
+      }) as Effect.Effect<void, never, never>;
+    return Object.assign(base, { serve });
+  };

@@ -37,7 +37,7 @@ import * as Reactivity from "./Reactivity.ts"
  * It exposes the generated HTTP API client, an atom runtime, mutation helpers that
  * return `AtomResultFn`s, and query helpers that return atoms of endpoint results.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface AtomHttpApiClient<Self, Id extends string, Groups extends HttpApiGroup.Constraint>
@@ -266,6 +266,9 @@ export const Service =
           HttpClientError.HttpClientError | SchemaError
         >)
       }))
+      if (opts.reactivityKeys) {
+        atom = self.runtime.factory.withReactivity(opts.reactivityKeys)(atom)
+      }
       if (opts.responseMode === "decoded-only" && opts.serializationKey) {
         const endpoint = groups[opts.group].endpoints[opts.endpoint]
         atom = Atom.serializable(atom, {
@@ -281,9 +284,7 @@ export const Service =
           ? Atom.setIdleTTL(atom, opts.timeToLive)
           : Atom.keepAlive(atom)
       }
-      return opts.reactivityKeys
-        ? self.runtime.factory.withReactivity(opts.reactivityKeys)(atom)
-        : atom
+      return atom
     })
 
     self.query = ((

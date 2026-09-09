@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * an account-level binding: pass an id from `ListWorkflowExecutions`.
  * Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.GetWorkflowExecutionHttp)`.
- * @binding
- * @section Workflow Monitoring
- * @example Read a Workflow Execution's State
+ * ### Workflow Monitoring
+ * **Example:** Read a Workflow Execution's State
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getWorkflowExecution = yield* AWS.ImageBuilder.GetWorkflowExecution();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const execution = yield* getWorkflowExecution({ workflowExecutionId });
  * yield* Effect.log(`${execution.type} workflow is ${execution.status}`);
  * ```
+ *
+ * @binding
  */
 export interface GetWorkflowExecution extends Binding.Service<
   GetWorkflowExecution,

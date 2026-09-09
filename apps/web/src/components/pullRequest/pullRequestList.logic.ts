@@ -18,6 +18,9 @@ import type {
   PullRequestListState,
 } from "@t3tools/contracts";
 
+import { toSortableTimestamp } from "../../lib/threadSort";
+import type { PullRequestListSort } from "./pullRequestListPreferences";
+
 /**
  * A listed change request with the environment that read it. Nothing on a row says which machine
  * it came from, and the page unions every connected one — so acting on a row, refreshing it, or
@@ -64,7 +67,7 @@ export type PullRequestViewers = PullRequestListResult["viewers"];
 /** A row plus the environment that read it, where the caller has one to give. */
 type ScopedEntry = PullRequestListEntry & { readonly environmentId?: string };
 
-export const pullRequestViewerKey = (entry: ScopedEntry): string =>
+const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
@@ -415,7 +418,7 @@ export function groupPullRequestsByInvolvement<Entry extends ScopedEntry>(
       buckets.others.push(entry);
     }
   }
-  return (["reviewRequested", "authored", "others"] as const)
+  return (["authored", "reviewRequested", "others"] as const)
     .filter((key) => buckets[key].length > 0)
     .map((key) => ({ key, label: GROUP_LABELS[key], entries: buckets[key] }));
 }
@@ -466,7 +469,11 @@ export function pullRequestStatsKeysToRequest(
     [...enteredKeys].filter((key) => {
       const entry = entriesByKey.get(key);
       return (
-        entry !== undefined && !requested.has(key) && !statsByRow.has(pullRequestDiffStatKey(entry))
+        entry !== undefined &&
+        entry.additions === 0 &&
+        entry.deletions === 0 &&
+        !requested.has(key) &&
+        !statsByRow.has(pullRequestDiffStatKey(entry))
       );
     }),
   );
@@ -615,8 +622,8 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   const byRecency = (left: Entry, right: Entry) => right.updatedAt.localeCompare(left.updatedAt);
   return (
     [
-      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
       { key: "authored", entries: [...authoredByKey.values()].toSorted(byRecency) },
+      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
       { key: "others", entries: others },
     ] as const
   )
@@ -1003,7 +1010,8 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
  * verdict, then everything else still open. Drafts stay in that third tier because their author
  * has not made them mergeable yet. Finished work follows open work when all states are visible. A
  * known conflict is never ready, whatever its checks, review or state say, so it stays at the
- * bottom. Smaller measured changes come first within a tier; recency only breaks a remaining tie.
+ * bottom. Within each tier, smaller measured diffs come first, then unknown sizes. Recency
+ * breaks ties between equally sized diffs.
  */
 export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
@@ -1020,11 +1028,49 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
   return entries.toSorted((left, right) => {
     const byTier = tier(left) - tier(right);
     if (byTier !== 0) return byTier;
-    const byMeasurement = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
-    if (byMeasurement !== 0) return byMeasurement;
-    const bySize = left.additions + left.deletions - (right.additions + right.deletions);
-    return bySize !== 0 ? bySize : right.updatedAt.localeCompare(left.updatedAt);
+    const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+    const sized = left.additions + left.deletions - (right.additions + right.deletions);
+    return measured || sized || right.updatedAt.localeCompare(left.updatedAt);
   });
+}
+
+/** Keeps authored work first while applying the selected ordering inside every involvement group. */
+export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  sort: PullRequestListSort,
+  searchText: string,
+  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
+): ReadonlyArray<PullRequestGroup<Entry>> {
+  const sortWithinGroups = (rank: (entries: ReadonlyArray<Entry>) => ReadonlyArray<Entry>) =>
+    groups.map((group) => ({ ...group, entries: rank(group.entries) }));
+
+  if (sort === "ready") {
+    return searchText.trim().length === 0
+      ? sortWithinGroups((entries) => rankPullRequestsByMergeReadiness(entries, hasMeasuredSize))
+      : groups;
+  }
+  if (sort === "updated") return groups;
+
+  const timestamp = (entry: Entry) =>
+    toSortableTimestamp(entry.updatedAt) ?? toSortableTimestamp(entry.createdAt) ?? 0;
+  return sortWithinGroups((entries) =>
+    entries.toSorted((left, right) => {
+      if (sort === "newest" || sort === "oldest") {
+        const leftCreated = toSortableTimestamp(left.createdAt);
+        const rightCreated = toSortableTimestamp(right.createdAt);
+        const measured = Number(rightCreated !== null) - Number(leftCreated !== null);
+        const dated = (leftCreated ?? 0) - (rightCreated ?? 0);
+        return (
+          measured || (sort === "newest" ? -dated : dated) || timestamp(right) - timestamp(left)
+        );
+      }
+      const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+      const sized = left.additions + left.deletions - (right.additions + right.deletions);
+      return (
+        measured || (sort === "largest" ? -sized : sized) || timestamp(right) - timestamp(left)
+      );
+    }),
+  );
 }
 
 /**

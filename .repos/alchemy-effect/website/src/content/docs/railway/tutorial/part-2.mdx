@@ -1,0 +1,297 @@
+---
+title: "Part 2: Deploy a Service"
+description: Bundle an Effect HTTP server, deploy it to Railway as a Service, and serve requests on up.railway.app.
+sidebar:
+  order: 2
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+In [Part 1](/railway/tutorial/part-1) you deployed a Project. Now you
+will deploy a `Railway.Service`: an Effect program running in a
+Railway container. Alchemy bundles it, generates a Dockerfile, and
+uploads the context. Railway builds the image.
+
+:::note[Image Services]
+Pass `image: "hashicorp/http-echo"` to skip the build and pull a
+public tag instead — see [Services](/railway/compute/services).
+:::
+
+## Move the Project to a module
+
+So far the Project lives inside the Stack's generator. To let other
+files reference it, declare it at **module scope** instead — a
+resource declared this way is an Effect you can import and `yield*`
+anywhere. Create `src/project.ts`:
+
+```typescript
+// src/project.ts
+import * as Railway from "alchemy/Railway";
+
+export const Site = Railway.Project("Site");
+```
+
+The logical id is still `Site`, so Alchemy recognizes it as the same
+Project you deployed in Part 1 — moving declarations between files
+doesn't recreate anything.
+
+## Update the Stack
+
+Import the Project and yield it from the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
++import { Site } from "./src/project.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Railway.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+-    const site = yield* Railway.Project("Site");
++    const site = yield* Site;
+
+    return {
+      name: site.name,
+      projectId: site.projectId,
+      url: site.url,
+    };
+  }),
+);
+```
+
+## Create the Service file
+
+A Service in Alchemy is a class — it has both an infrastructure
+definition and a runtime implementation expressed as an Effect.
+Create `src/api.ts` with the smallest possible declaration:
+
+```typescript
+// src/api.ts
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
+import { Site } from "./project.ts";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    return {};
+  }),
+) {}
+```
+
+The `<Api>` type argument plus the empty `()` is a one-time bit of
+ceremony — it lets TypeScript reason about `Api` as a typed handle.
+`project: Site` says which Project this Service runs in, and
+`main: import.meta.url` tells Alchemy this same file is the bundle
+entrypoint.
+
+## Serve HTTP with `fetch`
+
+Add a `fetch` field — Alchemy treats anything returned from the
+`Effect.gen` block as the runtime API, and `fetch` specifically is
+wired to an HTTP server listening on the Service's port:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
++import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Site } from "./project.ts";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+-    return {};
++    return {
++      fetch: Effect.succeed(HttpServerResponse.text("Hello from Railway!")),
++    };
+  }),
+) {}
+```
+
+`HttpServerResponse` is the same `effect/unstable/http` API used on
+every other Alchemy runtime — the handler you write here would run
+unchanged on Cloudflare Workers or AWS Lambda.
+
+:::note
+Notice the "Effect returning an Effect" pattern. The outer generator
+is the **Init phase** — it runs at deploy time and at process
+startup. The inner `fetch` generator is the **Runtime phase** — it
+runs per request.
+:::
+
+## Pin a region
+
+Railway Services live in a [region](/railway/compute/regions). Omit
+it and Railway picks a default. Set it explicitly so the Volume you
+add in Part 3 can match:
+
+```diff lang="typescript"
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+-  { project: Site, main: import.meta.url },
++  { project: Site, main: import.meta.url, region: "us-west2" },
+```
+
+Updating `region` later is in place.
+
+## Set the port
+
+Give the Service an explicit port so Railway's edge knows where to
+forward:
+
+```diff lang="typescript"
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+-  { project: Site, main: import.meta.url, region: "us-west2" },
++  { project: Site, main: import.meta.url, region: "us-west2", port: 3000 },
+```
+
+The port is written to the process environment as `PORT` and used as
+the generated domain's `targetPort`. Alchemy publishes HTTPS on
+Railway's edge in front of it.
+
+## Add a health route
+
+Add `/health` so you can probe the process:
+
+```diff lang="typescript"
+// src/api.ts
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+// ...
+    return {
+-      fetch: Effect.succeed(HttpServerResponse.text("Hello from Railway!")),
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        const url = new URL(request.url, "http://service");
++        if (url.pathname === "/health") {
++          return HttpServerResponse.json({ ok: true });
++        }
++        return HttpServerResponse.text("Hello from Railway!");
++      }),
+    };
+```
+
+## Wire the Service into the Stack
+
+The `Api` class is just a typed identifier — yielding it inside the
+Stack's Effect is what registers the resource and starts the deploy:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
++import Api from "./src/api.ts";
+import { Site } from "./src/project.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Railway.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Site;
++    const api = yield* Api;
+
+    return {
+      name: site.name,
+      projectId: site.projectId,
+-      url: site.url,
++      url: api.url,
+    };
+  }),
+);
+```
+
+Yielding `Api` returns the resolved Service outputs — the service
+id, region, and the public `url`.
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
+
+[g]+[/g] [b]Api[/b] [d](Railway.Service)[/d]
+[d]•[/d] [b]Site[/b] [d](Railway.Project)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Api[/b] [d](Railway.Service)[/d] [g]created[/g]
+{
+[s2]name: "myapp-site-dev-a1b2c3d4",
+[s2]projectId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+[s2]url: "https://myapp-api-dev-a1b2c3d4.up.railway.app",
+}`} />
+
+A lot just happened:
+
+1. `src/api.ts` was bundled with Rolldown into a single ESM file.
+2. Alchemy generated a Dockerfile (`FROM oven/bun:1`) and uploaded
+   the context. Railway built the image.
+3. It created the Service, attached a `*.up.railway.app` domain, and
+   pointed Railway's edge at port 3000.
+
+## Try it out
+
+```sh
+curl https://myapp-api-dev-a1b2c3d4.up.railway.app
+# → Hello from Railway!
+```
+
+## Ship a change
+
+Edit the greeting in `src/api.ts` and deploy again:
+
+<Terminal content={`[u]Plan[/u]: [y]1 to update[/y]
+
+[y]~[/y] [b]Api[/b] [d](Railway.Service)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Api[/b] [d](Railway.Service)[/d] [y]updated[/y]`} />
+
+Alchemy hashes the bundle: if your code didn't change, the Service
+is a no-op; if it did, a new image is built, pushed, and the Service
+updated in place.
+
+## Recap
+
+You now have:
+
+- An HTTP Service running as a Railway container in `us-west2`
+- A public `https://{name}.up.railway.app` URL
+- A code-hash-based update loop — edit, deploy, new image
+
+In [Part 3](/railway/tutorial/part-3), you'll attach a Volume and
+persist data across deploys.

@@ -1,0 +1,36 @@
+{
+  "name": "cloudflare-website-nextjs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "next": "catalog:frontend",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@opennextjs/cloudflare": "catalog:frontend",
+    "@tailwindcss/postcss": "catalog:frontend",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:frontend"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-website-nextjs"
+  }
+}

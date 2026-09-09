@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `comprehendmedical:StopSNOMEDCTInferenceJob` on `*`. Provide the
  * implementation with `Effect.provide(AWS.ComprehendMedical.StopSNOMEDCTInferenceJobHttp)`.
  *
- * @binding
- * @section Batch SNOMED CT Inference Jobs
- * @example Stop a Running Job
+ * ### Batch SNOMED CT Inference Jobs
+ * **Example:** Stop a Running Job
  * ```typescript
  * // init
  * const stopSNOMEDCTInferenceJob = yield* AWS.ComprehendMedical.StopSNOMEDCTInferenceJob();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* stopSNOMEDCTInferenceJob({ JobId: jobId });
  * ```
+ *
+ * @binding
  */
 export interface StopSNOMEDCTInferenceJob extends Binding.Service<
   StopSNOMEDCTInferenceJob,

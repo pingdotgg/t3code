@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: claude-opus-5
-effort: high
+model: gpt-5-6-sol
+effort: medium
 input: full_diff
 tools:
   - browse_code
@@ -14,8 +14,10 @@ exclude:
   - "**/*.test.ts"
 labels:
   - vouch:trusted
+  - macroscope-review
 requires:
   - Check
+maxBudgetPerRun: 5
 maxBudgetPerPR: 25
 conclusion: failure
 showToolCalls: true
@@ -50,7 +52,7 @@ Review changed TypeScript for the conventions below. They apply when a pull requ
 
 ## Errors
 
-- Define service failures with `Schema.TaggedErrorClass` and structured attributes: operation or stage, resource path or entity identifier, normalized category or status. Derive `message` from those attributes only. Never derive it from `cause`, `cause.message`, or a stringified defect, and do not add a `detail` field that copies `cause.message`.
+- Define service failures with `Schema.TaggedError` and structured attributes: operation or stage, resource path or entity identifier, normalized category or status. Derive `message` from those attributes only. Never derive it from `cause`, `cause.message`, or a stringified defect, and do not add a `detail` field that copies `cause.message`.
 - When wrapping a real failure, keep the immediate underlying error as `cause` so the chain and stack survive. Make `cause` required if every construction wraps a failure. Pure validation or domain errors created without an underlying failure need no cause.
 - Keep attributes and log annotations safe and bounded: no raw wire payloads, command arguments or output, signed URLs, credentials, query strings, or arbitrary defect text. Preserve the exact value only as `cause`; expose normalized categories, lengths, counts, and safe URL protocol or hostname where useful.
 - At a translation boundary, pass through an already structured domain error when it is part of the target error channel; wrap only unknown or lower-level failures. Map failures where the context is known instead of wrapping a whole multi-step pipeline in one generic error.

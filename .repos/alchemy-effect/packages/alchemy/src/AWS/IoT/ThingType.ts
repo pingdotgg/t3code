@@ -50,9 +50,8 @@ export interface ThingType extends Resource<
 /**
  * An AWS IoT Thing Type — a reusable template describing a class of things.
  *
- * @resource
- * @section Creating a Thing Type
- * @example Basic Thing Type
+ * ### Creating a Thing Type
+ * **Example:** Basic Thing Type
  * ```typescript
  * const thingType = yield* ThingType("sensor-type", {
  *   description: "Temperature sensors",
@@ -60,7 +59,7 @@ export interface ThingType extends Resource<
  * });
  * ```
  *
- * @example Create a Thing of this Type
+ * **Example:** Create a Thing of this Type
  * ```typescript
  * const thingType = yield* ThingType("sensor-type", {
  *   searchableAttributes: ["location"],
@@ -71,6 +70,8 @@ export interface ThingType extends Resource<
  *   attributes: { location: "warehouse-a" },
  * });
  * ```
+ *
+ * @resource
  */
 export const ThingType = Resource<ThingType>("AWS.IoT.ThingType");
 

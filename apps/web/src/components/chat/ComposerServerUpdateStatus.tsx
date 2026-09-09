@@ -1,5 +1,6 @@
+import { Spinner } from "~/components/ui/spinner";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import { CircleAlertIcon, InfoIcon, LoaderCircleIcon } from "lucide-react";
+import { CircleAlertIcon, DownloadIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
@@ -12,12 +13,12 @@ export function ComposerServerUpdateIcon({
   readonly status: ServerUpdateState["status"];
 }) {
   if (status === "running") {
-    return <LoaderCircleIcon aria-hidden className="motion-safe:animate-spin" />;
+    return <Spinner aria-hidden />;
   }
   if (status === "failed") {
     return <CircleAlertIcon aria-hidden className="text-error" />;
   }
-  return <InfoIcon aria-hidden />;
+  return <DownloadIcon aria-hidden />;
 }
 
 /** One text line, clipped at the end so the error detail never squeezes its title. */
