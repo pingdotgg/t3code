@@ -20,8 +20,10 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
+import * as FcmDeliveries from "./FcmDeliveries.ts";
 
 export type AgentActivityPublishError =
+  | FcmDeliveries.FcmDeliveryError
   | AgentActivityRows.AgentActivityRowUpsertPersistenceError
   | AgentActivityRows.AgentActivityRowDeletePersistenceError
   | AgentActivityRows.AgentActivityRowListPersistenceError
@@ -50,6 +52,7 @@ export const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
+  const fcmDeliveries = yield* FcmDeliveries.FcmDeliveries;
 
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
@@ -79,8 +82,11 @@ export const make = Effect.gen(function* () {
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
     const deliveriesByTarget = yield* Effect.forEach(
       targets,
-      (target) =>
-        Effect.all(
+      Effect.fnUntraced(function* (target) {
+        if (target.platform === "android") {
+          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+        }
+        return yield* Effect.all(
           [
             apnsDeliveries.sendForTarget({
               target,
@@ -95,7 +101,8 @@ export const make = Effect.gen(function* () {
                 }),
           ],
           { concurrency: 2 },
-        ),
+        );
+      }),
       { concurrency: 4 },
     );
     return deliveriesByTarget.flat();
@@ -119,6 +126,9 @@ export const make = Effect.gen(function* () {
       const target = targets.find((row) => row.device_id === input.deviceId) ?? null;
       if (target === null) {
         return null;
+      }
+      if (target.platform === "android") {
+        return yield* fcmDeliveries.enqueue({ target, state: null, replay: true });
       }
       const now = yield* DateTime.now;
       const aggregate = makeAggregateState({

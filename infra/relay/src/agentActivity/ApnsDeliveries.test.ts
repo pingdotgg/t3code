@@ -63,7 +63,7 @@ const apnsSigningKeyPair = NodeCrypto.generateKeyPairSync("ec", {
 const signingConfig = RelayConfiguration.RelayConfiguration.of({
   ...config,
   apns: {
-    ...config.apns,
+    ...config.apns!,
     privateKey: Redacted.make(apnsSigningKeyPair.privateKey),
   },
 });
@@ -257,6 +257,48 @@ function makeLayer(input: {
 }
 
 describe("ApnsDeliveries", () => {
+  it.effect("skips Apple delivery when an Android-only relay disables APNs", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    return Effect.gen(function* () {
+      const service = yield* ApnsDeliveries.ApnsDeliveries;
+      expect(yield* service.sendForTarget({ target, aggregate, nowMs: 0 })).toBeNull();
+      expect(yield* service.sendPushNotificationForTarget({ target, aggregate })).toBeNull();
+      expect(
+        yield* service.sendLiveActivity({
+          target,
+          token: "activity-token",
+          kind: "live_activity_update",
+          aggregate,
+        }),
+      ).toMatchObject({ ok: false, apnsReason: "APNs is disabled for this relay." });
+      expect(
+        yield* service.sendPushNotification({
+          target,
+          token: "push-token",
+          notification: {
+            title: "Finished",
+            body: "Thread",
+            environmentId: state.environmentId,
+            threadId: state.threadId,
+            deepLink: state.deepLink,
+          },
+        }),
+      ).toMatchObject({ ok: false, apnsReason: "APNs is disabled for this relay." });
+      expect(queuedJobs).toHaveLength(0);
+      expect(attempts).toHaveLength(0);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          attempts,
+          queuedJobs,
+          config: { ...config, apns: null },
+          execute: () => Effect.die("Disabled APNs must not make HTTP requests"),
+        }),
+      ),
+    );
+  });
+
   it.effect("never starts an activity remotely when no update token is registered", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];

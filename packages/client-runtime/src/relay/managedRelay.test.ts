@@ -636,9 +636,9 @@ describe("ManagedRelayClient", () => {
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
   });
 
-  it.effect("lists account devices through the Clerk bearer client endpoint", () => {
+  it.effect("lists account devices through the v2 Clerk bearer client endpoint", () => {
     const fetchFn = ((input, init) => {
-      expect(String(input)).toBe("https://relay.example.test/v1/client/devices");
+      expect(String(input)).toBe("https://relay.example.test/v2/client/devices");
       expect(init?.headers).toMatchObject({
         authorization: "Bearer clerk-token",
       });
@@ -663,6 +663,23 @@ describe("ManagedRelayClient", () => {
               },
               updatedAt: "2026-06-01T00:00:00.000Z",
             },
+            {
+              deviceId: "device-2",
+              label: "Android phone",
+              platform: "android",
+              iosMajorVersion: null,
+              androidApiLevel: 36,
+              appVersion: "1.0.0",
+              notifications: {
+                enabled: true,
+                notifyOnApproval: true,
+                notifyOnInput: true,
+                notifyOnCompletion: true,
+                notifyOnFailure: true,
+              },
+              liveActivities: { enabled: true },
+              updatedAt: "2026-06-01T00:00:00.000Z",
+            },
           ],
         }),
       );
@@ -678,6 +695,12 @@ describe("ManagedRelayClient", () => {
           notifications: {
             enabled: false,
           },
+        },
+        {
+          deviceId: "device-2",
+          platform: "android",
+          iosMajorVersion: null,
+          androidApiLevel: 36,
         },
       ]);
     }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
