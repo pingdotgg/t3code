@@ -230,6 +230,147 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  for (const ending of ["completed", "failed", "unresolved", "unavailable", "reconnect"] as const) {
+    it.effect(`normalizes OpenCode step usage for ${ending} turns`, () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        let promptId = "";
+        const harness = yield* makeOpenCodeRuntimeHarness(`usage-${ending}`, "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+            abort: async () => ({ data: true }),
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: "root",
+              info: { id: promptId, role: "user", time: { created: 1 } },
+            },
+          }),
+        );
+        const step = (id: string, messageID = "assistant") => ({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "step-finish",
+              id,
+              sessionID: "root",
+              messageID,
+              reason: "stop",
+              cost: 0.01,
+              tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 4 } },
+            },
+          },
+        });
+        if (ending !== "unavailable") {
+          yield* Effect.promise(() => nativeEvents.push(step("one")));
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: "root",
+                info: {
+                  id: "assistant",
+                  role: "assistant",
+                  time: { created: 1 },
+                  parentID: promptId,
+                },
+              },
+            }),
+          );
+          yield* Effect.promise(() => nativeEvents.push(step("one")));
+          yield* Effect.promise(() => nativeEvents.push(step("two")));
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.part.removed",
+              properties: { sessionID: "root", messageID: "assistant", partID: "one" },
+            }),
+          );
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "message.updated",
+              properties: {
+                sessionID: "root",
+                info: {
+                  id: "old-assistant",
+                  role: "assistant",
+                  time: { created: 1 },
+                  parentID: "old-prompt",
+                },
+              },
+            }),
+          );
+          yield* Effect.promise(() => nativeEvents.push(step("old", "old-assistant")));
+        }
+        if (ending === "unresolved")
+          yield* Effect.promise(() => nativeEvents.push(step("unknown", "unknown-assistant")));
+        if (ending === "reconnect") {
+          yield* Effect.promise(() =>
+            nativeEvents.push({ type: "server.connected", properties: {} }),
+          );
+          yield* Effect.promise(() =>
+            nativeEvents.push({ type: "server.connected", properties: {} }),
+          );
+        }
+        if (ending === "failed") {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "session.error",
+              properties: {
+                sessionID: "root",
+                error: { name: "UnknownError", data: { message: "failed" } },
+              },
+            }),
+          );
+        } else {
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "session.status",
+              properties: { sessionID: "root", status: { type: "busy" } },
+            }),
+          );
+          yield* Effect.promise(() =>
+            nativeEvents.push({
+              type: "session.status",
+              properties: { sessionID: "root", status: { type: "idle" } },
+            }),
+          );
+        }
+        const events = yield* Fiber.join(received);
+        const completed = events.findLast((event) => event.type === "provider_turn.updated");
+        assert.deepEqual(
+          completed?.providerTurn.turnTokenUsage,
+          ending === "unavailable"
+            ? { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false }
+            : {
+                usageStatus: ending === "completed" ? "complete" : "partial",
+                usageScope: "main_agent",
+                inputTokens: 34,
+                cachedInputTokens: 6,
+                cacheCreationTokens: 8,
+                outputTokens: 14,
+                reasoningTokens: 4,
+                hasSubagents: false,
+              },
+        );
+      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+    );
+  }
+
   for (const kind of ["permission", "question"] as const) {
     it.effect(`cancels an undelivered ${kind} reply at its deadline`, () =>
       Effect.gen(function* () {

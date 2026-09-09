@@ -243,7 +243,57 @@ type TerminalTurnStatus = Extract<
   "completed" | "interrupted" | "failed" | "cancelled"
 >;
 
+type OpenCodeStepUsage = Pick<
+  Extract<OpenCodePart, { readonly type: "step-finish" }>,
+  "id" | "tokens"
+>;
+
+interface OpenCodeTurnTokenUsageAccumulator {
+  readonly partIds: Set<string>;
+  readonly promptMessageIds: Set<string>;
+  readonly assistantOwnershipByMessageId: Map<string, "owned" | "other" | "unknown">;
+  // Native removal does not undo usage. Keep unresolved counts until this turn settles.
+  readonly unresolvedStepsByMessageId: Map<string, Map<string, OpenCodeStepUsage>>;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  hasSubagents: boolean;
+  complete: boolean;
+}
+
+function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumulator {
+  return {
+    partIds: new Set(),
+    promptMessageIds: new Set(),
+    assistantOwnershipByMessageId: new Map(),
+    unresolvedStepsByMessageId: new Map(),
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    hasSubagents: false,
+    complete: true,
+  };
+}
+
+function accumulateOpenCodeStepUsage(
+  accumulator: OpenCodeTurnTokenUsageAccumulator,
+  part: OpenCodeStepUsage,
+): void {
+  if (accumulator.partIds.has(part.id)) return;
+  accumulator.partIds.add(part.id);
+  accumulator.inputTokens += part.tokens.input + part.tokens.cache.read + part.tokens.cache.write;
+  accumulator.cachedInputTokens += part.tokens.cache.read;
+  accumulator.cacheCreationTokens += part.tokens.cache.write;
+  accumulator.outputTokens += part.tokens.output + part.tokens.reasoning;
+  accumulator.reasoningTokens += part.tokens.reasoning;
+}
+
 interface ActiveOpenCodeTurn {
+  readonly usage: OpenCodeTurnTokenUsageAccumulator;
   readonly isRoot: boolean;
   readonly threadId: ThreadId;
   readonly runId: ProviderAdapterV2TurnInput["runId"] | null;
@@ -998,6 +1048,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         };
         const abortController = new AbortController();
         let closing = false;
+        let hasConnected = false;
 
         const emitProviderEvent = (event: ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
@@ -1127,6 +1178,32 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 : providerRef(turn.nativeUserMessageId, "weak"),
             status,
             completedAt,
+            ...(completedAt === null
+              ? {}
+              : {
+                  turnTokenUsage:
+                    turn.usage.partIds.size === 0
+                      ? {
+                          usageScope: "main_agent" as const,
+                          usageStatus: "unavailable" as const,
+                          hasSubagents: turn.usage.hasSubagents,
+                        }
+                      : {
+                          usageScope: "main_agent" as const,
+                          usageStatus:
+                            status === "completed" &&
+                            turn.usage.complete &&
+                            turn.usage.unresolvedStepsByMessageId.size === 0
+                              ? ("complete" as const)
+                              : ("partial" as const),
+                          inputTokens: turn.usage.inputTokens,
+                          cachedInputTokens: turn.usage.cachedInputTokens,
+                          cacheCreationTokens: turn.usage.cacheCreationTokens,
+                          outputTokens: turn.usage.outputTokens,
+                          reasoningTokens: turn.usage.reasoningTokens,
+                          hasSubagents: turn.usage.hasSubagents,
+                        },
+                }),
           };
           Object.assign(turn.providerTurn, providerTurn);
           state.providerTurns.set(String(providerTurn.id), providerTurn);
@@ -1272,6 +1349,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             driver: OPENCODE_PROVIDER,
             nativeItemId: part.id,
           });
+          turn.usage.hasSubagents = true;
           const input = toolInput(part);
           const prompt = recordString(input, "prompt") ?? "";
           const title = toolTitle(part) ?? recordString(input, "description") ?? null;
@@ -2223,6 +2301,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             runAttemptId: null,
             startedAt,
             itemOrdinals: new Map(),
+            usage: makeOpenCodeTurnTokenUsageAccumulator(),
             parts: new Map(),
             partIdsByMessage: new Map(),
             toolNamesByCallId: new Map(),
@@ -2373,7 +2452,30 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (state === undefined) return;
           const message = event.properties.info;
           state.messageRoles.set(message.id, message.role);
-          if (message.role !== "user") return;
+          if (message.role === "assistant") {
+            const usage = state.activeTurn?.usage;
+            if (usage === undefined) return;
+            const prior = usage.assistantOwnershipByMessageId.get(message.id);
+            const ownership =
+              prior !== undefined && prior !== "unknown"
+                ? prior
+                : !message.parentID
+                  ? "unknown"
+                  : usage.promptMessageIds.has(message.parentID)
+                    ? "owned"
+                    : "other";
+            usage.assistantOwnershipByMessageId.set(message.id, ownership);
+            if (ownership !== "unknown") {
+              if (ownership === "owned") {
+                for (const step of usage.unresolvedStepsByMessageId.get(message.id)?.values() ??
+                  []) {
+                  accumulateOpenCodeStepUsage(usage, step);
+                }
+              }
+              usage.unresolvedStepsByMessageId.delete(message.id);
+            }
+            return;
+          }
           const isNewUserMessage = !state.userMessageIds.includes(message.id);
           if (isNewUserMessage) state.userMessageIds.push(message.id);
           let turn = state.activeTurn;
@@ -2383,6 +2485,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const matchesAdmission =
             turn !== null &&
             (turn.admissionMessageId === null || turn.admissionMessageId === message.id);
+          if (turn !== null && matchesAdmission) turn.usage.promptMessageIds.add(message.id);
           if (turn !== null && matchesAdmission && turn.nativeUserMessageId === null) {
             turn.nativeUserMessageId = message.id;
             yield* emitProviderTurn(state, turn, "running", null);
@@ -2403,6 +2506,22 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (state === undefined || turn === null || turn === undefined || turn.finalized) return;
           if (part.type === "text" && state.messageRoles.get(part.messageID) === "user") {
             if (!turn.isRoot) yield* projectChildUserPart(state, turn, part);
+            return;
+          }
+          if (part.type === "step-finish") {
+            const usage = turn.usage;
+            const ownership = usage.assistantOwnershipByMessageId.get(part.messageID);
+            if (ownership === "owned") accumulateOpenCodeStepUsage(usage, part);
+            else if (
+              ownership === "unknown" ||
+              (ownership === undefined && !state.messageRoles.has(part.messageID))
+            ) {
+              const steps =
+                usage.unresolvedStepsByMessageId.get(part.messageID) ??
+                new Map<string, OpenCodeStepUsage>();
+              steps.set(part.id, { id: part.id, tokens: part.tokens });
+              usage.unresolvedStepsByMessageId.set(part.messageID, steps);
+            }
             return;
           }
           if (part.type === "tool") {
@@ -2472,6 +2591,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             payload: event,
           });
           switch (event.type) {
+            case "server.connected":
+              if (hasConnected) {
+                for (const state of threads.values()) {
+                  if (state.activeTurn !== null) state.activeTurn.usage.complete = false;
+                }
+              }
+              hasConnected = true;
+              return;
             case "message.updated":
               yield* handleMessageUpdated(event);
               yield* handleAssistantCompleted(event);
@@ -2971,6 +3098,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 runAttemptId: turnInput.attemptId,
                 startedAt,
                 itemOrdinals: new Map(),
+                usage: makeOpenCodeTurnTokenUsageAccumulator(),
                 parts: new Map(),
                 partIdsByMessage: new Map(),
                 toolNamesByCallId: new Map(),
@@ -2990,6 +3118,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 admissionSettled: Deferred.makeUnsafe<void>(),
                 admissionAbortController: new AbortController(),
               };
+              if (turn.admissionMessageId !== null)
+                turn.usage.promptMessageIds.add(turn.admissionMessageId);
               const admissionSettled = turn.admissionSettled;
               const admissionAbortController = turn.admissionAbortController;
               state.appThread = turnInput.appThread;
@@ -3157,6 +3287,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               turn.idleDuringAdmission = false;
               turn.admissionSettled = Deferred.makeUnsafe<void>();
               turn.admissionAbortController = new AbortController();
+              if (turn.admissionMessageId !== null)
+                turn.usage.promptMessageIds.add(turn.admissionMessageId);
               const admissionSettled = turn.admissionSettled;
               const admissionAbortController = turn.admissionAbortController;
               yield* sdkCall(
