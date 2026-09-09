@@ -164,11 +164,6 @@ export function usePullRequestTurnRefreshes(
   ).values;
 }
 
-export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
-  const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
-  return Option.getOrNull(AsyncResult.value(result));
-}
-
 export interface MergedPullRequestListView {
   readonly data: MergedPullRequestList | null;
   readonly error: string | null;

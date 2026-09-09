@@ -70,11 +70,7 @@ import { useProjects } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import {
-  pullRequestEnvironment,
-  usePullRequestTurnRefresh,
-  useSharedPullRequestSummary,
-} from "~/state/pullRequests";
+import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -584,7 +580,6 @@ export function PullRequestDetailPanel({
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
-  const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const [cachedDetail, setCachedDetail] = useState(() =>
     readPullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
@@ -709,7 +704,6 @@ export function PullRequestDetailPanel({
     activityQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh]);
   const [refreshToken, setRefreshToken] = useState(0);
-  const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
@@ -2433,7 +2427,7 @@ export function PullRequestDetailPanel({
                     fixFindingLabel={handoffLabels.fixFinding}
                     onFixFinding={startFixFinding}
                     onRefresh={refreshDetail}
-                    refreshToken={codeRefreshToken}
+                    refreshToken={refreshToken}
                   />
                 </Suspense>
               </div>
