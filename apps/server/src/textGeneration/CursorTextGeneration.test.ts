@@ -1,6 +1,9 @@
 import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
@@ -8,7 +11,11 @@ import { beforeEach, vi } from "vite-plus/test";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 
 const cursorSdkMock = vi.hoisted(() => ({
-  prompt: vi.fn(async () => ({
+  create: vi.fn<(options: unknown) => Promise<unknown>>(),
+  send: vi.fn<(prompt: string) => Promise<unknown>>(),
+  close: vi.fn(),
+  cancel: vi.fn(async () => {}),
+  prompt: vi.fn(async (_prompt: string, _options: unknown) => ({
     id: "run-cursor-text-generation-test",
     status: "finished" as const,
     result:
@@ -16,16 +23,37 @@ const cursorSdkMock = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("@cursor/sdk", () => ({
-  Agent: {
-    prompt: cursorSdkMock.prompt,
-  },
-}));
+vi.mock("@cursor/sdk", () => ({ Agent: { create: cursorSdkMock.create } }));
+
+let hasCustomPolicy = false;
+const fsLayer = FileSystem.layerNoop({
+  exists: () => Effect.succeed(hasCustomPolicy),
+  makeTempDirectoryScoped: () => Effect.succeed("/isolated-text-generation"),
+});
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const cursorSettings = decodeCursorSettings({ enabled: true });
 
 beforeEach(() => {
+  hasCustomPolicy = false;
+  cursorSdkMock.create.mockReset();
+  cursorSdkMock.send.mockReset();
+  cursorSdkMock.create.mockImplementation(async (options) => {
+    cursorSdkMock.send.mockImplementation(async (prompt) => ({
+      status: "running",
+      cancel: cursorSdkMock.cancel,
+      wait: () => cursorSdkMock.prompt(prompt, options),
+    }));
+    return {
+      close: cursorSdkMock.close,
+      [Symbol.asyncDispose]: async () => {
+        cursorSdkMock.close();
+      },
+      send: cursorSdkMock.send,
+    };
+  });
+  cursorSdkMock.close.mockClear();
+  cursorSdkMock.cancel.mockClear();
   cursorSdkMock.prompt.mockReset();
   cursorSdkMock.prompt.mockResolvedValue({
     id: "run-cursor-text-generation-test",
@@ -65,7 +93,7 @@ describe("CursorTextGeneration", () => {
       expect(prompt).toContain("Staged patch:");
       expect(options).toEqual({
         apiKey: "test-cursor-key",
-        mode: "agent",
+        mode: "plan",
         model: {
           id: "gpt-5.4",
           params: [
@@ -75,13 +103,14 @@ describe("CursorTextGeneration", () => {
           ],
         },
         local: {
-          cwd: process.cwd(),
+          cwd: "/isolated-text-generation",
           autoReview: false,
-          sandboxOptions: { enabled: false },
+          sandboxOptions: { enabled: true },
+          settingSources: [],
           enableAgentRetries: true,
         },
       });
-    }),
+    }).pipe(Effect.provide(fsLayer)),
   );
 
   it.effect("accepts json objects with extra assistant text around them", () =>
@@ -109,7 +138,7 @@ describe("CursorTextGeneration", () => {
 
       expect(generated.subject).toBe("Update README dummy comment with attribution and date");
       expect(generated.body).toBe("");
-    }),
+    }).pipe(Effect.provide(fsLayer)),
   );
 
   it.effect("generates thread titles through Cursor SDK text generation", () =>
@@ -133,8 +162,112 @@ describe("CursorTextGeneration", () => {
       });
 
       expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-    }),
+    }).pipe(Effect.provide(fsLayer)),
   );
+
+  it.effect("fails closed when ambient sandbox policy can expand write access", () =>
+    Effect.gen(function* () {
+      hasCustomPolicy = true;
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      const failure = yield* Effect.flip(
+        generation.generateThreadTitle({
+          cwd: "/real-workspace",
+          message: "Title",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        }),
+      );
+      expect(failure.detail).toContain("custom ~/.cursor/sandbox.json");
+      expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(fsLayer)),
+  );
+
+  it.effect("cancels the native run when text generation times out", () =>
+    Effect.gen(function* () {
+      let started!: () => void;
+      const called = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      cursorSdkMock.prompt.mockImplementationOnce(() => {
+        started();
+        return new Promise(() => {});
+      });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      const result = yield* generation
+        .generateThreadTitle({
+          cwd: "/real-workspace",
+          message: "Title",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => called);
+      yield* TestClock.adjust("180 seconds");
+      expect((yield* Fiber.join(result)).detail).toContain("timed out");
+      expect(cursorSdkMock.cancel).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(fsLayer), Effect.scoped),
+  );
+
+  for (const phase of ["create", "send"] as const) {
+    it.effect(`times out pending ${phase} and releases its late SDK resource`, () =>
+      Effect.gen(function* () {
+        let started!: () => void;
+        const called = new Promise<void>((resolve) => {
+          started = resolve;
+        });
+        let resolveLate!: (resource: unknown) => void;
+        const pending = new Promise<unknown>((resolve) => {
+          resolveLate = resolve;
+        });
+        const wait = vi.fn();
+        const agent = {
+          close: cursorSdkMock.close,
+          [Symbol.asyncDispose]: async () => {
+            cursorSdkMock.close();
+          },
+          send: async () => {
+            started();
+            return pending;
+          },
+        };
+        cursorSdkMock.create.mockImplementation(async () => {
+          if (phase === "create") {
+            started();
+            return pending;
+          }
+          return agent;
+        });
+        const generation = yield* makeCursorTextGeneration(cursorSettings, {
+          CURSOR_API_KEY: "key",
+        });
+        const result = yield* generation
+          .generateThreadTitle({
+            cwd: "/real-workspace",
+            message: "Title",
+            modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2" },
+          })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Effect.promise(() => called);
+        yield* TestClock.adjust("180 seconds");
+        expect((yield* Fiber.join(result)).detail).toContain("timed out");
+        let cleanup!: () => void;
+        const cleaned = new Promise<void>((resolve) => {
+          cleanup = resolve;
+        });
+        if (phase === "create") cursorSdkMock.close.mockImplementationOnce(cleanup);
+        else
+          cursorSdkMock.cancel.mockImplementationOnce(async () => {
+            cleanup();
+          });
+        resolveLate(
+          phase === "create" ? agent : { status: "running", cancel: cursorSdkMock.cancel, wait },
+        );
+        yield* Effect.promise(() => cleaned);
+        expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+        expect(wait).not.toHaveBeenCalled();
+        if (phase === "send") expect(cursorSdkMock.cancel).toHaveBeenCalledOnce();
+      }).pipe(Effect.provide(fsLayer), Effect.scoped),
+    );
+  }
 
   it.effect("requires CURSOR_API_KEY before calling the SDK", () =>
     Effect.gen(function* () {
@@ -157,6 +290,6 @@ describe("CursorTextGeneration", () => {
         "Cursor API key is required. Add CURSOR_API_KEY in provider settings.",
       );
       expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
-    }),
+    }).pipe(Effect.provide(fsLayer)),
   );
 });
