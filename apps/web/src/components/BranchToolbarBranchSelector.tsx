@@ -1,3 +1,6 @@
+import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
+import { useRightPanelStore } from "../rightPanelStore";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -47,7 +50,13 @@ import {
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
-import { ChangeRequestStatusIcon, prStatusIndicator } from "./ThreadStatusIndicators";
+import {
+  PR_STATE_COLOR_CLASS,
+  ThreadPullRequestBadgeContent,
+  prStatusIndicator,
+  resolveThreadPullRequestBadge,
+  useLinkedThreadPullRequest,
+} from "./ThreadStatusIndicators";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
@@ -612,7 +621,7 @@ export function BranchToolbarBranchSelector({
     startFromOrigin,
   });
 
-  // PR pill shown next to the branch selector when the active branch has one.
+  // Branch status is the fallback when this thread has no linked pull requests.
   const branchPrBranch = resolveBranchToolbarPrBranch({
     activeThreadBranch,
     resolvedActiveBranch,
@@ -621,12 +630,35 @@ export function BranchToolbarBranchSelector({
     branchPrBranch !== null && branchStatusQuery.data?.refName === branchPrBranch
       ? (branchStatusQuery.data.pr ?? null)
       : null;
-  const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
-  // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
-  // state-description tooltip.
-  const branchPrTooltip = branchPr
-    ? `Open ${sourceControlPresentation.terminology.singular} #${branchPr.number} (${branchPr.state})`
-    : "";
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(environmentId);
+  const linkedStatus = useLinkedThreadPullRequest(
+    environmentId,
+    serverThread?.linkedPullRequest,
+    true,
+    serverThread?.pullRequests,
+    serverThread?.branchPullRequest,
+  );
+  const currentLinkedPr = supportsMultiplePullRequests
+    ? resolveThreadCurrentPullRequestLink(serverThread?.pullRequests ?? [])
+    : null;
+  const prBadge = supportsMultiplePullRequests
+    ? resolveThreadPullRequestBadge(serverThread?.pullRequests)
+    : null;
+  const displayedPr = linkedStatus?.pr ?? (currentLinkedPr === null ? branchPr : null);
+  const displayedPrStatus = prStatusIndicator(
+    displayedPr,
+    linkedStatus?.sourceControlProvider ?? branchStatusQuery.data?.sourceControlProvider,
+  );
+  const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
+  const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
+  const isStack = prBadge?.kind === "stack";
+  const prTooltip = isStack
+    ? `Open stack of ${prBadge.layers} pull requests, ${prBadge.state}`
+    : `Open ${sourceControlPresentation.terminology.singular} #${prNumber}${
+        prBadge?.kind === "pull-request" && prBadge.others > 0
+          ? `, and ${prBadge.others} more linked`
+          : ""
+      }`;
   const openPrLink = useOpenPrLink(threadRef);
 
   function renderPickerItem(itemValue: string, index: number) {
@@ -730,39 +762,34 @@ export function BranchToolbarBranchSelector({
         className={cn("flex min-w-0 items-center gap-1", className)}
         data-composer-context-control
       >
-        {branchPr && branchPrStatus ? (
+        {isStack || prUrl ? (
           <Tooltip>
             <TooltipTrigger
               render={
                 <button
                   type="button"
-                  aria-label={branchPrTooltip}
-                  onClick={(event) => openPrLink(event, branchPrStatus.url)}
+                  aria-label={prTooltip}
+                  onClick={(event) => {
+                    if (isStack) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      useRightPanelStore.getState().open(threadRef, "pull-requests");
+                    } else if (prUrl) {
+                      openPrLink(event, prUrl);
+                    }
+                  }}
                   className={cn(
                     "inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[11px] font-medium tabular-nums transition-colors hover:bg-muted/60",
-                    branchPrStatus.colorClass,
+                    isStack
+                      ? PR_STATE_COLOR_CLASS[prBadge.state]
+                      : (displayedPrStatus?.colorClass ?? "text-muted-foreground"),
                   )}
                 />
               }
             >
-              <ChangeRequestStatusIcon
-                state={branchPr.state}
-                isDraft={branchPr.isDraft}
-                className="size-3"
-              />
-              <span
-                data-composer-label
-                className="min-w-0 max-w-12 overflow-hidden group-data-[compact]/composer-context:max-w-0"
-              >
-                <span
-                  data-composer-label-motion
-                  className="block w-full min-w-0 max-w-12 truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-                >
-                  #{branchPr.number}
-                </span>
-              </span>
+              <ThreadPullRequestBadgeContent badge={prBadge} number={prNumber} />
             </TooltipTrigger>
-            <TooltipPopup side="top">{branchPrTooltip}</TooltipPopup>
+            <TooltipPopup side="top">{prTooltip}</TooltipPopup>
           </Tooltip>
         ) : null}
         {/* Context menu lives on the wrapper: the disabled Button has

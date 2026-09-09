@@ -12,6 +12,7 @@ import {
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
+  type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
@@ -131,6 +132,25 @@ export function ThreadPullRequestBadgeIcon({
 }) {
   const Icon = icon === "stack" ? LayersIcon : GitPullRequestArrowIcon;
   return <Icon aria-hidden className={cn("size-3 shrink-0", className)} />;
+}
+
+/** Shared stack count and current-PR label for the sidebar and composer footer. */
+export function ThreadPullRequestBadgeContent({
+  badge,
+  number,
+}: {
+  badge: ThreadPullRequestBadge | null;
+  number?: number | undefined;
+}) {
+  return (
+    <>
+      <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
+      {badge?.kind === "stack" ? badge.layers : number}
+      {badge?.kind === "pull-request" && badge.others > 0 ? (
+        <span className="opacity-70">+{badge.others}</span>
+      ) : null}
+    </>
+  );
 }
 
 /**

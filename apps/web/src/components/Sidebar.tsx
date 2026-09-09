@@ -193,7 +193,7 @@ import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   PR_STATE_COLOR_CLASS,
-  ThreadPullRequestBadgeIcon,
+  ThreadPullRequestBadgeContent,
   ThreadPullRequestsMiniList,
   ThreadWorktreeIndicator,
   prStatusIndicator,
@@ -1488,9 +1488,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     </span>
   );
 
-  // One badge shape for every thread: the glyph says stack or not, the number is the current
-  // pull request, and "+N" counts the others behind it. A real link so cmd/ctrl+click and
-  // middle-click open the host in the browser; a plain click opens T3's pull request view.
+  // Stacks show their layer count; unrelated links show the current PR and a remainder count.
+  // Plain clicks open T3; individual PR links also support opening the host in a new tab.
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
     : null;
@@ -1521,8 +1520,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className={prBadgeClassName(prBadgeShape.state, PR_STATE_COLOR_CLASS[prBadgeShape.state])}
         aria-label={`Stack of ${prBadgeShape.layers} pull requests, ${prBadgeShape.state}`}
       >
-        <ThreadPullRequestBadgeIcon icon="stack" />
-        {prBadgeShape.layers}
+        <ThreadPullRequestBadgeContent badge={prBadgeShape} />
       </InlineButton>
     ) : prStatus && pr ? (
       <a
@@ -1545,11 +1543,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             : prStatus.tooltip
         }
       >
-        <ThreadPullRequestBadgeIcon icon="pull-request" />
-        {pr.number}
-        {prBadgeShape && prBadgeShape.others > 0 ? (
-          <span className="opacity-70">+{prBadgeShape.others}</span>
-        ) : null}
+        <ThreadPullRequestBadgeContent badge={prBadgeShape} number={pr.number} />
       </a>
     ) : currentLinkedPr ? (
       <a
@@ -1561,11 +1555,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className="inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums text-muted-foreground hover:underline"
         aria-label={`PR #${currentLinkedPr.number}, status pending`}
       >
-        <ThreadPullRequestBadgeIcon icon="pull-request" />
-        {currentLinkedPr.number}
-        {prBadgeShape?.kind === "pull-request" && prBadgeShape.others > 0 ? (
-          <span>+{prBadgeShape.others}</span>
-        ) : null}
+        <ThreadPullRequestBadgeContent badge={prBadgeShape} number={currentLinkedPr.number} />
       </a>
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
