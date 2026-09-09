@@ -112,19 +112,22 @@ const RawListItemSchema = Schema.Struct({
   statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(RawCheckSchema))),
 });
 
-/**
- * A search's own answer, which is the listing's row one connection deeper: `gh pr list --json`
- * flattens reviewers and labels, and GraphQL does not. Everything below the row is optional
- * because a node that is not a pull request decodes as an empty object, which is skipped.
- */
-const RawSearchItemSchema = Schema.Struct({
+const RawStackMembershipSchema = Schema.Struct({
   stack: Schema.optional(
     Schema.NullOr(
       Schema.Struct({ number: Schema.Int, size: Schema.Int, baseRefName: Schema.String }),
     ),
   ),
   stackEntry: Schema.optional(Schema.NullOr(Schema.Struct({ position: Schema.Int }))),
+});
 
+/**
+ * A search's own answer, which is the listing's row one connection deeper: `gh pr list --json`
+ * flattens reviewers and labels, and GraphQL does not. Everything below the row is optional
+ * because a node that is not a pull request decodes as an empty object, which is skipped.
+ */
+const RawSearchItemSchema = Schema.Struct({
+  ...RawStackMembershipSchema.fields,
   number: Schema.Int,
   title: Schema.String,
   url: Schema.String,
@@ -226,6 +229,13 @@ const RawStatsSchema = Schema.Struct({
         ),
       ),
     ),
+  ),
+});
+
+const RawStackMembershipsSchema = Schema.Struct({
+  data: Schema.Record(
+    Schema.String,
+    Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(RawStackMembershipSchema) })),
   ),
 });
 
@@ -1536,6 +1546,7 @@ export function decodePullRequestSearchJson(
     const node = decodedNode.value;
     const repository = trimmed(node.repository?.nameWithOwner);
     if (repository === null) continue;
+    const stack = toStackMembership(node);
     items.push({
       ...toListItem({
         ...node,
@@ -1551,16 +1562,7 @@ export function decodePullRequestSearchJson(
           return state === null ? [] : [{ state }];
         }),
       }),
-      ...(node.stack && node.stackEntry
-        ? {
-            stack: {
-              number: node.stack.number,
-              size: node.stack.size,
-              base: node.stack.baseRefName,
-              position: node.stackEntry.position,
-            },
-          }
-        : {}),
+      ...(stack === undefined ? {} : { stack }),
       repository,
     });
   }
@@ -1569,6 +1571,19 @@ export function decodePullRequestSearchJson(
     rawCount: nodes.length,
     hasNextPage: decoded.success.data.search.pageInfo?.hasNextPage ?? false,
   });
+}
+
+function toStackMembership(
+  raw: Schema.Schema.Type<typeof RawStackMembershipSchema>,
+): PullRequestStackMembership | undefined {
+  return raw.stack && raw.stackEntry
+    ? {
+        number: raw.stack.number,
+        size: raw.stack.size,
+        base: raw.stack.baseRefName,
+        position: raw.stackEntry.position,
+      }
+    : undefined;
 }
 
 /** What a repository selector may hold before it is written into a GraphQL document unquoted. */
@@ -1599,6 +1614,42 @@ export function buildPullRequestStatsGraphQlQuery(
     );
   }
   return `query {\n${selections.join("\n")}\n}`;
+}
+
+/** Stack membership for the visible rows of a per-repository listing. */
+export function buildPullRequestStackMembershipsGraphQlQuery(
+  repository: string,
+  numbers: ReadonlyArray<number>,
+): string | null {
+  if (numbers.length === 0) return null;
+  const [owner, name, ...rest] = repository.trim().split("/");
+  if (rest.length > 0 || owner === undefined || name === undefined) return null;
+  if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+  const selections: string[] = [];
+  for (const [index, number] of numbers.entries()) {
+    if (!Number.isSafeInteger(number) || number <= 0) return null;
+    selections.push(
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${number}) { stack { number size baseRefName } stackEntry { position } } }`,
+    );
+  }
+  return `query PullRequestStackMemberships {\n${selections.join("\n")}\n}`;
+}
+
+const decodeStackMemberships = decodeJsonResult(RawStackMembershipsSchema);
+
+export function decodePullRequestStackMembershipsJson(
+  raw: string,
+): Result.Result<ReadonlyMap<number, PullRequestStackMembership>, DecodeFailure> {
+  const decoded = decodeStackMemberships(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const memberships = new Map<number, PullRequestStackMembership>();
+  for (const [alias, value] of Object.entries(decoded.success.data)) {
+    const index = /^s(\d+)$/.exec(alias)?.[1];
+    if (index === undefined || value?.pullRequest == null) continue;
+    const stack = toStackMembership(value.pullRequest);
+    if (stack !== undefined) memberships.set(Number(index), stack);
+  }
+  return Result.succeed(memberships);
 }
 
 /**
