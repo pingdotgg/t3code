@@ -2378,7 +2378,7 @@ function OpenCommandPaletteDialog(props: {
       const highlightedRepository = displayedGroups
         .flatMap((group) => group.items)
         .find((item) => item.value === highlightedItemValue);
-      if (highlightedRepository?.value.startsWith("repository-suggestion:")) {
+      if (highlightedRepository) {
         executeItem(highlightedRepository);
         return;
       }
