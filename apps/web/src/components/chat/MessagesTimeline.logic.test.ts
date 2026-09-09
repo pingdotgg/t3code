@@ -1,6 +1,7 @@
 import {
   CheckpointRef,
   TurnItemId,
+  RuntimeRequestId,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -487,6 +488,86 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it.each(["waiting", "completed"] as const)(
+    "groups approval and user-input requests with commands without expanding them when %s",
+    (status) => {
+      const fixture = makeStreamingTimelineFixture();
+      const source = fixture.visibleTurnItems[0]!;
+      const common = {
+        ...source.item,
+        threadId: fixture.threadId,
+        runId: fixture.runId,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status,
+      };
+      const items: OrchestrationV2ProjectedTurnItem["item"][] = [
+        {
+          ...common,
+          id: TurnItemId.make("command"),
+          type: "command_execution",
+          input: "pwd",
+          output: "",
+        },
+        {
+          ...common,
+          id: TurnItemId.make("approval"),
+          type: "approval_request",
+          requestId: RuntimeRequestId.make("approval-request"),
+          requestKind: "command",
+          prompt: "Allow pwd?",
+        },
+        {
+          ...common,
+          id: TurnItemId.make("input"),
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("input-request"),
+          questions: [],
+        },
+      ];
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items.map((item, position) => ({
+          ...source,
+          item,
+          position,
+          sourceItemId: item.id,
+        })),
+        optimisticMessages: [],
+      });
+      expect(entries.map((entry) => entry.kind)).toEqual(["work", "work", "work"]);
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        isWorking: status === "waiting",
+        runningRunId: fixture.runId,
+        activeTurnStartedAt: fixture.time(0),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      const workRows = rows.filter((row) => row.kind === "work-toggle" || row.kind === "work-live");
+      expect(workRows).toHaveLength(1);
+      expect(workRows[0]).toMatchObject({ expanded: false });
+      const expandedRows = deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        isWorking: status === "waiting",
+        runningRunId: fixture.runId,
+        activeTurnStartedAt: fixture.time(0),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        expandedWorkGroupIds: new Set([workRows[0]!.groupId]),
+      });
+      const expanded = expandedRows.find((row) => row.kind === "work" && row.isExpandedToolGroup);
+      expect(
+        expanded?.kind === "work" && expanded.groupedEntries.map((entry) => entry.itemType),
+      ).toEqual(["command_execution", "approval_request", "user_input_request"]);
+      expect(rows.some((row) => row.kind === "event")).toBe(false);
+      expect(workRows[0]).not.toMatchObject({ expanded: true });
+      expect(workRows[0]).not.toMatchObject({ isExpandedToolGroup: true });
+    },
+  );
+
   it.each(["running", "completed", "superseded"] as const)(
     "keeps system notices visible as non-failing warnings through %s work",
     (state) => {
