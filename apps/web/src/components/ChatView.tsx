@@ -217,6 +217,7 @@ import {
   GitBranchIcon,
   Minimize2Icon,
   PaperclipIcon,
+  PlayIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
@@ -352,6 +353,10 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import {
+  buildContinuationPrompt,
+  splitLeadingCdForPrompt,
+} from "@t3tools/client-runtime/continuation-prompt";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableCompactionProvider,
@@ -5865,6 +5870,126 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     selectedProvider,
   ]);
+  // Continue after an interrupted or failed turn. The prompt is hidden from
+  // the transcript (rendered as a marker) and names the tool call that was
+  // cut off so the agent resumes from that step.
+  const [dismissedContinueTurnIds, setDismissedContinueTurnIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const continueTurnId =
+    activeThread &&
+    isServerThread &&
+    activeLatestTurn &&
+    (activeLatestTurn.state === "interrupted" || activeLatestTurn.state === "error") &&
+    !isWorking &&
+    pendingApprovals.length === 0 &&
+    pendingUserInputs.length === 0 &&
+    activeThread.messages.some((message) => message.role === "user")
+      ? activeLatestTurn.turnId
+      : null;
+  const handleContinueInterruptedTurn = useCallback(async () => {
+    if (!activeThread || !activeLatestTurn || continueTurnId === null) return;
+    if (sendInFlightRef.current) return;
+    // The step that was cut off: prefer a call that never finished (stopped,
+    // failed, or still marked in progress), else the last tool call of the
+    // turn, whether or not it carried a command.
+    const turnEntries = workLogEntries.filter(
+      (entry) => entry.turnId === continueTurnId && entry.tone === "tool",
+    );
+    const cutOff =
+      turnEntries.findLast(
+        (entry) =>
+          entry.toolLifecycleStatus === "inProgress" ||
+          entry.toolLifecycleStatus === "stopped" ||
+          entry.toolLifecycleStatus === "failed",
+      ) ?? turnEntries.at(-1);
+    const split = cutOff?.command ? splitLeadingCdForPrompt(cutOff.command) : null;
+    const text = buildContinuationPrompt({
+      reason: activeLatestTurn.state === "error" ? "error" : "interrupted",
+      command: split?.command,
+      cwd: split?.cwd ?? undefined,
+      toolLabel: cutOff && !cutOff.command ? cutOff.label : undefined,
+    });
+    setDismissedContinueTurnIds((ids) => new Set(ids).add(continueTurnId));
+    // Same optimistic side effects as a normal send: the composer goes busy,
+    // the working row appears, and live-follow is re-armed.
+    sendInFlightRef.current = true;
+    // A lingering session error would mark the local dispatch as already
+    // acknowledged, so the composer never went busy; clear it like onSend.
+    setThreadError(activeThread.id, null);
+    beginLocalDispatch({ preparingWorktree: false });
+    scrollToEnd();
+    const createdAt = new Date().toISOString();
+    const result = await startThreadTurn({
+      environmentId: activeThread.environmentId,
+      input: {
+        threadId: activeThread.id,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text,
+          attachments: [],
+          origin: "continuation",
+        },
+        modelSelection: activeThread.modelSelection,
+        runtimeMode: activeThread.runtimeMode,
+        interactionMode: activeThread.interactionMode,
+        createdAt,
+      },
+    });
+    sendInFlightRef.current = false;
+    if (result._tag === "Failure") {
+      resetLocalDispatch();
+      // An interrupted command never reached the server; only real failures toast.
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add({
+          type: "error",
+          title: "Could not continue",
+          description: "The turn could not be restarted. Send a message to continue instead.",
+        });
+      }
+      setDismissedContinueTurnIds((ids) => {
+        const next = new Set(ids);
+        next.delete(continueTurnId);
+        return next;
+      });
+    }
+  }, [
+    activeLatestTurn,
+    activeThread,
+    beginLocalDispatch,
+    continueTurnId,
+    resetLocalDispatch,
+    scrollToEnd,
+    setThreadError,
+    startThreadTurn,
+    workLogEntries,
+  ]);
+  const continueBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (continueTurnId === null || dismissedContinueTurnIds.has(continueTurnId)) return null;
+    const stopped = activeLatestTurn?.state === "interrupted";
+    return {
+      id: `continue-turn:${continueTurnId}`,
+      variant: "info",
+      icon: <PlayIcon />,
+      title: stopped ? "Pick up where it stopped" : "Pick up after the error",
+      description: stopped
+        ? "Resume from the step that was interrupted without retyping anything."
+        : "Retry from the step that failed without retyping anything.",
+      actions: (
+        <Button size="xs" variant="ghost" onClick={() => void handleContinueInterruptedTurn()}>
+          Continue
+        </Button>
+      ),
+      dismissLabel: "Dismiss continue prompt",
+      onDismiss: () => setDismissedContinueTurnIds((ids) => new Set(ids).add(continueTurnId)),
+    };
+  }, [
+    activeLatestTurn?.state,
+    continueTurnId,
+    dismissedContinueTurnIds,
+    handleContinueInterruptedTurn,
+  ]);
   const handleRestoreThreadBranch = useCallback(() => {
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
@@ -5892,6 +6017,7 @@ export default function ChatView(props: ChatViewProps) {
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
     const resumeCompactionItems =
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
+    const continueItems = continueBannerItem === null ? [] : [continueBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
@@ -5902,6 +6028,7 @@ export default function ChatView(props: ChatViewProps) {
         ...usageLimitsItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
+        ...continueItems,
         ...resumeCompactionItems,
         ...wokeThreadItems,
         ...parkedThreadItems,
@@ -5912,6 +6039,7 @@ export default function ChatView(props: ChatViewProps) {
       ...usageLimitsItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
+      ...continueItems,
       ...resumeCompactionItems,
       ...wokeThreadItems,
       {
@@ -5957,6 +6085,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    continueBannerItem,
     feedbackBannerItems,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
