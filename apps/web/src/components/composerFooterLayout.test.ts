@@ -90,6 +90,34 @@ describe("resolveComposerTimelineInset", () => {
     ).toBe(200);
   });
 
+  it("uses the measured expanded height while the resting strip host is mounting", () => {
+    expect(
+      resolveComposerTimelineInset({ currentInset: 172, overlayHeight: 110, isResting: true }),
+    ).toBe(172);
+  });
+
+  it("keeps timeline padding stable when the model-only strip appears on collapse", () => {
+    const expanded = resolveComposerTimelineInset({
+      currentInset: 0,
+      overlayHeight: 172,
+      isResting: false,
+    });
+    const collapsed = resolveComposerTimelineInset({
+      currentInset: expanded,
+      overlayHeight: 110,
+      isResting: true,
+      restingOnlyHeight: 32,
+    });
+    expect(collapsed).toBe(expanded);
+    expect(
+      resolveComposerTimelineInset({
+        currentInset: collapsed,
+        overlayHeight: 172,
+        isResting: false,
+      }),
+    ).toBe(expanded);
+  });
+
   it("reserves the empty expansion when no larger height is known", () => {
     expect(
       resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
