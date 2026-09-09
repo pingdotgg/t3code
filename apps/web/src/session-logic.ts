@@ -1406,7 +1406,7 @@ function timelineEntryFromProposedPlan(proposedPlan: ProposedPlan): TimelineEntr
 
 function timelineEntryFromWork(workEntry: WorkLogEntry): TimelineEntry {
   return {
-    id: workEntry.id,
+    id: `work:${workEntry.id}`,
     kind: "work",
     createdAt: workEntry.createdAt,
     entry: workEntry,

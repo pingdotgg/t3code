@@ -1939,7 +1939,7 @@ function appendActivityGroupRows(
     }
     result.push({
       type: "activity-group",
-      id: activity.id,
+      id: `activity:${activity.id}`,
       createdAt: activity.createdAt,
       turnId: activity.turnId,
       activities: [activity],
@@ -1981,15 +1981,23 @@ function appendToolGroupRows(
   // an earlier run (a call whose end was never reported) stays in place.
   const shimmer = activeTail && (active || latestActivity.status === "success");
   const singleActivity = activities.length === 1 ? latestActivity : null;
+  if (singleActivity && !singleActivity.toolLike && !active) {
+    result.push({
+      type: "activity-group",
+      id: `activity:${singleActivity.id}`,
+      createdAt: singleActivity.createdAt,
+      turnId: singleActivity.turnId,
+      activities,
+    });
+    return;
+  }
   const summary = live
     ? liveToolActivitySummary(latestActivity, live)
     : singleActivity !== null &&
         singleActivity.toolLike &&
         toolGroupAction(singleActivity.workEntry) !== "edit"
       ? singleToolCallLabel(singleActivity)
-      : singleActivity !== null && !singleActivity.toolLike
-        ? singleActivity.workEntry.label
-        : summarizeToolGroup(activities.map((activity) => activity.workEntry));
+      : summarizeToolGroup(activities.map((activity) => activity.workEntry));
   const primarySourceActivity = activities.find(
     (activity) => activity.workEntry.toolSource !== undefined,
   );
@@ -2239,7 +2247,7 @@ function toThreadFeedActivityEntry(
   });
   return {
     type: "activity",
-    id: entry.id,
+    id: `activity:${entry.id}`,
     createdAt: entry.createdAt,
     turnId: entry.turnId,
     activity: {

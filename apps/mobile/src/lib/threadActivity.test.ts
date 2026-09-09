@@ -275,6 +275,75 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it.each([false, true])("preserves an async answer with its turn expanded=%s", (expanded) => {
+    const createdAt = "2026-09-07T12:00:00.000Z";
+    const turnId = TurnId.make("answer-turn");
+    const message = {
+      id: MessageId.make("async-answer:question"),
+      role: "user" as const,
+      text: "Which option?\nAlpha",
+      turnId: null,
+      createdAt,
+      updatedAt: createdAt,
+      streaming: false,
+    };
+    const thread = makeThread({
+      id: ThreadId.make("async-answer"),
+      projectId: ProjectId.make("project-1"),
+      title: "Answered question",
+      messages: [message],
+      activities: [
+        makeActivity({
+          id: EventId.make(message.id),
+          kind: "user-input.resolved",
+          summary: "User input submitted",
+          createdAt,
+          turnId,
+        }),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      null,
+      new Set(expanded ? [turnId] : []),
+    );
+
+    expect(rows.filter((row) => row.type === "message")).toEqual([
+      expect.objectContaining({ message }),
+    ]);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+    expect(rows.filter((row) => row.type === "activity-group")).toHaveLength(expanded ? 1 : 0);
+  });
+
+  it.each([false, true])("renders an answered question once with group expanded=%s", (expanded) => {
+    const thread = makeThread({
+      id: ThreadId.make("single-answer"),
+      projectId: ProjectId.make("project-1"),
+      title: "Answered question",
+      activities: [
+        makeActivity({
+          id: EventId.make("answer"),
+          kind: "user-input.resolved",
+          summary: "User input submitted",
+          createdAt: "2026-09-07T12:00:00.000Z",
+          payload: { requestId: "question", answers: { choice: "Yes" } },
+        }),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      null,
+      new Set(),
+      new Set(expanded ? ["work-group:answer"] : []),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ id: "answer", icon: "message", summary: "User input submitted" }],
+    });
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
@@ -398,17 +467,21 @@ describe("buildThreadFeed", () => {
       ),
     });
     const initial = buildThreadFeed(thread);
-    expect(initial.map((row) => row.id)).toEqual(["work-1", "message-4", "work-5"]);
+    expect(initial.map((row) => row.id)).toEqual([
+      "activity:work-1",
+      "message-4",
+      "activity:work-5",
+    ]);
     const split = buildThreadFeed({
       ...thread,
       messages: [{ ...messages[0]!, text: "Now visible" }, messages[1]!],
     });
     expect(split.map((row) => row.id)).toEqual([
-      "work-1",
+      "activity:work-1",
       "message-2",
-      "work-3",
+      "activity:work-3",
       "message-4",
-      "work-5",
+      "activity:work-5",
     ]);
     expect(split[0]).not.toBe(initial[0]);
     expect(split.at(-1)).toBe(initial.at(-1));
@@ -418,7 +491,7 @@ describe("buildThreadFeed", () => {
       ...thread,
       messages: [messages[0]!, { ...messages[1]!, createdAt: "2026-04-01T00:00:06.000Z" }],
     });
-    expect(reordered.map((row) => row.id)).toEqual(["work-1", "message-4"]);
+    expect(reordered.map((row) => row.id)).toEqual(["activity:work-1", "message-4"]);
     expect(reordered[0]).toMatchObject({
       activities: [{ id: "work-1" }, { id: "work-3" }, { id: "work-5" }],
     });
@@ -431,13 +504,13 @@ describe("buildThreadFeed", () => {
       loadedMessages: [messages[1]!],
       localMessages: [olderMessage],
     });
-    expect(page.map((row) => row.id)).toEqual(["older-message", "message-4", "work-5"]);
+    expect(page.map((row) => row.id)).toEqual(["older-message", "message-4", "activity:work-5"]);
     const prepended = buildThreadFeed(thread, { loadedMessages: [olderMessage, ...messages] });
     expect(prepended.map((row) => row.id)).toEqual([
       "older-message",
-      "work-1",
+      "activity:work-1",
       "message-4",
-      "work-5",
+      "activity:work-5",
     ]);
     expect(prepended.at(-1)).toBe(page.at(-1));
   });
@@ -463,7 +536,7 @@ describe("buildThreadFeed", () => {
     expect(presented).toMatchObject([
       {
         type: "activity-group",
-        id: "context-compaction",
+        id: "activity:context-compaction",
         activities: [{ summary: "Compacted context 899K → 19K tokens" }],
       },
     ]);
@@ -2235,7 +2308,7 @@ describe("buildThreadFeed", () => {
       // the slot belongs to "Thinking" and the group keeps its own identity.
       expect(rows.slice(0, 3).map((entry) => [entry.id, entry.type])).toEqual([
         ["work-toggle:work-group:activity-1", "work-toggle"],
-        ["activity-2", "activity-group"],
+        ["activity:activity-2", "activity-group"],
         [shimmer ? "live-activity-row" : "work-live:work-group:activity-3", "work-toggle"],
       ]);
       expect(rows.slice(0, 3).map((entry) => entry.type === "work-toggle" && entry.live)).toEqual([
@@ -2392,7 +2465,7 @@ describe("buildThreadFeed", () => {
     });
     expect(liveIds([call(1, "inProgress"), errorRow, call(2, "inProgress")])).toEqual([
       "work-toggle:work-live:work-group:tool:turn-failing-calls:call-1",
-      "activity-group:runtime-error",
+      "activity-group:activity:runtime-error",
       "work-toggle:live-activity-row",
     ]);
   });
@@ -2709,7 +2782,7 @@ describe("buildThreadFeed", () => {
       new Set([groupId]),
     );
     expect(correctedRows.find((entry) => entry.type === "activity-group")).toMatchObject({
-      id: "call-a-1",
+      id: "activity:call-a-1",
       activities: [{ status: "failure", workEntry: { tone: "error" } }],
     });
   });

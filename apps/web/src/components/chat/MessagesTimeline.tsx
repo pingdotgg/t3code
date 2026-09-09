@@ -2268,9 +2268,7 @@ function WorkGroupToggleTimelineRow({
       <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
         <ToolActivityIconView
           icon={row.toolIcon}
-          fallbackName={
-            row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
-          }
+          fallbackName={row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
           className="size-4 shrink-0 stroke-[1.8]"
           muted
         />
