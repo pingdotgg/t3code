@@ -1107,14 +1107,14 @@ describe("RpcSessionFactory", () => {
           { command: "terminal.toggle", shortcut },
         ],
         issues: [{ kind: "keybindings.future-issue", message: "From a newer server" }],
-        availableEditors: ["some-future-editor", "zed"],
+        availableEditors: ["some-future-editor", "sublime-text", "zed"],
       });
       yield* Fiber.join(readyFiber);
 
       const config = yield* session.initialConfig;
       expect(config.keybindings).toEqual([{ command: "terminal.toggle", shortcut }]);
       expect(config.issues).toEqual([]);
-      expect(config.availableEditors).toEqual(["zed"]);
+      expect(config.availableEditors).toEqual(["sublime-text", "zed"]);
     }),
   );
 

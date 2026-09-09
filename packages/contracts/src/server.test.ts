@@ -136,9 +136,9 @@ describe("server config forward compatibility", () => {
   });
 
   it("drops editor ids this build does not know", () => {
-    const parsed = decodeAvailableEditors(["zed", "some-future-editor", "vscode"]);
+    const parsed = decodeAvailableEditors(["zed", "some-future-editor", "sublime-text", "vscode"]);
 
-    expect(parsed).toEqual(["zed", "vscode"]);
+    expect(parsed).toEqual(["zed", "sublime-text", "vscode"]);
   });
 
   // A provider status this build has never seen (a new ServerProviderState,

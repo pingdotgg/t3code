@@ -24,6 +24,7 @@ import {
   CursorIcon,
   Icon,
   KiroIcon,
+  SublimeTextIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -90,6 +91,11 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
     {
       Icon: Zed,
       value: "zed",
+      kind: "brand",
+    },
+    {
+      Icon: SublimeTextIcon,
+      value: "sublime-text",
       kind: "brand",
     },
     {

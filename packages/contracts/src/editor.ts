@@ -50,6 +50,12 @@ export const EDITORS = [
     remoteScheme: "vscodium",
   },
   { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
+  {
+    id: "sublime-text",
+    label: "Sublime Text",
+    commands: ["subl"],
+    launchStyle: "direct-path",
+  },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
