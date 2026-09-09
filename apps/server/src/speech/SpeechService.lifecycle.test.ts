@@ -13,7 +13,7 @@ const native = vi.hoisted(() => ({
   dispose: vi.fn(),
   transcribe: vi.fn(async () => ({ text: "hello" })),
 }));
-vi.mock("transcribe-cpp", () => ({ TranscribeModel: { load: async () => native } }));
+vi.mock("./native.ts", () => ({ loadNativeSpeechModel: async () => native }));
 vi.mock("./model.ts", () => ({
   SPEECH_MODEL: { name: "test" },
   downloadSpeechModel: async () => "test.gguf",
@@ -89,4 +89,24 @@ it.effect("retains ownership of native work after its request is interrupted", (
     }).pipe(Effect.provide(layer));
     expect(native.dispose).toHaveBeenCalledOnce();
   }),
+);
+
+it.effect(
+  "closes its scope without waiting for hung native inference",
+  () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      native.transcribe.mockImplementationOnce(() => {
+        started.resolve();
+        return new Promise(() => {});
+      });
+      yield* Effect.gen(function* () {
+        const speech = yield* SpeechService.SpeechService;
+        const request = yield* speech.transcribe(pcm()).pipe(Effect.forkChild);
+        yield* Effect.promise(() => started.promise);
+        yield* Fiber.interrupt(request);
+      }).pipe(Effect.provide(layer));
+      expect(native.dispose).toHaveBeenCalledOnce();
+    }),
+  { timeout: 1000 },
 );

@@ -246,6 +246,7 @@ export function ComposerPermissionsSection(props: {
 }
 
 export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  showActions?: boolean;
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
@@ -298,6 +299,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.showActions !== false ? (
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}
@@ -326,6 +328,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
       />
+      ) : null}
     </>
   );
 });

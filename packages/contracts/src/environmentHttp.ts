@@ -761,6 +761,11 @@ class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").a
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
+export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<EnvironmentVoiceBodyLimit>()(
+  "EnvironmentVoiceBodyLimit",
+  { error: EnvironmentRequestInvalidError },
+) {}
+
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   .add(
     HttpApiEndpoint.get("status", "/api/voice/status", {
@@ -775,7 +780,9 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
       success: EnvironmentSpeechTranscriptionResult,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
-    }).middleware(EnvironmentAuthenticatedAuth),
+    })
+      .middleware(EnvironmentVoiceBodyLimit)
+      .middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.delete("removeModel", "/api/voice/model", {

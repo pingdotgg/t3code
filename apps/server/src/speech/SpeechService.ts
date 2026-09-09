@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import { loadNativeSpeechModel } from "./native.ts";
 import {
   downloadSpeechModel,
   isSpeechModelReady,
@@ -91,7 +92,7 @@ type LoadedModel = {
     pcm: Float32Array,
     options: { readonly timestamps: "none"; readonly language: "en" },
   ) => Promise<{ readonly text: string }>;
-  readonly dispose: () => void;
+  readonly dispose: () => Promise<void>;
 };
 
 export class SpeechService extends Context.Service<
@@ -123,23 +124,27 @@ export const make = Effect.gen(function* () {
   let activeTranscriptions = 0;
   let activeOperation: Promise<unknown> | undefined;
   let closing = false;
+  const lifetime = new AbortController();
 
   yield* Effect.addFinalizer(() =>
     Effect.promise(async () => {
       closing = true;
-      await activeOperation?.catch(() => undefined);
-      model?.dispose();
+      lifetime.abort();
+      await model?.dispose();
       model = undefined;
       loading = undefined;
     }),
   );
 
-  const loadModel = async (signal?: AbortSignal) => {
+  const loadModel = async () => {
     if (model) return model;
-    loading ??= downloadSpeechModel(modelDirectory, signal)
+    loading ??= downloadSpeechModel(modelDirectory, lifetime.signal)
       .then(async (modelPath) => {
-        const { TranscribeModel } = await import("transcribe-cpp");
-        const loaded = await TranscribeModel.load(modelPath, { backend: "cpu" });
+        const loaded = await loadNativeSpeechModel(modelPath, lifetime.signal);
+        if (closing) {
+          await loaded.dispose();
+          throw new SpeechBusyError({ operation: "model preparation" });
+        }
         model = loaded;
         return loaded;
       })
@@ -210,7 +215,7 @@ export const make = Effect.gen(function* () {
       }),
     removeModel: exclusive("model removal", async () => {
       await loading?.catch(() => undefined);
-      model?.dispose();
+      await model?.dispose();
       model = undefined;
       loading = undefined;
       await removeSpeechModel(modelDirectory);

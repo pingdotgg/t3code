@@ -2,7 +2,7 @@
 
 Voice input is available in supported browsers, in the desktop app, and on iOS
 26 or newer. Select the microphone button beside Send to record, then select the
-stop button to transcribe. Select discard to cancel. The transcript is inserted
+checkmark button to transcribe. Select the X button to cancel. The transcript is inserted
 into the composer for editing and is never sent automatically.
 
 On web and desktop, T3 Code transcribes recordings on the connected T3

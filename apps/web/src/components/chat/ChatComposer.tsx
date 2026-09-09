@@ -3561,8 +3561,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </>
                   ) : null}
-                  {speechPresentation.showsSend ? (
                   <ComposerFooterPrimaryActions
+                    showActions={speechPresentation.showsSend}
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     activeContextWindow={
@@ -3620,7 +3620,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   />
-                  ) : null}
                 </div>
               </div>
             )}

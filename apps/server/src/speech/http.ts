@@ -1,5 +1,12 @@
-import { AuthOrchestrationOperateScope, EnvironmentHttpApi } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import {
@@ -9,6 +16,21 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as SpeechService from "./SpeechService.ts";
+
+const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const length = Number(request.headers["content-length"]);
+    if (length > SpeechService.MAX_SPEECH_BYTES)
+      return yield* failEnvironmentInvalidRequest("invalid_audio");
+    return yield* effect.pipe(
+      Effect.provideService(
+        HttpServerRequest.MaxBodySize,
+        FileSystem.Size(SpeechService.MAX_SPEECH_BYTES),
+      ),
+    );
+  }),
+);
 
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -63,4 +85,4 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       );
   }),
-);
+).pipe(Layer.provide(bodyLimit));

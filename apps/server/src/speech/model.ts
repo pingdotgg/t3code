@@ -30,8 +30,10 @@ function speechModelPath(directory: string): string {
   return NodePath.join(directory, SPEECH_MODEL.filename);
 }
 
-export function isSpeechModelReady(directory: string): Promise<boolean> {
-  return hasExpectedModel(speechModelPath(directory));
+export async function isSpeechModelReady(directory: string): Promise<boolean> {
+  // Readiness is advisory. downloadSpeechModel verifies the digest before every native load.
+  const stat = await NodeFSP.stat(speechModelPath(directory)).catch(() => null);
+  return stat?.isFile() === true && stat.size === SPEECH_MODEL.size;
 }
 
 export async function downloadSpeechModel(
