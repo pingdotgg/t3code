@@ -40,7 +40,14 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       const invoke = (file: string) =>
         exec(
           process.execPath,
-          [path.join(shim, "agent-device-launcher.mjs"), "snapshot", "--config", file],
+          [
+            path.join(shim, "agent-device-launcher.mjs"),
+            "snapshot",
+            "--config",
+            file,
+            "--session",
+            "test-session",
+          ],
           { env: { ...process.env, AGENT_DEVICE_DAEMON_BASE_URL: "http://wrong-host" } },
         ).then((result) => JSON.parse(result.stdout));
       expect(yield* Effect.promise(() => Promise.all(files.map(invoke)))).toEqual([
@@ -58,11 +65,18 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       expect(agentDeviceSession("thread", "mini", "same-id")).not.toBe(
         agentDeviceSession("thread", "android", "same-id"),
       );
-      yield* Effect.promise(() =>
-        expect(
-          exec(process.execPath, [path.join(shim, "agent-device-launcher.mjs"), "snapshot"]),
-        ).rejects.toThrow("Call device_open first"),
-      );
+      for (const args of [
+        ["snapshot"],
+        ["snapshot", "--config", files[0]!],
+        ["snapshot", "--config", "help"],
+        ["snapshot", "--config", files[0]!, "--session"],
+      ]) {
+        yield* Effect.promise(() =>
+          expect(
+            exec(process.execPath, [path.join(shim, "agent-device-launcher.mjs"), ...args]),
+          ).rejects.toThrow("Call device_open first"),
+        );
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

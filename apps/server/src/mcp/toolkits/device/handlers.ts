@@ -145,6 +145,12 @@ const handlers = {
         });
       }
       const target = yield* pickDevice(state.devices, input);
+      // Resolve consent and agent connectivity before booting or registering a session.
+      const agentArgs = yield* devices.agentTarget({
+        threadId: scope.threadId,
+        hostId: target.hostId,
+        deviceId: target.id,
+      });
       const session = yield* devices.open({
         threadId: scope.threadId,
         hostId: target.hostId,
@@ -156,14 +162,7 @@ const handlers = {
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
-      const targetArgs = [
-        ...agentDeviceTargetArgs(device),
-        ...(yield* devices.agentTarget({
-          threadId: scope.threadId,
-          hostId: device.hostId,
-          deviceId: device.id,
-        })),
-      ];
+      const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
       return {
         device,
         agentDevice: { command: "agent-device", targetArgs },
