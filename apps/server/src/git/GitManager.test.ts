@@ -602,6 +602,7 @@ function runStackedAction(
     action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
     actionId?: string;
     commitMessage?: string;
+    splitCommits?: boolean;
     featureBranch?: boolean;
     filePaths?: readonly string[];
   },
@@ -3316,6 +3317,172 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(statusStdout).toContain("b.txt");
       expect(statusStdout).not.toContain("a.txt");
+    }),
+  );
+
+  it.effect("splits change units into ordered logical commits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.ts"), "export const alpha = 1;\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.test.ts"), "test('alpha', () => {});\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.ts"), "export const beta = 2;\n");
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: (input) => {
+            const hunkIdByPath = new Map(
+              input.changeUnitSummary.split(/\r?\n/g).map((line) => {
+                const [hunkId = "", path = ""] = line.split("\t");
+                return [path, hunkId] as const;
+              }),
+            );
+            return Effect.succeed({
+              commits: [
+                {
+                  subject: "Add alpha behavior",
+                  body: "",
+                  hunkIds: [
+                    hunkIdByPath.get("alpha.ts") ?? "",
+                    hunkIdByPath.get("alpha.test.ts") ?? "",
+                  ],
+                },
+                {
+                  subject: "Add beta behavior",
+                  body: "",
+                  hunkIds: [hunkIdByPath.get("beta.ts") ?? ""],
+                },
+              ],
+            });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        splitCommits: true,
+      });
+
+      expect(result.commit).toMatchObject({
+        status: "created",
+        subject: "Add beta behavior",
+        commitCount: 2,
+      });
+      expect(
+        yield* runGit(repoDir, ["log", "-2", "--pretty=%s"]).pipe(
+          Effect.map((output) => output.stdout.trim().split("\n")),
+        ),
+      ).toEqual(["Add beta behavior", "Add alpha behavior"]);
+      expect(
+        yield* runGit(repoDir, ["show", "HEAD~1", "--format=", "--name-only"]).pipe(
+          Effect.map((output) => output.stdout.trim().split("\n").toSorted()),
+        ),
+      ).toEqual(["alpha.test.ts", "alpha.ts"]);
+      expect(
+        yield* runGit(repoDir, ["status", "--porcelain"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe("");
+    }),
+  );
+
+  it.effect("splits distant hunks in the same file into separate commits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const filePath = NodePath.join(repoDir, "settings.ts");
+      NodeFS.writeFileSync(
+        filePath,
+        `${Array.from(
+          { length: 30 },
+          (_, index) => `export const value${index + 1} = ${index + 1};`,
+        ).join("\n")}\n`,
+      );
+      yield* runGit(repoDir, ["add", "settings.ts"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add settings fixture"]);
+
+      const original = NodeFS.readFileSync(filePath, "utf8");
+      NodeFS.writeFileSync(
+        filePath,
+        original.replace("value2 = 2", "value2 = 200").replace("value29 = 29", "value29 = 2900"),
+      );
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: (input) => {
+            const hunkIds = input.changeUnitSummary
+              .split(/\r?\n/g)
+              .map((line) => line.split("\t").at(0)?.trim() ?? "")
+              .filter((hunkId) => hunkId.length > 0);
+            return Effect.succeed({
+              commits: [
+                { subject: "Increase early setting", body: "", hunkIds: [hunkIds[0] ?? ""] },
+                { subject: "Increase late setting", body: "", hunkIds: [hunkIds[1] ?? ""] },
+              ],
+            });
+          },
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        splitCommits: true,
+      });
+
+      expect(result.commit).toMatchObject({ status: "created", commitCount: 2 });
+      expect(
+        yield* runGit(repoDir, ["log", "-2", "--pretty=%s"]).pipe(
+          Effect.map((output) => output.stdout.trim().split("\n")),
+        ),
+      ).toEqual(["Increase late setting", "Increase early setting"]);
+      expect(
+        yield* runGit(repoDir, ["show", "HEAD~1", "--format=", "--unified=0"]).pipe(
+          Effect.map((output) => output.stdout),
+        ),
+      ).toContain("value2 = 200");
+      expect(
+        yield* runGit(repoDir, ["show", "HEAD", "--format=", "--unified=0"]).pipe(
+          Effect.map((output) => output.stdout),
+        ),
+      ).toContain("value29 = 2900");
+      expect(
+        yield* runGit(repoDir, ["status", "--porcelain"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe("");
+    }),
+  );
+
+  it.effect("rejects logical commit plans that omit change units", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.ts"), "export const alpha = 1;\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.ts"), "export const beta = 2;\n");
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: () =>
+            Effect.succeed({
+              commits: [{ subject: "Add alpha behavior", body: "", hunkIds: ["H001"] }],
+            }),
+        },
+      });
+
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        splitCommits: true,
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("omitted 1 change unit");
+      expect(
+        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
+          Effect.map((output) => output.stdout.trim()),
+        ),
+      ).toBe("Initial commit");
     }),
   );
 
