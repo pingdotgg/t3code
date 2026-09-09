@@ -921,6 +921,24 @@ describe("native provider presentation in the v2 timeline", () => {
     expect(workEntryIndicatesToolSuccess(entry.entry)).toBe(false);
   });
 
+  it("retains Claude Read image previews without tool output", () => {
+    const item = {
+      ...base,
+      type: "dynamic_tool" as const,
+      toolName: "Read",
+      input: { file_path: "/workspace/reference.png" },
+      viewedImagePath: "/workspace/reference.png",
+    } satisfies OrchestrationV2TurnItem;
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(item)],
+      optimisticMessages: [],
+    });
+    expect(entry).toMatchObject({
+      kind: "work",
+      entry: { viewedImagePath: "/workspace/reference.png" },
+    });
+  });
+
   it("keeps browser identity and its source on a completed tool row", () => {
     const item = {
       ...base,

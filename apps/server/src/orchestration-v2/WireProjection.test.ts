@@ -8,13 +8,19 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
-  type OrchestrationV2TurnItem,
+  OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import { projectTurnItemForWire, projectDomainEventForWire } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
+
+const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
+const encodeTurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
+const decodeTurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
 
 const base = {
   id: TurnItemId.make("tool-1"),
@@ -37,6 +43,24 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("preserves image metadata through wire and JSON contracts while redacting output", () => {
+    const item = {
+      ...base,
+      toolName: "Read",
+      input: { file_path: "/workspace/reference.png" },
+      viewedImagePath: "/workspace/reference.png",
+      output: { data: "private-image-data" },
+    } satisfies OrchestrationV2TurnItem;
+    const projected = projectTurnItemForWire(item);
+    const live = decodeTurnItem(projected);
+    const encoded = encodeTurnItemJson(live);
+    const json = decodeTurnItemJson(encoded);
+    const decoded = decodeTurnItem(json);
+    expect(decoded).toMatchObject({ viewedImagePath: "/workspace/reference.png" });
+    expect(decoded).not.toHaveProperty("output");
+    expect(item.output.data).toBe("private-image-data");
+  });
+
   it("preserves provider notices in bounded items and live events", () => {
     const item = {
       ...base,
