@@ -94,15 +94,21 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
+/** vscode-remote authority prefix: SSH host or a local WSL distro. */
+export type RemoteOpenAuthority = "ssh-remote" | "wsl";
+
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link that
- * opens `absolutePath` on `host` in the local editor over SSH. Returns
- * undefined for editors without remote deep-link support.
+ * Builds a `<scheme>://vscode-remote/<authority>+<host><path>` deep link that
+ * opens `absolutePath` on `host` in the local editor. `ssh-remote` (the
+ * default) connects over SSH; `wsl` opens a distro on this machine through
+ * the editor's Remote WSL integration. Returns undefined for editors without
+ * remote deep-link support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
   readonly absolutePath: string;
+  readonly authority?: RemoteOpenAuthority;
 }): string | undefined => {
   const scheme = remoteSchemeForEditor(input.editor);
   if (scheme === undefined) {
@@ -112,7 +118,8 @@ export const buildRemoteOpenUrl = (input: {
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(input.host)}${encodedPath}`;
+  const authority = input.authority ?? "ssh-remote";
+  return `${scheme}://vscode-remote/${authority}+${encodeURIComponent(input.host)}${encodedPath}`;
 };
 
 /**

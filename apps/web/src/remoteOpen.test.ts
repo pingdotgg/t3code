@@ -7,7 +7,7 @@ import {
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import { resolveDesktopWslDistro, resolveRemoteOpenState } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -145,5 +145,119 @@ describe("buildRemoteOpenUrl", () => {
     expect(buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/tmp/x" })).toBe(
       undefined,
     );
+  });
+});
+
+describe("WSL desktop-local backends", () => {
+  const wslTarget = new BearerConnectionTarget({
+    environmentId,
+    label: "WSL (Ubuntu)",
+    connectionId: "local:wsl:default",
+  });
+
+  it("resolves the running distro from the bootstrap serving the same URL", () => {
+    expect(
+      resolveDesktopWslDistro({
+        target: wslTarget,
+        httpBaseUrl: "http://172.20.0.1:3100",
+        bootstraps: [
+          {
+            id: "wsl:default",
+            label: "WSL (Ubuntu)",
+            runningDistro: "Ubuntu",
+            httpBaseUrl: "http://172.20.0.1:3100",
+            wsBaseUrl: "ws://172.20.0.1:3100",
+          },
+        ],
+      }),
+    ).toBe("Ubuntu");
+  });
+
+  it("returns null for non-WSL desktop-local backends", () => {
+    expect(
+      resolveDesktopWslDistro({
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "Other",
+          connectionId: "local:other",
+        }),
+        httpBaseUrl: "http://127.0.0.1:3100",
+        bootstraps: [
+          {
+            id: "other",
+            label: "Other",
+            runningDistro: "Ubuntu",
+            httpBaseUrl: "http://127.0.0.1:3100",
+            wsBaseUrl: "ws://127.0.0.1:3100",
+          },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("uses wsl deep links in the desktop renderer when the distro is known", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: wslTarget,
+        sshAlias: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        wslDistro: "Ubuntu",
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "wsl", host: "Ubuntu" } });
+  });
+
+  it("falls back to exec inside the distro when the distro is unknown", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: wslTarget,
+        sshAlias: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        wslDistro: null,
+      }),
+    ).toEqual({ mode: "local-exec" });
+  });
+
+  it("uses wsl deep links for the desktop primary in wsl-only mode", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: primaryTarget("http://172.20.0.1:3100"),
+        sshAlias: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        wslDistro: "Ubuntu",
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "wsl", host: "Ubuntu" } });
+  });
+
+  it("takes the primary's distro from the wsl-only primary, not the bootstrap list", () => {
+    expect(
+      resolveDesktopWslDistro({
+        target: primaryTarget("http://172.20.0.1:3100"),
+        httpBaseUrl: "http://172.20.0.1:3100",
+        bootstraps: [],
+        primaryWslDistro: "Ubuntu",
+      }),
+    ).toBe("Ubuntu");
+    expect(
+      resolveDesktopWslDistro({
+        target: primaryTarget("http://127.0.0.1:3100"),
+        httpBaseUrl: "http://127.0.0.1:3100",
+        bootstraps: [],
+        primaryWslDistro: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("builds a wsl deep link", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "Ubuntu",
+        absolutePath: "/home/theo/code/my repo",
+        authority: "wsl",
+      }),
+    ).toBe("vscode://vscode-remote/wsl+Ubuntu/home/theo/code/my%20repo");
   });
 });
