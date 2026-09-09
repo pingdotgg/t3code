@@ -422,7 +422,7 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
           if (stored.event.type !== "turn-item.updated") return;
           assert.equal(stored.event.payload.type, "dynamic_tool");
           if (stored.event.payload.type !== "dynamic_tool") return;
-          assert.deepInclude(stored.event.payload.output, { truncated: true });
+          assert.notProperty(stored.event.payload, "output");
         }
         const persisted = yield* store.read({ threadId: thread.id }).pipe(Stream.runCollect);
         const fullEvent = persisted.find(
