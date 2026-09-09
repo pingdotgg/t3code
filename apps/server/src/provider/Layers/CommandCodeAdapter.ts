@@ -227,8 +227,12 @@ interface CommandCodeSession {
 
 interface ActiveRun {
   readonly turnId: TurnId;
-  /** Set by interruptTurn, read by the running turn once the child exits. */
-  interruptRequested: boolean;
+  /**
+   * Cancellation object shared between the runner and interrupt/retire paths.
+   * Kept on the run itself (not derived from the session map) so a run that
+   * outlives its session entry still observes its own interruption.
+   */
+  readonly cancel: { requested: boolean };
   /** Null between the atomic reservation and the process actually spawning. */
   child: TurnChildHandle | null;
 }
@@ -353,6 +357,34 @@ export function makeCommandCodeAdapter(
     const releaseTurn = (threadId: ThreadId, turnId: TurnId): Effect.Effect<void> =>
       updateSessionForTurn(threadId, turnId, (current) => ({ ...current, activeRun: null }));
 
+    /**
+     * Attach the spawned child to the reserved run. Returns false when the run
+     * was retired (startSession replaced the session) between reservation and
+     * spawn — the caller must then abort its local child instead of running.
+     */
+    const attachChild = (
+      threadId: ThreadId,
+      turnId: TurnId,
+      child: TurnChildHandle,
+    ): Effect.Effect<boolean> =>
+      Ref.modify(sessions, (map) => {
+        const session = map.get(threadId);
+        if (
+          session === undefined ||
+          session.activeRun === null ||
+          session.activeRun.turnId !== turnId
+        ) {
+          return [false, map] as const;
+        }
+        return [
+          true,
+          new Map(map).set(threadId, {
+            ...session,
+            activeRun: { ...session.activeRun, child },
+          }),
+        ] as const;
+      });
+
     const killActiveChild = (activeRun: ActiveRun): Effect.Effect<void> =>
       activeRun.child === null
         ? Effect.void
@@ -373,7 +405,7 @@ export function makeCommandCodeAdapter(
           true,
           new Map(map).set(threadId, {
             ...session,
-            activeRun: { turnId, interruptRequested: false, child: null },
+            activeRun: { turnId, cancel: { requested: false }, child: null },
           }),
         ] as const;
       });
@@ -393,6 +425,7 @@ export function makeCommandCodeAdapter(
             issue: "turn was not reserved for this thread",
           });
         }
+        const runCancel = session.activeRun.cancel;
 
         yield* offer({
           type: "turn.started",
@@ -423,19 +456,30 @@ export function makeCommandCodeAdapter(
         );
         const child = spawned as unknown as TurnChildHandle;
 
-        yield* updateSessionForTurn(input.threadId, input.turnId, (current) => ({
-          ...current,
-          activeRun:
-            current.activeRun === null ? current.activeRun : { ...current.activeRun, child },
-        }));
-        // A delayed interrupt may have landed before the child spawned; honor it now.
-        const attachedRun = (yield* getSession(input.threadId)).activeRun;
-        if (
-          attachedRun !== null &&
-          attachedRun.turnId === input.turnId &&
-          attachedRun.interruptRequested
-        ) {
-          yield* killActiveChild(attachedRun);
+        const owned = yield* attachChild(input.threadId, input.turnId, child);
+        if (!owned) {
+          // startSession retired this run before the child spawned: abort the
+          // local child and end the turn as interrupted instead of running it.
+          runCancel.requested = true;
+          yield* child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
+          yield* offer({
+            type: "turn.aborted",
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: { reason: "interrupted" },
+          });
+          return "interrupted" as const;
+        }
+        // A delayed interrupt may have landed before the child spawned.
+        if (runCancel.requested) {
+          yield* child.kill({ forceKillAfter: "2 seconds" }).pipe(Effect.ignore);
+          yield* offer({
+            type: "turn.aborted",
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: { reason: "interrupted" },
+          });
+          return "interrupted" as const;
         }
 
         // Stream the prompt over stdin; Command Code auto-detects piped input.
@@ -626,6 +670,28 @@ export function makeCommandCodeAdapter(
                 });
                 return;
               }
+              case "tool_errored": {
+                const toolCallId =
+                  typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
+                const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
+                if (toolCallId === undefined) return;
+                const rawError =
+                  typeof frame["error"] === "string" || typeof frame["errorMessage"] === "string"
+                    ? String(frame["error"] ?? frame["errorMessage"]).trim()
+                    : "";
+                yield* offer({
+                  type: "item.completed",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: `tool-${toolCallId}`,
+                  payload: {
+                    itemType: itemTypeForTool(toolName),
+                    status: "failed",
+                    ...(rawError.length > 0 ? { detail: rawError.slice(0, 2_000) } : {}),
+                  },
+                });
+                return;
+              }
               case "tool_completed": {
                 const toolCallId =
                   typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
@@ -688,11 +754,7 @@ export function makeCommandCodeAdapter(
           buffer = "";
         }
 
-        const currentRun = (yield* getSession(input.threadId)).activeRun;
-        const wasInterrupted =
-          currentRun !== null &&
-          currentRun.turnId === input.turnId &&
-          currentRun.interruptRequested;
+        const wasInterrupted = runCancel.requested;
         const usage = lastUsage;
 
         // Adopt the Command Code session id reported by the run so the next
@@ -826,7 +888,7 @@ export function makeCommandCodeAdapter(
           // land on the replacement session.
           const previous = (yield* Ref.get(sessions)).get(input.threadId);
           if (previous !== undefined && previous.activeRun !== null) {
-            previous.activeRun.interruptRequested = true;
+            previous.activeRun.cancel.requested = true;
             yield* killActiveChild(previous.activeRun);
           }
           yield* Ref.update(sessions, (map) => new Map(map).set(input.threadId, session));
@@ -901,7 +963,7 @@ export function makeCommandCodeAdapter(
             // Interrupt arrived for an older turn; a newer one owns the thread.
             return;
           }
-          activeRun.interruptRequested = true;
+          activeRun.cancel.requested = true;
           yield* killActiveChild(activeRun);
         }),
       respondToRequest: (
@@ -932,7 +994,7 @@ export function makeCommandCodeAdapter(
         Effect.gen(function* () {
           const session = yield* getSession(threadId);
           if (session.activeRun !== null) {
-            session.activeRun.interruptRequested = true;
+            session.activeRun.cancel.requested = true;
             yield* killActiveChild(session.activeRun);
           }
           yield* Ref.update(sessions, (map) => {
@@ -982,7 +1044,7 @@ export function makeCommandCodeAdapter(
           const current = yield* Ref.get(sessions);
           for (const session of current.values()) {
             if (session.activeRun !== null) {
-              session.activeRun.interruptRequested = true;
+              session.activeRun.cancel.requested = true;
               yield* killActiveChild(session.activeRun);
             }
           }

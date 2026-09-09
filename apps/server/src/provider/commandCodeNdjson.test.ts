@@ -82,5 +82,13 @@ describe("captured headless transcript fixtures", () => {
       "utf8",
     );
     expect(stderr).toMatch(/unknown model/);
+    // The captured stdout for a bad-model run is empty: an early arg error
+    // must never emit a `result` line (the adapter maps exit-code failures).
+    const stdout = NodeFS.readFileSync(
+      new URL("./testFixtures/commandCodeHeadless/error-bad-model.stdout.txt", import.meta.url),
+      "utf8",
+    );
+    expect(stdout.trim()).toBe("");
+    expect(stdout).not.toContain('"type":"result"');
   });
 });

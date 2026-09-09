@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 import { parseCommandCodeModelList } from "./commandCodeModels.ts";
@@ -57,15 +55,5 @@ describe("parseCommandCodeModelList", () => {
   it("returns an empty list for garbage output", () => {
     expect(parseCommandCodeModelList("")).toEqual([]);
     expect(parseCommandCodeModelList("Anthropic\n\nOpen Source\n")).toEqual([]);
-  });
-});
-
-describe("commandCodeModels fixture", () => {
-  it("loads the captured transcript fixture", () => {
-    const lines = NodeFS.readFileSync(
-      new URL("./testFixtures/commandCodeHeadless/turn-text-success.ndjson", import.meta.url),
-      "utf8",
-    ).split("\n");
-    expect(lines.length).toBeGreaterThan(5);
   });
 });
