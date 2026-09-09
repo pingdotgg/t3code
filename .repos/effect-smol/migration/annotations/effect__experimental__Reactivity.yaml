@@ -1,0 +1,15 @@
+"@effect/experimental/Reactivity#layer":
+  replacement: effect/unstable/reactivity/Reactivity#layer
+  note: Import layer from the v4 unstable Reactivity module.
+"@effect/experimental/Reactivity#make":
+  replacement: effect/unstable/reactivity/Reactivity#make
+  note: Import make from the v4 unstable Reactivity module.
+"@effect/experimental/Reactivity#Reactivity":
+  replacement: effect/unstable/reactivity/Reactivity#Reactivity
+  note: Use the v4 Reactivity Context.Service; unsafe methods were renamed with an Unsafe suffix.
+"@effect/experimental/Reactivity#Reactivity.Service":
+  replacement: effect/unstable/reactivity/Reactivity#Reactivity["Service"]
+  note: The named namespace member was removed; derive the service shape from the Context.Service class.
+"@effect/experimental/Reactivity#stream":
+  replacement: effect/unstable/reactivity/Reactivity#stream
+  note: Import stream from the v4 unstable Reactivity module.

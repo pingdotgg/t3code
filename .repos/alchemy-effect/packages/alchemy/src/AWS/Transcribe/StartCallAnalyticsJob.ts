@@ -28,9 +28,8 @@ export interface StartCallAnalyticsJobRequest extends Omit<
  * is granted `iam:PassRole` on it alongside `transcribe:StartCallAnalyticsJob`
  * (which has no resource-level IAM).
  *
- * @binding
- * @section Call Analytics Jobs
- * @example Start a Call Analytics Job
+ * ### Call Analytics Jobs
+ * **Example:** Start a Call Analytics Job
  * ```typescript
  * // init — bind the Transcribe data-access role
  * const startCallAnalyticsJob = yield* AWS.Transcribe.StartCallAnalyticsJob(dataAccessRole);
@@ -41,6 +40,8 @@ export interface StartCallAnalyticsJobRequest extends Omit<
  *   Media: { MediaFileUri: "s3://my-bucket/calls/call.wav" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface StartCallAnalyticsJob extends Binding.Service<
   StartCallAnalyticsJob,

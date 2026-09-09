@@ -16,9 +16,8 @@ export interface GetParameterHistoryRequest extends Omit<
  * metadata) of the bound parameter. The binding also grants `kms:Decrypt`
  * on the parameter's encryption key so `WithDecryption: true` works on
  * `SecureString` parameters.
- * @binding
- * @section Reading Parameter History
- * @example List All Versions of a Parameter
+ * ### Reading Parameter History
+ * **Example:** List All Versions of a Parameter
  * ```typescript
  * const getHistory = yield* SSM.GetParameterHistory(config);
  *
@@ -27,6 +26,8 @@ export interface GetParameterHistoryRequest extends Omit<
  *   yield* Effect.log(`v${version.Version}: ${version.Value}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetParameterHistory extends Binding.Service<
   GetParameterHistory,

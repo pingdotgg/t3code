@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.DeleteMembersHttp)`.
- * @binding
- * @section Members & Organization
- * @example Delete Members
+ * ### Members & Organization
+ * **Example:** Delete Members
  * ```typescript
  * // init — account-level binding, no resource argument
  * const deleteMembers = yield* AWS.SecurityHub.DeleteMembers();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * yield* deleteMembers({ AccountIds: ["111122223333"] });
  * ```
+ *
+ * @binding
  */
 export interface DeleteMembers extends Binding.Service<
   DeleteMembers,

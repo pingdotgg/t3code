@@ -86,22 +86,23 @@ export interface ClusterSubnetGroup extends Resource<
  *
  * Subnet groups are free and provision instantly. A {@link Cluster}
  * references one by name via `clusterSubnetGroupName`.
- * @resource
- * @section Creating a Cluster Subnet Group
- * @example Subnet Group Spanning Two Subnets
+ * ### Creating a Cluster Subnet Group
+ * **Example:** Subnet Group Spanning Two Subnets
  * ```typescript
  * const subnetGroup = yield* Redshift.ClusterSubnetGroup("WarehouseSubnets", {
  *   description: "Subnets for the analytics warehouse",
  *   subnetIds: [subnetA.subnetId, subnetB.subnetId],
  * });
  * ```
- * @example Tagged Subnet Group
+ * **Example:** Tagged Subnet Group
  * ```typescript
  * const subnetGroup = yield* Redshift.ClusterSubnetGroup("WarehouseSubnets", {
  *   subnetIds: [subnetA.subnetId, subnetB.subnetId],
  *   tags: { team: "analytics" },
  * });
  * ```
+ *
+ * @resource
  */
 export const ClusterSubnetGroup = Resource<ClusterSubnetGroup>(
   "AWS.Redshift.ClusterSubnetGroup",

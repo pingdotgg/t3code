@@ -14,16 +14,15 @@ export const retryIfCancelled = Effect.retry({
  *
  * Returns `undefined` if the user cancels (Ctrl+C / Escape).
  *
- * Uses `Effect.callback` so fiber interruption propagates via the abort
- * signal to any async resources we own; the clack prompt itself is left
- * to resolve — its result is ignored after interruption.
+ * Uses `Effect.callback` so fiber interruption propagates to the clack
+ * prompt through its abort signal, releasing stdin and restoring the cursor.
  */
 export const prompt = <T>(
-  fn: () => Promise<T | symbol>,
+  fn: (signal: AbortSignal) => Promise<T | symbol>,
 ): Effect.Effect<T, PromptCancelled> =>
   Effect.callback<T, PromptCancelled>((resume, signal) => {
     let settled = false;
-    fn().then(
+    fn(signal).then(
       (result) => {
         if (settled || signal.aborted) return;
         settled = true;
@@ -45,15 +44,42 @@ export const success = (str: string) => Effect.sync(() => p.log.success(str));
 export const warn = (str: string) => Effect.sync(() => p.log.warn(str));
 export const error = (str: string) => Effect.sync(() => p.log.error(str));
 export const info = (str: string) => Effect.sync(() => p.log.info(str));
-export const text = (opts: p.TextOptions) => prompt(() => p.text(opts));
-export const password = (opts: p.PasswordOptions) =>
-  prompt(() => p.password(opts));
+type TextOptions = Omit<p.TextOptions, "validate"> & {
+  validate?: (value: string) => string | Error | undefined;
+};
+
+type PasswordOptions = Omit<p.PasswordOptions, "validate"> & {
+  validate?: (value: string) => string | Error | undefined;
+};
+
+export const text = (opts: TextOptions) => {
+  const validate = opts.validate;
+  return prompt<string>((signal) =>
+    p.text({
+      ...opts,
+      signal,
+      validate:
+        validate === undefined ? undefined : (value) => validate(value ?? ""),
+    }),
+  );
+};
+export const password = (opts: PasswordOptions) => {
+  const validate = opts.validate;
+  return prompt<string>((signal) =>
+    p.password({
+      ...opts,
+      signal,
+      validate:
+        validate === undefined ? undefined : (value) => validate(value ?? ""),
+    }),
+  );
+};
 export const select = <Value>(opts: p.SelectOptions<Value>) =>
-  prompt(() => p.select<Value>(opts));
+  prompt((signal) => p.select<Value>({ ...opts, signal }));
 export const confirm = (opts: p.ConfirmOptions) =>
-  prompt(() => p.confirm(opts));
+  prompt((signal) => p.confirm({ ...opts, signal }));
 export const multiselect = <Value>(opts: p.MultiSelectOptions<Value>) =>
-  prompt(() => p.multiselect<Value>(opts));
+  prompt((signal) => p.multiselect<Value>({ ...opts, signal }));
 
 /**
  * Open a URL in the user's default browser.

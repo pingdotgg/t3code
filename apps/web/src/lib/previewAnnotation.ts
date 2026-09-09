@@ -111,7 +111,7 @@ async function previewAnnotationScreenshotFile(
 }
 
 /** Upper bound on turning a picked element's crop into a composer attachment. */
-export const PREVIEW_ANNOTATION_CAPTURE_TIMEOUT_MS = 5_000;
+const PREVIEW_ANNOTATION_CAPTURE_TIMEOUT_MS = 5_000;
 
 export type PreviewAnnotationCapture =
   /** The crop is ready to attach. */

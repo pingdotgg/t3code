@@ -634,8 +634,12 @@ export const PullRequestSummary = Schema.Struct({
   title: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   state: PullRequestState,
+  /** Present when the host says the open pull request is still a draft. */
+  isDraft: Schema.optional(Schema.Boolean),
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
+  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
 });
 export type PullRequestSummary = typeof PullRequestSummary.Type;
@@ -1138,7 +1142,7 @@ export function pullRequestProviderRequirement(
  * as-is; the underlying failure travels in `cause` (absent for `provider-unsupported`, which
  * has none).
  */
-export class PullRequestUnavailableError extends Schema.TaggedErrorClass<PullRequestUnavailableError>()(
+export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestUnavailableError>()(
   "PullRequestUnavailableError",
   {
     reason: PullRequestUnavailableReason,
@@ -1167,7 +1171,7 @@ export class PullRequestUnavailableError extends Schema.TaggedErrorClass<PullReq
   }
 }
 
-export class PullRequestOperationError extends Schema.TaggedErrorClass<PullRequestOperationError>()(
+export class PullRequestOperationError extends Schema.TaggedError<PullRequestOperationError>()(
   "PullRequestOperationError",
   {
     operation: Schema.String,

@@ -24,7 +24,7 @@ import * as ShardId from "./ShardId.ts"
  * Represents a generic interface to the persistent storage required by the
  * cluster.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class RunnerStorage extends Context.Service<RunnerStorage, {
@@ -84,7 +84,7 @@ export class RunnerStorage extends Context.Service<RunnerStorage, {
  * String-encoded runner storage interface used by adapters that persist runner
  * addresses, runners, machine ids, and shard ids outside the in-memory model.
  *
- * @category Encoded
+ * @category services
  * @since 4.0.0
  */
 export interface Encoded {
@@ -195,29 +195,31 @@ export const makeEncoded = (encoded: Encoded) =>
  *
  * **Details**
  *
- * Registered runners are treated as healthy and shard acquisition is kept only in
- * process memory.
+ * Runner health and shard acquisition are kept only in process memory.
  *
  * @category constructors
  * @since 4.0.0
  */
 export const makeMemory = Effect.gen(function*() {
-  const runners = MutableHashMap.empty<RunnerAddress, Runner>()
+  const runners = MutableHashMap.empty<RunnerAddress, readonly [runner: Runner, healthy: boolean]>()
   let acquired: Array<ShardId.ShardId> = []
   let id = 0
 
   return RunnerStorage.of({
-    getRunners: Effect.sync(() => Array.from(MutableHashMap.values(runners), (runner) => [runner, true])),
-    register: (runner) =>
+    getRunners: Effect.sync(() => Array.from(MutableHashMap.values(runners))),
+    register: (runner, healthy) =>
       Effect.sync(() => {
-        MutableHashMap.set(runners, runner.address, runner)
+        MutableHashMap.set(runners, runner.address, [runner, healthy])
         return MachineId.make(id++)
       }),
     unregister: (address) =>
       Effect.sync(() => {
         MutableHashMap.remove(runners, address)
       }),
-    setRunnerHealth: () => Effect.void,
+    setRunnerHealth: (address, healthy) =>
+      Effect.sync(() => {
+        MutableHashMap.modify(runners, address, ([runner]) => [runner, healthy] as const)
+      }),
     acquire: (_address, shardIds) => {
       acquired = Array.from(shardIds)
       return Effect.succeed(acquired)

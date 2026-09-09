@@ -89,7 +89,7 @@ export function b() {}
           "  4 |\n" +
           "  5 | /** description */\n" +
           "> 6 | export function b() {}\n" +
-          "    | ^\n" +
+          "    |  ^\n" +
           "  7 |         "
         ]
       ))
@@ -106,7 +106,7 @@ export function b() {}
           "Missing `@since` tag in file /test.ts:\n" +
           "\n" +
           "> 1 | export { a }\n" +
-          "    |          ^"
+          "    |           ^"
         ]
       ))
   })
@@ -122,7 +122,7 @@ export function b() {}
           "Missing `@since` tag in file /test.ts:\n" +
           "\n" +
           "> 1 | export namespace A {}\n" +
-          "    | ^"
+          "    |  ^"
         ]
       ))
 
@@ -145,7 +145,7 @@ export function b() {}
           "  4 |        */\n" +
           "  5 |       export namespace A {\n" +
           "> 6 |         export interface B {}\n" +
-          "    |         ^\n" +
+          "    |          ^\n" +
           "  7 |       }\n" +
           "  8 |       "
         ]
@@ -170,7 +170,7 @@ export function b() {}
           "  4 |        */\n" +
           "  5 |       export namespace A {\n" +
           "> 6 |         export type B = string\n" +
-          "    |         ^\n" +
+          "    |          ^\n" +
           "  7 |       }\n" +
           "  8 |       "
         ]
@@ -195,7 +195,7 @@ export function b() {}
           "  4 |        */\n" +
           "  5 |       export namespace A {\n" +
           "> 6 |         export namespace B {}\n" +
-          "    |         ^\n" +
+          "    |          ^\n" +
           "  7 |       }\n" +
           "  8 |       "
         ]
@@ -213,7 +213,7 @@ export function b() {}
           "Missing `@since` tag in file /test.ts:\n" +
           "\n" +
           "> 1 | export class MyClass {}\n" +
-          "    | ^"
+          "    |  ^"
         ]
       ))
   })

@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { type Cause, Effect, Queue, Schema, Stream } from "effect"
 import { Entity, ShardingConfig } from "effect/unstable/cluster"
-import { Rpc } from "effect/unstable/rpc/index"
+import { Rpc } from "effect/unstable/rpc"
 import { CallerId, ContextBleedEntity, ContextBleedLayer, TestEntity, TestEntityLayer, User } from "./TestEntity.ts"
 
 const StreamEntity = Entity.make("StreamEntity", [

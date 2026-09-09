@@ -20,9 +20,8 @@ export interface ListDataAutomationLibraryIngestionJobsRequest extends Omit<
  *
  * Provide the implementation with
  * `Effect.provide(AWS.BedrockDataAutomation.ListDataAutomationLibraryIngestionJobsHttp)`.
- * @binding
- * @section Library Ingestion
- * @example List Recent Ingestion Jobs
+ * ### Library Ingestion
+ * **Example:** List Recent Ingestion Jobs
  * ```typescript
  * // deploy time — bind the library
  * const listJobs =
@@ -31,6 +30,8 @@ export interface ListDataAutomationLibraryIngestionJobsRequest extends Omit<
  * // runtime — first page of jobs
  * const { jobs } = yield* listJobs({ maxResults: 25 });
  * ```
+ *
+ * @binding
  */
 export interface ListDataAutomationLibraryIngestionJobs extends Binding.Service<
   ListDataAutomationLibraryIngestionJobs,

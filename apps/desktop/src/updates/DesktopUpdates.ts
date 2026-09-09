@@ -76,7 +76,7 @@ const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressIn
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-export class DesktopUpdateActionInProgressError extends Schema.TaggedErrorClass<DesktopUpdateActionInProgressError>()(
+export class DesktopUpdateActionInProgressError extends Schema.TaggedError<DesktopUpdateActionInProgressError>()(
   "DesktopUpdateActionInProgressError",
   {
     action: Schema.Literals(["check", "download", "install", "channel"]),
@@ -88,7 +88,7 @@ export class DesktopUpdateActionInProgressError extends Schema.TaggedErrorClass<
   }
 }
 
-export class DesktopUpdateChannelPersistenceError extends Schema.TaggedErrorClass<DesktopUpdateChannelPersistenceError>()(
+export class DesktopUpdateChannelPersistenceError extends Schema.TaggedError<DesktopUpdateChannelPersistenceError>()(
   "DesktopUpdateChannelPersistenceError",
   {
     channel: DesktopUpdateChannelSchema,
@@ -100,7 +100,7 @@ export class DesktopUpdateChannelPersistenceError extends Schema.TaggedErrorClas
   }
 }
 
-export class DesktopUpdatePollerError extends Schema.TaggedErrorClass<DesktopUpdatePollerError>()(
+export class DesktopUpdatePollerError extends Schema.TaggedError<DesktopUpdatePollerError>()(
   "DesktopUpdatePollerError",
   {
     poller: Schema.Literals(["startup", "poll"]),
@@ -112,7 +112,7 @@ export class DesktopUpdatePollerError extends Schema.TaggedErrorClass<DesktopUpd
   }
 }
 
-export class DesktopUpdateEventHandlingError extends Schema.TaggedErrorClass<DesktopUpdateEventHandlingError>()(
+export class DesktopUpdateEventHandlingError extends Schema.TaggedError<DesktopUpdateEventHandlingError>()(
   "DesktopUpdateEventHandlingError",
   {
     event: Schema.Literals(["update-available", "download-progress", "update-downloaded"]),
@@ -124,7 +124,7 @@ export class DesktopUpdateEventHandlingError extends Schema.TaggedErrorClass<Des
   }
 }
 
-export class DesktopUpdaterReportedError extends Schema.TaggedErrorClass<DesktopUpdaterReportedError>()(
+export class DesktopUpdaterReportedError extends Schema.TaggedError<DesktopUpdaterReportedError>()(
   "DesktopUpdaterReportedError",
   {
     operation: Schema.Literals(["check", "download", "install", "channel", "background"]),
@@ -136,7 +136,7 @@ export class DesktopUpdaterReportedError extends Schema.TaggedErrorClass<Desktop
   }
 }
 
-export class DesktopUpdateUnexpectedActionError extends Schema.TaggedErrorClass<DesktopUpdateUnexpectedActionError>()(
+export class DesktopUpdateUnexpectedActionError extends Schema.TaggedError<DesktopUpdateUnexpectedActionError>()(
   "DesktopUpdateUnexpectedActionError",
   {
     action: Schema.Literals(["download", "install"]),
@@ -155,7 +155,6 @@ export const DesktopUpdateSetChannelError = Schema.Union([
   DesktopUpdateChannelPersistenceError,
 ]);
 export type DesktopUpdateSetChannelError = typeof DesktopUpdateSetChannelError.Type;
-export const isDesktopUpdateSetChannelError = Schema.is(DesktopUpdateSetChannelError);
 
 export class DesktopUpdates extends Context.Service<
   DesktopUpdates,
@@ -272,6 +271,7 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;

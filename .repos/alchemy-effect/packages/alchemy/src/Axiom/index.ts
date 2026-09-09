@@ -7,6 +7,7 @@ export * from "./Dashboard.ts";
 export * from "./Dataset.ts";
 export * from "./Monitor.ts";
 export * from "./Notifier.ts";
+export * from "./Telemetry.ts";
 export * from "./Providers.ts";
 export * from "./View.ts";
 export * from "./VirtualField.ts";

@@ -11,6 +11,7 @@ import {
   type PullRequestCommit,
   type PullRequestDetailView,
   type PullRequestMergeability,
+  type PullRequestMergeMethod,
   type PullRequestReaction,
   type PullRequestReviewThread,
   type PullRequestState,
@@ -20,6 +21,24 @@ import {
 } from "@t3tools/contracts";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+
+export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: "Merge",
+  squash: "Squash and merge",
+  rebase: "Rebase and merge",
+};
+
+export function resolvePullRequestMergeMethod(
+  allowed: ReadonlyArray<PullRequestMergeMethod>,
+  current: PullRequestMergeMethod | null,
+  projectDefault: PullRequestMergeMethod | undefined,
+  lastSelected: PullRequestMergeMethod,
+): PullRequestMergeMethod {
+  for (const method of [current, projectDefault, lastSelected]) {
+    if (method && allowed.includes(method)) return method;
+  }
+  return allowed[0] ?? "merge";
+}
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const bitbucketRepositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -187,13 +206,6 @@ export function isStackedPullRequestBase(
     ? defaultRef.name.slice(remotePrefix.length)
     : defaultRef.name;
   return defaultBranch !== baseBranch;
-}
-
-/** Plain-language state, shown beside the author. Conflicts are a merge signal, not a state. */
-export function describePullRequestState(state: PullRequestState, isDraft: boolean): string {
-  if (state === "merged") return "Merged";
-  if (state === "closed") return "Closed";
-  return isDraft ? "Draft" : "Ready for review";
 }
 
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */
