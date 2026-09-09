@@ -377,6 +377,7 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string;
       label: string;
+      active: boolean;
     }
   | {
       kind: "message";
@@ -1031,6 +1032,7 @@ export function deriveMessagesTimelineRows(input: {
     });
   };
   let hasActivityRow = false;
+  let hasActiveCompaction = false;
   const appendActiveWorkRows = () => {
     if (activeWorkRow === null) return;
     nextRows.push(activeWorkRow);
@@ -1109,11 +1111,14 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.kind === "work" &&
       timelineEntry.entry.sourceActivityKind === "context-compaction"
     ) {
+      const active = workEntryIsInActiveRun(timelineEntry.entry);
+      hasActiveCompaction ||= active;
       nextRows.push({
         kind: "context-compaction",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         label: timelineEntry.entry.label,
+        active,
       });
       continue;
     }
@@ -1323,7 +1328,7 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
-  if (input.isWorking && (!hasActivityRow || latestToolFailed)) {
+  if (input.isWorking && !hasActiveCompaction && (!hasActivityRow || latestToolFailed)) {
     nextRows.push({
       kind: "thinking",
       id: LIVE_ACTIVITY_ROW_ID,
@@ -1496,7 +1501,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "context-compaction": {
       const bc = b as typeof a;
-      return a.createdAt === bc.createdAt && a.label === bc.label;
+      return a.createdAt === bc.createdAt && a.label === bc.label && a.active === bc.active;
     }
 
     case "proposed-plan":

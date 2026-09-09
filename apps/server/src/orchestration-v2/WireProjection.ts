@@ -3,24 +3,22 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { compactDynamicToolOutput, toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 
-function encodedBytes(value: unknown): number {
-  try {
-    const serialized = JSON.stringify(value);
-    return Buffer.byteLength(serialized ?? String(value), "utf8");
-  } catch {
-    return Number.POSITIVE_INFINITY;
-  }
-}
-
 function truncateDetail(value: string | undefined): string | undefined {
-  if (value === undefined || Buffer.byteLength(value, "utf8") <= MAX_DETAIL_STRING_BYTES) {
+  if (
+    value === undefined ||
+    (value.length <= MAX_DETAIL_STRING_BYTES &&
+      Buffer.byteLength(value, "utf8") <= MAX_DETAIL_STRING_BYTES)
+  ) {
     return value;
   }
-  const prefix = Buffer.from(value, "utf8")
+  // UTF-8 needs at least one byte per UTF-16 code unit. Only encode the prefix
+  // that could fit, rather than allocating a buffer for the complete output.
+  const prefix = Buffer.from(value.slice(0, MAX_DETAIL_STRING_BYTES), "utf8")
     .subarray(0, MAX_DETAIL_STRING_BYTES)
     .toString("utf8")
     .replace(/\uFFFD$/u, "");
@@ -28,20 +26,38 @@ function truncateDetail(value: string | undefined): string | undefined {
 }
 
 function summarizeDynamicValue(value: unknown): unknown {
-  if (encodedBytes(value) <= MAX_DYNAMIC_VALUE_BYTES) {
-    return value;
-  }
   let serialized: string;
   try {
-    serialized = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+    if (typeof value === "string" && value.length > MAX_DYNAMIC_VALUE_BYTES) {
+      serialized = value;
+    } else {
+      const json = JSON.stringify(value) ?? String(value);
+      if (Buffer.byteLength(json, "utf8") <= MAX_DYNAMIC_VALUE_BYTES) {
+        return value;
+      }
+      serialized = typeof value === "string" ? value : json;
+    }
   } catch {
     serialized = "Unserializable tool output";
   }
-  const firstLine =
-    serialized
-      .split(/\r?\n/u)
-      .map((line) => line.replace(/\s+/gu, " ").trim())
-      .find((line) => line.length > 0) ?? "Large tool output";
+
+  // Preserve the first nonblank normalized line, but stop after the preview.
+  // Splitting and normalizing every line can allocate far more than the input.
+  const start = /\S/u.exec(serialized)?.index;
+  let firstLine = start === undefined ? "Large tool output" : "";
+  let pendingSpace = false;
+  for (let index = start ?? serialized.length; index < serialized.length; index += 1) {
+    const character = serialized[index]!;
+    if (character === "\n") break;
+    if (/\s/u.test(character)) {
+      pendingSpace = true;
+      continue;
+    }
+    if (pendingSpace) firstLine += " ";
+    firstLine += character;
+    pendingSpace = false;
+    if (firstLine.length > 160) break;
+  }
   return {
     summary: firstLine.length <= 160 ? firstLine : `${firstLine.slice(0, 159).trimEnd()}…`,
     truncated: true,
@@ -50,15 +66,23 @@ function summarizeDynamicValue(value: unknown): unknown {
 
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
-    case "command_execution":
-      return { ...item, output: truncateDetail(item.output) };
-    case "file_change":
-      return {
-        ...item,
-        diffStr: truncateDetail(item.diffStr),
-        oldStr: truncateDetail(item.oldStr),
-        newStr: truncateDetail(item.newStr),
-      };
+    case "command_execution": {
+      const { output, ...projected } = item;
+      // Clients used this preview to recognize provider-reported failures. Keep
+      // the outcome without retaining or serializing the output that proved it.
+      const failed =
+        item.outputIndicatesFailure === true ||
+        (item.exitCode !== undefined && item.exitCode !== 0) ||
+        (output !== undefined &&
+          toolOutputIndicatesFailure(output.slice(0, MAX_DETAIL_STRING_BYTES)));
+      return failed ? { ...projected, outputIndicatesFailure: true } : projected;
+    }
+    case "file_change": {
+      // File identity and counts are enough for activity. Full diffs already
+      // have a dedicated read path and remain intact in persistence.
+      const { diffStr: _diff, oldStr: _old, newStr: _new, ...projected } = item;
+      return projected;
+    }
     case "subagent":
       return {
         ...item,
@@ -66,12 +90,15 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         progress: truncateDetail(item.progress),
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
-    case "dynamic_tool":
+    case "dynamic_tool": {
+      const { output: rawOutput, ...projected } = item;
+      const output = compactDynamicToolOutput(rawOutput);
       return {
-        ...item,
+        ...projected,
         input: summarizeDynamicValue(item.input),
-        ...(item.output === undefined ? {} : { output: summarizeDynamicValue(item.output) }),
+        ...(output === undefined ? {} : { output }),
       };
+    }
     default:
       return item;
   }

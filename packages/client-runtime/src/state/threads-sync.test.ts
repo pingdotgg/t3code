@@ -22,6 +22,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient } from "effect/unstable/http";
 
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
@@ -35,6 +36,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
+import { threadHistoryControllerLayer } from "./threadHistoryController.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
@@ -107,6 +109,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
   readonly loadCached?: Effect.Effect<Option.Option<OrchestrationV2ThreadDetailSnapshot>>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
+  readonly historyPaging?: "enabled" | "no-http" | "no-controller";
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -116,6 +119,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const loaderCalls = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
+  const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -132,6 +136,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: {
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: true;
+      readonly acceptBoundedSnapshot?: true;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -139,6 +144,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           Effect.andThen(
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
+          Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
@@ -207,7 +213,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     clearVcsRefs: () => Effect.void,
     clear: () => Effect.void,
   });
-  const threadState = yield* makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
+  let makeThreadState = makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
     Effect.provideService(ThreadSnapshotLoader, snapshotLoader),
@@ -216,6 +222,18 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
     ),
   );
+  if (options?.historyPaging !== "no-http") {
+    makeThreadState = makeThreadState.pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Unexpected history HTTP request")),
+      ),
+    );
+  }
+  if (options?.historyPaging !== "no-controller") {
+    makeThreadState = makeThreadState.pipe(Effect.provide(threadHistoryControllerLayer));
+  }
+  const threadState = yield* makeThreadState;
   yield* SubscriptionRef.changes(threadState).pipe(
     Stream.runForEach((state) =>
       Ref.set(latest, state).pipe(Effect.andThen(Queue.offer(observed, state))),
@@ -233,6 +251,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     loaderCalls,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
+    lastAcceptBoundedSnapshot,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -345,7 +364,15 @@ describe("EnvironmentThreads", () => {
           return h.savedThreads;
         }),
       );
-      expect(yield* Ref.get(saved)).toEqual([{ snapshotSequence: 7, projection: BASE_PROJECTION }]);
+      expect(yield* Ref.get(saved)).toEqual([
+        {
+          snapshotSequence: 7,
+          projection: BASE_PROJECTION,
+          historyCursor: null,
+          hasMoreHistory: false,
+          latestLocalTurnOrdinal: 12,
+        },
+      ]);
     }),
   );
 
@@ -654,6 +681,48 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("keeps progressive history metadata from a bounded socket fallback", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 14,
+        projection: BASE_PROJECTION,
+        historyCursor: "socket-history-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 47,
+        payloadBudgetExceeded: false,
+      });
+
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" && value.history.historyCursor === "socket-history-cursor",
+      );
+      expect(state.history).toMatchObject({
+        historyCursor: "socket-history-cursor",
+        hasMoreHistory: true,
+        loading: false,
+        error: null,
+        expanded: false,
+        latestLocalTurnOrdinal: 47,
+      });
+      // HTTP was unavailable, so the request preserves the legacy full-snapshot
+      // fallback even though the client can defensively decode bounded metadata.
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBeUndefined();
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBeUndefined();
+
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)).toMatchObject({
+        snapshotSequence: 14,
+        historyCursor: "socket-history-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 47,
+      });
+    }),
+  );
+
   it.effect("seeds the thread from the HTTP snapshot and resumes live events", () =>
     Effect.gen(function* () {
       const httpProjection: OrchestrationV2ThreadProjection = {
@@ -683,6 +752,7 @@ describe("EnvironmentThreads", () => {
       // resumed from that snapshot's sequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBeGreaterThanOrEqual(1);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(1);
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBeUndefined();
     }),
   );
 
@@ -721,6 +791,7 @@ describe("EnvironmentThreads", () => {
         expanded: false,
       });
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(11);
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
       // Bounded HTTP success must not require a socket snapshot frame.
       expect(Option.getOrThrow(state.data).thread.title).toBe("Live after bounded");
     }),
@@ -826,6 +897,7 @@ describe("EnvironmentThreads", () => {
       // Warm progressive cache must not re-download; resume via afterSequence.
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
     }),
   );
 
@@ -839,8 +911,105 @@ describe("EnvironmentThreads", () => {
         expanded: false,
       });
       expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBeUndefined();
     }),
   );
+
+  for (const cacheKind of ["disk", "retained"] as const) {
+    it.effect(`retains paging support through a complete bounded ${cacheKind} cache`, () =>
+      Effect.gen(function* () {
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: undefined,
+          owner: undefined,
+        };
+        const cold = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* makeHarness({
+              resumeCache,
+              httpSnapshot: {
+                _tag: "present",
+                snapshot: { snapshotSequence: 4, projection: BASE_PROJECTION },
+                history: {
+                  historyCursor: null,
+                  hasMoreHistory: false,
+                  latestLocalTurnOrdinal: null,
+                },
+              },
+            });
+            yield* Queue.offer(harness.inputs, titleUpdated("Complete bounded", 5));
+            yield* awaitThreadState(
+              harness.observed,
+              (value) =>
+                value.status === "live" &&
+                Option.isSome(value.data) &&
+                value.data.value.thread.title === "Complete bounded",
+            );
+            return harness;
+          }),
+        );
+        const saved = (yield* Ref.get(cold.savedThreads)).at(-1);
+        expect(saved).toMatchObject({
+          snapshotSequence: 5,
+          historyCursor: null,
+          hasMoreHistory: false,
+          latestLocalTurnOrdinal: null,
+        });
+
+        const warm = yield* makeHarness(
+          cacheKind === "retained"
+            ? { resumeCache }
+            : { loadCached: Effect.succeed(Option.some(saved!)) },
+        );
+        // The thread may have grown past the replay budget while closed. Its
+        // warm subscription must still allow the server to bound that fallback.
+        yield* Queue.offer(warm.inputs, titleUpdated("Grown while closed", 200));
+        yield* awaitThreadState(
+          warm.observed,
+          (value) =>
+            value.status === "live" &&
+            Option.isSome(value.data) &&
+            value.data.value.thread.title === "Grown while closed",
+        );
+        expect(yield* Ref.get(warm.loaderCalls)).toBe(0);
+        expect(yield* Ref.get(warm.lastSubscribeAfterSequence)).toBe(5);
+        expect(yield* Ref.get(warm.lastAcceptBoundedSnapshot)).toBe(true);
+      }),
+    );
+  }
+
+  for (const historyPaging of ["no-http", "no-controller"] as const) {
+    it.effect(`does not negotiate bounded fallbacks with ${historyPaging}`, () =>
+      Effect.gen(function* () {
+        for (const source of ["cache", "http"] as const) {
+          const history = {
+            historyCursor: "known-paging-cursor",
+            hasMoreHistory: true,
+          };
+          const harness = yield* makeHarness({
+            historyPaging,
+            ...(source === "cache"
+              ? { cached: BASE_PROJECTION, cachedHistory: history }
+              : {
+                  httpSnapshot: {
+                    _tag: "present" as const,
+                    snapshot: { snapshotSequence: 4, projection: BASE_PROJECTION },
+                    history,
+                  },
+                }),
+          });
+          yield* Queue.offer(harness.inputs, titleUpdated("Paging unavailable", 10));
+          yield* awaitThreadState(
+            harness.observed,
+            (value) =>
+              value.status === "live" &&
+              Option.isSome(value.data) &&
+              value.data.value.thread.title === "Paging unavailable",
+          );
+          expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBeUndefined();
+        }
+      }),
+    );
+  }
 
   it.effect("socket snapshot clears progressive history meta left from a bounded window", () =>
     Effect.gen(function* () {
@@ -889,8 +1058,8 @@ describe("EnvironmentThreads", () => {
       yield* Effect.yieldNow;
       const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
       expect(saved?.projection.thread.title).toBe("Full socket snapshot");
-      expect(saved?.historyCursor).toBeUndefined();
-      expect(saved?.hasMoreHistory).toBeUndefined();
+      expect(saved?.historyCursor).toBeNull();
+      expect(saved?.hasMoreHistory).toBe(false);
     }),
   );
 
