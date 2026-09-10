@@ -353,6 +353,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
 }
 
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
+  if (item.type === "notification") return item.outcome === "failed" ? "failure" : null;
   if (item.type === "error") {
     if (item.status === "failed") return "failure";
     return item.status === "completed" ? "success" : "neutral";
@@ -397,6 +398,7 @@ function itemWorkLogTone(item: OrchestrationV2TurnItem): WorkLogPresentationEntr
 }
 
 function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
+  if (item.type === "notification") return "zap";
   switch (item.type) {
     case "reasoning":
       return "agent";
@@ -446,6 +448,7 @@ function itemSummary(
   item: OrchestrationV2TurnItem,
   toolPresentation: T3McpToolPresentation | null = null,
 ): string {
+  if (item.type === "notification") return item.summary;
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title = item.title?.trim();
@@ -532,6 +535,8 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
       return null;
+    case "notification":
+      return item.detail ?? null;
     case "proposed_plan":
       return item.markdown || null;
     case "todo_list":
@@ -622,7 +627,7 @@ function toFeedActivity(
   const item = row.item;
   const toolPresentation = itemToolPresentation(item);
   const summary = itemSummary(item, toolPresentation);
-  const detail = itemPreview(item);
+  const detail = item.type === "notification" ? null : itemPreview(item);
   const createdAt = DateTime.formatIso(item.startedAt ?? item.updatedAt);
   const workEntry = toWorkLogEntry(item, createdAt, summary, detail);
   const getFullDetail = memoizeValue(() =>
@@ -721,9 +726,11 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
       continue;
     }
 
-    const isCompaction = entry.activity.projectedItem.item.type === "compaction";
+    const isStandaloneActivity =
+      entry.activity.projectedItem.item.type === "compaction" ||
+      entry.activity.projectedItem.item.type === "notification";
     if (
-      isCompaction ||
+      isStandaloneActivity ||
       entry.activity.prominent ||
       firstActivityEntry?.runId !== entry.runId ||
       firstActivityEntry?.activity.attemptId !== entry.activity.attemptId
@@ -732,7 +739,7 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     }
     firstActivityEntry ??= entry;
     openGroupActivities.push(entry.activity);
-    if (isCompaction || entry.activity.prominent) {
+    if (isStandaloneActivity || entry.activity.prominent) {
       flushGroup();
     }
   }
@@ -860,7 +867,10 @@ function deriveThreadFeedRunFolds(
             entry.id !== terminalAssistantId &&
             !(
               entry.type === "activity-group" &&
-              entry.activities.some((activity) => activity.prominent)
+              entry.activities.some(
+                (activity) =>
+                  activity.prominent || activity.projectedItem.item.type === "notification",
+              )
             ),
         )
         .map((entry) => entry.id),
@@ -1085,7 +1095,7 @@ function appendActivityGroupRows(
   for (const activity of activities) {
     const item = activity.projectedItem.item;
     const severeProviderError = item.type === "error" && item.status === "failed";
-    if (!activity.prominent && !severeProviderError) {
+    if (!activity.prominent && !severeProviderError && item.type !== "notification") {
       groupableRun.push(activity);
       continue;
     }

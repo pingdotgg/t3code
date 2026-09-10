@@ -51,6 +51,7 @@ import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
+import { notificationTurnItem } from "./Notification.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -1032,7 +1033,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             nodeId: rootNodeId,
             providerInstanceId: queuedRun.providerInstanceId,
             occurredAt: now,
-            payload: userTurnItem,
+            payload: notificationTurnItem(userTurnItem, queuedMessage, projection.subagents),
           },
           {
             type: "run.updated",
@@ -3341,6 +3342,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode = { type: "start_immediately" };
         }
       }
+      if (
+        command.notification !== undefined &&
+        (command.createdBy !== "agent" ||
+          (command.creationSource !== "server" && command.creationSource !== "provider") ||
+          dispatchMode.type !== "queue_after_active")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Notifications must be server- or provider-created queued messages.",
+        });
+      }
       let delegatedCompletion:
         | OrchestrationV2ConversationMessage["delegatedCompletion"]
         | undefined;
@@ -3616,6 +3629,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdAt: now,
           updatedAt: now,
           ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
+          ...(command.notification === undefined ? {} : { notification: command.notification }),
         };
         const emitEvent = emit(events, command);
         yield* emitEvent({
@@ -3917,6 +3931,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           createdAt: now,
           updatedAt: now,
           ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
+          ...(command.notification === undefined ? {} : { notification: command.notification }),
         };
         const turnItem: OrchestrationV2TurnItem = {
           createdBy: command.createdBy,
@@ -4042,7 +4057,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           nodeId: rootNodeId,
           providerInstanceId: modelSelection.instanceId,
           occurredAt: now,
-          payload: turnItem,
+          payload: notificationTurnItem(turnItem, message, projection.subagents),
         });
         if (preparationTurnItem !== null) {
           yield* emitEvent({
@@ -4590,6 +4605,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
         ...(delegatedCompletion === undefined ? {} : { delegatedCompletion }),
+        ...(command.notification === undefined ? {} : { notification: command.notification }),
       };
       const turnItem: OrchestrationV2TurnItem = {
         createdBy: command.createdBy,
@@ -4938,7 +4954,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: rootNodeId,
         providerInstanceId: modelSelection.instanceId,
         occurredAt: now,
-        payload: turnItem,
+        payload: notificationTurnItem(turnItem, message, projection.subagents),
       });
       const forkResolution = nativeForkResolution ?? portableForkResolution;
       if (pendingForkTransfer !== undefined && forkResolution !== null) {
@@ -5788,7 +5804,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Queued run ${queuedRun.id} is missing message or execution state.`,
         });
       }
-      if (queuedMessage.delegatedCompletion !== undefined) {
+      if (
+        queuedMessage.delegatedCompletion !== undefined ||
+        queuedMessage.notification !== undefined
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -5880,7 +5899,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const movingMessage = projection.messages.find(
         (candidate) => candidate.id === moving.userMessageId,
       );
-      if (movingMessage?.delegatedCompletion !== undefined) {
+      if (
+        movingMessage?.delegatedCompletion !== undefined ||
+        movingMessage?.notification !== undefined
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -6071,7 +6093,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Queued run ${queuedRun.id} has no user message.`,
         });
       }
-      if (queuedMessage.delegatedCompletion !== undefined) {
+      if (
+        queuedMessage.delegatedCompletion !== undefined ||
+        queuedMessage.notification !== undefined
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,

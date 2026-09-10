@@ -1475,3 +1475,44 @@ it("makes attachment-only question answers expandable in the mobile feed", () =>
   });
   expect(group.activities[0]?.getFullDetail()).toContain("spec.txt");
 });
+
+it("renders automatic completion as a neutral activity while retaining its details", () => {
+  const item = {
+    ...base("notification", "2026-06-20T00:00:01.000Z", 0),
+    type: "notification" as const,
+    source: { kind: "monitor" as const },
+    outcome: "updated" as const,
+    summary: "Monitor reported an update",
+    detail: "Build checks changed",
+  };
+  const feed = buildThreadFeed([
+    projected(item, 0),
+    projected(command(), 1),
+    projected(assistantMessage(), 2),
+  ]);
+  expect(feed[0]?.type).toBe("activity-group");
+  if (feed[0]?.type !== "activity-group") throw new Error("Expected notification activity");
+  const activity = feed[0].activities[0]!;
+  expect(activity.summary).toBe("Monitor reported an update");
+  expect(activity.detail).toBeNull();
+  expect(activity.status).toBeNull();
+  expect(activity.getFullDetail()).toContain(item.detail);
+  const presented = deriveThreadFeedPresentation(
+    feed,
+    {
+      runId,
+      status: "completed",
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    },
+    new Set(),
+  );
+  expect(
+    presented.some(
+      (entry) =>
+        entry.type === "activity-group" &&
+        entry.activities.some((activity) => activity.summary === "Monitor reported an update"),
+    ),
+  ).toBe(true);
+  expect(buildThreadFeed([projected(userMessage(), 0)])[0]?.type).toBe("message");
+});
