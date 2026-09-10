@@ -605,6 +605,10 @@ function useCreateProject(environment: EnvironmentOption | null) {
         !canCreateProjectInEnvironment(environment.connectionState) ||
         !readEnvironmentScope(environment.environmentId, AuthOrchestrationOperateScope)
       ) {
+        Alert.alert(
+          "Project not added",
+          `This connection cannot add projects right now. Any existing files remain at ${workspaceRoot}.`,
+        );
         return;
       }
 
