@@ -229,11 +229,20 @@ export function azureDevOpsFilePatch(input: {
   const created = oldContents === "" && newContents !== "";
   const deleted = newContents === "" && oldContents !== "";
   if (created || deleted) {
-    const lines = contentLines(created ? newContents : oldContents);
-    const section = replacementSection(header, input.texts);
+    const contents = created ? newContents : oldContents;
+    const lines = contentLines(contents);
     // A marker on every line puts a side that just fits the size ceiling half again over it, and
     // what one file weighs is what a slice's budget is spent in. Such a file is listed without its
     // hunks, the same as one whose sides were too big to read at all.
+    //
+    // Weighed off the side's own bytes plus the one marker a line will carry, which is strictly
+    // under what the section costs and needs none of it built. Joining and measuring half a
+    // megabyte of lines to learn an answer already known is 15 to 120ms, and it is spent on
+    // exactly the files that hold the request longest.
+    if (byteLength(contents) + lines.length > MAX_FILE_BYTES) {
+      return { section: `${header}\n`, truncated: true, abandoned: false, edits: lines.length };
+    }
+    const section = replacementSection(header, input.texts);
     if (byteLength(section) > MAX_FILE_BYTES) {
       return { section: `${header}\n`, truncated: true, abandoned: false, edits: lines.length };
     }

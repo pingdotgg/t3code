@@ -49,6 +49,9 @@ const DIFF_FILE_CONCURRENCY = 4;
  */
 export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 
+/** How many pull requests' repository locations one provider remembers at once. */
+export const LOCATION_CACHE_CAPACITY = 128;
+
 const CAPABILITIES: PullRequestCapabilities = {
   // Azure serves no patch of its own, so the one the Code tab reads is built here out of the
   // files an iteration changed and both sides of each of them.
@@ -180,16 +183,20 @@ export const make = Effect.gen(function* () {
    * repositories, so it is remembered rather than re-read: the marks alone would otherwise pay for
    * a whole pull request read every time they checked whether a file had been pushed to.
    *
-   * Bounded and oldest-first, since a long-lived server sees far more pull requests than a reader
-   * ever has open.
+   * Bounded and least recently used, since a long-lived server sees far more pull requests than a
+   * reader ever has open: first in would let a listing walking cold pull requests evict the one
+   * being read, and every mark on it would then pay a whole pull request read again.
    */
-  const LOCATION_CACHE_CAPACITY = 128;
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
   const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
     const key = `${input.cwd} ${input.number}`;
     const held = locations.get(key);
-    if (held !== undefined) return Effect.succeed(held);
+    if (held !== undefined) {
+      locations.delete(key);
+      locations.set(key, held);
+      return Effect.succeed(held);
+    }
     return cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
       Effect.map((pullRequest) => {
         const location = pullRequest.location;

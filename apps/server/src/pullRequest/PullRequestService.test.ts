@@ -30,6 +30,10 @@ import {
 import { PullRequestProviderRegistry, fromProviders } from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+import {
+  FILE_REVISIONS_CACHE_CAPACITY,
+  MAX_FILE_REVISION_PATHS,
+} from "./pullRequestViewedFiles.ts";
 
 function project(input: {
   readonly id: string;
@@ -5199,6 +5203,62 @@ it.effect("keeps environment marks apart from another change request's", () =>
     const other = yield* service.filesViewed({ ...GITLAB_REFERENCE, number: 2 });
 
     assert.deepStrictEqual(other.files, []);
+  }),
+);
+
+it.effect("bounds the paths one change request's held revisions carry", () =>
+  Effect.gen(function* () {
+    // The cache's count bounds how many change requests are held, not what any one of them holds:
+    // a reader ticking a wide change request renews the same entry on every press and adds a path
+    // to it each time. A press carries at most half the cap, so going one past it takes three.
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(new Map(), asked);
+    const batch = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        path: `${prefix}/${String(index).padStart(4, "0")}.ts`,
+        viewed: true,
+      }));
+    const press = (prefix: string, count: number) =>
+      service.setFilesViewed({ ...GITLAB_REFERENCE, files: batch(prefix, count) });
+
+    yield* press("a", MAX_FILE_REVISION_PATHS / 2);
+    yield* press("b", MAX_FILE_REVISION_PATHS / 2);
+    yield* press("c", 1);
+    const pressed = asked.length;
+
+    // The marks a read carries come first by path, so this one covers the earliest batch, which
+    // is where the paths asked about longest ago are. Held short of them the entry no longer
+    // answers the read, and the host is asked rather than the reader being told a version that
+    // nothing holds any more.
+    yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.strictEqual(asked.length, pressed + 1);
+    assert.ok(asked.at(-1)?.includes("a/0000.ts"));
+  }),
+);
+
+it.effect("keeps the change request being ticked through, not the one pressed first", () =>
+  Effect.gen(function* () {
+    // Ordered by insertion alone a hit does not renew its entry, so the review a reader is
+    // working down is the first thing dropped once a cache's worth of other change requests have
+    // been pressed, and the next press on it pays a host read for a version already held.
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(new Map([["src/a.ts", "blob-a"]]), asked);
+    const press = (number: number) =>
+      service.setFilesViewed({
+        ...GITLAB_REFERENCE,
+        number,
+        files: [{ path: "src/a.ts", viewed: true }],
+      });
+
+    yield* press(1);
+    // A cache's worth of other change requests, with the open one pressed in between each.
+    for (let filled = 0; filled < FILE_REVISIONS_CACHE_CAPACITY; filled += 1) {
+      yield* press(2 + filled);
+      yield* press(1);
+    }
+
+    assert.strictEqual(asked.length, 1 + FILE_REVISIONS_CACHE_CAPACITY);
   }),
 );
 

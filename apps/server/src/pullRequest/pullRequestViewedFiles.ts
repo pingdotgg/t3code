@@ -27,7 +27,16 @@ import type { PullRequestError, SupportedProject } from "./PullRequestService.ts
  */
 const FILE_REVISIONS_CACHE_TTL = Duration.seconds(60);
 const FILE_REVISIONS_STALE_WINDOW = Duration.minutes(10);
-const FILE_REVISIONS_CACHE_CAPACITY = 64;
+export const FILE_REVISIONS_CACHE_CAPACITY = 64;
+
+/**
+ * How many paths one scope's entry carries. The count above bounds how many scopes are held, not
+ * what any one of them holds: a reader ticking one file after another renews the same scope on
+ * every press and adds a path to it each time, so a long review of a wide change request grows a
+ * single entry without limit. Well over what a scope can report marks for, so a trim here only
+ * ever reaches paths carried from earlier presses.
+ */
+export const MAX_FILE_REVISION_PATHS = 1_000;
 
 interface FileRevisionsDependencies {
   readonly runFork: (effect: Effect.Effect<void>) => unknown;
@@ -85,12 +94,23 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
       const revisions = new Map(carried?.revisions ?? []);
       const asked = new Set(carried?.asked ?? []);
       for (const path of paths) {
+        // Reinserted rather than added, so what a full entry drops below is the path nobody has
+        // asked about in the longest rather than one just asked for.
+        asked.delete(path);
         asked.add(path);
         const revision = answer.get(path);
         // Left out of the answer is the host not saying, not the head having nothing: the
         // version it last gave stands, since deleting it would turn a file reported as changed
         // back into a cleared one.
-        if (revision !== undefined) revisions.set(path, revision);
+        if (revision !== undefined) {
+          revisions.delete(path);
+          revisions.set(path, revision);
+        }
+      }
+      for (const path of asked) {
+        if (asked.size <= MAX_FILE_REVISION_PATHS) break;
+        asked.delete(path);
+        revisions.delete(path);
       }
       heldFileRevisions.delete(key);
       if (heldFileRevisions.size >= FILE_REVISIONS_CACHE_CAPACITY) {
@@ -111,6 +131,10 @@ const makeFileRevisions = (dependencies: FileRevisionsDependencies) => {
   const heldFileRevisionsFor = (key: string, paths: ReadonlyArray<string>, now: number) => {
     const held = heldFileRevisions.get(key);
     if (held === undefined) return null;
+    // Put back at the end on every read, so the scope a reader is working through is not the one
+    // evicted by a listing walking scopes nobody has open.
+    heldFileRevisions.delete(key);
+    heldFileRevisions.set(key, held);
     if (now - held.at > Duration.toMillis(FILE_REVISIONS_STALE_WINDOW)) return null;
     return paths.every((path) => held.asked.has(path)) ? held : null;
   };

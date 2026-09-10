@@ -3,7 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
-import { make, MAX_DIFF_SPAWNS } from "./AzureDevOpsPullRequestProvider.ts";
+import {
+  LOCATION_CACHE_CAPACITY,
+  make,
+  MAX_DIFF_SPAWNS,
+} from "./AzureDevOpsPullRequestProvider.ts";
 import {
   byteLength,
   MAX_DIFF_SLICE_BYTES,
@@ -313,6 +317,44 @@ describe("what one diff slice spends", () => {
 
       expect(patchedPaths(read.slice.patch)).toEqual(["c.ts", "d.ts"]);
       expect(read.slice.nextCursor).toBe(`${ITERATION.id}:4`);
+    }),
+  );
+  it.effect("keeps the pull request being read, not the one looked up first", () =>
+    Effect.gen(function* () {
+      // Where a pull request lives is read from the pull request itself, so an evicted entry
+      // costs a whole pull request read before any file can be asked for. Ordered by insertion
+      // alone a hit does not renew its entry, so the review being worked through is the first
+      // thing dropped once a listing has walked a cache's worth of cold pull requests.
+      const HOT = 7;
+      const readsOf = new Map<number, number>();
+
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: (input) =>
+              Effect.sync(() => {
+                readsOf.set(input.number, (readsOf.get(input.number) ?? 0) + 1);
+                return { ...PULL_REQUEST, number: input.number };
+              }),
+            listIterations: () => Effect.succeed([ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({ changes: [change("a.ts")], truncated: false }),
+            readItemContent: () => Effect.succeed({ contents: side("new", 2, 4), isBinary: false }),
+          }),
+        ),
+      );
+
+      const readDiff = (number: number) =>
+        provider.getDiff({ cwd: "/w", repository: "acme/web", host: "dev.azure.com", number });
+
+      yield* readDiff(HOT);
+      // A cache's worth of cold pull requests, with the open one read in between each of them.
+      for (let filled = 0; filled < LOCATION_CACHE_CAPACITY; filled += 1) {
+        yield* readDiff(HOT + 1 + filled);
+        yield* readDiff(HOT);
+      }
+
+      expect(readsOf.get(HOT)).toBe(1);
     }),
   );
 });
