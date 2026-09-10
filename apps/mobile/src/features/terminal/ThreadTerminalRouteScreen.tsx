@@ -215,7 +215,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           terminalId,
         })
       : null;
-  const knownSessions = useKnownTerminalSessions({
+  const {
+    sessions: knownSessions,
+    isPending: sessionsPending,
+    error: sessionsError,
+  } = useKnownTerminalSessions({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
   });
@@ -1281,6 +1285,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               terminalSession.error ?? "This connection does not have permission to view terminals."
             }
           />
+        ) : !canOperateTerminal && !hasTerminalTarget && sessionsPending ? (
+          <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+        ) : !canOperateTerminal && !hasTerminalTarget && sessionsError !== null ? (
+          <EmptyState title="Could not load terminals" detail={sessionsError} />
         ) : !canOperateTerminal && !hasTerminalTarget ? (
           <EmptyState
             title="No terminal sessions"

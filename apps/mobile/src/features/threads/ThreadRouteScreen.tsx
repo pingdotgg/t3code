@@ -350,7 +350,7 @@ function ThreadRouteContent(
         })
       : null,
   );
-  const knownTerminalSessions = useKnownTerminalSessions({
+  const { sessions: knownTerminalSessions } = useKnownTerminalSessions({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
   });
