@@ -71,7 +71,11 @@ export function classifyComposerAttachmentFile(
   if (inferImageMimeTypeForUnknownFile(file)) {
     return "image";
   }
-  if (!file.type.toLowerCase().startsWith("image/")) {
+  // Providers can read SVG source as a file, but cannot accept it as an image.
+  if (
+    file.type.toLowerCase() === "image/svg+xml" ||
+    !file.type.toLowerCase().startsWith("image/")
+  ) {
     return "file";
   }
   return isProviderSendTurnSupportedImageMimeType(file.type) ? "image" : "unsupported-image";
@@ -152,7 +156,7 @@ export function shouldHandleComposerAttachmentPaste(input: {
   if (
     input.files.some((file) => {
       const classification = classifyComposerAttachmentFile(file);
-      return classification === "image" || classification === "unsupported-image";
+      return classification === "image" || file.type.toLowerCase().startsWith("image/");
     })
   ) {
     return true;
