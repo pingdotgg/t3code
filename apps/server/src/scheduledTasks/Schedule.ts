@@ -67,7 +67,7 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
  * jitter and short sleeps, while a server booted hours after the slot skips
  * to the next occurrence instead of firing stale work at a random time.
  */
-export const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
+const MISSED_FIXED_TIME_GRACE_MS = 10 * MINUTE_MS;
 
 /**
  * True when a due fixed-time run was missed by more than the grace window and
@@ -84,7 +84,7 @@ export function isMissedFixedTimeRun(
   return DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt) > MISSED_FIXED_TIME_GRACE_MS;
 }
 
-export function describeSchedule(schedule: ScheduledTaskSchedule): string {
+function describeSchedule(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / MINUTE_MS;
     if (Number.isInteger(minutes)) {

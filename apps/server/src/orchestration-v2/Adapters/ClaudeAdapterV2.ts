@@ -185,8 +185,7 @@ export function claudeProviderTurnTokenUsage(
     updatedAt,
   };
 }
-export const CLAUDE_DRIVER_KIND = CLAUDE_PROVIDER;
-export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER_KIND);
+export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 export const ClaudeProviderCapabilitiesV2 = {
@@ -6100,7 +6099,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       Effect.mapError(
         (cause) =>
           new ProviderAdapterDriverCreateError({
-            driver: CLAUDE_DRIVER_KIND,
+            driver: CLAUDE_PROVIDER,
             instanceId: input.instanceId,
             detail: "Failed to create Claude Agent SDK adapter.",
             cause,
@@ -6113,7 +6112,7 @@ export const ClaudeAdapterV2Driver: ProviderAdapterDriver<
   ClaudeSettings,
   ClaudeAdapterV2DriverEnv
 > = {
-  driverKind: CLAUDE_DRIVER_KIND,
+  driverKind: CLAUDE_PROVIDER,
   configSchema: ClaudeSettings,
   defaultConfig: (): ClaudeSettings => DEFAULT_CLAUDE_SETTINGS,
   create: (input) => createClaudeAdapterV2(input, {}),
@@ -6141,7 +6140,7 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
   });
 });
 
-export const layer: Layer.Layer<
+const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
   ClaudeAgentSdkQueryRunner | FileSystem.FileSystem | IdAllocatorV2 | Path.Path | ServerConfig

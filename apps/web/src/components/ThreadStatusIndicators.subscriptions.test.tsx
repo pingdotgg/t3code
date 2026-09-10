@@ -8,7 +8,7 @@ import { makeThreadFixture } from "../test-fixtures";
 
 const state = vi.hoisted(() => ({ queries: [] as string[] }));
 
-vi.mock("../state/entities", () => ({ useProject: () => null }));
+vi.mock("../state/entities", () => ({ useProject: () => null, useServerConfigs: () => new Map() }));
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => undefined }));
 vi.mock("../state/vcs", async () => {
   const { AsyncResult, Atom } = await import("effect/unstable/reactivity");

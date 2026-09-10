@@ -18,8 +18,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
 
-export const ACP_REGISTRY_URL =
-  "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
 const AcpRegistryPackageDistribution = Schema.Struct({
   package: Schema.String,

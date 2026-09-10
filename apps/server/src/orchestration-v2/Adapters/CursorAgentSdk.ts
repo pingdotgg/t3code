@@ -271,7 +271,7 @@ export function loggedCursorSendOptions(
   };
 }
 
-export function makeCursorAgentSdkProtocolLogger(input: {
+function makeCursorAgentSdkProtocolLogger(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];

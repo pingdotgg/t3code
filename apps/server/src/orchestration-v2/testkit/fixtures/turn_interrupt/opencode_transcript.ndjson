@@ -11,4 +11,10 @@
 {"type":"emit_inbound","label":"message.updated.assistant","frame":{"type":"sdk.event","event":{"id":"evt_edca8f7cc003brTfV2AHRR2C61","type":"message.updated","properties":{"sessionID":"ses_123570840ffenLEumkPQfegGCd","info":{"id":"msg_edca8f7cc002W56d1gpf5e17kX","parentID":"msg_edca8f7c9001w8R30p1SpzPuUJ","role":"assistant","mode":"build","agent":"build","path":{"cwd":"/private/tmp/t3-opencode-probe","root":"/"},"cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}},"modelID":"gpt-5.4-mini","providerID":"openai","time":{"created":1781818521548},"sessionID":"ses_123570840ffenLEumkPQfegGCd"}}}}}
 {"type":"emit_inbound","label":"session.status.idle","frame":{"type":"sdk.event","event":{"id":"evt_edca8f7d0001Gjy7U3InhsfliL","type":"session.status","properties":{"sessionID":"ses_123570840ffenLEumkPQfegGCd","status":{"type":"idle"}}}}}
 {"type":"emit_inbound","label":"session.abort.response","frame":{"type":"sdk.response","operation":"session.abort","data":true}}
+{"type":"expect_outbound","label":"session.children.interrupt","frame":{"type":"session.children","input":{"sessionID":"ses_123570840ffenLEumkPQfegGCd"}}}
+{"type":"emit_inbound","label":"session.children.interrupt.response","frame":{"type":"sdk.response","operation":"session.children","data":[]}}
+{"type":"expect_outbound","label":"session.abort.cleanup","frame":{"type":"session.abort","input":{"sessionID":"ses_123570840ffenLEumkPQfegGCd"}}}
+{"type":"emit_inbound","label":"session.abort.cleanup.response","frame":{"type":"sdk.response","operation":"session.abort","data":true}}
+{"type":"expect_outbound","label":"session.children.cleanup","frame":{"type":"session.children","input":{"sessionID":"ses_123570840ffenLEumkPQfegGCd"}}}
+{"type":"emit_inbound","label":"session.children.cleanup.response","frame":{"type":"sdk.response","operation":"session.children","data":[]}}
 {"type":"runtime_exit","status":"success"}
