@@ -854,7 +854,10 @@ it.effect(
         assert.isDefined(token);
         const resolved = yield* registry.resolve(token!);
         assert.equal(resolved?.threadId, threadId);
-        assert.deepEqual(resolved?.capabilities, new Set(["preview", "orchestration", "worktree"]));
+        assert.deepEqual(
+          resolved?.capabilities,
+          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+        );
 
         yield* manager.close(providerSessionId);
         assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
@@ -908,7 +911,10 @@ it.effect(
         assert.equal(captured?.browserToolsAvailable, false);
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
         const resolved = yield* registry.resolve(token!);
-        assert.deepEqual(resolved?.capabilities, new Set(["orchestration", "worktree"]));
+        assert.deepEqual(
+          resolved?.capabilities,
+          new Set(["orchestration", "worktree", "pull-requests"]),
+        );
 
         yield* manager.close(providerSessionId);
       });

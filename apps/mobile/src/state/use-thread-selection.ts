@@ -84,6 +84,7 @@ function threadDetailToShell(
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     linkedPullRequest: thread.linkedPullRequest ?? null,
+    pullRequests: thread.pullRequests,
     branchPullRequest: thread.branchPullRequest ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     lineage: thread.lineage,

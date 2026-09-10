@@ -1,3 +1,4 @@
+import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
   ThreadLinkedPullRequest,
   EnvironmentId,
@@ -117,11 +118,7 @@ export interface EnvironmentThreadShell {
   readonly pinOrderKey: string | null;
   /** Slot in the user-arranged active order; null for keyless active threads. */
   readonly activeOrderKey: string | null;
-  /**
-   * Pull request the user linked to the thread (#8160). The v2 server does not
-   * project this yet, so it stays undefined on v2 environments; UI treats
-   * undefined and null alike.
-   */
+  readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
   /**
@@ -212,6 +209,7 @@ export function presentThreadShell(
     interactionMode: thread.interactionMode,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    pullRequests: threadPullRequestsOf(thread),
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,
