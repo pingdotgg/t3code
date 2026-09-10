@@ -27,7 +27,17 @@ Then add a second Codex instance in **Settings > Providers**:
 
 Both instances must use the same **CODEX_HOME path**. T3 Code prepares the shared
 state in the shadow directory; do not populate it by copying your whole Codex
-home.
+home. Shared Codex entries are linked into the shadow home, while the shadow
+home keeps its own `auth.json` and local runtime directories (`log`, `memories`,
+and `tmp`).
+
+If an older T3 Code version or a manual copy left a real file or directory where
+a shared link belongs, T3 Code moves that entry into a recoverable
+`<shadow-home>.t3-shadow-backups` directory beside the shadow home before
+creating the link. Nothing from the old shadow setup is deleted. Keep the
+backup until you have confirmed that the account and existing threads open
+normally. The ephemeral `mcp-oauth-locks` directory is the exception: it is
+replaced with the shared lock directory because its contents are runtime locks.
 
 The shadow account needs its own `auth.json` file. If Codex uses an OS credential
 store, configure file storage for this setup. See
@@ -46,8 +56,10 @@ not move the conversation into a separate Codex home.
 If the account is missing from the picker, compare the home paths in provider
 settings. If two instances show the same unexpected account or models, check their
 reported accounts, refresh provider status, and confirm the second instance has
-its own shadow path and login. A shadow-home conflict usually means the directory
-contains a copied Codex setup. Use a fresh shadow directory and sign in again.
+its own shadow path and login. If a shadow-home startup error remains after an
+update, close T3 Code and inspect the matching `<shadow-home>.t3-shadow-backups`
+directory; it contains the preserved entries that were replaced with shared
+links. The private `auth.json` must remain a real file in the shadow home.
 
 ## Answer questions while Codex works
 

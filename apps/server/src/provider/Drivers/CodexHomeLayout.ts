@@ -32,6 +32,7 @@ const KNOWN_SHARED_DIRECTORIES = [
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
 const REPLACEABLE_SHARED_RUNTIME_DIRECTORIES = new Set(["mcp-oauth-locks"]);
+const SHADOW_HOME_BACKUP_SUFFIX = ".t3-shadow-backups";
 
 function resolveHomePath(path: Path.Path, value: string | undefined): string {
   const expanded =
@@ -74,7 +75,15 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "makeTempDirectory",
+      "readDirectory",
+      "remove",
+      "rename",
+      "symlink",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -96,20 +105,6 @@ export class CodexShadowHomePathConflictError extends Schema.TaggedError<CodexSh
   }
 }
 
-export class CodexShadowHomeEntryConflictError extends Schema.TaggedError<CodexShadowHomeEntryConflictError>()(
-  "CodexShadowHomeEntryConflictError",
-  {
-    ...CodexShadowHomeContext,
-    entryName: Schema.String,
-    linkPath: Schema.String,
-    targetPath: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Cannot create Codex shadow home entry '${this.entryName}' because '${this.linkPath}' already exists and is not a symlink.`;
-  }
-}
-
 export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<CodexShadowHomePrivateEntrySymlinkError>()(
   "CodexShadowHomePrivateEntrySymlinkError",
   {
@@ -126,7 +121,6 @@ export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<
 export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomeFileSystemError,
   CodexShadowHomePathConflictError,
-  CodexShadowHomeEntryConflictError,
   CodexShadowHomePrivateEntrySymlinkError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
@@ -213,6 +207,71 @@ const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(f
   }
 });
 
+const backupLegacySharedEntry = Effect.fn("CodexHomeLayout.backupLegacySharedEntry")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly sharedHomePath: string;
+    readonly effectiveHomePath: string;
+    readonly entryName: string;
+    readonly entryPath: string;
+  }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
+    const path = yield* Path.Path;
+    const backupRoot = path.join(
+      path.dirname(input.effectiveHomePath),
+      `${path.basename(input.effectiveHomePath)}${SHADOW_HOME_BACKUP_SUFFIX}`,
+    );
+
+    yield* input.fileSystem.makeDirectory(backupRoot, { recursive: true }).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: input.sharedHomePath,
+            effectiveHomePath: input.effectiveHomePath,
+            operation: "makeDirectory",
+            path: backupRoot,
+            entryName: input.entryName,
+            cause,
+          }),
+      }),
+    );
+
+    const backupDirectory = yield* input.fileSystem
+      .makeTempDirectory({
+        directory: backupRoot,
+        prefix: `${input.entryName}.`,
+      })
+      .pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            new CodexShadowHomeFileSystemError({
+              sharedHomePath: input.sharedHomePath,
+              effectiveHomePath: input.effectiveHomePath,
+              operation: "makeTempDirectory",
+              path: backupRoot,
+              entryName: input.entryName,
+              cause,
+            }),
+        }),
+      );
+    const backupPath = path.join(backupDirectory, input.entryName);
+
+    yield* input.fileSystem.rename(input.entryPath, backupPath).pipe(
+      Effect.catchTags({
+        PlatformError: (cause) =>
+          new CodexShadowHomeFileSystemError({
+            sharedHomePath: input.sharedHomePath,
+            effectiveHomePath: input.effectiveHomePath,
+            operation: "rename",
+            path: input.entryPath,
+            targetPath: backupPath,
+            entryName: input.entryName,
+            cause,
+          }),
+      }),
+    );
+  },
+);
+
 const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
@@ -243,29 +302,28 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   );
 
   if (state._tag === "NotSymlink") {
-    if (!REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
-      return yield* new CodexShadowHomeEntryConflictError({
-        sharedHomePath: input.sharedHomePath,
-        effectiveHomePath: input.effectiveHomePath,
-        entryName: input.entryName,
-        linkPath: link,
-        targetPath: target,
+    if (REPLACEABLE_SHARED_RUNTIME_DIRECTORIES.has(input.entryName)) {
+      yield* input.fileSystem.remove(link, { recursive: true }).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            new CodexShadowHomeFileSystemError({
+              sharedHomePath: input.sharedHomePath,
+              effectiveHomePath: input.effectiveHomePath,
+              operation: "remove",
+              path: link,
+              entryName: input.entryName,
+              cause,
+            }),
+        }),
+      );
+    } else {
+      // Older T3 versions could leave a real copy of a shared Codex entry here.
+      // Preserve it beside the shadow home before replacing it with the shared link.
+      yield* backupLegacySharedEntry({
+        ...input,
+        entryPath: link,
       });
     }
-
-    yield* input.fileSystem.remove(link, { recursive: true }).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          new CodexShadowHomeFileSystemError({
-            sharedHomePath: input.sharedHomePath,
-            effectiveHomePath: input.effectiveHomePath,
-            operation: "remove",
-            path: link,
-            entryName: input.entryName,
-            cause,
-          }),
-      }),
-    );
     return yield* createLink;
   }
 

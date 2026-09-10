@@ -8,7 +8,6 @@ import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
-  CodexShadowHomeEntryConflictError,
   CodexShadowHomePathConflictError,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
@@ -244,9 +243,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "rejects shared entries that already exist in the shadow home as real files",
+      "moves legacy real shared files aside before creating their links",
       () =>
         Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const sharedHome = yield* makeTempDir("t3code-codex-shared-");
           const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
@@ -261,19 +261,70 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             }),
           );
 
-          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+          yield* materializeCodexShadowHome(layout);
 
-          expect(error).toBeInstanceOf(CodexShadowHomeEntryConflictError);
-          expect(error).toMatchObject({
-            sharedHomePath: sharedHome,
-            effectiveHomePath: shadowHome,
-            entryName: "config.toml",
-            linkPath: path.join(shadowHome, "config.toml"),
-            targetPath: path.join(sharedHome, "config.toml"),
-          });
-          expect(error.message).toBe(
-            `Cannot create Codex shadow home entry 'config.toml' because '${path.join(shadowHome, "config.toml")}' already exists and is not a symlink.`,
+          const configTarget = yield* fileSystem.readLink(path.join(shadowHome, "config.toml"));
+          const backupRoot = path.join(
+            path.dirname(shadowHome),
+            `${path.basename(shadowHome)}.t3-shadow-backups`,
           );
+          const backupDirectories = yield* fileSystem.readDirectory(backupRoot);
+          const backupContents = yield* fileSystem.readFileString(
+            path.join(backupRoot, backupDirectories[0]!, "config.toml"),
+          );
+
+          expect(configTarget).toBe(path.join(sharedHome, "config.toml"));
+          expect(backupDirectories).toHaveLength(1);
+          expect(backupContents).toBe('model = "local"\n');
+
+          yield* materializeCodexShadowHome(layout);
+          expect(yield* fileSystem.readDirectory(backupRoot)).toHaveLength(1);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "moves legacy real shared directories aside before creating their links",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+
+          yield* fileSystem.makeDirectory(path.join(sharedHome, "ambient-suggestions"));
+          yield* fileSystem.makeDirectory(path.join(shadowHome, "ambient-suggestions"), {
+            recursive: true,
+          });
+          yield* writeTextFile(
+            path.join(shadowHome, "ambient-suggestions", "legacy.json"),
+            '{"legacy":true}\n',
+          );
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          const directoryTarget = yield* fileSystem.readLink(
+            path.join(shadowHome, "ambient-suggestions"),
+          );
+          const backupRoot = path.join(
+            path.dirname(shadowHome),
+            `${path.basename(shadowHome)}.t3-shadow-backups`,
+          );
+          const backupDirectories = yield* fileSystem.readDirectory(backupRoot);
+          const backupContents = yield* fileSystem.readFileString(
+            path.join(backupRoot, backupDirectories[0]!, "ambient-suggestions", "legacy.json"),
+          );
+
+          expect(directoryTarget).toBe(path.join(sharedHome, "ambient-suggestions"));
+          expect(backupDirectories).toHaveLength(1);
+          expect(backupContents).toBe('{"legacy":true}\n');
         }),
     );
 
