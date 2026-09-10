@@ -160,9 +160,9 @@ export function DeviceStreamView(props: {
     if (props.platform !== "ios" || !screen || screen.width > screen.height) return 0;
     switch (screen.orientation) {
       case "landscape_left":
-        return -90;
-      case "landscape_right":
         return 90;
+      case "landscape_right":
+        return -90;
       case "portrait_upside_down":
         return 180;
       default:

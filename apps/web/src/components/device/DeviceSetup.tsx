@@ -14,9 +14,9 @@ import { cn } from "~/lib/utils";
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
 
 export const deviceHubDescription =
-  "Open simulators and emulators. Required device support is set up automatically.";
+  "Enable this environment to open simulators and emulators, whether they run here or on a remote device host.";
 export const agentDeviceDescription =
-  "Allow agents to start and control devices. Required tools are set up automatically and available to new agent sessions.";
+  "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
   const availability = state.hosts

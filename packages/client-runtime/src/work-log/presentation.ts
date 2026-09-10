@@ -44,6 +44,7 @@ export type ToolGroupAction =
   | "edit"
   | "command"
   | "browser"
+  | "device"
   | "code-search"
   | "search"
   | "other"
@@ -462,6 +463,7 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation?.action !== undefined) return presentation.action;
   if (presentation?.icon === "browser") return "browser";
+  if (presentation?.icon === "device") return "device";
   if (
     entry.requestKind === "file-read" ||
     entry.itemType === "image_view" ||
@@ -569,6 +571,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return `Changed ${count} ${count === 1 ? "file" : "files"}`;
     case "command":
       return `Ran ${count} ${count === 1 ? "command" : "commands"}`;
+    case "device":
+      return `Used device controls ${count} ${count === 1 ? "time" : "times"}`;
     case "browser":
       return `Used browser ${count} ${count === 1 ? "time" : "times"}`;
     case "search":

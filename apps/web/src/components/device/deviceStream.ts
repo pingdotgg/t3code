@@ -633,9 +633,9 @@ export function createDeviceStreamClient(
     if (platform !== "ios" || !screen || screen.width > screen.height) return { x, y };
     switch (screen.orientation) {
       case "landscape_left":
-        return { x: 1 - y, y: x };
-      case "landscape_right":
         return { x: y, y: 1 - x };
+      case "landscape_right":
+        return { x: 1 - y, y: x };
       case "portrait_upside_down":
         return { x: 1 - x, y: 1 - y };
       default:

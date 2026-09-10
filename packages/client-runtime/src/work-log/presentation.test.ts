@@ -660,3 +660,53 @@ describe("pull request tool presentation", () => {
     ).toBeNull();
   });
 });
+
+describe("device group summaries", () => {
+  const deviceEntry = (tool: string): WorkLogPresentationEntry => ({
+    label: "MCP tool call",
+    toolData: { server: "t3-code", tool },
+    itemType: "mcp_tool_call",
+    toolLifecycleStatus: "completed",
+    tone: "tool",
+  });
+
+  it.each(["device_list", "device_open", "device_screenshot", "device_close"])(
+    "recognizes %s as device controls",
+    (tool) => {
+      const entry = deviceEntry(tool);
+      expect(summarizeToolGroup([entry])).toBe("Used device controls 1 time");
+      expect(toolGroupSummaryKind([entry])).toBe("device");
+    },
+  );
+
+  it("summarizes device calls alongside shell commands", () => {
+    expect(
+      summarizeToolGroup([
+        { label: "Ran command", itemType: "command_execution", command: "pwd", tone: "tool" },
+        deviceEntry("device_list"),
+        deviceEntry("device_open"),
+      ]),
+    ).toBe("Ran 1 command and used device controls 2 times");
+  });
+
+  it("recognizes Claude tool names and preserves screenshot previews", () => {
+    const entry = {
+      ...deviceEntry("device_screenshot"),
+      toolData: { toolName: "mcp__t3_code__device_screenshot" },
+      viewedImagePath: "/workspace/device.png",
+    };
+    expect(summarizeToolGroup([entry])).toBe("Used device controls 1 time");
+    expect(workEntryViewedImagePath(entry)).toBe("/workspace/device.png");
+  });
+
+  it("does not classify another server's tools as T3 device controls", () => {
+    expect(
+      summarizeToolGroup([
+        {
+          ...deviceEntry("device_open"),
+          toolData: { server: "another-server", tool: "device_open" },
+        },
+      ]),
+    ).toBe("Used 1 tool");
+  });
+});

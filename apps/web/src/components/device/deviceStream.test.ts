@@ -155,14 +155,15 @@ describe("iOS input startup", () => {
     expect(sockets).toHaveLength(0);
   });
 
-  it("maps displayed landscape touches to raw iOS coordinates once", async () => {
+  it.each([
+    ["landscape_left", 0.7, 1 - 0.2],
+    ["landscape_right", 1 - 0.7, 0.2],
+  ])("maps %s touches back to the raw iOS framebuffer", async (orientation, x, y) => {
     const { client, sockets } = setup();
     client.start();
     await vi.advanceTimersByTimeAsync(2_000);
     const socket = sockets[0]!;
-    const json = new TextEncoder().encode(
-      JSON.stringify({ width: 400, height: 800, orientation: "landscape_left" }),
-    );
+    const json = new TextEncoder().encode(JSON.stringify({ width: 400, height: 800, orientation }));
     const packet = new Uint8Array(1 + json.length);
     packet[0] = 0x82;
     packet.set(json, 1);
@@ -171,8 +172,8 @@ describe("iOS input startup", () => {
     const sent = socket.send.mock.calls[0]![0] as Uint8Array;
     expect(JSON.parse(new TextDecoder().decode(sent.subarray(1)))).toEqual({
       type: "begin",
-      x: 1 - 0.7,
-      y: 0.2,
+      x,
+      y,
     });
     client.stop();
   });
