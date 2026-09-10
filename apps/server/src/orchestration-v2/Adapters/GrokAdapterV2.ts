@@ -17,6 +17,8 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import { ServerConfig } from "../../config.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import {
+  applyGrokAcpModelSelection,
+  currentGrokModelIdFromSessionSetup,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../../provider/acp/GrokAcpSupport.ts";
@@ -223,6 +225,24 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     supportsImagePrompts: true,
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
+    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
+      Effect.gen(function* () {
+        const legacy = startResult.initializeResult.protocolVersion === 1;
+        const options = legacy ? [] : yield* runtime.getConfigOptions;
+        const configuredModel = options.find((option) => option.category === "model")?.currentValue;
+        return yield* applyGrokAcpModelSelection({
+          runtime: legacy
+            ? runtime
+            : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+          currentModelId: legacy
+            ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
+            : typeof configuredModel === "string"
+              ? configuredModel
+              : undefined,
+          requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
+          mapError: (cause) => cause,
+        });
+      }),
     makeRuntime:
       options.makeRuntime ??
       ((input) =>
