@@ -170,7 +170,7 @@ const registerGrokAskUserQuestionExtensions = ({
   Effect.forEach(
     ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
     (method) =>
-      runtime.handleExtRequest(method, XAiAskUserQuestionRequest, (params) => {
+      runtime.handleExtRequest(method, XAiAskUserQuestionRequest, (params, requestContext) => {
         const identity = extractXAiAskUserQuestionIdentity(params);
         const questions = extractXAiAskUserQuestions(params).map((question) => ({
           id: question.id,
@@ -178,13 +178,14 @@ const registerGrokAskUserQuestionExtensions = ({
           question: question.question,
           options: [...question.options],
         }));
-        return requestUserInput({
-          nativeItemId: `${identity.sessionId}:xai-question:${identity.toolCallId}`,
-          nativeMethod: method,
-          nativeRequestId: identity.toolCallId,
-          nativeSessionId: identity.sessionId,
-          questions,
-        }).pipe(
+        return requestUserInput(
+          {
+            nativeItemId: `${identity.sessionId}:xai-question:${identity.toolCallId}`,
+            nativeRequestId: identity.toolCallId,
+            questions,
+          },
+          requestContext,
+        ).pipe(
           Effect.flatMap(({ acknowledgeNativeResponse, answers }) =>
             Effect.succeed(
               answers === null
@@ -202,9 +203,6 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     driver: GROK_PROVIDER,
     runtimeHarness: "Grok",
     capabilities: GrokProviderCapabilitiesV2,
-    // Idle settle over-settled preamble-before-tools turns and cancelled the
-    // prompt while Grok continued, freezing T3 projection mid-turn.
-    settleRootTurnWhenIdle: false,
     interruptPromptOnCancel: false,
     // User Stop (requestRuntimeRestart) still hard-kills the process group and
     // respawns so existing background tasks stop too. Older 0.2.x builds could

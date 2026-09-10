@@ -102,10 +102,23 @@ const T3_MCP_TOOLS: Record<
   preview_recording_stop: { displayName: "Stop recording the preview browser" },
 };
 
+/**
+ * The T3 orchestration tool inventory, used to gate loose name matching on
+ * both the server (ACP MCP identity recovery) and the client (logo branding).
+ */
+export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
+
 function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+/**
+ * ACP agents disagree on how the injected T3 server prefixes its tools:
+ * `mcp__t3-code__x` (Claude/Cursor), `t3-code.x` (Codex), plus single
+ * underscore, colon, slash, dash, and space separators seen from registry
+ * agents. The prefix match is deliberately loose because the display-name
+ * table below is the real gate; unknown tools stay on the generic renderer.
+ */
 function resolveT3McpToolName(value: string): string | null {
   const label = normalizeT3McpToolLabel(value);
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/.exec(label);
@@ -123,7 +136,9 @@ function resolveT3McpToolName(value: string): string | null {
     return namespaceMatch.groups.tool ?? null;
   }
 
-  return Object.hasOwn(T3_MCP_TOOLS, label) ? label : null;
+  const prefixed = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
+  const candidate = prefixed?.groups?.tool ?? label;
+  return Object.hasOwn(T3_MCP_TOOLS, candidate) ? candidate : null;
 }
 
 export function resolveT3McpToolPresentation(
