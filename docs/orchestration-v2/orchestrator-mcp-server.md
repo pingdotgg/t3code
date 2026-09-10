@@ -227,7 +227,7 @@ provider session. The request becomes the V2 command
 `delegated_task.request`.
 
 `mode: "async"` returns the current durable state immediately.
-`mode: "wait"` polls the original delegated run until it becomes terminal or
+`mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
 the timeout expires. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`.
 
@@ -238,6 +238,7 @@ type DelegateTaskResult = {
   childRunId: string | null;
   childNodeId: string;
   status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "interrupted";
+  workState: "working" | "waiting_for_children" | "result_available";
   hasPendingChildRuns: boolean;
   providerInstanceId: string;
   model: string | null;
@@ -254,18 +255,18 @@ type DelegateTaskResult = {
 ### `task_status`
 
 Reads a delegated task from the parent thread's durable projection. A task ID
-from another parent thread is rejected. The primary `childRunId`, `status`,
-`summary`, and `resultContextTransferId` fields stay tied to the original
-delegated run. `hasPendingChildRuns` remains true while any later child run is
-queued or executing. The `latestTerminal*` fields expose the original run or
-the highest-ordinal later terminal run that began execution. Rolled-back runs
-and never-started later cancellations do not displace the latest meaningful
-result.
+from another parent thread is rejected. `childRunId` identifies the original
+run. `workState` distinguishes active work, a finished turn waiting for children,
+and an available result. The task remains nonterminal until its known work
+finishes. Its published `summary` and result transfer then remain stable across
+later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
+`latestTerminal*` exposes later executed, non-monitor results without replacing
+the published task result.
 
 ### `task_cancel`
 
-Interrupts the original delegated run through the normal V2 `run.interrupt`
-command. It is idempotent for terminal tasks and accepts an optional cancellation
+Interrupts the currently active task run through the normal V2 `run.interrupt`
+command. Native background work between turns currently has no interruptible run. It is idempotent for terminal tasks and accepts an optional cancellation
 reason. Use `t3_thread_interrupt` to interrupt a later follow-up run.
 
 ### `create_threads`
@@ -397,8 +398,8 @@ persisted events and then follows live events, so finalization also runs after
 a server restart. An existing `subagent_result` transfer makes finalization
 idempotent.
 
-The result summary prefers the latest assistant content from the child run and
-falls back to a terminal-status message when no assistant text exists.
+A failed run exposes its provider error before any progress text. Successful
+results use the latest assistant content from the final work turn.
 
 ## Policy And Idempotency
 
