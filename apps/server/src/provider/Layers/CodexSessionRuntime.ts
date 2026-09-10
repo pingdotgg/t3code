@@ -178,8 +178,8 @@ export interface CodexSessionRuntimeOptions {
 export interface CodexSessionRuntimeSendTurnInput {
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
-    readonly url: string;
+    readonly type: "localImage";
+    readonly path: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
@@ -602,8 +602,8 @@ export function buildTurnStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
-    readonly url: string;
+    readonly type: "localImage";
+    readonly path: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier;
@@ -2363,7 +2363,21 @@ export const makeCodexSessionRuntime = (
               hasConfiguredMcpServer(options.appServerArgs) &&
               (options.browserToolsAvailable ?? true),
           });
-          const rawResponse = yield* client.raw.request("turn/start", params);
+          const rawResponse = yield* client.raw.request("turn/start", params).pipe(
+            // The provider rejects oversized serialized turn payloads with HTTP
+            // 413 before any model call happens. Compaction shrinks the rollout
+            // history on the CLI side, so a single retry after it completes can
+            // recover what would otherwise be a dead turn.
+            Effect.catchIf(
+              (cause) =>
+                cause._tag === "CodexAppServerRequestError" && cause.errorMessage.includes("413"),
+              () =>
+                Effect.gen(function* () {
+                  yield* client.request("thread/compact/start", { threadId: providerThreadId });
+                  return yield* client.raw.request("turn/start", params);
+                }),
+            ),
+          );
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
             Effect.mapError((error) =>
               CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(

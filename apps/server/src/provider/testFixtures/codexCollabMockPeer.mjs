@@ -61,6 +61,16 @@ rl.on("line", (line) => {
     write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
     return;
   }
+  if (method === "thread/compact/start") {
+    if (script.recordRequests) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
+    write({ id, result: {} });
+    return;
+  }
   if (method === "skills/list" || method === "model/list") {
     write({ id, result: { data: [] } });
     return;
@@ -118,6 +128,24 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "turn/start") {
+    if (script.recordTurnStartRequests) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
+    if (script.turnStart413BeforeSuccess) {
+      script.turnStart413BeforeSuccess = false;
+      write({
+        id,
+        error: {
+          code: -32000,
+          message:
+            "unexpected status 413 Payload Too Large from http://127.0.0.1:8317/v1/responses",
+        },
+      });
+      return;
+    }
     const turnId = script.turnIds?.[turnStartCount];
     const turn = turnId
       ? { ...fixture.responses.turnStart.turn, id: turnId }
