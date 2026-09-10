@@ -5,9 +5,9 @@ import type {
 } from "@t3tools/contracts";
 import { type ChangeRequestTerminology, sourceControlClients } from "../sourceControlClients.ts";
 
-export type GitActionIconName = "commit" | "push" | "pr";
+export type GitActionIconName = "branch" | "commit" | "push" | "pr";
 
-export type GitDialogAction = "commit" | "push" | "create_pr";
+export type GitDialogAction = "create_branch" | "commit" | "push" | "create_pr";
 
 export interface GitActionMenuItem {
   id: "commit" | "push" | "pr";
@@ -40,7 +40,13 @@ export type DefaultBranchConfirmableAction =
 
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "forceWithLease" | "commitMessage" | "splitCommits" | "featureBranch" | "filePaths"
+  | "action"
+  | "forceWithLease"
+  | "commitMessage"
+  | "splitCommits"
+  | "featureBranch"
+  | "featureBranchOnly"
+  | "filePaths"
 >;
 
 export function changeRequestTerminologyFor(

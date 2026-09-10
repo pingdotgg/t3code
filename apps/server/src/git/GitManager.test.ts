@@ -607,6 +607,7 @@ function runStackedAction(
     commitMessage?: string;
     splitCommits?: boolean;
     featureBranch?: boolean;
+    featureBranchOnly?: boolean;
     forceWithLease?: boolean;
     filePaths?: readonly string[];
   },
@@ -791,6 +792,61 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("creates a branch-only feature ref from a detached diff against the default ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "source-change"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\ndetached change\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Detached change"]);
+      const detachedSha = yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+        Effect.map((result) => result.stdout.trim()),
+      );
+      yield* runGit(repoDir, ["checkout", "--detach", detachedSha]);
+      yield* runGit(repoDir, ["branch", "-D", "source-change"]);
+
+      let generatedPatch = "";
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              generatedPatch = input.stagedPatch;
+              return {
+                subject: "Describe detached change",
+                body: "",
+                ...(input.includeBranch ? { branch: "feature/detached-change" } : {}),
+              };
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+        featureBranchOnly: true,
+      });
+
+      expect(result.branch).toEqual({
+        status: "created",
+        name: "feature/detached-change",
+      });
+      expect(result.commit.status).toBe("skipped_not_requested");
+      expect(result.toast.title).toBe("Created feature/detached-change");
+      expect(generatedPatch).toContain("detached change");
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe("feature/detached-change");
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe(detachedSha);
+    }),
+  );
+
   it.effect("force pushes rewritten history with a lease", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

@@ -494,7 +494,7 @@ interface GitActionCompletionResult {
 }
 
 function summarizeGitActionResult(
-  result: Pick<GitActionCompletionResult, "commit" | "push" | "pr">,
+  result: Pick<GitActionCompletionResult, "branch" | "commit" | "push" | "pr">,
   terms: ChangeRequestTerminology,
 ): {
   title: string;
@@ -530,6 +530,10 @@ function summarizeGitActionResult(
     const shortSha = shortenSha(result.commit.commitSha);
     const title = shortSha ? `Committed ${shortSha}` : "Committed changes";
     return withDescription(title, truncateText(result.commit.subject));
+  }
+
+  if (result.branch.status === "created") {
+    return { title: `Created ${result.branch.name}` };
   }
 
   return { title: "Done" };
@@ -2283,12 +2287,15 @@ export const make = Effect.gen(function* () {
       commitMessage?: string;
       includeBranch?: boolean;
       filePaths?: readonly string[];
+      context?: { readonly stagedSummary: string; readonly stagedPatch: string };
       settings: SourceControlTextGenerationSettings;
     }) {
       const customCommit = parseCustomCommitMessage(input.commitMessage ?? "");
-      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths, {
-        includePatch: customCommit === null,
-      });
+      const context =
+        input.context ??
+        (yield* gitCore.prepareCommitContext(input.cwd, input.filePaths, {
+          includePatch: customCommit === null,
+        }));
       if (!context) {
         return null;
       }
@@ -3470,16 +3477,40 @@ export const make = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
+    branchOnly = false,
   ) {
-    const suggestion = yield* resolveCommitAndBranchSuggestion({
-      cwd,
-      branch,
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(filePaths ? { filePaths } : {}),
-      includeBranch: true,
-      settings,
-    });
-    if (!suggestion) {
+    const detachedContext =
+      branchOnly && branch === null
+        ? yield* gitCore.resolveBaseRef(cwd, "HEAD").pipe(
+            Effect.flatMap((baseRef) =>
+              baseRef === null
+                ? Effect.succeed(null)
+                : gitCore.readRangeContext(cwd, baseRef).pipe(
+                    Effect.map((context) => {
+                      const stagedSummary =
+                        context.diffSummary.trim() || context.commitSummary.trim();
+                      const stagedPatch = context.diffPatch.trim();
+                      return stagedSummary.length > 0 || stagedPatch.length > 0
+                        ? { stagedSummary, stagedPatch }
+                        : null;
+                    }),
+                  ),
+            ),
+          )
+        : undefined;
+    const suggestion =
+      branchOnly && branch === null && detachedContext === null
+        ? null
+        : yield* resolveCommitAndBranchSuggestion({
+            cwd,
+            branch,
+            ...(commitMessage ? { commitMessage } : {}),
+            ...(filePaths ? { filePaths } : {}),
+            ...(detachedContext ? { context: detachedContext } : {}),
+            includeBranch: true,
+            settings,
+          });
+    if (!suggestion && !branchOnly) {
       return yield* new GitManagerError({
         operation: "runFeatureBranchStep",
         cwd,
@@ -3488,7 +3519,9 @@ export const make = Effect.gen(function* () {
     }
 
     const naming = yield* vcsProjectConfig.resolveBranchNaming({ cwd });
-    const suggestedBranch = suggestion.branch ?? sanitizeFeatureBranchName(suggestion.subject);
+    const suggestedBranch =
+      suggestion?.branch ??
+      (suggestion ? sanitizeFeatureBranchName(suggestion.subject) : "feature/update");
     const preferredBranch = removeBuiltInFeaturePrefix(suggestedBranch, naming);
     const existingBranchNames = yield* gitCore.listLocalBranchNames(cwd);
     const resolvedBranch = resolveAutoBranchName(existingBranchNames, preferredBranch, naming);
@@ -3498,8 +3531,8 @@ export const make = Effect.gen(function* () {
 
     return {
       branchStep: { status: "created" as const, name: resolvedBranch },
-      resolvedCommitMessage: suggestion.commitMessage,
-      resolvedCommitSuggestion: suggestion,
+      resolvedCommitMessage: suggestion?.commitMessage,
+      resolvedCommitSuggestion: suggestion ?? undefined,
     };
   });
 
@@ -3931,7 +3964,7 @@ export const make = Effect.gen(function* () {
         const initialStatus = yield* input.forceWithLease
           ? gitCore.statusDetailsLocal(input.cwd)
           : gitCore.statusDetails(input.cwd);
-        const wantsCommit = isCommitAction(input.action);
+        const wantsCommit = isCommitAction(input.action) && !input.featureBranchOnly;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
@@ -3960,7 +3993,17 @@ export const make = Effect.gen(function* () {
           });
         }
 
-        if (input.featureBranch && !wantsCommit) {
+        if (
+          input.featureBranchOnly &&
+          (!input.featureBranch || input.action !== "commit" || initialStatus.branch !== null)
+        ) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "Branch-only creation requires a detached HEAD feature-branch commit action.",
+          });
+        }
+        if (input.featureBranch && !wantsCommit && !input.featureBranchOnly) {
           return yield* new GitManagerError({
             operation: "runStackedAction",
             cwd: input.cwd,
@@ -4040,6 +4083,7 @@ export const make = Effect.gen(function* () {
             initialStatus.branch,
             input.commitMessage,
             input.filePaths,
+            input.featureBranchOnly,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -4049,7 +4093,7 @@ export const make = Effect.gen(function* () {
         }
 
         const currentBranch = branchStep.name ?? initialStatus.branch;
-        const commitAction = isCommitAction(input.action) ? input.action : null;
+        const commitAction = wantsCommit && isCommitAction(input.action) ? input.action : null;
         const changeRequestTerms = wantsPr ? yield* changeRequestTermsFor(input.cwd) : null;
 
         const commit = input.splitCommits

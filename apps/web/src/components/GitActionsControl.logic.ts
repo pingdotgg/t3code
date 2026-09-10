@@ -20,7 +20,7 @@ export {
 } from "@t3tools/client-runtime/state/vcs";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "branch" | "commit" | "push" | "pr";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
@@ -35,6 +35,7 @@ export interface GitQuickAction {
     | "run_action"
     | "run_pull"
     | "open_publish"
+    | "create_branch"
     | "open_commit_dialog"
     | "open_push_dialog"
     | "show_hint";
@@ -159,6 +160,40 @@ export function buildMenuItems(
     dialogAction: "commit",
   };
 
+  if (!hasBranch) {
+    return [
+      {
+        id: "branch",
+        label: "Create feature branch",
+        disabled: isBusy,
+        icon: "branch",
+        kind: "open_dialog",
+        dialogAction: "create_branch",
+      },
+      commitItem,
+      ...(hasPrimaryRemote
+        ? [
+            {
+              id: "push" as const,
+              label: "Push",
+              disabled: true,
+              icon: "push" as const,
+              kind: "open_dialog" as const,
+              dialogAction: "push" as const,
+            },
+            {
+              id: "pr" as const,
+              label: `Create ${terminology.shortLabel}`,
+              disabled: true,
+              icon: "pr" as const,
+              kind: "open_dialog" as const,
+              dialogAction: "create_pr" as const,
+            },
+          ]
+        : []),
+    ];
+  }
+
   if (!hasPrimaryRemote) {
     return [commitItem];
   }
@@ -219,14 +254,10 @@ export function resolveQuickAction(
   const terminology = changeRequestTerminologyFor(gitStatus);
 
   if (!hasBranch) {
-    if (hasChanges) {
-      return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
-    }
     return {
-      label: "Commit",
-      disabled: true,
-      kind: "show_hint",
-      hint: `Create and checkout a ref before pushing or opening a ${terminology.singular}.`,
+      label: "Create feature branch",
+      disabled: false,
+      kind: "create_branch",
     };
   }
 

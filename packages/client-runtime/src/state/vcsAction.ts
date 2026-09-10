@@ -80,6 +80,7 @@ export interface RunVcsStackedActionInput {
   readonly commitMessage?: string;
   readonly splitCommits?: boolean;
   readonly featureBranch?: boolean;
+  readonly featureBranchOnly?: boolean;
   readonly filePaths?: ReadonlyArray<string>;
   readonly threadId?: ThreadId;
   readonly projectId?: ProjectId;
@@ -475,6 +476,7 @@ export function createVcsActionManager<R, E>(
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.splitCommits ? { splitCommits: true } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
+          ...(input.featureBranchOnly ? { featureBranchOnly: true } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),

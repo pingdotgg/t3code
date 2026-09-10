@@ -406,3 +406,55 @@ describe("when: ref has diverged from upstream", () => {
     assert.deepInclude(push, { disabled: true });
   });
 });
+
+describe("when: HEAD is detached and there are no local changes", () => {
+  it("resolveQuickAction offers to create a feature branch", () => {
+    const quick = resolveQuickAction(
+      status({ refName: null, hasWorkingTreeChanges: false, hasUpstream: false }),
+      false,
+    );
+    assert.deepEqual(quick, {
+      kind: "create_branch",
+      label: "Create feature branch",
+      disabled: false,
+    });
+  });
+
+  it("buildMenuItems enables feature branch creation and keeps other actions disabled", () => {
+    const items = buildMenuItems(status({ refName: null, hasWorkingTreeChanges: false }), false);
+    assert.deepEqual(items, [
+      {
+        id: "branch",
+        label: "Create feature branch",
+        disabled: false,
+        icon: "branch",
+        kind: "open_dialog",
+        dialogAction: "create_branch",
+      },
+      {
+        id: "commit",
+        label: "Commit",
+        disabled: true,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+      {
+        id: "push",
+        label: "Push",
+        disabled: true,
+        icon: "push",
+        kind: "open_dialog",
+        dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "Create PR",
+        disabled: true,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "create_pr",
+      },
+    ]);
+  });
+});
