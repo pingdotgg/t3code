@@ -306,6 +306,7 @@ describe("EventNdjsonLogger", () => {
           { method: "item/agentMessage/delta", payload: circularDelta },
           threadId,
         );
+        yield* native.write({ method: "item/delta", params: circularDelta }, threadId);
         yield* native.write(
           { method: "thread/realtime/outputAudio/delta", payload: circularDelta },
           threadId,

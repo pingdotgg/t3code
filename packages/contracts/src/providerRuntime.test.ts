@@ -8,6 +8,7 @@ import {
 } from "./providerRuntime.ts";
 
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
+const encodeRuntimeEvent = Schema.encodeSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
   it("includes every runtime event in the public event type", () => {
@@ -75,6 +76,24 @@ describe("ProviderRuntimeEvent", () => {
 
     expect(parsed.provider).toBe("ollama");
     expect(parsed.providerInstanceId).toBe("ollama_local");
+  });
+
+  it("round-trips Muse SDK events for a specific provider instance", () => {
+    const event = {
+      type: "session.started",
+      eventId: "event-muse-session",
+      provider: "muse",
+      providerInstanceId: "muse_work",
+      createdAt: "2026-09-10T00:00:00.000Z",
+      threadId: "thread-muse",
+      payload: { message: "started" },
+      raw: {
+        source: "muse.sdk.event",
+        payload: { type: "session_created", sessionId: "native-session" },
+      },
+    };
+
+    expect(encodeRuntimeEvent(decodeRuntimeEvent(event))).toEqual(event);
   });
 
   it("decodes turn.plan.updated for plan rendering", () => {
