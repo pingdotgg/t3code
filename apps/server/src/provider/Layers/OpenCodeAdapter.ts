@@ -25,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -479,14 +480,19 @@ const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestErro
 /**
  * Map a `Cause.squash`-ed failure into a `ProviderAdapterProcessError`. The
  * typed cause is usually an `OpenCodeRuntimeError` (from {@link runOpenCodeSdk}),
- * in which case we preserve its `detail`; otherwise we fall back to
+ * in which case the surfaced detail keeps the failing operation ahead of its
+ * `detail` (`operation: detail`); otherwise we fall back to
  * {@link openCodeRuntimeErrorDetail} for unknown causes (defects, etc.).
  */
 const toProcessError = (threadId: ThreadId, cause: unknown): ProviderAdapterProcessError =>
   new ProviderAdapterProcessError({
     provider: PROVIDER,
     threadId,
-    detail: OpenCodeRuntimeError.is(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause),
+    // Keep the SDK operation in the surfaced detail: bare upstream messages
+    // like "Unexpected server error" give no hint which call failed.
+    detail: OpenCodeRuntimeError.is(cause)
+      ? `${cause.operation}: ${cause.detail}`
+      : openCodeRuntimeErrorDetail(cause),
     cause,
   });
 
@@ -2839,9 +2845,18 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
               });
-              const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-              if (mcpSession && !server.external) {
-                yield* runOpenCodeSdk("mcp.add", () =>
+              // Preview automation is best-effort: the `t3-code` toolkit is a
+              // convenience, and an OpenCode server that rejects the
+              // registration (observed as `mcp.add` 500s, and as 200s whose
+              // status is not `connected`) must not take down session
+              // startup. A failed registration only costs the browser preview
+              // tools, so capture the reason, warn, and continue.
+              const mcpPreviewWarning = yield* Effect.gen(function* () {
+                const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+                if (!mcpSession || server.external) {
+                  return undefined;
+                }
+                const added = yield* runOpenCodeSdk("mcp.add", () =>
                   client.mcp.add({
                     name: "t3-code",
                     config: {
@@ -2853,6 +2868,27 @@ export function makeOpenCodeAdapter(
                       oauth: false,
                     },
                   }),
+                ).pipe(Effect.result);
+                if (Result.isFailure(added)) {
+                  const detail = OpenCodeRuntimeError.is(added.failure)
+                    ? added.failure.detail
+                    : openCodeRuntimeErrorDetail(added.failure);
+                  return `registration request failed (${detail})`;
+                }
+                const status = added.success.data?.["t3-code"];
+                if (status?.status === "connected") {
+                  return undefined;
+                }
+                const reason =
+                  status !== undefined && "error" in status && typeof status.error === "string"
+                    ? status.error
+                    : `status '${status?.status ?? "unknown"}'`;
+                return `server reported ${reason}`;
+              });
+              if (mcpPreviewWarning !== undefined) {
+                yield* Effect.logWarning(
+                  "OpenCode preview registration failed; continuing without browser preview tools.",
+                  { detail: mcpPreviewWarning },
                 );
               }
               // Resume: re-adopt the session named by the durable cursor —
@@ -2946,6 +2982,7 @@ export function makeOpenCodeAdapter(
                 client,
                 openCodeSession: resolved.openCodeSession,
                 created: resolved.created,
+                mcpPreviewWarning,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -3053,6 +3090,16 @@ export function makeOpenCodeAdapter(
             message: "OpenCode session started",
           },
         });
+        if (started.mcpPreviewWarning !== undefined) {
+          yield* emit({
+            ...(yield* buildEventBase({ threadId: input.threadId })),
+            type: "runtime.warning",
+            payload: {
+              message: "Browser preview tools are unavailable for this OpenCode session.",
+              detail: started.mcpPreviewWarning,
+            },
+          });
+        }
         yield* emit({
           ...(yield* buildEventBase({ threadId: input.threadId })),
           type: "thread.started",

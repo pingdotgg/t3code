@@ -26,6 +26,7 @@ import type {
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -33,6 +34,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -129,6 +131,8 @@ const runtimeMock = {
     questionListImplementation: null as (() => Promise<Array<QuestionRequest>>) | null,
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
+    mcpAddCalls: [] as Array<unknown>,
+    mcpAddImplementation: null as ((input: unknown) => Promise<unknown>) | null,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -184,6 +188,8 @@ const runtimeMock = {
     this.state.questionListImplementation = null;
     this.state.sessionUpdateCalls.length = 0;
     this.state.forkCalls.length = 0;
+    this.state.mcpAddCalls.length = 0;
+    this.state.mcpAddImplementation = null;
   },
 };
 
@@ -471,6 +477,15 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           );
         },
       },
+      mcp: {
+        add: async (input: unknown) => {
+          runtimeMock.state.mcpAddCalls.push(input);
+          if (runtimeMock.state.mcpAddImplementation) {
+            return await runtimeMock.state.mcpAddImplementation(input);
+          }
+          return { data: { "t3-code": { status: "connected" } } };
+        },
+      },
       question: {
         list: async () => {
           runtimeMock.state.questionListCalls += 1;
@@ -629,6 +644,25 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(runtimeMock.state.authHeaders, [
         `Basic ${btoa("opencode:secret-password")}`,
       ]);
+    }),
+  );
+
+  it.effect("skips preview registration for external OpenCode servers", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-external-mcp");
+      yield* setTestMcpProviderSession(threadId);
+      const session = yield* Effect.ensuring(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        }),
+        clearTestMcpProviderSession(threadId),
+      );
+      NodeAssert.equal(session.threadId, threadId);
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, []);
+      yield* adapter.stopSession(threadId);
     }),
   );
 
@@ -7581,6 +7615,160 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(sessions.length, 1);
       NodeAssert.equal(sessions[0]?.threadId, "thread-native-log-failure");
       NodeAssert.deepEqual(closeCallsDuringRun, []);
+    }),
+  );
+});
+
+// Spawned-server layer: no serverUrl, so the adapter binds a local server
+// (`external: false`) and reaches the `mcp.add` preview registration the
+// external-server layer above always skips.
+const openCodeAdapterLocalServerTestSettings = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+});
+
+const OpenCodeAdapterLocalServerTestLayer = Layer.effect(
+  OpenCodeAdapter,
+  makeOpenCodeAdapter(openCodeAdapterLocalServerTestSettings),
+).pipe(
+  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+  Layer.provideMerge(
+    ServerSettingsService.layerTest({
+      providers: {
+        opencode: {
+          binaryPath: "fake-opencode",
+        },
+      },
+    }),
+  ),
+  Layer.provideMerge(providerSessionDirectoryTestLayer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+const setTestMcpProviderSession = (threadId: ThreadId) =>
+  Effect.sync(() =>
+    McpProviderSession.setMcpProviderSession({
+      environmentId: EnvironmentId.make("env-opencode-mcp-test"),
+      threadId,
+      providerSessionId: "mcp-test-session",
+      providerInstanceId: ProviderInstanceId.make("opencode"),
+      endpoint: "http://127.0.0.1:9999/mcp",
+      authorizationHeader: "Bearer test-token",
+    }),
+  );
+
+const clearTestMcpProviderSession = (threadId: ThreadId) =>
+  Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
+
+it.layer(OpenCodeAdapterLocalServerTestLayer)("OpenCodeAdapterPreviewRegistration", (it) => {
+  it.effect("registers preview tools with the spawned server", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-connected");
+      yield* setTestMcpProviderSession(threadId);
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* Effect.ensuring(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        }),
+        clearTestMcpProviderSession(threadId),
+      );
+      NodeAssert.equal(session.threadId, threadId);
+      NodeAssert.deepEqual(runtimeMock.state.mcpAddCalls, [
+        {
+          name: "t3-code",
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:9999/mcp",
+            headers: { Authorization: "Bearer test-token" },
+            oauth: false,
+          },
+        },
+      ]);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(
+        events.some((event) => event.type === "runtime.warning"),
+        false,
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts the session when preview registration throws", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-add-throws");
+      runtimeMock.state.mcpAddImplementation = async () => {
+        throw new Error("Unexpected server error. Check server logs for details.", {
+          cause: { status: 500, body: { name: "UnknownError" } },
+        });
+      };
+      yield* setTestMcpProviderSession(threadId);
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* Effect.ensuring(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        }),
+        clearTestMcpProviderSession(threadId),
+      );
+      NodeAssert.equal(session.threadId, threadId);
+      NodeAssert.equal(runtimeMock.state.mcpAddCalls.length, 1);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const warning = events.find((event) => event.type === "runtime.warning");
+      NodeAssert.equal(warning?.type, "runtime.warning");
+      NodeAssert.match(
+        String(warning?.type === "runtime.warning" ? warning.payload.detail : ""),
+        /Unexpected server error/,
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("starts the session when preview registration reports a failed status", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-add-failed");
+      runtimeMock.state.mcpAddImplementation = async () => ({
+        data: { "t3-code": { status: "failed", error: "SSE error: boom" } },
+      });
+      yield* setTestMcpProviderSession(threadId);
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* Effect.ensuring(
+        adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        }),
+        clearTestMcpProviderSession(threadId),
+      );
+      NodeAssert.equal(session.threadId, threadId);
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const warning = events.find((event) => event.type === "runtime.warning");
+      NodeAssert.equal(warning?.type, "runtime.warning");
+      NodeAssert.match(
+        String(warning?.type === "runtime.warning" ? warning.payload.detail : ""),
+        /boom/,
+      );
+      yield* adapter.stopSession(threadId);
     }),
   );
 });
