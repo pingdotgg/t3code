@@ -503,6 +503,7 @@ const buildAppUnderTest = (options?: {
   onPairingChangesSubscribed?: Effect.Effect<void>;
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   layers?: {
+    devices?: Partial<DeviceService.DeviceService["Service"]>;
     processDiagnostics?: Partial<ProcessDiagnostics.ProcessDiagnostics["Service"]>;
     keybindings?: Partial<Keybindings.Keybindings["Service"]>;
     environmentTheme?: Partial<EnvironmentTheme.EnvironmentThemeService["Service"]>;
@@ -813,6 +814,7 @@ const buildAppUnderTest = (options?: {
             state: Effect.succeed(EMPTY_DEVICE_STATE),
             currentReadiness: () => Effect.succeed(null),
             sessionsForThread: () => Effect.succeed([]),
+            ...options?.layers?.devices,
           }),
         ),
       ),
@@ -6003,6 +6005,73 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(installStarts, 0);
       assert.equal(authCalls, 0);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires settings permission for device setup and SSH host testing", () =>
+    Effect.gen(function* () {
+      let configurations = 0;
+      let hostTests = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          devices: {
+            configure: () =>
+              Effect.sync(() => {
+                configurations += 1;
+                return EMPTY_DEVICE_STATE;
+              }),
+            testHost: (host) =>
+              Effect.sync(() => {
+                hostTests += 1;
+                return {
+                  ...host,
+                  kind: "ssh" as const,
+                  platforms: [],
+                  hubInstalled: false,
+                  agentDeviceInstalled: false,
+                };
+              }),
+          },
+        },
+      });
+      for (const scope of ["orchestration:read", "orchestration:operate", "settings:write"]) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const configure = client[WS_METHODS.deviceConfigure]({
+                enabled: false,
+                agentAccessEnabled: false,
+              });
+              const testHost = client[WS_METHODS.deviceTestHost]({
+                id: "remote",
+                label: "Remote",
+                target: "test-host",
+              });
+              if (scope === "settings:write") {
+                yield* configure;
+                yield* testHost;
+              } else {
+                for (const error of [
+                  yield* configure.pipe(Effect.flip),
+                  yield* testHost.pipe(Effect.flip),
+                ]) {
+                  assert.equal(error._tag, "EnvironmentAuthorizationError");
+                  assert.include(error.message, "settings:write");
+                }
+              }
+            }),
+          ),
+        );
+      }
+      assert.equal(configurations, 1);
+      assert.equal(hostTests, 1);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

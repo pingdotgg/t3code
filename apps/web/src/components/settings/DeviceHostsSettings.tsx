@@ -1,3 +1,5 @@
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { DeviceHostAvailability } from "../device/DeviceHostAvailability";
@@ -24,6 +26,7 @@ export function DeviceHostsSettings(props: {
   environmentId: EnvironmentId | null;
   hosts: ReadonlyArray<SshDeviceHostConfig>;
 }) {
+  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings);
   const test = useAtomCommand(deviceEnvironment.testHost, { reportFailure: false });
   const { state } = useDeviceState(props.environmentId);
@@ -40,7 +43,8 @@ export function DeviceHostsSettings(props: {
   const setCheck = (id: string, value: (typeof checks)[string]) =>
     setChecks((current) => ({ ...current, [id]: value }));
   const save = async (hosts: ReadonlyArray<SshDeviceHostConfig>) => {
-    if (!props.environmentId) return;
+    if (!props.environmentId || !readEnvironmentScope(props.environmentId, AuthSettingsWriteScope))
+      return;
     setBusy(true);
     try {
       const saved = await update({
@@ -55,7 +59,12 @@ export function DeviceHostsSettings(props: {
     }
   };
   const testConnection = async (host: SshDeviceHostConfig) => {
-    if (!props.environmentId || checks[host.id]?.pending) return;
+    if (
+      !props.environmentId ||
+      !readEnvironmentScope(props.environmentId, AuthSettingsWriteScope) ||
+      checks[host.id]?.pending
+    )
+      return;
     setCheck(host.id, { pending: true });
     try {
       const summary = await test({ environmentId: props.environmentId, input: host });
@@ -78,7 +87,7 @@ export function DeviceHostsSettings(props: {
         <Button
           size="sm"
           variant="outline"
-          disabled={busy || !props.environmentId || editing !== null}
+          disabled={!canConfigure || busy || !props.environmentId || editing !== null}
           onClick={() => {
             setEditing({ id: randomUUID(), label: "", target: "" });
           }}
@@ -173,7 +182,7 @@ export function DeviceHostsSettings(props: {
                         <Button
                           size="icon-sm"
                           variant="ghost-muted"
-                          disabled={busy}
+                          disabled={!canConfigure || busy}
                           aria-label={host.label + " options"}
                         />
                       }
@@ -201,7 +210,7 @@ export function DeviceHostsSettings(props: {
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy || progress !== null}
+                    disabled={!canConfigure || busy || progress !== null}
                     onClick={() => void testConnection(host)}
                   >
                     Test connection
@@ -222,7 +231,7 @@ export function DeviceHostsSettings(props: {
                   <Input
                     required
                     value={editing.label}
-                    disabled={busy}
+                    disabled={!canConfigure || busy}
                     onChange={(event) => setEditing({ ...editing, label: event.target.value })}
                     placeholder="Mac mini"
                   />
@@ -232,7 +241,7 @@ export function DeviceHostsSettings(props: {
                   <Input
                     required
                     value={editing.target}
-                    disabled={busy}
+                    disabled={!canConfigure || busy}
                     onChange={(event) => setEditing({ ...editing, target: event.target.value })}
                     placeholder="user@host or SSH alias"
                   />
@@ -241,7 +250,7 @@ export function DeviceHostsSettings(props: {
                   <span>Identity file, optional</span>
                   <Input
                     value={editing.identityFile ?? ""}
-                    disabled={busy}
+                    disabled={!canConfigure || busy}
                     onChange={(event) => {
                       const { identityFile: _, ...rest } = editing;
                       setEditing(
@@ -258,7 +267,7 @@ export function DeviceHostsSettings(props: {
                     min={1}
                     max={65535}
                     value={editing.port ?? ""}
-                    disabled={busy}
+                    disabled={!canConfigure || busy}
                     onChange={(event) => {
                       const { port: _, ...rest } = editing;
                       setEditing(
@@ -273,6 +282,7 @@ export function DeviceHostsSettings(props: {
                     size="sm"
                     type="submit"
                     disabled={
+                      !canConfigure ||
                       busy ||
                       !editing.label.trim() ||
                       !editing.target.trim() ||
@@ -286,6 +296,7 @@ export function DeviceHostsSettings(props: {
                     type="button"
                     variant="outline"
                     disabled={
+                      !canConfigure ||
                       busy ||
                       !editing.label.trim() ||
                       !editing.target.trim() ||
