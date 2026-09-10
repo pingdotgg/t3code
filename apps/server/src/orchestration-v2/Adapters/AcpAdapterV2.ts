@@ -5768,8 +5768,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           runtimePolicy: ProviderAdapterV2RuntimePolicy,
         ) {
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
+          let appliedModel: string | undefined;
           if (flavor.applyModelSelection !== undefined) {
-            yield* flavor.applyModelSelection({ runtime, startResult, modelSelection });
+            appliedModel = yield* flavor.applyModelSelection({
+              runtime,
+              startResult,
+              modelSelection,
+            });
           } else if (
             requestedModel.length > 0 &&
             requestedModel !== "auto" &&
@@ -5782,6 +5787,29 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             if (hasModelConfig) {
               yield* runtime.setModel(requestedModel);
             }
+          }
+          // Same-runtime switches compare against this stored setup, so keep
+          // its model metadata in sync with what the session now runs on;
+          // otherwise switching A -> B -> A would see the stale setup-time A
+          // and skip the final switch.
+          if (appliedModel !== undefined) {
+            const applied = appliedModel;
+            yield* Ref.update(activeSessionSetup, (setup) => {
+              if (setup === null) {
+                return setup;
+              }
+              const models = setup.sessionSetupResult.models;
+              if (models == null || models.currentModelId === applied) {
+                return setup;
+              }
+              return {
+                ...setup,
+                sessionSetupResult: {
+                  ...setup.sessionSetupResult,
+                  models: { ...models, currentModelId: applied },
+                },
+              };
+            });
           }
           const optionSelections = modelSelection.options ?? [];
           const configOptions = yield* runtime.getConfigOptions;
