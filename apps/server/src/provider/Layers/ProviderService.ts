@@ -869,7 +869,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       if (Option.isNone(projectionQuery)) return false;
       const thread = yield* projectionQuery.value.getThreadShellById(threadId);
       if (Option.isNone(thread)) return false;
-      return resolveProjectAgentBrowserAccess(settings, thread.value.projectId);
+      return thread.value.projectId === null
+        ? settings.enableAgentBrowserAccess
+        : resolveProjectAgentBrowserAccess(settings, thread.value.projectId);
     },
     Effect.catch((cause) =>
       Effect.logWarning(

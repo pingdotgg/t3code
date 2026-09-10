@@ -1137,7 +1137,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   showSendWhileRunning?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlanInNewThread: (() => void) | undefined;
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
@@ -1356,7 +1356,7 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlanInNewThread: (() => void) | undefined;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -4675,9 +4675,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const handleInterruptPrimaryAction = useCallback(() => {
     void onInterrupt();
   }, [onInterrupt]);
-  const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
-    void onImplementPlanInNewThread();
-  }, [onImplementPlanInNewThread]);
   // The phone composer collapses when the editor loses focus. Desktop only
   // rests on a timeline scroll, so losing focus there changes nothing.
   const scheduleComposerCollapseCheck = useCallback(() => {
@@ -5127,9 +5124,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               preserveComposerFocusOnPointerDown
                               onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                               onInterrupt={handleInterruptPrimaryAction}
-                              onImplementPlanInNewThread={
-                                handleImplementPlanInNewThreadPrimaryAction
-                              }
+                              onImplementPlanInNewThread={onImplementPlanInNewThread}
                             />
                           ) : null}
                         </div>
@@ -5765,7 +5760,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
-                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      onImplementPlanInNewThread={onImplementPlanInNewThread}
                     />
                   </div>
                 ) : null}
@@ -5871,7 +5866,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     showSendWhileRunning={isMobileViewport}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
-                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                    onImplementPlanInNewThread={onImplementPlanInNewThread}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
                     }

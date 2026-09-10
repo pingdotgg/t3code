@@ -1,6 +1,7 @@
 "use client";
 
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
+import { useNewQuickChat } from "../hooks/useNewQuickChat";
 
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -70,6 +71,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useActiveProjectTarget } from "../hooks/useActiveProjectTarget";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
@@ -397,6 +399,7 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const hasActiveProject = useActiveProjectTarget() !== null;
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -404,8 +407,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   });
   const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
   const toggleMode = useCallback(
-    (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
-    [],
+    (mode: SearchOverlayMode) => {
+      if ((mode === "files" || mode === "content") && !hasActiveProject) return;
+      dispatch({ _tag: "ToggleMode", mode });
+    },
+    [hasActiveProject],
   );
   const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
   const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
@@ -1090,6 +1096,34 @@ function OpenCommandPaletteDialog(props: {
     [openProjectFromSearch, pickerProjects, projectGroupByTargetKey],
   );
 
+  const newQuickChat = useNewQuickChat();
+  const quickChatItems = useMemo<CommandPaletteActionItem[]>(() => {
+    const eligible = environments.filter(
+      (environment) => environment.serverConfig?.environment.capabilities.quickChats === true,
+    );
+    const preferredId =
+      activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId;
+    const preferred = eligible.find((environment) => environment.environmentId === preferredId);
+    return (preferred ? [preferred] : eligible).map((environment, index) => ({
+      kind: "action",
+      value: `new-quick-chat:${environment.environmentId}`,
+      title: "New quick chat",
+      ...(index === 0 ? { shortcutKey: "0" } : {}),
+      description: preferred || eligible.length === 1 ? "No project needed" : environment.label,
+      searchTerms: ["quick chat", "question", "no project"],
+      icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await newQuickChat(environment.environmentId);
+      },
+    }));
+  }, [
+    environments,
+    activeThread?.environmentId,
+    activeDraftThread?.environmentId,
+    primaryEnvironmentId,
+    newQuickChat,
+  ]);
+
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
@@ -1529,7 +1563,10 @@ function OpenCommandPaletteDialog(props: {
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
 
   useLayoutEffect(() => {
-    if (openIntent?.kind !== "new-thread-in" || projectThreadItems.length === 0) {
+    if (
+      openIntent?.kind !== "new-thread-in" ||
+      (projectThreadItems.length === 0 && quickChatItems.length === 0)
+    ) {
       return;
     }
     clearOpenIntent();
@@ -1555,6 +1592,7 @@ function OpenCommandPaletteDialog(props: {
           label: "Projects",
           items: enumerateCommandPaletteItems(prioritized),
         },
+        { value: "quick-chat", label: "Quick chat", items: quickChatItems },
       ],
     });
   }, [
@@ -1564,10 +1602,13 @@ function OpenCommandPaletteDialog(props: {
     currentProjectId,
     openIntent,
     projectThreadItems,
+    quickChatItems,
     pushPaletteView,
   ]);
 
-  const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
+    ...quickChatItems,
+  ];
 
   if (projects.length > 0) {
     const activeProjectTitle =
@@ -1604,7 +1645,10 @@ function OpenCommandPaletteDialog(props: {
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      groups: [
+        { value: "projects", label: "Projects", items: projectThreadItems },
+        { value: "quick-chat", label: "Quick chat", items: quickChatItems },
+      ],
     });
   }
 
@@ -1654,6 +1698,7 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push({
     kind: "action",
     value: "action:open-file-picker",
+    disabled: currentProjectId === null,
     searchTerms: ["go to file", "open file", "file picker", "find file", "quick open"],
     title: "Go to file",
     icon: <FileSearchIcon className={ITEM_ICON_CLASS} />,
@@ -1667,6 +1712,7 @@ function OpenCommandPaletteDialog(props: {
   actionItems.push({
     kind: "action",
     value: "action:search-project-contents",
+    disabled: currentProjectId === null,
     searchTerms: ["search project", "find in files", "grep", "content search", "text search"],
     title: "Search project contents",
     icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
@@ -2320,6 +2366,26 @@ function OpenCommandPaletteDialog(props: {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (
+      isPrimaryModifierPressed(event) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      const matchingItem = displayedGroups
+        .flatMap((group) => group.items)
+        .find(
+          (item) =>
+            item.shortcutKey !== undefined &&
+            (event.key === item.shortcutKey || event.code === `Digit${item.shortcutKey}`),
+        );
+      if (matchingItem) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) executeItem(matchingItem);
+        return;
+      }
+    }
     const command = resolveShortcutCommand(event, keybindings, {
       platform: navigator.platform,
       context: { modelPickerOpen: false },

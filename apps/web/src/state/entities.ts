@@ -183,6 +183,30 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+/** Wait for creation to reach the shell before navigating to a persisted thread. */
+export function waitForThreadShell(ref: ScopedThreadRef): Promise<EnvironmentThreadShell> {
+  const atom = environmentThreadShells.threadShellAtom(ref);
+  const current = appAtomRegistry.get(atom);
+  if (current !== null) return Promise.resolve(current);
+  return new Promise((resolve, reject) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      reject(
+        new Error("The new chat has not synced yet. Open it from the sidebar once reconnected."),
+      );
+    }, 10_000);
+    const finish = (thread: EnvironmentThreadShell | null) => {
+      if (thread === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(thread);
+    };
+    unsubscribe = appAtomRegistry.subscribe(atom, finish);
+    finish(appAtomRegistry.get(atom));
+  });
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */

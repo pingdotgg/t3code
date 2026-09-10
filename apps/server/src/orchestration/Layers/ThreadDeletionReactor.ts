@@ -1,3 +1,4 @@
+import { makeQuickChatWorkspace } from "../quickChatWorkspace.ts";
 import type { OrchestrationEvent } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -41,14 +42,8 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
+  const quickChatWorkspace = yield* makeQuickChatWorkspace;
   const terminalManager = yield* TerminalManager.TerminalManager;
-
-  const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: providerService.stopSession({ threadId }),
-      message: "thread deletion cleanup skipped provider session stop",
-      threadId,
-    });
 
   const closeThreadTerminals = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -61,8 +56,25 @@ const make = Effect.gen(function* () {
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
-    yield* stopProviderSession(threadId);
+    let stopped = false;
+    yield* logCleanupCauseUnlessInterrupted({
+      effect: providerService.stopSession({ threadId }).pipe(
+        Effect.catchTags({ ProviderSessionNotFoundError: () => Effect.void }),
+        Effect.tap(() => {
+          stopped = true;
+          return Effect.void;
+        }),
+      ),
+      message: "thread deletion cleanup skipped provider session stop",
+      threadId,
+    });
     yield* closeThreadTerminals(threadId);
+    if (stopped)
+      yield* logCleanupCauseUnlessInterrupted({
+        effect: quickChatWorkspace.remove(threadId),
+        message: "thread deletion cleanup skipped quick-chat directory removal",
+        threadId,
+      });
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

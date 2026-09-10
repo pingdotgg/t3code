@@ -1,3 +1,4 @@
+import { useQuickChatAttachmentStore } from "../quickChatAttachmentStore";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -138,6 +139,7 @@ export function useThreadActionMenu(input: {
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const items = buildThreadActionMenuItems({
+          isQuickChat: thread.projectId === null,
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
           isSettled: supports.settlement && thread.settledOverride === "settled",
@@ -206,11 +208,17 @@ export function useThreadActionMenu(input: {
             });
             return;
           }
+          case "attach-to-project": {
+            useQuickChatAttachmentStore.getState().open(threadRef);
+            return;
+          }
           case "new-thread-on-branch": {
+            const projectRef = scopeProjectRef(threadRef.environmentId, thread.projectId);
+            if (!projectRef) return;
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
-              handleNewThread(scopeProjectRef(threadRef.environmentId, thread.projectId), {
+              handleNewThread(projectRef, {
                 branch: thread.branch,
                 worktreePath: thread.worktreePath,
                 envMode: thread.worktreePath ? "worktree" : "local",

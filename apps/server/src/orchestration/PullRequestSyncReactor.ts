@@ -238,6 +238,7 @@ export const make = Effect.gen(function* () {
       entries: ReadonlyArray<LinkEntry>,
     ) {
       const first = entries[0]!;
+      if (first.thread.projectId === null) return;
       const ref = {
         projectId: first.thread.projectId,
         host: first.link.host,

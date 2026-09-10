@@ -49,6 +49,9 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+import * as ProviderService from "../../provider/Services/ProviderService.ts";
+import { makeQuickChatWorkspace } from "../quickChatWorkspace.ts";
+
 const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
@@ -89,6 +92,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const crypto = yield* Crypto.Crypto;
+  // Offline CLI engines have no provider processes; server composition supplies this service.
+  const providers = yield* Effect.serviceOption(ProviderService.ProviderService);
+  const quickChatWorkspace = yield* makeQuickChatWorkspace;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
@@ -203,13 +209,34 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }
 
         if (
-          envelope.command.type === "thread.auto-settle" &&
+          (envelope.command.type === "thread.auto-settle" ||
+            (envelope.command.type === "thread.meta.update" &&
+              envelope.command.projectId !== undefined)) &&
           threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null
         ) {
           return yield* new OrchestrationCommandInvariantError({
             commandType: envelope.command.type,
             detail: `thread ${envelope.command.threadId} has live background work`,
           });
+        }
+
+        if (
+          envelope.command.type === "thread.meta.update" &&
+          envelope.command.projectId !== undefined
+        ) {
+          // Pending requests survive restarts; the command model's activity window does not.
+          const thread = yield* projectionSnapshotQuery.getThreadShellById(
+            envelope.command.threadId,
+          );
+          if (
+            Option.isSome(thread) &&
+            (thread.value.hasPendingApprovals || thread.value.hasPendingUserInput)
+          ) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: envelope.command.type,
+              detail: "Resolve pending requests before attaching the quick chat to a project.",
+            });
+          }
         }
 
         // Command snapshots omit activities at startup and cap them while running.
@@ -219,6 +246,37 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        // Repository identities are derived by snapshot queries, not persisted events.
+        // Refresh the legacy PR view before deciding which existing link to replace.
+        if (
+          (envelope.command.type === "thread.meta.update" &&
+            envelope.command.linkedPullRequest !== undefined) ||
+          envelope.command.type === "thread.pull-request.sync"
+        ) {
+          const shell = yield* projectionSnapshotQuery.getThreadShellById(
+            envelope.command.threadId,
+          );
+          if (Option.isSome(shell) && shell.value.projectId !== null) {
+            const project = yield* projectionSnapshotQuery.getProjectShellById(
+              shell.value.projectId,
+            );
+            if (Option.isSome(project)) {
+              commandReadModel = {
+                ...commandReadModel,
+                projects: commandReadModel.projects.map((entry) =>
+                  entry.id === project.value.id
+                    ? { ...entry, repositoryIdentity: project.value.repositoryIdentity }
+                    : entry,
+                ),
+                threads: commandReadModel.threads.map((entry) =>
+                  entry.id === shell.value.id
+                    ? { ...entry, linkedPullRequest: shell.value.linkedPullRequest }
+                    : entry,
+                ),
+              };
+            }
+          }
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
@@ -247,6 +305,40 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 ...planned,
                 metadata: { ...planned.metadata, origin: envelope.origin },
               }));
+        const promotion =
+          envelope.command.type === "thread.meta.update" && envelope.command.projectId !== undefined
+            ? yield* Effect.gen(function* () {
+                const command = envelope.command;
+                if (command.type !== "thread.meta.update" || command.projectId === undefined)
+                  return null;
+                const thread = commandReadModel.threads.find(
+                  (thread) => thread.id === command.threadId,
+                )!;
+                const project = commandReadModel.projects.find(
+                  (project) => project.id === command.projectId,
+                )!;
+                if (Option.isSome(providers)) {
+                  const sessions = yield* providers.value.listSessions();
+                  if (sessions.some((session) => session.threadId === thread.id)) {
+                    yield* providers.value.stopSession({ threadId: thread.id });
+                  }
+                }
+                return yield* quickChatWorkspace.prepare(
+                  thread.id,
+                  command.worktreePath ?? project.workspaceRoot,
+                );
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationCommandInvariantError({
+                      commandType: envelope.command.type,
+                      detail:
+                        "Could not transfer the quick-chat workspace. Its original files have been kept.",
+                      cause,
+                    }),
+                ),
+              )
+            : null;
         const committedCommand = yield* sql
           .withTransaction(
             Effect.gen(function* () {
@@ -280,6 +372,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 error: null,
               });
 
+              // Provider ingestion can report new background work while SQL yields.
+              // Reject before committing so neither the event nor projection moves it.
+              if (
+                envelope.command.type === "thread.meta.update" &&
+                envelope.command.projectId !== undefined &&
+                threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !==
+                  null
+              ) {
+                return yield* new OrchestrationCommandInvariantError({
+                  commandType: envelope.command.type,
+                  detail: `thread ${envelope.command.threadId} has live background work`,
+                });
+              }
+
               return {
                 committedEvents,
                 attachmentCleanups,
@@ -289,6 +395,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             }),
           )
           .pipe(
+            Effect.onError(() =>
+              promotion
+                ? promotion.rollback.pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("Failed to roll back quick-chat transfer", {
+                        cause: Cause.pretty(cause),
+                      }),
+                    ),
+                  )
+                : Effect.void,
+            ),
             Effect.catchTag("SqlError", (sqlError) =>
               Effect.fail(
                 toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),
@@ -297,6 +414,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           );
 
         commandReadModel = committedCommand.nextCommandReadModel;
+        if (promotion)
+          yield* promotion.commit.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Quick-chat source cleanup will retry on the next turn", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
         for (const cleanup of committedCommand.attachmentCleanups) {
           yield* cleanup;
         }

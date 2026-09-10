@@ -7,6 +7,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  * remains data-driven.
  */
 export type ThreadActionMenuId =
+  | "attach-to-project"
   | "new-thread-on-branch"
   | "project-settings"
   | "pin"
@@ -27,6 +28,7 @@ export type ThreadActionMenuId =
   | "delete";
 
 export interface ThreadActionMenuState {
+  readonly isQuickChat?: boolean;
   readonly branch: string | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
@@ -53,6 +55,16 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
+    ...(state.isQuickChat
+      ? [
+          {
+            id: "attach-to-project" as const,
+            label: "Attach to project",
+            icon: "folder",
+            disabled: state.isRunning,
+          },
+        ]
+      : []),
     ...(state.branch
       ? [
           {
@@ -62,7 +74,7 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.supports.pinning
+    ...(state.supports.pinning && !state.isQuickChat
       ? [
           state.isPinned
             ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
@@ -72,14 +84,14 @@ export function buildThreadActionMenuItems(
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
-    ...(state.supports.settlement
+    ...(state.supports.settlement && !state.isQuickChat
       ? [
           state.isSettled
             ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
       : []),
-    ...(state.supports.snooze
+    ...(state.supports.snooze && !state.isQuickChat
       ? [
           state.isSnoozed
             ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
@@ -113,14 +125,18 @@ export function buildThreadActionMenuItems(
       icon: "copy",
       separatorBefore: true,
       children: [
-        { id: "copy-path", label: "Path", icon: "folder" },
+        ...(!state.isQuickChat
+          ? [{ id: "copy-path" as const, label: "Path", icon: "folder" }]
+          : []),
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
+    ...(!state.isQuickChat
+      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      : []),
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle
     // (stays visible in the Settled shelf) and Delete (clears history for

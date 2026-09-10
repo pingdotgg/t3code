@@ -167,6 +167,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly quickChat?: boolean;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -487,23 +488,25 @@ describe("ProviderCommandReactor", () => {
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.make("cmd-project-create"),
-        projectId: asProjectId("project-1"),
-        title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
-        defaultModelSelection: modelSelection,
-        createdAt: now,
-      }),
-    );
+    if (!input?.quickChat) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-create"),
+          projectId: asProjectId("project-1"),
+          title: "Provider Project",
+          workspaceRoot: "/tmp/provider-project",
+          defaultModelSelection: modelSelection,
+          createdAt: now,
+        }),
+      );
+    }
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
         commandId: CommandId.make("cmd-thread-create"),
         threadId: ThreadId.make("thread-1"),
-        projectId: asProjectId("project-1"),
+        projectId: input?.quickChat ? null : asProjectId("project-1"),
         title: "Thread",
         modelSelection: modelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -828,6 +831,149 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }),
+  );
+
+  effectIt.effect(
+    "transfers quick-chat files and adds hidden context only to the next provider turn",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const resumed = yield* Deferred.make<void>();
+        let starts = 0;
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            quickChat: true,
+            startSessionEffect: (session) =>
+              Deferred.succeed(++starts === 1 ? started : resumed, undefined).pipe(
+                Effect.as(session),
+              ),
+          }),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("quick-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("quick-message"),
+            role: "user",
+            text: "Explain passkeys",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Deferred.await(started);
+        yield* Effect.promise(() => harness.drain());
+        const snapshot = yield* Effect.promise(() => harness.readModel());
+        expect(snapshot.projects).toEqual([]);
+        expect(snapshot.threads[0]?.projectId).toBeNull();
+        expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+          cwd: expect.stringContaining("quick-chats"),
+        });
+        expect(harness.sendTurn).toHaveBeenCalledOnce();
+        const startInput = harness.startSession.mock.calls[0]?.[1];
+        if (
+          typeof startInput !== "object" ||
+          startInput === null ||
+          !("cwd" in startInput) ||
+          typeof startInput.cwd !== "string"
+        )
+          throw new Error("Expected quick-chat workspace");
+        const scratchCwd = startInput.cwd;
+        NodeFS.writeFileSync(NodePath.join(scratchCwd, "example.py"), "print('hello')");
+        const worktree = NodeFS.mkdtempSync(
+          NodePath.join(NodeOS.tmpdir(), "t3-promoted-worktree-"),
+        );
+        createdStateDirs.add(worktree);
+
+        yield* harness.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("quick-project"),
+          projectId: ProjectId.make("project-1"),
+          title: "Project",
+          workspaceRoot: "/tmp/provider-project",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("quick-idle"),
+          threadId: ThreadId.make("thread-1"),
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "ready",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("quick-attach"),
+          threadId: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-1"),
+          worktreePath: worktree,
+          branch: "quick-chat",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("quick-resume"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("quick-followup"),
+            role: "user",
+            text: "Implement them",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:02.000Z",
+        });
+        yield* Deferred.await(resumed);
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+          cwd: worktree,
+        });
+        expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId: ThreadId.make("thread-1") });
+        expect(NodeFS.existsSync(scratchCwd)).toBe(false);
+        const filesPath = NodePath.join(
+          worktree,
+          "quick-chat-files",
+          Buffer.from("thread-1").toString("base64url"),
+        );
+        expect(NodeFS.readFileSync(NodePath.join(filesPath, "example.py"), "utf8")).toBe(
+          "print('hello')",
+        );
+        expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+          input: expect.stringContaining(filesPath),
+        });
+        expect(
+          (yield* Effect.promise(() => harness.readModel())).threads[0]?.messages.map(
+            (message) => message.text,
+          ),
+        ).toEqual(["Explain passkeys", "Implement them"]);
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("after-promotion-note"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("third-message"),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:03.000Z",
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn.mock.calls[2]?.[0]).toMatchObject({ input: "Continue" });
+      }),
   );
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {

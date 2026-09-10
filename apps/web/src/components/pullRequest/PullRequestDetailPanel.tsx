@@ -1033,7 +1033,7 @@ export function PullRequestDetailPanel({
    * after preparing it, so there is one path from "a task" to "a thread holding it".
    */
   const openThreadWithTask = async (
-    projectRef: ReturnType<typeof scopeProjectRef>,
+    projectRef: NonNullable<ReturnType<typeof scopeProjectRef>>,
     task: ThreadTask | null,
     opened?: { draftId: DraftId },
   ): Promise<{ draftId: DraftId } | null> => {

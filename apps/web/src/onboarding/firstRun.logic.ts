@@ -25,7 +25,7 @@ interface FirstRunWorkspaceInput {
   }>;
   readonly threads: ReadonlyArray<{
     readonly id: string;
-    readonly projectId: string;
+    readonly projectId: string | null;
     readonly environmentId: string;
     readonly latestTurn: unknown;
     readonly latestUserMessageAt: string | null;

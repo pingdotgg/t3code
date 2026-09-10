@@ -11,8 +11,16 @@ import {
 export function scopeProjectRef(
   environmentId: EnvironmentIdType,
   projectId: ProjectIdType,
-): ScopedProjectRef {
-  return { environmentId, projectId };
+): ScopedProjectRef;
+export function scopeProjectRef(
+  environmentId: EnvironmentIdType,
+  projectId: ProjectIdType | null,
+): ScopedProjectRef | null;
+export function scopeProjectRef(
+  environmentId: EnvironmentIdType,
+  projectId: ProjectIdType | null,
+): ScopedProjectRef | null {
+  return projectId === null ? null : { environmentId, projectId };
 }
 
 export function scopeThreadRef(

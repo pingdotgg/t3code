@@ -515,6 +515,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OptionalBearerHeaders,
+      payload: { includeQuickChats: Schema.optional(Schema.Literal("true")) },
       success: OrchestrationShellSnapshot,
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

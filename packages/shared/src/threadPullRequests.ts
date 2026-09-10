@@ -138,10 +138,10 @@ export function resolveThreadCurrentPullRequestLink(
 /** Legacy clients can only route links belonging to the thread's own repository. */
 export function legacyLinkedPullRequestOf(
   links: ReadonlyArray<ThreadPullRequestLink>,
-  projectId: ThreadLinkedPullRequest["projectId"],
+  projectId: ThreadLinkedPullRequest["projectId"] | null,
   identity: RepositoryIdentity | null | undefined,
 ): ThreadLinkedPullRequest | null {
-  if (!identity) return null;
+  if (projectId === null || !identity) return null;
   const host = pullRequestHostOf(identity, identity.provider as SourceControlProviderKind);
   const repository = sourceControlRepositorySelector(identity);
   if (repository === null) return null;

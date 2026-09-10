@@ -70,7 +70,7 @@ export const linkCreatedPullRequest = <E>(input: {
     const engine = yield* OrchestrationEngine.OrchestrationEngineService;
     const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
     const thread = yield* snapshots.getThreadShellById(input.threadId);
-    if (Option.isNone(thread)) return;
+    if (Option.isNone(thread) || thread.value.projectId === null) return;
     const project = Option.getOrUndefined(
       yield* snapshots.getProjectShellById(thread.value.projectId),
     );

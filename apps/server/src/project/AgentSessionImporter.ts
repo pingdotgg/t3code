@@ -49,7 +49,7 @@ class AgentSessionThreadProjectConflictError extends Schema.TaggedError<AgentSes
   {
     threadId: ThreadId,
     expectedProjectId: ProjectId,
-    actualProjectId: ProjectId,
+    actualProjectId: Schema.NullOr(ProjectId),
   },
 ) {
   override get message(): string {

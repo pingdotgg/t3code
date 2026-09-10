@@ -15,7 +15,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -276,6 +280,11 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
+    // Mutations need a finite, fresh read rather than the reconnecting picker subscription.
+    readRefs: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:read-refs",
+      tag: WS_METHODS.vcsListRefs,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,

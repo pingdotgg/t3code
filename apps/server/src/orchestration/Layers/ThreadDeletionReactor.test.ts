@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ServerConfig } from "../../config.ts";
 import {
   CommandId,
   CorrelationId,
@@ -12,6 +14,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import { makeQuickChatWorkspace } from "../quickChatWorkspace.ts";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vite-plus/test";
@@ -79,6 +83,65 @@ describe("ThreadDeletionReactor drain", () => {
     payload: { threadId, deletedAt: now },
   });
 
+  effectIt.effect("archive retains files and deletion waits for the provider to stop", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspace = yield* makeQuickChatWorkspace;
+      const source = workspace.directory(threadId);
+      yield* fs.makeDirectory(source, { recursive: true });
+      yield* fs.writeFileString(`${source}/script.sh`, "echo hello");
+      const deleteChat = yield* Deferred.make<void>();
+      const stopStarted = yield* Deferred.make<void>();
+      const finishStop = yield* Deferred.make<void>();
+      const archived: OrchestrationEvent = {
+        ...deletedEvent(1),
+        type: "thread.archived",
+        payload: { threadId, archivedAt: now, updatedAt: now },
+      };
+      const engine = {
+        latestSequence: Effect.succeed(0),
+        streamDomainEvents: Stream.concat(
+          Stream.make(archived),
+          Stream.fromEffect(Deferred.await(deleteChat)).pipe(Stream.map(() => deletedEvent(2))),
+        ),
+      } as unknown as OrchestrationEngineShape;
+      const provider = {
+        stopSession: () =>
+          Deferred.succeed(stopStarted, undefined).pipe(Effect.andThen(Deferred.await(finishStop))),
+      } as unknown as ProviderServiceShape;
+      const terminal = {
+        close: () => Effect.void,
+      } as unknown as TerminalManager.TerminalManager["Service"];
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadDeletionReactor;
+        yield* reactor.start();
+        yield* reactor.drainThrough(1);
+        expect(yield* fs.readFileString(`${source}/script.sh`)).toBe("echo hello");
+        yield* Deferred.succeed(deleteChat, undefined);
+        yield* Deferred.await(stopStarted);
+        expect(yield* fs.exists(source)).toBe(true);
+        yield* Deferred.succeed(finishStop, undefined);
+        yield* reactor.drainThrough(2);
+        expect(yield* fs.exists(source)).toBe(false);
+      }).pipe(
+        Effect.provide(
+          ThreadDeletionReactorLive.pipe(
+            Layer.provide(Layer.succeed(ProviderService, provider)),
+            Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminal)),
+            Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-deletion-lifecycle-",
+        }).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+    ),
+  );
+
   effectIt.effect("waits for a published deletion the subscriber has not consumed yet", () =>
     Effect.gen(function* () {
       const stops: Array<number> = [];
@@ -112,6 +175,8 @@ describe("ThreadDeletionReactor drain", () => {
         Layer.provide(Layer.succeed(ProviderService, providerService)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-deletion-test-" })),
+        Layer.provide(NodeServices.layer),
       );
 
       yield* Effect.scoped(

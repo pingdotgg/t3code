@@ -680,21 +680,12 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeWakeTick,
   ]);
   const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled)
-      return {
-        items: [],
-        hiddenSettledCount: 0,
-        snoozedCount: 0,
-        snoozedShelfHeaderIndex: null,
-        settledCount: 0,
-        settledShelfHeaderIndex: null,
-        nextSnoozeWakeAt: null,
-      };
-    // Settled threads are live shells; archived threads keep their original
-    // "hidden from lists" meaning.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: props.threads.filter(
+        (thread) =>
+          thread.archivedAt === null && (threadListV2Enabled || thread.projectId === null),
+      ),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -763,7 +754,7 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       buildThreadListV2ListItems({
         items: threadListV2Layout.items,
-        pendingTasks: v2PendingTasks,
+        pendingTasks: threadListV2Enabled ? v2PendingTasks : [],
         snoozedCount: threadListV2Layout.snoozedCount,
         snoozedShelfExpanded,
         snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
@@ -772,7 +763,13 @@ export function HomeScreen(props: HomeScreenProps) {
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${nowMinute}:00.000Z`,
       }),
-    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
+    [
+      settledShelfExpanded,
+      snoozedShelfExpanded,
+      threadListV2Layout,
+      v2PendingTasks,
+      threadListV2Enabled,
+    ],
   );
 
   const renderV2Item = useCallback(
@@ -781,6 +778,10 @@ export function HomeScreen(props: HomeScreenProps) {
       const showTrailingDivider =
         nextItem?.type === "v2-thread" ||
         (nextItem?.type === "v2-pending" && !nextItem.showPendingDivider);
+      if (item.type === "v2-quick-chats-header")
+        return (
+          <Text className="px-4 pt-4 pb-2 text-sm font-t3-bold text-foreground">Quick chats</Text>
+        );
       if (item.type === "v2-pending") {
         const pendingScopeKey = scopedProjectKey(
           item.pendingTask.environmentId,
@@ -864,14 +865,21 @@ export function HomeScreen(props: HomeScreenProps) {
           onArchiveThread={props.onArchiveThread}
           onRegenerateThreadTitle={handleRegenerateThreadTitle}
           titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
-          settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
+          settlementSupported={
+            thread.projectId !== null && settlementEnvironmentIds.has(thread.environmentId)
+          }
           onSettleThread={handleSettleThread}
-          snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
-          pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
+          snoozeSupported={
+            thread.projectId !== null && snoozeEnvironmentIds.has(thread.environmentId)
+          }
+          pinningSupported={
+            thread.projectId !== null && pinningEnvironmentIds.has(thread.environmentId)
+          }
           reorderSupported={
-            item.item.pinned
+            thread.projectId !== null &&
+            (item.item.pinned
               ? pinReorderEnvironmentIds.has(thread.environmentId)
-              : activeReorderEnvironmentIds.has(thread.environmentId)
+              : activeReorderEnvironmentIds.has(thread.environmentId))
           }
           canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
           canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
@@ -962,7 +970,7 @@ export function HomeScreen(props: HomeScreenProps) {
   );
 
   const renderItem = useCallback(
-    ({ item }: LegendListRenderItemProps<HomeListItem>) => {
+    ({ item }: { readonly item: HomeListItem }) => {
       switch (item.type) {
         case "header":
           return (
@@ -1060,7 +1068,25 @@ export function HomeScreen(props: HomeScreenProps) {
     ],
   );
 
-  const keyExtractor = useCallback((item: HomeListItem) => item.key, []);
+  const legacyListItems = useMemo(
+    () => [...listLayout.items, ...threadListV2Items],
+    [listLayout.items, threadListV2Items],
+  );
+  const renderLegacyListItem = useCallback(
+    (props: LegendListRenderItemProps<HomeListItem | ThreadListV2ListItem>) => {
+      const item = props.item;
+      if (
+        item.type === "header" ||
+        item.type === "thread" ||
+        item.type === "pending-task" ||
+        item.type === "show-more"
+      )
+        return renderItem({ item });
+      return renderV2Item({ item, index: props.index - listLayout.items.length });
+    },
+    [renderItem, renderV2Item, listLayout.items.length],
+  );
+  const keyExtractor = useCallback((item: HomeListItem | ThreadListV2ListItem) => item.key, []);
 
   /* Empty states */
   // The signal must ignore the search/environment filters: an active query
@@ -1224,10 +1250,23 @@ export function HomeScreen(props: HomeScreenProps) {
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <LegendList
             ref={listRef}
-            data={listLayout.items}
-            renderItem={renderItem}
+            data={legacyListItems}
+            renderItem={renderLegacyListItem}
             keyExtractor={keyExtractor}
-            itemsAreEqual={homeListItemsAreEqual}
+            itemsAreEqual={(previous, item) => {
+              if (
+                (previous.type === "header" ||
+                  previous.type === "thread" ||
+                  previous.type === "pending-task" ||
+                  previous.type === "show-more") &&
+                (item.type === "header" ||
+                  item.type === "thread" ||
+                  item.type === "pending-task" ||
+                  item.type === "show-more")
+              )
+                return homeListItemsAreEqual(previous, item);
+              return previous === item;
+            }}
             drawDistance={500}
             estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
             extraData={extraData}

@@ -182,7 +182,7 @@ export function getThreadListV2OrderedSection(input: {
   readonly queuedThreadKeys?: ReadonlySet<string>;
 }): EnvironmentThreadShell[] {
   const threads = input.threads.filter((thread) => {
-    if (thread.archivedAt !== null) return false;
+    if (thread.archivedAt !== null || thread.projectId === null) return false;
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
@@ -269,6 +269,7 @@ export interface ThreadListV2SettledShelfListItem {
 }
 
 export type ThreadListV2ListItem =
+  | { readonly type: "v2-quick-chats-header"; readonly key: "v2-quick-chats-header" }
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2SnoozedShelfListItem
@@ -330,6 +331,14 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
+  const quickChatIndex = result.findIndex(
+    (item) => item.type === "v2-thread" && item.item.thread.projectId === null,
+  );
+  if (quickChatIndex >= 0)
+    result.splice(quickChatIndex, 0, {
+      type: "v2-quick-chats-header",
+      key: "v2-quick-chats-header",
+    });
   return result;
 }
 
@@ -395,7 +404,11 @@ export function buildThreadListV2Items(input: {
   for (const thread of input.threads) {
     // Callers pass live shells. The server stamps settledOverride for the tail.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
-    if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
+    if (
+      thread.projectId !== null &&
+      projectKeys !== null &&
+      !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)
+    ) {
       continue;
     }
     if (
@@ -411,6 +424,10 @@ export function buildThreadListV2Items(input: {
         }),
       ) !== true
     ) {
+      continue;
+    }
+    if (thread.projectId === null) {
+      active.push(thread);
       continue;
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
@@ -483,7 +500,9 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
-  for (const thread of orderedActive) {
+  for (const thread of [...orderedActive].sort(
+    (left, right) => Number(left.projectId === null) - Number(right.projectId === null),
+  )) {
     items.push({
       thread,
       variant: "card",

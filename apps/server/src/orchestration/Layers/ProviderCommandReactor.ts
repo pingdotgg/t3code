@@ -1,3 +1,4 @@
+import { makeQuickChatWorkspace } from "../quickChatWorkspace.ts";
 import {
   type ChatAttachment,
   CommandId,
@@ -22,6 +23,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
+import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -325,6 +327,8 @@ const make = Effect.gen(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
+  const quickChatWorkspace = yield* makeQuickChatWorkspace;
+  const pendingTurnStarts = yield* FiberSet.make<void, never>();
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
@@ -478,10 +482,36 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId) {
+  const resolveProject = Effect.fnUntraced(function* (projectId: ProjectId | null) {
+    if (projectId === null) return undefined;
     return yield* projectionSnapshotQuery
       .getProjectShellById(projectId)
       .pipe(Effect.map(Option.getOrUndefined));
+  });
+
+  // Quick chats own a stable directory without inheriting a project's workspace.
+  const resolveSessionCwd = Effect.fn("resolveSessionCwd")(function* (thread: {
+    readonly id: ThreadId;
+    readonly projectId: ProjectId | null;
+    readonly worktreePath: string | null;
+  }) {
+    if (thread.projectId === null) {
+      const cwd = quickChatWorkspace.directory(thread.id);
+      yield* fileSystem.makeDirectory(cwd, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: "unknown",
+              method: "thread.turn.start",
+              detail: "Could not prepare the quick chat directory.",
+              cause,
+            }),
+        ),
+      );
+      return cwd;
+    }
+    const project = yield* resolveProject(thread.projectId);
+    return resolveThreadWorkspaceCwd({ thread, projects: project ? [project] : [] });
   });
 
   /**
@@ -492,7 +522,7 @@ const make = Effect.gen(function* () {
    */
   const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
     readonly id: ThreadId;
-    readonly projectId: ProjectId;
+    readonly projectId: ProjectId | null;
     readonly branch: string | null;
     readonly worktreePath: string | null;
   }) {
@@ -707,11 +737,7 @@ const make = Effect.gen(function* () {
         });
       }
     }
-    const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
-      thread,
-      projects: project ? [project] : [],
-    });
+    const effectiveCwd = yield* resolveSessionCwd(thread);
     const refreshWorkspaceSnapshot = effectiveCwd
       ? providerRegistry
           .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
@@ -858,7 +884,11 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const cwd = thread.projectId === null ? null : yield* resolveSessionCwd(thread);
+    const promotionNote = cwd ? yield* quickChatWorkspace.pendingNote(thread.id, cwd) : null;
+    const normalizedInput = toNonEmptyProviderInput(
+      promotionNote ? `${input.messageText}\n\n${promotionNote}` : input.messageText,
+    );
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
@@ -1032,12 +1062,7 @@ const make = Effect.gen(function* () {
     if (thread.title !== previousTitle) {
       return { _tag: "Superseded" } as const;
     }
-    const project = yield* resolveProject(thread.projectId);
-    const cwd =
-      resolveThreadWorkspaceCwd({
-        thread,
-        projects: project ? [project] : [],
-      }) ?? process.cwd();
+    const cwd = (yield* resolveSessionCwd(thread)) ?? process.cwd();
     const { textGenerationModelSelection: modelSelection } =
       yield* serverSettingsService.getSettings;
     const generated = yield* textGeneration.generateThreadTitle({
@@ -1302,12 +1327,7 @@ const make = Effect.gen(function* () {
 
     const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
+      const generationCwd = (yield* resolveSessionCwd(thread)) ?? process.cwd();
       const generationInput = {
         messageText: assistantCitationsToPlainText(message.text),
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
@@ -1440,9 +1460,21 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap(() =>
+        quickChatWorkspace.clearNote(thread.id).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not acknowledge quick-chat relocation note", {
+              threadId: thread.id,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        ),
+      ),
+      Effect.asVoid,
+      Effect.catchCause(recoverTurnStartFailure),
+      FiberSet.run(pendingTurnStarts),
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -1835,6 +1867,7 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* FiberSet.awaitEmpty(pendingTurnStarts);
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;

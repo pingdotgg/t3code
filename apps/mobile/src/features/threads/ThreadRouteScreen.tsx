@@ -1,3 +1,4 @@
+import { QuickChatProjectAttachment } from "./QuickChatProjectAttachment";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -241,12 +242,30 @@ function ThreadRouteContent(
   const threadId = firstRouteParam(params.threadId);
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+  const [attachmentThreadIdentity, setAttachmentThreadIdentity] = useState<string | null>(null);
+  const handleOpenQuickChatAttachment = useCallback(() => {
+    setAttachmentThreadIdentity(routeThreadIdentity);
+  }, [routeThreadIdentity]);
+  const isQuickChat = selectedThread?.projectId === null;
+  const quickChatHeaderItems = useMemo<NativeHeaderItems>(
+    () => [
+      withNativeGlassHeaderItem({
+        accessibilityLabel: "Attach to project",
+        icon: { name: "folder.badge.plus", type: "sfSymbol" as const },
+        identifier: "thread-attach-project",
+        label: "Attach to project",
+        onPress: handleOpenQuickChatAttachment,
+        type: "button" as const,
+      }),
+    ],
+    [handleOpenQuickChatAttachment],
+  );
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
-      if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
+      if (inspectorSelection.mode !== "route" && selectedThreadCwd === null) {
         return null;
       }
       return inspectorSelection.mode;
@@ -273,7 +292,7 @@ function ThreadRouteContent(
   useEffect(() => {
     setInspectorSelection((current) => {
       if (props.renderInspector === undefined) {
-        if (current === null || current.mode === "route") {
+        if (selectedThreadCwd === null || current === null || current.mode === "route") {
           return null;
         }
         return { ...current, routeThreadIdentity };
@@ -285,7 +304,7 @@ function ThreadRouteContent(
 
       return { ...current, routeThreadIdentity };
     });
-  }, [props.renderInspector, routeThreadIdentity]);
+  }, [props.renderInspector, routeThreadIdentity, selectedThreadCwd]);
 
   useFocusEffect(
     useCallback(() => {
@@ -640,7 +659,8 @@ function ThreadRouteContent(
         : undefined,
     onOpenFilesInspector:
       fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
+    onOpenGitInspector:
+      fileInspector.supported && selectedThreadCwd !== null ? handleOpenGitInspector : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
@@ -707,6 +727,13 @@ function ThreadRouteContent(
     if (Platform.OS !== "android") return [];
 
     const actions: AndroidHeaderAction[] = [];
+    if (isQuickChat) {
+      actions.push({
+        accessibilityLabel: "Attach to project",
+        icon: "folder",
+        onPress: handleOpenQuickChatAttachment,
+      });
+    }
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -728,11 +755,16 @@ function ThreadRouteContent(
         onPress: () => handleOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: handleOpenGitInspector,
-    });
+    if (
+      selectedThreadProject?.workspaceRoot &&
+      (!fileInspector.supported || selectedThreadCwd !== null)
+    ) {
+      actions.push({
+        accessibilityLabel: "Open git controls",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: handleOpenGitInspector,
+      });
+    }
     if (fileInspector.supported && selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Toggle inspector",
@@ -742,6 +774,8 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
+    isQuickChat,
+    handleOpenQuickChatAttachment,
     fileInspector.supported,
     handleOpenFilesInspector,
     handleOpenTerminal,
@@ -838,7 +872,9 @@ function ThreadRouteContent(
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
-      <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      {selectedThreadProject && (
+        <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      )}
 
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
@@ -855,6 +891,13 @@ function ThreadRouteContent(
             : undefined
         }
       >
+        {isQuickChat && attachmentThreadIdentity === routeThreadIdentity && (
+          <QuickChatProjectAttachment
+            key={`${selectedThread.environmentId}:${selectedThread.id}`}
+            threadRef={{ environmentId: selectedThread.environmentId, threadId: selectedThread.id }}
+            onClose={() => setAttachmentThreadIdentity(null)}
+          />
+        )}
         <ThreadDetailScreen
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           contentPresentation={contentPresentation}
@@ -913,7 +956,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <NativeStackScreenOptions
-        optionsVersion={threadGitControlProps.projectScripts}
+        optionsVersion={{ projectScripts: threadGitControlProps.projectScripts, isQuickChat }}
         options={{
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
@@ -943,7 +986,14 @@ function ThreadRouteContent(
           // reserved for future breadcrumbs/status).
           unstable_headerRightItems:
             Platform.OS === "ios"
-              ? () => (layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems)
+              ? () =>
+                  selectedThreadProject
+                    ? layout.usesSplitView
+                      ? threadCenterHeaderItems
+                      : compactRightHeaderItems
+                    : isQuickChat
+                      ? quickChatHeaderItems
+                      : []
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
           contentStyle:

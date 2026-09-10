@@ -287,3 +287,7 @@ describe("linked request settlement", () => {
     );
   });
 });
+
+it("keeps idle quick chats out of automatic project settlement", () => {
+  expect(decide(makeThread({ projectId: null, branch: null, worktreePath: null }))).toBe(false);
+});

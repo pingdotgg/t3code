@@ -20,6 +20,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import { makeQuickChatWorkspace } from "../quickChatWorkspace.ts";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -63,6 +65,7 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 function makeOrchestrationLayer(
   databasePath?: string,
   repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+  onProjected?: (event: OrchestrationEvent) => void,
 ) {
   const persistence = databasePath
     ? makeSqlitePersistenceLive(databasePath)
@@ -73,7 +76,23 @@ function makeOrchestrationLayer(
   return Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(
+        onProjected
+          ? Layer.effect(
+              OrchestrationProjectionPipeline,
+              Effect.gen(function* () {
+                const pipeline = yield* OrchestrationProjectionPipeline;
+                return {
+                  ...pipeline,
+                  projectEventDeferred: (event: OrchestrationEvent) =>
+                    pipeline
+                      .projectEventDeferred(event)
+                      .pipe(Effect.tap(() => Effect.sync(() => onProjected(event)))),
+                };
+              }),
+            ).pipe(Layer.provide(OrchestrationProjectionPipelineLive))
+          : OrchestrationProjectionPipelineLive,
+      ),
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
@@ -469,6 +488,7 @@ describe("OrchestrationEngine", () => {
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
+      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-engine-workspace-test-" })),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -563,6 +583,185 @@ describe("OrchestrationEngine", () => {
       expect(yield* engine.latestSequence).toBe(sequence);
     }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
+
+  it("keeps a quick chat unattached while a question is pending after restart", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-quick-attachment-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    const threadId = ThreadId.make("quick-pending");
+    const projectId = ProjectId.make("quick-project");
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("project"),
+          projectId,
+          title: "Project",
+          workspaceRoot: directory,
+          createdAt: now(),
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("chat"),
+          threadId,
+          projectId: null,
+          title: "Quick chat",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          runtimeMode: "full-access",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("question"),
+          threadId,
+          createdAt: now(),
+          activity: {
+            id: EventId.make("question"),
+            kind: "user-input.requested",
+            summary: "Question",
+            tone: "info",
+            turnId: null,
+            createdAt: now(),
+            payload: { requestId: "pending-question", responseMode: "message", questions: [] },
+          },
+        }),
+      );
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      const error = await system.run(
+        system.engine
+          .dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make("attach"),
+            threadId,
+            projectId,
+          })
+          .pipe(Effect.flip),
+      );
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(String(error)).toContain("Resolve pending requests");
+      expect(
+        (await system.readModel()).threads.find((thread) => thread.id === threadId)?.projectId,
+      ).toBeNull();
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  effectIt.effect("attaches quick chats only after background work finishes", () => {
+    let reportBackgroundWork = () => {};
+    return Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const snapshots = yield* ProjectionSnapshotQuery;
+      const liveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+      const threadId = ThreadId.make("quick-chat-background");
+      const projectId = ProjectId.make("quick-chat-project");
+      const fs = yield* FileSystem.FileSystem;
+      const workspace = yield* makeQuickChatWorkspace;
+      const cwd = yield* fs.makeTempDirectoryScoped();
+      const source = workspace.directory(threadId);
+      yield* fs.makeDirectory(source, { recursive: true });
+      yield* fs.writeFileString(`${source}/script.sh`, "echo preserved");
+      reportBackgroundWork = () =>
+        liveness.recordTaskLiveness({
+          threadId,
+          taskId: "racing-task",
+          taskType: "subagent",
+          status: undefined,
+          kind: "started",
+        });
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("quick-project-create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: cwd,
+        createdAt: now(),
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("quick-chat-create"),
+        threadId,
+        projectId: null,
+        title: "Quick chat",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      });
+      for (const taskType of ["subagent", "local_bash"]) {
+        liveness.recordTaskLiveness({
+          threadId,
+          taskId: taskType,
+          taskType,
+          status: undefined,
+          kind: "started",
+        });
+        const result = yield* engine
+          .dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make(`quick-attach-${taskType}`),
+            threadId,
+            projectId,
+          })
+          .pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+        expect(
+          (yield* snapshots.getSnapshot()).threads.find((thread) => thread.id === threadId)
+            ?.projectId,
+        ).toBeNull();
+        liveness.clearThreadLiveness(threadId);
+      }
+      const raced = yield* engine
+        .dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("quick-attach-race"),
+          threadId,
+          projectId,
+        })
+        .pipe(Effect.result);
+      expect(raced._tag).toBe("Failure");
+      expect(yield* fs.readFileString(`${source}/script.sh`)).toBe("echo preserved");
+      expect(yield* fs.readDirectory(`${cwd}/quick-chat-files`)).toEqual([]);
+      expect(yield* workspace.pendingNote(threadId, cwd)).toBeNull();
+      expect(
+        (yield* snapshots.getSnapshot()).threads.find((thread) => thread.id === threadId)
+          ?.projectId,
+      ).toBeNull();
+      const events = yield* Stream.runCollect(engine.readEvents(0));
+      expect(events.some((event) => event.commandId === CommandId.make("quick-attach-race"))).toBe(
+        false,
+      );
+      liveness.clearThreadLiveness(threadId);
+      yield* engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("quick-attach-idle"),
+        threadId,
+        projectId,
+      });
+      expect(
+        (yield* snapshots.getSnapshot()).threads.find((thread) => thread.id === threadId)
+          ?.projectId,
+      ).toBe(projectId);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        makeOrchestrationLayer(undefined, undefined, (event) => {
+          if (event.commandId === CommandId.make("quick-attach-race")) reportBackgroundWork();
+        }),
+      ),
+    );
+  });
 
   effectIt.effect(
     "rejects persisted changes and live background work without blocking unrelated threads",
@@ -1120,6 +1319,11 @@ describe("OrchestrationEngine", () => {
                   },
           ),
         );
+        if (change === "relink") {
+          expect(
+            (await system.readModel()).threads[0]?.pullRequests.map((link) => link.number),
+          ).toEqual([3]);
+        }
         const command = {
           type: "thread.pull-request.sync",
           commandId: CommandId.make("pr-race-stale-sync"),
@@ -1618,6 +1822,9 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-engine-workspace-test-" }),
+        ),
         Layer.provide(NodeServices.layer),
       ),
     );
@@ -1767,6 +1974,9 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolver.layer),
         Layer.provide(SqlitePersistenceMemory),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-engine-workspace-test-" }),
+        ),
         Layer.provide(NodeServices.layer),
       ),
     );

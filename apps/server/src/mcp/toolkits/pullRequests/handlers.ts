@@ -169,10 +169,12 @@ const make = Effect.gen(function* () {
     thread: OrchestrationThreadShell,
     Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError,
   ) =>
-    snapshots.getProjectShellById(thread.projectId).pipe(
-      Effect.map(Option.getOrUndefined),
-      Effect.mapError((cause) => new Failure({ cause })),
-    );
+    thread.projectId === null
+      ? Effect.succeed(undefined)
+      : snapshots.getProjectShellById(thread.projectId).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.mapError((cause) => new Failure({ cause })),
+        );
 
   const dispatchFailure =
     (Failure: typeof PullRequestLinkFailedError | typeof PullRequestUnlinkFailedError) =>

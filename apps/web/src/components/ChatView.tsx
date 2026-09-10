@@ -1915,7 +1915,7 @@ export default function ChatView(props: ChatViewProps) {
     [activeKnownTerminalIds, panelTerminalIds],
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
-  const rightPanelOpen = rightPanelState.isOpen;
+  const rightPanelOpen = activeThread?.projectId != null && rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const activeTerminalDrawerPresence = usePanelPresence(
@@ -3624,7 +3624,7 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadRef, storeSetTerminalOpen],
   );
   const toggleTerminalVisibility = useCallback(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !activeProject) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
       if (!activeThreadId || !activeProject) {
@@ -4445,13 +4445,13 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadRef, diffOpen, onDiffPanelOpen],
   );
   const toggleRightPanel = useCallback(() => {
-    if (!activeThreadRef) return;
+    if (!activeThreadRef || !activeProject) return;
     if (rightPanelOpen) {
       closePreviewPanel();
       return;
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
+  }, [activeThreadRef, activeProject, closePreviewPanel, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -5793,7 +5793,6 @@ export default function ChatView(props: ChatViewProps) {
   const compactThreadUnavailable =
     !activeThread ||
     !activeThreadHasCompactableConversation ||
-    !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
     isWorking ||
@@ -5808,11 +5807,9 @@ export default function ChatView(props: ChatViewProps) {
   const compactDisabledReason = compactDisabled
     ? composerHasUnsentContent
       ? "Send or clear your draft before compacting"
-      : !activeProject
-        ? "Choose a project before compacting"
-        : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+      : !manualCompactionProviderAvailable
+        ? "Compaction is unavailable for this provider"
+        : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -6675,7 +6672,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    if (!activeProject) {
+    if (!activeProject && activeThread.projectId !== null) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
@@ -6688,14 +6685,20 @@ export default function ChatView(props: ChatViewProps) {
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
+      isFirstMessage &&
+      activeProject !== null &&
+      sendEnvMode === "worktree" &&
+      !activeThread.worktreePath
         ? activeThreadBranch
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+      isFirstMessage &&
+      activeProject !== null &&
+      sendEnvMode === "worktree" &&
+      !activeThread.worktreePath;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
@@ -6989,7 +6992,7 @@ export default function ChatView(props: ChatViewProps) {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
           ? {
-              ...(isLocalDraftThread
+              ...(isLocalDraftThread && activeProject
                 ? {
                     createThread: {
                       projectId: activeProject.id,
@@ -7003,7 +7006,7 @@ export default function ChatView(props: ChatViewProps) {
                     },
                   }
                 : {}),
-              ...(baseBranchForWorktree
+              ...(baseBranchForWorktree && activeProject
                 ? {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
@@ -7056,7 +7059,7 @@ export default function ChatView(props: ChatViewProps) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
         acknowledgeActiveThreadWoke();
-        if (backgroundThreadRef) {
+        if (backgroundThreadRef && activeProject) {
           markPromotedDraftThreadByRef(backgroundThreadRef);
           try {
             const nextDraft = await handleNewThread(
@@ -8190,7 +8193,7 @@ export default function ChatView(props: ChatViewProps) {
             isServerThread={isServerThread}
             activeProject={activeProject}
             openInCwd={gitCwd}
-            activeProjectScripts={activeProjectScripts}
+            activeProjectScripts={activeProject ? activeProjectScripts : undefined}
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
@@ -8463,7 +8466,9 @@ export default function ChatView(props: ChatViewProps) {
                             onPageScrollRelease={onComposerPageScrollRelease}
                             onSend={onSend}
                             onInterrupt={onInterrupt}
-                            onImplementPlanInNewThread={onImplementPlanInNewThread}
+                            onImplementPlanInNewThread={
+                              activeProject ? onImplementPlanInNewThread : undefined
+                            }
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={
                               onSelectActivePendingUserInputOption
@@ -8495,7 +8500,22 @@ export default function ChatView(props: ChatViewProps) {
                           data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                           className="relative z-0"
                         >
-                          {mountComposerContextStrip && (
+                          {mountComposerContextStrip && !activeProject && (
+                            <ComposerSurface.ContextStrip
+                              className={cn(
+                                !showComposerContextStrip &&
+                                  "pointer-events-none invisible absolute inset-x-0 top-full",
+                              )}
+                            >
+                              <div
+                                ref={setRestingComposerControlsHost}
+                                data-composer-context-control
+                                data-chat-resting-composer-controls-host="true"
+                                className="flex min-w-0 flex-1 items-center justify-start overflow-x-clip overflow-y-visible"
+                              />
+                            </ComposerSurface.ContextStrip>
+                          )}
+                          {mountComposerContextStrip && activeProject && (
                             <div className="pointer-events-auto">
                               <BranchToolbar
                                 environmentId={activeThread.environmentId}

@@ -172,8 +172,24 @@ export function createSidebarSortingStrategy(input: {
     groups.settled = visible.map((key) => ({ kind: "thread", key, section: "settled" }));
     const projected: SidebarListItem[] = [];
     const marker = (name: SidebarListMarker) => projected.push({ kind: "marker", marker: name });
+    const quickChatsStart = items.findIndex(
+      (item) => item.kind === "marker" && item.marker === "quick-chats-header",
+    );
+    const quickChatKeys = new Set(
+      quickChatsStart < 0
+        ? []
+        : items
+            .slice(quickChatsStart + 1)
+            .flatMap((item) =>
+              item.kind === "thread" && item.section === "active" ? [item.key] : [],
+            ),
+    );
     const section = (name: "active" | "settled") => {
-      if (groups[name].length > 0) projected.push(...groups[name]);
+      if (name === "active" && quickChatKeys.size > 0) {
+        projected.push(...groups.active.filter((item) => !quickChatKeys.has(item.key)));
+        marker("quick-chats-header");
+        projected.push(...groups.active.filter((item) => quickChatKeys.has(item.key)));
+      } else if (groups[name].length > 0) projected.push(...groups[name]);
       else marker(`${name}-placeholder`);
     };
     marker("pinned-header");

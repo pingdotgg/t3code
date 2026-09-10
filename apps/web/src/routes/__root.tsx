@@ -15,6 +15,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { AttachQuickChatDialog } from "../components/AttachQuickChatDialog";
 import { CommandPalette } from "../components/CommandPalette";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -171,6 +172,7 @@ function RootRouteView() {
     <CommandPalette>
       <AppSidebarLayout>
         <Outlet />
+        <AttachQuickChatDialog />
       </AppSidebarLayout>
     </CommandPalette>
   );
