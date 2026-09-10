@@ -31,7 +31,7 @@ const REPLAY_SETTINGS = Schema.decodeUnknownSync(AcpRegistrySettings)({
   authMethodId: "replay",
 });
 
-export function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscript) {
+function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscript) {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(`acp-registry-${transcript.scenario}`).pipe(Effect.orDie),

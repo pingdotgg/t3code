@@ -253,10 +253,10 @@ export const issueActiveMcpCredential = (
 export const touchActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.touch(threadId) : Effect.void;
 
-export const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
+const revokeActiveMcpThread = (threadId: ThreadId): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeThread(threadId) : Effect.void;
 
-export const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
+const revokeAllActiveMcpCredentials = (): Effect.Effect<void> =>
   activeMcpSessionRegistry ? activeMcpSessionRegistry.revokeAll : Effect.void;
 
 /** Exposed for tests. */

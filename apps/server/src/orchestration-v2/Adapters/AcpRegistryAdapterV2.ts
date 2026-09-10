@@ -38,9 +38,7 @@ import {
 } from "./AcpAdapterV2.ts";
 
 export const ACP_REGISTRY_PROVIDER = ProviderDriverKind.make("acpRegistry");
-export const ACP_REGISTRY_DRIVER_KIND = ACP_REGISTRY_PROVIDER;
-export const ACP_REGISTRY_DEFAULT_INSTANCE_ID =
-  defaultInstanceIdForDriver(ACP_REGISTRY_DRIVER_KIND);
+export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_REGISTRY_PROVIDER);
 
 const DEFAULT_ACP_REGISTRY_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({});
 
@@ -134,7 +132,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   AcpRegistrySettings,
   AcpRegistryAdapterV2DriverEnv
 > = {
-  driverKind: ACP_REGISTRY_DRIVER_KIND,
+  driverKind: ACP_REGISTRY_PROVIDER,
   configSchema: AcpRegistrySettings,
   defaultConfig: (): AcpRegistrySettings => DEFAULT_ACP_REGISTRY_SETTINGS,
   create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
@@ -173,7 +171,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
         Effect.mapError(
           (cause) =>
             new ProviderAdapterDriverCreateError({
-              driver: ACP_REGISTRY_DRIVER_KIND,
+              driver: ACP_REGISTRY_PROVIDER,
               instanceId: input.instanceId,
               detail: "Failed to create ACP Registry adapter.",
               cause,

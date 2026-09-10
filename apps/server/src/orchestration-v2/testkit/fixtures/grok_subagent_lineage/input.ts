@@ -1,6 +1,6 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const GROK_SUBAGENT_LINEAGE_PROMPT = "audit this codebase";
+const GROK_SUBAGENT_LINEAGE_PROMPT = "audit this codebase";
 
 export function grokSubagentLineageInput(): OrchestratorFixtureInput {
   return {
