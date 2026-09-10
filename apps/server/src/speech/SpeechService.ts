@@ -80,11 +80,17 @@ export class SpeechModelNotFoundError extends Schema.TaggedError<SpeechModelNotF
   { modelId: Schema.String },
 ) {}
 
+export class SpeechDownloadCancelledError extends Schema.TaggedError<SpeechDownloadCancelledError>()(
+  "SpeechDownloadCancelledError",
+  { modelId: Schema.String },
+) {}
+
 type SpeechError =
   | SpeechOperationError
   | SpeechInvalidAudioError
   | SpeechUnsupportedPlatformError
   | SpeechModelNotFoundError
+  | SpeechDownloadCancelledError
   | SpeechBusyError;
 
 const isSpeechError = Schema.is(
@@ -93,6 +99,7 @@ const isSpeechError = Schema.is(
     SpeechUnsupportedPlatformError,
     SpeechBusyError,
     SpeechModelNotFoundError,
+    SpeechDownloadCancelledError,
     SpeechOperationError,
   ]),
 );
@@ -188,6 +195,9 @@ export const make = Effect.gen(function* () {
       );
       if (downloading?.modelId === modelId) downloading.verifying = true;
       return modelPath;
+    } catch (error) {
+      if (controller.signal.aborted) throw new SpeechDownloadCancelledError({ modelId });
+      throw error;
     } finally {
       lifetime.signal.removeEventListener("abort", abort);
       if (downloading?.modelId === modelId) downloading = undefined;

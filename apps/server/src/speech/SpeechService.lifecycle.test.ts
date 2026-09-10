@@ -15,6 +15,9 @@ const native = vi.hoisted(() => ({
   transcribe: vi.fn(async () => ({ text: "hello" })),
 }));
 const loadNative = vi.hoisted(() => vi.fn(async () => native));
+const downloadModel = vi.hoisted(() =>
+  vi.fn(async (_directory: string, _model: unknown, _signal?: AbortSignal) => "test.gguf"),
+);
 vi.mock("./native.ts", () => ({ loadNativeSpeechModel: loadNative }));
 vi.mock("./model.ts", () => ({
   DEFAULT_SPEECH_MODEL_ID: "test-model",
@@ -40,7 +43,7 @@ vi.mock("./model.ts", () => ({
     speed: 1,
     recommended: true,
   }),
-  downloadSpeechModel: async () => "test.gguf",
+  downloadSpeechModel: downloadModel,
   isSpeechModelReady: async () => true,
   removeSpeechModel: async () => {},
 }));
@@ -50,7 +53,10 @@ const layer = SpeechService.layer.pipe(
   Layer.provide(NodeServices.layer),
 );
 const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  downloadModel.mockImplementation(async () => "test.gguf");
+});
 it.effect("releases the loaded native model when its service scope closes", () =>
   Effect.gen(function* () {
     yield* Effect.gen(function* () {
@@ -83,6 +89,32 @@ it.effect("reloads the native model after inference fails", () =>
       expect(loadNative).toHaveBeenCalledTimes(2);
     }).pipe(Effect.provide(layer));
   }),
+);
+it.effect(
+  "reports an explicitly cancelled download without wrapping it as an operation failure",
+  () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      downloadModel.mockImplementationOnce(
+        async (_directory: string, _model: unknown, signal?: AbortSignal) => {
+          started.resolve();
+          return new Promise<string>((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      );
+      yield* Effect.gen(function* () {
+        const speech = yield* SpeechService.SpeechService;
+        const request = yield* speech.downloadModel("test-model").pipe(Effect.forkChild);
+        yield* Effect.promise(() => started.promise);
+        yield* speech.cancelDownload("test-model");
+        const result = yield* Effect.result(Fiber.join(request));
+        expect(Result.isFailure(result) && result.failure).toMatchObject({
+          _tag: "SpeechDownloadCancelledError",
+          modelId: "test-model",
+        });
+      }).pipe(Effect.provide(layer));
+    }),
 );
 it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
   Effect.gen(function* () {

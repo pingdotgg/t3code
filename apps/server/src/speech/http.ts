@@ -69,6 +69,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => Effect.void,
               SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
@@ -89,6 +90,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
               SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
@@ -125,6 +127,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
               SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
@@ -143,6 +146,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
               SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
