@@ -31,7 +31,7 @@ import {
   runDaemon as runEffectWorkerDaemon,
   OrchestrationEffectWorkerV2,
 } from "../EffectWorker.ts";
-import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
+import { EventSinkV2, layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
@@ -225,7 +225,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
-  OrchestratorV2 | OrchestrationEffectWorkerV2,
+  OrchestratorV2 | OrchestrationEffectWorkerV2 | EventSinkV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -247,7 +247,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly runEffectWorker?: boolean;
   } = {},
 ): Layer.Layer<
-  OrchestratorV2 | OrchestrationEffectWorkerV2,
+  OrchestratorV2 | OrchestrationEffectWorkerV2 | EventSinkV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const serverConfigLayer = Layer.effect(
@@ -415,10 +415,11 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectWorkerProvided = effectWorkerLayer.pipe(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
-  const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided).pipe(
-    Layer.provide(worktreeRepairDependenciesTestLayer),
-    Layer.provide(NodeServices.layer),
-  );
+  const replayRuntime = Layer.mergeAll(
+    orchestratorProvided,
+    effectWorkerProvided,
+    eventSinkProvided,
+  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the

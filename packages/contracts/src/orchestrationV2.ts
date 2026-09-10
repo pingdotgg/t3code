@@ -2387,6 +2387,13 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     runId: RunId,
   }),
+  /** Provider acceptance of a mailbox delivery; distinct from the agent reading its result. */
+  Schema.Struct({
+    type: Schema.Literal("notification.delivery.accept"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+  }),
   Schema.Struct({
     type: Schema.Literal("prepared-run.progress"),
     commandId: CommandId,
