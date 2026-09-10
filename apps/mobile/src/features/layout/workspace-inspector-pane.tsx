@@ -4,6 +4,7 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
+  type SharedValue,
 } from "react-native-reanimated";
 
 import { constrainAuxiliaryPaneWidth, type WorkspacePaneLayout } from "../../lib/layout";
@@ -22,6 +23,7 @@ import { WorkspacePaneDivider } from "./workspace-pane-divider";
  * module stays import-cycle-free with AdaptiveWorkspaceLayout.
  */
 export function WorkspaceInspectorPane(props: {
+  readonly renderedInspectorWidth: SharedValue<number>;
   /**
    * When false the pane animates closed but keeps its content mounted for the
    * exit transition (a route that lost focus). `onClosed` fires once the
@@ -45,7 +47,7 @@ export function WorkspaceInspectorPane(props: {
   // inspector at its final position so route replacement never replays an
   // entering transition. Only visibility and explicit resizing change it.
   const inspectorProgress = useSharedValue(inspectorVisible ? 1 : 0);
-  const renderedInspectorWidth = useSharedValue(inspectorVisible ? (inspectorWidth ?? 0) : 0);
+  const { renderedInspectorWidth } = props;
   // The content keeps its own width so the reveal (outer width) clips a
   // fully-laid-out pane instead of reflowing text every frame. When the OPEN
   // pane's target width changes (e.g. the sidebar toggles and reserves
