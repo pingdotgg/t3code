@@ -19,7 +19,11 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveSpawnCommand,
+  withCommandDirectoryCache,
+} from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -427,19 +431,23 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
 > {
   const available: EditorId[] = [];
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+  // Return completed probes before server.getConfig's five-second deadline
+  // would discard the entire list. The existing discovery cache keeps this result.
+  yield* Effect.gen(function* () {
+    for (const editor of EDITORS) {
+      if (editor.commands === null) {
+        if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+          available.push(editor.id);
+        }
+        continue;
+      }
+
+      const command = yield* resolveAvailableCommand(editor.commands, env);
+      if (Option.isSome(command)) {
         available.push(editor.id);
       }
-      continue;
     }
-
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
+  }).pipe(withCommandDirectoryCache, Effect.timeoutOption("4 seconds"));
 
   return available;
 });

@@ -840,6 +840,7 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
+          readDirectory: () => Effect.succeed(["code.CMD"]),
           stat: () =>
             Effect.sync(() => {
               statCalls += 1;
@@ -905,6 +906,7 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
+          readDirectory: () => Effect.succeed(["code.CMD"]),
           // The first scan parks inside `stat` so the interrupt lands while
           // discovery is in flight, which is what a client disconnecting
           // mid-connect does to the shared effect.
@@ -949,6 +951,62 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
             env: {
               PATH: "C:\\t3-editor-discovery-interrupt-test",
               PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
+it.effect("returns and caches completed editor probes when a later probe times out", () => {
+  const probes: string[] = [];
+  let stalledProbeStopped = false;
+  const launcherLayer = ExternalLauncher.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          readDirectory: () => Effect.succeed(["cursor.EXE", "trae.EXE", "explorer.EXE"]),
+          stat: (path) => {
+            probes.push(path);
+            return path.includes("trae")
+              ? Effect.never.pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      stalledProbeStopped = true;
+                    }),
+                  ),
+                )
+              : Effect.succeed({ type: "File" } as FileSystem.File.Info);
+          },
+        }),
+        Path.layer,
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.sync(() => makeMockDetachedHandle())),
+        ),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const launcher = yield* ExternalLauncher.ExternalLauncher;
+    const fiber = yield* Effect.forkChild(launcher.resolveAvailableEditors());
+    yield* TestClock.adjust("4 seconds");
+    assert.deepEqual(yield* Fiber.join(fiber), ["cursor"]);
+    assert.equal(stalledProbeStopped, true);
+    assert.equal(probes.length, 2);
+    assert.deepEqual(yield* launcher.resolveAvailableEditors(), ["cursor"]);
+    assert.equal(probes.length, 2);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        launcherLayer,
+        Layer.succeed(HostProcessPlatform, "win32"),
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: {
+              PATH: "C:\\t3-editor-partial-result-test",
+              PATHEXT: ".EXE",
             },
           }),
         ),
