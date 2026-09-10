@@ -1,4 +1,8 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type {
+  DiscoveredLocalServerUrlKind,
+  EnvironmentId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
@@ -6,6 +10,7 @@ import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
+import { findDiscoveredServerTarget } from "./previewEmptyStateLogic";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
 
 interface Props {
@@ -14,7 +19,7 @@ interface Props {
   configuredUrls?: ReadonlyArray<string> | undefined;
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
-  onOpenUrl: (url: string) => void;
+  onOpenUrl: (url: string, targetPort?: number, urlKind?: DiscoveredLocalServerUrlKind) => void;
 }
 
 export function PreviewEmptyState({
@@ -61,7 +66,10 @@ export function PreviewEmptyState({
                   key={entry.url}
                   threadRef={threadRef}
                   entry={entry}
-                  onOpen={() => onOpenUrl(entry.url)}
+                  onOpen={() => {
+                    const target = findDiscoveredServerTarget(entry.url, servers);
+                    onOpenUrl(entry.url, target?.port, target?.urlKind);
+                  }}
                   onRemove={() => onRemoveRecent(entry.url)}
                 />
               ))}
@@ -80,7 +88,7 @@ export function PreviewEmptyState({
                   key={`${server.host}:${server.port}`}
                   threadRef={threadRef}
                   server={server}
-                  onOpen={() => onOpenUrl(server.requestedUrl)}
+                  onOpen={() => onOpenUrl(server.requestedUrl, server.port, server.urlKind)}
                 />
               ))}
             </div>

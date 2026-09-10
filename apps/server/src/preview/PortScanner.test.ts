@@ -1,12 +1,14 @@
 import * as NodeNet from "node:net";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
+  ThreadId,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -18,8 +20,9 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { expect } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { FetchHttpClient } from "effect/unstable/http";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
@@ -59,6 +62,8 @@ const makeProbeFailureLayer = (
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessEnvironment, {}),
         Layer.succeed(ProcessRunner.ProcessRunner, { run }),
         Layer.succeed(Net.NetService, {
           canListenOnHost: () => Effect.succeed(true),
@@ -76,6 +81,8 @@ const makeProbeFailureLayer = (
 const TestPortDiscoveryLive = PortScanner.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(HostProcessEnvironment, {}),
       TestProcessRunner,
       TestIntegrationNet,
       Layer.succeed(HostProcessPlatform, "win32"),
@@ -93,6 +100,8 @@ const makeLsofScannerLayer = (input: {
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(HostProcessEnvironment, {}),
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
@@ -120,6 +129,418 @@ const makeLsofScannerLayer = (input: {
       ),
     ),
   );
+
+describe("Portless route enrichment", () => {
+  it("uses the live Portless URL for its target listener", () => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([
+        {
+          hostname: "eng-1252-simplify-the-onboarding.artelo.localhost",
+          port: 4058,
+          pid: 123,
+        },
+      ]),
+      proxyPortRaw: "443\n",
+      tls: true,
+      proxyListening: true,
+      isProcessAlive: (pid) => pid === 123,
+    });
+
+    expect(routes.get(4058)).toEqual({
+      url: "https://eng-1252-simplify-the-onboarding.artelo.localhost",
+      urlKind: "local-proxy",
+    });
+    expect(
+      PortScanner.__testing.applyNamedRoutes(
+        [
+          {
+            host: "localhost",
+            port: 4058,
+            url: "http://localhost:4058",
+            processName: "node",
+            pid: 456,
+            terminal: null,
+          },
+        ],
+        routes,
+      ),
+    ).toEqual([
+      {
+        host: "localhost",
+        port: 4058,
+        url: "https://eng-1252-simplify-the-onboarding.artelo.localhost",
+        urlKind: "local-proxy",
+        processName: "node",
+        pid: 456,
+        terminal: null,
+      },
+    ]);
+  });
+
+  it("ignores stale routes and preserves custom proxy settings", () => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([
+        { hostname: "stale.localhost", port: 3000, pid: 111 },
+        { hostname: "current.test", port: 3001, pid: 222 },
+        { hostname: "not a hostname", port: 3002, pid: 222 },
+      ]),
+      proxyPortRaw: "8080",
+      tls: false,
+      proxyListening: true,
+      isProcessAlive: (pid) => pid === 222,
+    });
+
+    expect([...routes]).toEqual([
+      [3001, { url: "http://current.test:8080", urlKind: "local-proxy" }],
+    ]);
+  });
+
+  it.each(["8080abc", "443.5"])("ignores a malformed proxy port of %s", (proxyPortRaw) => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([{ hostname: "current.test", port: 3001, pid: 222 }]),
+      proxyPortRaw,
+      tls: true,
+      proxyListening: true,
+      isProcessAlive: (pid) => pid === 222,
+    });
+
+    expect([...routes]).toEqual([[3001, { url: "https://current.test", urlKind: "local-proxy" }]]);
+  });
+
+  it("ignores routes when the Portless proxy is no longer listening", () => {
+    const routes = PortScanner.__testing.parsePortlessRouteSnapshot({
+      routesJson: JSON.stringify([{ hostname: "stale.localhost", port: 3001, pid: 222 }]),
+      proxyPortRaw: "443",
+      tls: true,
+      proxyListening: false,
+      isProcessAlive: () => true,
+    });
+
+    expect([...routes]).toEqual([]);
+  });
+});
+
+describe("ngrok route enrichment", () => {
+  it("maps public HTTP tunnels to their loopback target and prefers HTTPS", () => {
+    const routes = PortScanner.__testing.parseNgrokTunnelSnapshot({
+      tunnels: [
+        {
+          public_url: "http://feature.ngrok-free.app",
+          config: { addr: "http://localhost:4058" },
+        },
+        {
+          public_url: "https://feature.ngrok-free.app",
+          config: { addr: "http://127.0.0.1:4058" },
+        },
+      ],
+    });
+
+    expect(routes && [...routes]).toEqual([
+      [4058, { url: "https://feature.ngrok-free.app/", urlKind: "public-tunnel" }],
+    ]);
+  });
+
+  it("accepts current forwards_to entries and ignores unsafe or non-web tunnels", () => {
+    const routes = PortScanner.__testing.parseNgrokTunnelSnapshot({
+      tunnels: [
+        { public_url: "https://docs.example.com", forwards_to: "[::1]:4312" },
+        { public_url: "https://invalid.example.com", forwards_to: "internal.example.com:4313" },
+        { public_url: "tcp://1.tcp.ngrok.io:12345", config: { addr: "localhost:4314" } },
+        { public_url: "https://user:secret@example.com", config: { addr: "4315" } },
+      ],
+    });
+
+    expect(routes && [...routes]).toEqual([
+      [4312, { url: "https://docs.example.com/", urlKind: "public-tunnel" }],
+    ]);
+  });
+
+  it("returns null when the agent response does not match the tunnel list contract", () => {
+    expect(PortScanner.__testing.parseNgrokTunnelSnapshot({ tunnels: "invalid" })).toBeNull();
+  });
+
+  it("keeps app terminal ownership when ngrok runs in another terminal", () => {
+    const appTerminal = { threadId: ThreadId.make("thread-app"), terminalId: "term-app" } as const;
+    const ngrokTerminal = {
+      threadId: ThreadId.make("thread-ngrok"),
+      terminalId: "term-ngrok",
+    } as const;
+    const [server] = PortScanner.__testing.applyNamedRoutes(
+      [
+        {
+          host: "localhost",
+          port: 4058,
+          url: "http://localhost:4058",
+          processName: "node",
+          pid: 456,
+          terminal: appTerminal,
+        },
+      ],
+      new Map([
+        [
+          4058,
+          {
+            url: "https://feature.ngrok-free.app/",
+            urlKind: "public-tunnel" as const,
+            terminal: ngrokTerminal,
+          },
+        ],
+      ]),
+    );
+
+    expect(server?.terminal).toEqual(appTerminal);
+    expect(server?.url).toBe("https://feature.ngrok-free.app/");
+  });
+});
+
+describe("Tailscale Serve route enrichment", () => {
+  it("maps legacy Serve routes to their loopback targets and prefers HTTPS", () => {
+    const routes = PortScanner.__testing.parseTailscaleServeStatus(
+      JSON.stringify({
+        TCP: {
+          80: { HTTP: true },
+          443: { HTTPS: true },
+        },
+        Web: {
+          "desktop.example-tailnet.ts.net:80": {
+            Handlers: { "/": { Proxy: "http://127.0.0.1:4058" } },
+          },
+          "desktop.example-tailnet.ts.net:443": {
+            Handlers: { "/": { Proxy: "https+insecure://localhost:4058" } },
+          },
+        },
+      }),
+    );
+
+    expect([...routes]).toEqual([
+      [
+        4058,
+        {
+          url: "https://desktop.example-tailnet.ts.net/",
+        },
+      ],
+    ]);
+  });
+
+  it("supports Tailscale Services and preserves a non-root mount", () => {
+    const routes = PortScanner.__testing.parseTailscaleServeStatus(
+      JSON.stringify({
+        Services: {
+          "svc:docs": {
+            TCP: { 8443: { HTTPS: true } },
+            Web: {
+              "docs.example-tailnet.ts.net:8443": {
+                Handlers: { "/preview": { Proxy: "http://[::1]:4312/docs" } },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect([...routes]).toEqual([
+      [
+        4312,
+        {
+          url: "https://docs.example-tailnet.ts.net:8443/preview",
+        },
+      ],
+    ]);
+  });
+
+  it("maps foreground Serve routes", () => {
+    const routes = PortScanner.__testing.parseTailscaleServeStatus(
+      JSON.stringify({
+        Foreground: {
+          "session-1": {
+            TCP: { 443: { HTTPS: true } },
+            Web: {
+              "desktop.example-tailnet.ts.net:443": {
+                Handlers: { "/": { Proxy: "http://127.0.0.1:5173" } },
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    expect([...routes]).toEqual([
+      [
+        5173,
+        {
+          url: "https://desktop.example-tailnet.ts.net/",
+        },
+      ],
+    ]);
+  });
+
+  it("ignores malformed, credentialed, non-tailnet, and non-loopback routes", () => {
+    const routes = PortScanner.__testing.parseTailscaleServeStatus(
+      JSON.stringify({
+        TCP: { 443: { HTTPS: true } },
+        Web: {
+          "user:secret@desktop.example-tailnet.ts.net:443": {
+            Handlers: { "/": { Proxy: "http://localhost:3000" } },
+          },
+          "public.example.com:443": {
+            Handlers: { "/": { Proxy: "http://localhost:3001" } },
+          },
+          "desktop.example-tailnet.ts.net:443": {
+            Handlers: {
+              "//redirect": { Proxy: "http://localhost:3002" },
+              "/": { Proxy: "http://internal.example.com:3003" },
+            },
+          },
+        },
+      }),
+    );
+
+    expect([...routes]).toEqual([]);
+    expect(PortScanner.__testing.parseTailscaleServeStatus("not json").size).toBe(0);
+  });
+});
+
+effectIt.effect("replaces a discovered listener with its ngrok public URL", () => {
+  const targetPort = 43_127;
+  const configuredUrl = `http://localhost:${targetPort}/docs?mode=test#results`;
+  const requests: string[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    const url = String(input);
+    requests.push(url);
+    if (url === "http://localhost:4040/api/tunnels") {
+      return Promise.resolve(
+        Response.json({
+          tunnels: [
+            {
+              public_url: "https://feature.ngrok-free.app",
+              config: { addr: `http://localhost:${targetPort}` },
+            },
+          ],
+        }),
+      );
+    }
+    return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = makeProbeFailureLayer(
+    () =>
+      Effect.succeed({
+        stdout: `p1234\ncnode\nn*:${targetPort}\np5678\ncngrok\nn127.0.0.1:4040\n`,
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      }),
+    fetchFn,
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-ngrok",
+      terminalId: "term-ngrok",
+      processIds: [5678],
+    });
+    const servers = yield* scanner.scan([configuredUrl]);
+    expect(servers.map((server) => [server.port, server.url, server.urlKind])).toEqual([
+      [targetPort, "https://feature.ngrok-free.app/docs?mode=test#results", "public-tunnel"],
+    ]);
+    expect(servers[0]?.terminal).toEqual({
+      threadId: "thread-ngrok",
+      terminalId: "term-ngrok",
+    });
+    expect(requests).toContain("http://localhost:4040/api/tunnels");
+    expect(requests).toContain(configuredUrl);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("replaces a discovered listener with its Tailscale Serve URL", () => {
+  const targetPort = 43_128;
+  const configuredUrl = `http://localhost:${targetPort}/docs?mode=test#results`;
+  let tailscaleStatusRuns = 0;
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) =>
+    Promise.resolve(
+      String(input) === configuredUrl
+        ? new Response("app", { headers: { "content-type": "text/html" } })
+        : new Response("not found", { status: 404 }),
+    )) as typeof globalThis.fetch;
+  const layer = makeProbeFailureLayer((input) => {
+    if (input.command === "tailscale") tailscaleStatusRuns += 1;
+    return Effect.succeed({
+      stdout:
+        input.command === "tailscale"
+          ? JSON.stringify({
+              TCP: { 443: { HTTPS: true } },
+              Web: {
+                "desktop.example-tailnet.ts.net:443": {
+                  Handlers: { "/preview": { Proxy: `http://localhost:${targetPort}` } },
+                },
+              },
+            })
+          : `p1234\ncnode\nn*:${targetPort}\n`,
+      stderr: "",
+      code: ChildProcessSpawner.ExitCode(0),
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    });
+  }, fetchFn);
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-tailscale",
+      terminalId: "term-dev-server",
+      processIds: [1234],
+    });
+    const servers = yield* scanner.scan([configuredUrl]);
+    expect(servers.map((server) => [server.port, server.url, server.urlKind])).toEqual([
+      [
+        targetPort,
+        "https://desktop.example-tailnet.ts.net/preview/docs?mode=test#results",
+        undefined,
+      ],
+    ]);
+    expect(servers[0]?.terminal).toEqual({
+      threadId: "thread-tailscale",
+      terminalId: "term-dev-server",
+    });
+    expect(yield* scanner.scan([configuredUrl])).toEqual(servers);
+    expect(tailscaleStatusRuns).toBe(1);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("keeps a non-ngrok web server on the default agent port", () => {
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) =>
+    Promise.resolve(
+      String(input) === "http://localhost:4040/api/tunnels"
+        ? Response.json({ tunnels: [] })
+        : new Response("app", { headers: { "content-type": "text/html" } }),
+    )) as typeof globalThis.fetch;
+  const layer = makeProbeFailureLayer(
+    () =>
+      Effect.succeed({
+        stdout: "p1234\ncnode\nn*:4040\n",
+        stderr: "",
+        code: null,
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      }),
+    fetchFn,
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect(yield* scanner.scan()).toMatchObject([{ port: 4040, url: "http://localhost:4040" }]);
+  }).pipe(Effect.provide(layer));
+});
 
 const openServer = (
   port: number,
@@ -295,6 +716,23 @@ effectIt.effect("keeps a full configured URL when the discovered server root fai
     expect(servers).toHaveLength(1);
     expect(servers[0]?.url).toBe(configuredUrl);
     expect(requests).toContain(configuredUrl);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("does not duplicate configured paths across loopback aliases", () => {
+  const configuredUrl = `http://127.0.0.1:${LSOF_TEST_PORT}/docs`;
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) =>
+    Promise.resolve(
+      new Response(String(input), { headers: { "content-type": "text/html" } }),
+    )) as typeof globalThis.fetch;
+  const layer = makeLsofScannerLayer({ pid: () => 1234, fetch: fetchFn });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const servers = yield* scanner.scan([configuredUrl]);
+
+    expect(servers).toHaveLength(1);
+    expect(servers[0]?.url).toBe(configuredUrl);
   }).pipe(Effect.provide(layer));
 });
 
