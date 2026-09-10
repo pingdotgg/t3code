@@ -3562,7 +3562,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     </>
                   ) : null}
                   <ComposerFooterPrimaryActions
-                    showActions={speechPresentation.showsSend}
+                    showActions={speechPresentation.showsSend || phase === "running"}
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     activeContextWindow={

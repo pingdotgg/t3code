@@ -5,16 +5,23 @@ import * as Result from "effect/Result";
 import { FetchHttpClient } from "effect/unstable/http";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { PrimaryConnectionTarget, type PreparedConnection } from "../connection/model.ts";
+import {
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 import { transcribeEnvironmentPcm } from "./environment.ts";
 
 const environmentId = Schema.decodeUnknownSync(EnvironmentId)("voice-test");
-const prepared = (httpBaseUrl: string): PreparedConnection => ({
+const prepared = (
+  httpBaseUrl: string,
+  httpAuthorization: PreparedHttpAuthorization | null = null,
+): PreparedConnection => ({
   environmentId,
   label: "test",
   httpBaseUrl,
   socketUrl: "ws://localhost/ws",
-  httpAuthorization: null,
+  httpAuthorization,
   target: new PrimaryConnectionTarget({
     environmentId,
     label: "test",
@@ -59,8 +66,24 @@ for (const url of [
       ).toEqual({ text: "hello" });
       expect(fetch).toHaveBeenCalledWith(
         expect.anything(),
-        expect.objectContaining({ redirect: "error" }),
+        expect.objectContaining({ redirect: "error", credentials: "include" }),
       );
     }),
   );
 }
+
+it.effect("does not send browser cookies with bearer-authenticated voice requests", () =>
+  Effect.gen(function* () {
+    const fetch = vi.fn(async () => Response.json({ text: "hello" }));
+    yield* transcribeEnvironmentPcm(
+      prepared("https://remote.example", { _tag: "Bearer", token: "secret" }),
+      new Uint8Array(4),
+    ).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+    const requestInit = fetch.mock.calls[0]?.[1];
+    expect(requestInit).toEqual(expect.objectContaining({ redirect: "error" }));
+    expect(requestInit?.credentials).toBeUndefined();
+  }),
+);

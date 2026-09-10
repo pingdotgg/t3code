@@ -1,5 +1,4 @@
 import * as Effect from "effect/Effect";
-import { FetchHttpClient } from "effect/unstable/http";
 import { RemoteEnvironmentAuthFetchError } from "../rpc/http.ts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -29,6 +28,7 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
     method: input.method,
     url: input.path,
     timeoutMs: VOICE_REQUEST_TIMEOUT_MS,
+    requestInit: { redirect: "error" },
     validateUrl: (baseUrl) =>
       Effect.try({
         try: () => {
@@ -47,13 +47,7 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
             cause,
           }),
       }),
-    request: (args) =>
-      input.run(args).pipe(
-        Effect.provideService(FetchHttpClient.RequestInit, {
-          redirect: "error",
-          credentials: "include",
-        }),
-      ),
+    request: input.run,
   });
 });
 

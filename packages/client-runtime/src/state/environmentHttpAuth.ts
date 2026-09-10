@@ -40,13 +40,19 @@ export function withOrchestrationProtocolHeader(
  * Cookie-authenticated environments need credentialed mode for cross-origin fetches; bearer/DPoP uses headers.
  * `FetchHttpClient` reads `RequestInit` from the fiber context per request.
  */
-const withEnvironmentCredentials = <A, E, R>(
+const withEnvironmentRequestInit = <A, E, R>(
   authorization: PreparedHttpAuthorization | null,
+  requestInit: RequestInit | undefined,
   request: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  authorization === null
-    ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
-    : request;
+): Effect.Effect<A, E, R> => {
+  if (authorization !== null && requestInit === undefined) return request;
+  return request.pipe(
+    Effect.provideService(FetchHttpClient.RequestInit, {
+      ...requestInit,
+      ...(authorization === null ? { credentials: "include" as const } : {}),
+    }),
+  );
+};
 
 const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironmentAuthHeaders")(
   function* (
@@ -122,6 +128,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   readonly url: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group]) => string;
   readonly timeoutMs: number;
   readonly group: Group;
+  readonly requestInit?: RequestInit;
   readonly validateUrl?: (url: string) => Effect.Effect<void, RemoteEnvironmentRequestError>;
   readonly request: (input: {
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
@@ -182,7 +189,11 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       const result = yield* executeEnvironmentHttpRequest(
         requestUrl,
         input.timeoutMs,
-        withEnvironmentCredentials(authorization, input.request({ client, headers })),
+        withEnvironmentRequestInit(
+          authorization,
+          input.requestInit,
+          input.request({ client, headers }),
+        ),
       ).pipe(Effect.result);
 
       if (Result.isFailure(result)) {
