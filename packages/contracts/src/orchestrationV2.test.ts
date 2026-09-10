@@ -55,6 +55,7 @@ const decodeLegacySubscribeThreadInput = Schema.decodeUnknownSync(LegacySubscrib
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2TurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
 const decodeOrchestrationV2TurnItemJson = Schema.decodeUnknownSync(OrchestrationV2TurnItemJson);
+const encodeOrchestrationV2TurnItemJson = Schema.encodeSync(OrchestrationV2TurnItemJson);
 const decodeOrchestrationV2CheckpointScope = Schema.decodeUnknownSync(
   OrchestrationV2CheckpointScope,
 );
@@ -953,4 +954,45 @@ describe("orchestration V2 contracts", () => {
 
     expect(shell.pendingBackgroundTasks).toEqual([]);
   });
+});
+
+it("round-trips typed notifications and keeps work outcome separate from item status", () => {
+  const now = DateTime.makeUnsafe("2026-09-09T00:00:00Z");
+  const base = {
+    id: "notification",
+    threadId: "parent",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+    type: "notification",
+    outcome: "failed",
+    summary: "Build failed",
+    detail: "Exit code 1",
+  };
+  for (const source of [
+    { kind: "delegated_task", taskIds: ["task-1", "task-2"] },
+    { kind: "background_task" },
+    { kind: "background_command" },
+    { kind: "monitor" },
+  ]) {
+    const runtime = decodeOrchestrationV2TurnItem({ ...base, source, updatedAt: now });
+    const wire = encodeOrchestrationV2TurnItemJson(runtime);
+    expect(decodeOrchestrationV2TurnItemJson(wire)).toEqual(runtime);
+    expect(runtime).toMatchObject({ status: "completed", outcome: "failed", source });
+    expect(runtime).not.toHaveProperty("messageId");
+    expect(() =>
+      decodeOrchestrationV2TurnItem({ ...base, source, summary: "", updatedAt: now }),
+    ).toThrow();
+  }
+  expect(() =>
+    decodeOrchestrationV2TurnItem({ ...base, source: { kind: "delegated_task" }, updatedAt: now }),
+  ).toThrow();
 });
