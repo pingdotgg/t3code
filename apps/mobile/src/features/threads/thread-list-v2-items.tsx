@@ -871,9 +871,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         )}
         {pr ? (
           <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
-            {pr.kind === "stack" ? (
+            {pr.kind === "stack" || pr.others > 0 ? (
               <SymbolView
-                name="square.3.layers.3d"
+                name={pr.kind === "stack" ? "square.3.layers.3d" : "arrow.triangle.pull"}
                 size={12}
                 tintColorClassName={
                   selected
@@ -896,7 +896,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               )}
               style={{ fontFamily: MONO_FONT }}
             >
-              {pr.kind === "stack" ? pr.label : `#${pr.label}`}
+              {pr.kind === "stack" || pr.others > 0 ? pr.label : `#${pr.label}`}
             </Text>
           </View>
         ) : null}

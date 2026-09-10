@@ -1764,4 +1764,53 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
   });
+
+  it("only withholds an expanded tool-call label click while text is selected", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "entry-standalone",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "work-standalone",
+                  createdAt: MESSAGE_CREATED_AT,
+                  toolCallId: "call-standalone",
+                  label: "Run lint",
+                  tone: "tool",
+                  itemType: "command_execution",
+                  command: "pnpm lint",
+                  toolLifecycleStatus: "completed",
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      const label = renderer!.root.findAll(
+        (node) => node.type === "span" && String(node.props.className).includes("select-text"),
+      )[0];
+      const stopPropagation = vi.fn();
+      // Only the click that ends a selection may be withheld from the row
+      // toggle; the plain click has to reach it so the label can collapse.
+      for (const isCollapsed of [false, true]) {
+        label!.props.onClick({
+          currentTarget: { ownerDocument: { getSelection: () => ({ isCollapsed }) } },
+          stopPropagation,
+        });
+      }
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
 });
