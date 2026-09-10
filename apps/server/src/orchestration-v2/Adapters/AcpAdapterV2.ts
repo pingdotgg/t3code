@@ -1223,6 +1223,7 @@ interface ActiveAcpSubagent {
   readonly parentProviderThreadId: ProviderThreadId;
   childSessionId: string | null;
   assistantText: string;
+  readonly assistantMessages: Map<string, string>;
   nextChildOrdinal: number;
   /**
    * Whether a terminal carryover status has been projected to events.
@@ -2339,11 +2340,15 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           subagent: ActiveAcpSubagent,
           text: string,
           mode: "append" | "replace" = "append",
+          messageId?: string | null,
         ) {
           if (text.length === 0 && mode === "append") return;
-          subagent.assistantText = mode === "replace" ? text : `${subagent.assistantText}${text}`;
+          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
+          const previous = subagent.assistantMessages.get(nativeItemId) ?? "";
+          const messageText = mode === "replace" ? text : `${previous}${text}`;
+          subagent.assistantMessages.set(nativeItemId, messageText);
+          subagent.assistantText = messageText;
           const now = yield* DateTime.now;
-          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:result`;
           let ordinal = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
           if (ordinal === undefined) {
             ordinal = subagent.nextChildOrdinal++;
@@ -2381,7 +2386,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           if (update.sessionUpdate === "agent_message_chunk") {
             const text = acpContentBlockDisplayText(update.content);
             if (text !== undefined) {
-              yield* emitSubagentAssistant(subagent, text);
+              yield* emitSubagentAssistant(subagent, text, "append", update.messageId);
             }
           } else if (update.sessionUpdate === "agent_message") {
             if (update.content === undefined) return;
@@ -2391,7 +2396,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 return display === undefined ? [] : [display];
               })
               .join("\n");
-            yield* emitSubagentAssistant(subagent, text, "replace");
+            yield* emitSubagentAssistant(subagent, text, "replace", update.messageId);
           }
         });
 
@@ -2473,7 +2478,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               startedAt: now,
             }),
             status: taskStatus,
-            result: existing?.assistantText || update.result,
+            result: update.result ?? existing?.task.result ?? null,
             completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
             updatedAt: now,
           };
@@ -2487,6 +2492,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             parentProviderThreadId: context.input.providerThread.id,
             childSessionId: null,
             assistantText: "",
+            assistantMessages: new Map(),
             nextChildOrdinal: 101,
             terminalStatusProjected: false,
           };
@@ -2587,7 +2593,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           ) {
             yield* emitSubagentAssistant(subagent, update.result);
           }
-          const result = subagent.assistantText || update.result;
+          const result = update.result ?? subagent.task.result ?? (subagent.assistantText || null);
           subagent.task = {
             ...subagent.task,
             status: taskStatus,
@@ -4678,7 +4684,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           const result =
             resultOverride !== undefined && resultOverride !== null && resultOverride.length > 0
               ? resultOverride
-              : subagent.assistantText || subagent.task.result;
+              : (subagent.task.result ?? (subagent.assistantText || null));
           const completedAt = acpSubagentStatusIsTerminal(status) ? now : null;
           subagent.task = {
             ...subagent.task,
