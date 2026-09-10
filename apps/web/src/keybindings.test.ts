@@ -819,6 +819,25 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it.each([false, true])("resolves custom panel cycling with terminalFocus=%s", (terminalFocus) => {
+    const keybindings = compile([
+      { shortcut: modShortcut("arrowright"), command: "rightPanel.nextTab" },
+      { shortcut: modShortcut("arrowleft"), command: "rightPanel.previousTab" },
+    ]);
+    for (const [key, command] of [
+      ["ArrowRight", "rightPanel.nextTab"],
+      ["ArrowLeft", "rightPanel.previousTab"],
+    ] as const) {
+      assert.strictEqual(
+        resolveShortcutCommand(event({ key, metaKey: true }), keybindings, {
+          platform: "MacIntel",
+          context: { terminalFocus },
+        }),
+        command,
+      );
+    }
+  });
+
   it("matches bracket shortcuts using the physical key code", () => {
     assert.strictEqual(
       resolveShortcutCommand(

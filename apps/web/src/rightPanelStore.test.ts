@@ -7,6 +7,7 @@ import {
   pullRequestSurface,
   pullRequestSurfaceId,
   selectActiveRightPanel,
+  selectAdjacentRightPanelSurface,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
@@ -21,6 +22,80 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it.each(["next", "previous"] as const)(
+    "cycles %s in displayed order and preserves surfaces",
+    (direction) => {
+      const store = useRightPanelStore.getState();
+      store.openFile(refA, "src/app.ts", 42);
+      store.openBrowser(refA, "tab-a");
+      store.openTerminal(refA, "term-a");
+      store.splitTerminal(refA, "terminal:term-a", "term-b", "vertical");
+      store.open(refA, "diff");
+      const initial = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      const expected =
+        direction === "next"
+          ? ["file:src/app.ts", "browser:tab-a", "terminal:term-a", "diff"]
+          : ["terminal:term-a", "browser:tab-a", "file:src/app.ts", "diff"];
+      const revision = store.getUserActionRevision(refA);
+      for (const id of expected) {
+        const next = selectAdjacentRightPanelSurface(
+          useRightPanelStore.getState().byThreadKey,
+          refA,
+          direction,
+        );
+        expect(next?.id).toBe(id);
+        store.activateSurface(refA, next!.id);
+        const current = selectThreadRightPanelState(
+          useRightPanelStore.getState().byThreadKey,
+          refA,
+        );
+        expect(current.activeSurfaceId).toBe(id);
+        expect(current.surfaces).toBe(initial.surfaces);
+      }
+      expect(store.openProactive(refA, { id: "diff", kind: "diff" }, revision)).toBe(false);
+    },
+  );
+
+  it.each(["next", "previous"] as const)(
+    "safely ignores missing, empty, single and hidden panels for %s",
+    (direction) => {
+      const store = useRightPanelStore.getState();
+      const select = () =>
+        selectAdjacentRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA, direction);
+      expect(select()).toBeNull();
+      store.show(refA);
+      expect(select()).toBeNull();
+      store.open(refA, "diff");
+      expect(select()).toBeNull();
+      store.open(refA, "files");
+      store.close(refA);
+      const state = useRightPanelStore.getState();
+      expect(select()).toBeNull();
+      expect(useRightPanelStore.getState()).toBe(state);
+      expect(selectAdjacentRightPanelSurface(state.byThreadKey, null, direction)).toBeNull();
+    },
+  );
+
+  it("isolates cycling by thread and environment", () => {
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    const store = useRightPanelStore.getState();
+    for (const ref of [refA, refB, otherEnvironment]) {
+      store.open(ref, "files");
+      store.openBrowser(ref, "tab-a");
+    }
+    const before = useRightPanelStore.getState().byThreadKey;
+    const next = selectAdjacentRightPanelSurface(before, refA, "next");
+    store.activateSurface(refA, next!.id);
+    const after = useRightPanelStore.getState().byThreadKey;
+    expect(selectThreadRightPanelState(after, refA).activeSurfaceId).toBe("files");
+    for (const ref of [refB, otherEnvironment]) {
+      expect(selectThreadRightPanelState(after, ref)).toBe(
+        selectThreadRightPanelState(before, ref),
+      );
+      expect(selectThreadRightPanelState(after, ref).activeSurfaceId).toBe("browser:tab-a");
+    }
+  });
+
   const completedDiff = { id: "diff", kind: "diff" } as const;
   const linkedPullRequest = pullRequestSurface({
     projectId: "project-a",

@@ -205,6 +205,8 @@ describe("KeybindingsSettings.logic", () => {
       expect.arrayContaining([
         "chat.new",
         "rightPanel.toggleMaximized",
+        "rightPanel.nextTab",
+        "rightPanel.previousTab",
         "thread.stop",
         "script.setup-db.run",
       ]),
@@ -212,6 +214,11 @@ describe("KeybindingsSettings.logic", () => {
     expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.stop")).toBe(
       false,
     );
+    for (const command of ["rightPanel.nextTab", "rightPanel.previousTab"]) {
+      expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command)).toBe(
+        false,
+      );
+    }
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {

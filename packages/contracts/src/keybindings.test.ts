@@ -41,6 +41,10 @@ it.effect("parses keybinding rules", () =>
       command: "rightPanel.toggle",
     });
     assert.strictEqual(parsedRightPanelToggle.command, "rightPanel.toggle");
+    for (const command of ["rightPanel.nextTab", "rightPanel.previousTab"] as const) {
+      const parsed = yield* decode(KeybindingRule, { key: "alt+arrowright", command });
+      assert.strictEqual(parsed.command, command);
+    }
 
     const parsedRightPanelToggleMaximized = yield* decode(KeybindingRule, {
       key: "mod+shift+m",

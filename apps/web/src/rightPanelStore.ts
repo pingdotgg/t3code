@@ -796,6 +796,24 @@ export function selectThreadRightPanelState(
   return byThreadKey[scopedThreadKey(ref)] ?? EMPTY_THREAD_STATE;
 }
 
+/** Selects a neighbor in tab-strip order without changing any surface's resource state. */
+export function selectAdjacentRightPanelSurface(
+  byThreadKey: Record<string, ThreadRightPanelState>,
+  ref: ScopedThreadRef | null | undefined,
+  direction: "next" | "previous",
+): RightPanelSurface | null {
+  const state = selectThreadRightPanelState(byThreadKey, ref);
+  if (!state.isOpen || state.surfaces.length < 2) return null;
+  const index = state.surfaces.findIndex((surface) => surface.id === state.activeSurfaceId);
+  const nextIndex =
+    index < 0
+      ? direction === "next"
+        ? 0
+        : state.surfaces.length - 1
+      : (index + (direction === "next" ? 1 : -1) + state.surfaces.length) % state.surfaces.length;
+  return state.surfaces[nextIndex] ?? null;
+}
+
 export function selectActiveRightPanel(
   byThreadKey: Record<string, ThreadRightPanelState>,
   ref: ScopedThreadRef | null | undefined,

@@ -53,6 +53,14 @@ a shortcut.
 
 ## Commands with special behavior
 
+`rightPanel.nextTab` and `rightPanel.previousTab` cycle the current thread's open
+right-panel tabs in displayed order, wrapping at either end. Both are unbound by
+default; assign them in **Settings → Keybindings**. They do nothing when the panel
+is hidden or has fewer than two tabs. Bindings work while a terminal is focused
+unless restricted by a `when` condition. Focused embedded browser pages own their
+keyboard input; focus the app outside the page to use these commands. Browser or
+operating-system reserved shortcuts may also take precedence.
+
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
