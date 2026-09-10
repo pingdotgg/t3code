@@ -1,9 +1,8 @@
+import { McpAttachmentInput } from "./input.ts";
 import {
   AttachmentCreateUploadUrlInput,
   AttachmentCreateUploadUrlResult,
   AttachmentDeleteInput,
-  ChatImageAttachment,
-  ChatFileAttachment,
   MessageId,
   RunId,
   ThreadId,
@@ -52,7 +51,7 @@ const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),
-    attachments: Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachment])).check(
+    attachments: Schema.Array(McpAttachmentInput).check(
       Schema.isMinLength(1),
       Schema.isMaxLength(8),
     ),
