@@ -151,10 +151,8 @@ const PiProviderCapabilitiesV2 = {
     canCreateEmptyThread: true,
     canReadThreadSnapshot: true,
     canRollbackThread: true,
-    // T3's portable full-thread handoff matches Cursor and Grok without
-    // making this process clone a Pi session and switch back behind T3.
-    canForkThread: false,
-    canForkFromTurn: false,
+    canForkThread: true,
+    canForkFromTurn: true,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
   },
@@ -1962,6 +1960,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
 
       const registerThread = Effect.fnUntraced(function* (
         threadInput: ProviderAdapterV2EnsureThreadInput,
+        publish = true,
       ) {
         if (threadState !== null && threadState.activeTurn !== null) {
           return yield* protocolError("Cannot register a Pi thread while a turn is active");
@@ -2012,13 +2011,10 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         if (baselineThinking === null && appliedThinking === null) {
           baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
         }
-        const nativeId =
-          recordString(stateData, "sessionFile") ?? recordString(stateData, "sessionId");
+        // switch_session accepts a file path, not Pi's display session UUID.
+        const nativeId = recordString(stateData, "sessionFile");
         if (nativeId === undefined) {
-          return yield* protocolError(
-            "get_state returned neither sessionFile nor sessionId",
-            stateData,
-          );
+          return yield* protocolError("get_state returned no persisted sessionFile", stateData);
         }
         const createdAt = yield* DateTime.now;
         const providerThread: OrchestrationV2ProviderThread =
@@ -2062,11 +2058,12 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         // a failed one leaves it stale, so a recovered session does not keep
         // skipping turn refs. An empty tree is a success with no leafId.
         leafCursorStale = baselineEntries === undefined;
-        yield* emit({
-          type: "provider_thread.updated",
-          driver: PI_PROVIDER,
-          providerThread,
-        });
+        if (publish)
+          yield* emit({
+            type: "provider_thread.updated",
+            driver: PI_PROVIDER,
+            providerThread,
+          });
         return providerThread;
       });
 
@@ -2223,6 +2220,15 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
               );
             }
+            if (
+              state.providerThread.nativeThreadRef?.nativeId !==
+              turnInput.providerThread.nativeThreadRef?.nativeId
+            ) {
+              return yield* protocolError("Pi turn requested for a different native session");
+            }
+            // The orchestrator adopts a fork under its already-allocated row.
+            // Future session updates must retain that authoritative identity.
+            state.providerThread = turnInput.providerThread;
             yield* applySelection(turnInput.modelSelection);
             // Mirror the thread title into pi's session name so the session
             // stays identifiable in pi's own /resume listing. Best-effort:
@@ -2539,7 +2545,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                       // RPC messages do not expose session-tree entry ids. The
                       // active-branch index is stable for the lifetime of this
                       // snapshot and keeps abandoned branch ids out of it.
-                      nativeItemId: `snapshot-message:${index}`,
+                      nativeItemId: `${wantedNativeId}:snapshot-message:${index}`,
                     }),
                     threadId,
                     runId: null,
@@ -2601,6 +2607,24 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             if (recordField(forkData, "cancelled") === true) {
               return yield* protocolError("A Pi extension cancelled the session fork");
             }
+            // Pi fork replaces the session file, including for rollback. Persist
+            // its new identity before any later request can fail or restart.
+            const forkState = yield* request({ type: "get_state" }).pipe(
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  threadState = null;
+                }),
+              ),
+            );
+            const forkSessionFile = recordString(forkState, "sessionFile");
+            if (forkSessionFile === undefined) {
+              threadState = null;
+              return yield* protocolError("Pi fork did not return a persisted session file");
+            }
+            appliedModel = null;
+            appliedThinking = null;
+            appliedSessionName = null;
+            yield* updateProviderThread(state, { nativeThreadRef: providerRef(forkSessionFile) });
             const entriesData = yield* request({ type: "get_entries" }).pipe(
               Effect.orElseSucceed(() => undefined),
             );
@@ -2625,12 +2649,115 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             ),
           ),
         forkThread: (forkInput) =>
-          Effect.fail(
-            new ProviderAdapterForkThreadError({
-              driver: PI_PROVIDER,
-              providerThreadId: forkInput.sourceProviderThread.id,
-              cause: "Pi threads use T3 Code's portable full-thread fork.",
-            }),
+          Effect.gen(function* () {
+            if (threadState?.activeTurn != null) {
+              return yield* protocolError("Cannot fork while a Pi turn is active");
+            }
+            const source = forkInput.sourceProviderThread;
+            const sourceFile = source.nativeThreadRef?.nativeId;
+            if (sourceFile == null)
+              return yield* protocolError("Pi fork source has no session file");
+            const sourceTurns = (forkInput.sourceProviderTurns ?? []).filter(
+              (turn) => turn.providerThreadId === source.id,
+            );
+            const target = sourceTurns.find((turn) => turn.id === forkInput.providerTurnId);
+            if (forkInput.providerTurnId !== undefined && target === undefined) {
+              return yield* protocolError("Pi fork target turn is missing");
+            }
+            const beforeEntry =
+              target === undefined
+                ? null
+                : piRollbackForkEntry({
+                    target: { type: "provider_turn", providerTurn: target },
+                    providerThreadTurns: sourceTurns,
+                  });
+            if (beforeEntry === undefined) {
+              return yield* protocolError("Pi fork boundary has no captured session-tree entry");
+            }
+            // CLI --fork uses Pi's own session format and sets the destination
+            // cwd. RPC switch_session/clone alone would retain the source cwd.
+            // This short-lived process never prompts or runs user extensions.
+            const forkLaunch = buildPiRpcLaunch({
+              launchArgs: resolvedLaunchArgs.args,
+              environment: options.environment,
+              mcpSession: undefined,
+              extensionPath: undefined,
+              disableExtensions: true,
+              disableTools: true,
+            });
+            const nativeId = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const forkConnection = yield* makePiRpcConnection({
+                  command: options.settings.binaryPath || "pi",
+                  args: [...forkLaunch.args, "--fork", sourceFile],
+                  cwd,
+                  env: forkLaunch.env,
+                });
+                yield* Stream.fromQueue(forkConnection.events).pipe(
+                  Stream.runDrain,
+                  Effect.ignore,
+                  Effect.forkScoped,
+                );
+                if (beforeEntry !== null) {
+                  const result = yield* forkConnection.request({
+                    type: "fork",
+                    entryId: beforeEntry,
+                  });
+                  if (recordField(result, "cancelled") === true) {
+                    return yield* protocolError("A Pi extension cancelled the session fork");
+                  }
+                }
+                const state = yield* forkConnection.request({ type: "get_state" });
+                const file = recordString(state, "sessionFile");
+                if (file === undefined || file === sourceFile) {
+                  return yield* protocolError("Pi fork did not create a distinct session file");
+                }
+                return file;
+              }),
+            ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.spawner));
+            const now = yield* DateTime.now;
+            return yield* registerThread(
+              {
+                threadId: forkInput.targetThreadId,
+                modelSelection: forkInput.modelSelection ?? input.modelSelection,
+                runtimePolicy: forkInput.runtimePolicy ?? input.runtimePolicy,
+                existingProviderThread: {
+                  ...source,
+                  id: idAllocator.derive.providerThread({
+                    driver: PI_PROVIDER,
+                    nativeThreadId: nativeId,
+                  }),
+                  appThreadId: forkInput.targetThreadId,
+                  providerSessionId: input.providerSessionId,
+                  providerInstanceId: options.instanceId,
+                  ownerNodeId: forkInput.ownerNodeId ?? null,
+                  nativeThreadRef: providerRef(nativeId),
+                  nativeConversationHeadRef: null,
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  pendingBackgroundTasks: [],
+                  forkedFrom: {
+                    providerThreadId: source.id,
+                    ...(forkInput.providerTurnId === undefined
+                      ? {}
+                      : { providerTurnId: forkInput.providerTurnId }),
+                  },
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              false,
+            );
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterForkThreadError({
+                  driver: PI_PROVIDER,
+                  providerThreadId: forkInput.sourceProviderThread.id,
+                  cause,
+                }),
+            ),
           ),
       };
       return runtime;
