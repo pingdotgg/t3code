@@ -19,7 +19,7 @@ import {
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -372,16 +372,6 @@ function CommentComposer({
     onCommented();
   };
 
-  const handleCommentKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing || event.keyCode === 229 || event.shiftKey || event.altKey) {
-      return;
-    }
-    if (!isCommentSubmitShortcut(event, body, submitting !== null || actionPending)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!event.repeat) void submit("comment");
-  };
-
   return (
     <div className="mt-3 space-y-2">
       <Textarea
@@ -393,7 +383,12 @@ function CommentComposer({
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
         onChange={(event) => setBody(event.target.value)}
-        onKeyDown={handleCommentKeyDown}
+        onKeyDown={(event) => {
+          if (isCommentSubmitShortcut(event, body, submitting !== null || actionPending)) {
+            event.preventDefault();
+            void submit("comment");
+          }
+        }}
       />
       <div className="flex justify-end gap-2">
         {followUpAction === null ? null : (
