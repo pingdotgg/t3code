@@ -16,6 +16,7 @@ function dispatchWasNotAccepted(
   error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
   switch (error._tag) {
+    case "OrchestratorCommandRejectedError":
     case "OrchestratorProjectionError":
     case "OrchestratorProviderAdapterError":
     case "OrchestratorCommandPreviouslyRejectedError":
@@ -74,10 +75,14 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     );
     return yield* threads.dispatch({ ...command, answers, attachmentsByQuestionId });
   }
-  if (command.type !== "message.dispatch") return yield* threads.dispatch(command);
+  if (
+    command.type !== "message.dispatch" &&
+    (command.type !== "queued-run.edit" || command.attachments === undefined)
+  )
+    return yield* threads.dispatch(command);
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: command.threadId,
-    attachments: command.attachments,
+    attachments: command.attachments ?? [],
   });
   return yield* threads.dispatch({ ...command, attachments: claimed.attachments }).pipe(
     Effect.tap((result) =>
