@@ -270,7 +270,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   } satisfies FakePi;
 });
 
-const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "") {
+const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "", forkFake?: FakePi) {
   const idAllocator = yield* IdAllocatorV2;
   const serverConfig = yield* ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -278,7 +278,14 @@ const makeAdapter = Effect.fnUntraced(function* (fake: FakePi, launchArgs = "") 
     instanceId: PI_INSTANCE_ID,
     settings: { enabled: true, binaryPath: "pi", launchArgs, customModels: [] },
     environment: {},
-    spawner: fake.spawner,
+    spawner:
+      forkFake === undefined
+        ? fake.spawner
+        : ChildProcessSpawner.make((command) =>
+            ChildProcess.isStandardCommand(command) && command.args.includes("--fork")
+              ? forkFake.spawner.spawn(command)
+              : fake.spawner.spawn(command),
+          ),
     fileSystem,
     idAllocator,
     serverConfig,
@@ -290,8 +297,9 @@ const openRuntime = Effect.fnUntraced(function* (
   model = "default",
   threadId = THREAD_ID,
   providerSessionId = SESSION_ID,
+  forkFake?: FakePi,
 ) {
-  const adapter = yield* makeAdapter(fake);
+  const adapter = yield* makeAdapter(fake, "", forkFake);
   const runtime = yield* adapter.openSession({
     threadId,
     providerSessionId,
@@ -846,6 +854,8 @@ describe("PiAdapterV2", () => {
         startedAt: null,
         completedAt: null,
       });
+      const forkFile = "/fake/rolled-back.jsonl";
+      fake.queueState({ sessionFile: forkFile });
       const rollbackSnapshot = yield* runtime.rollbackThread({
         providerThread,
         target: {
@@ -859,8 +869,97 @@ describe("PiAdapterV2", () => {
       const fork = yield* fake.takeRequest("fork");
       assert.equal(fork["entryId"], "u2");
       assert.equal(rollbackSnapshot.providerThread.id, providerThread.id);
+      assert.equal(rollbackSnapshot.providerThread.nativeThreadRef?.nativeId, forkFile);
+      yield* runtime.resumeThread({ providerThread: rollbackSnapshot.providerThread });
+      const resume = yield* fake.takeRequest("switch_session");
+      assert.equal(resume["sessionPath"], forkFile);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  for (const historical of [false, true]) {
+    it.effect(
+      `natively forks ${historical ? "a historical turn" : "the latest turn"} into an independent session`,
+      () =>
+        Effect.gen(function* () {
+          const fake = yield* makeFakePi;
+          const forkFake = yield* makeFakePi;
+          const forkFile = "/fake/forked.jsonl";
+          const { runtime, takeEvent } = yield* openRuntime(
+            fake,
+            "default",
+            THREAD_ID,
+            SESSION_ID,
+            forkFake,
+          );
+          const source = yield* runtime.ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          });
+          const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
+            id: ProviderTurnId.make(`turn-${ordinal}`),
+            providerThreadId: source.id,
+            nodeId: NodeId.make(`node-${ordinal}`),
+            runAttemptId: null,
+            nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
+            ordinal,
+            status: "completed",
+            startedAt: null,
+            completedAt: null,
+          });
+          forkFake.queueState({ sessionFile: forkFile });
+          fake.queueState({ sessionFile: forkFile });
+          const target = ThreadId.make("fork-target");
+          const forked = yield* runtime.forkThread({
+            sourceProviderThread: source,
+            sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
+            providerTurnId: turn(1).id,
+            targetThreadId: target,
+          });
+          assert.equal(forked.appThreadId, target);
+          assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+          assert.notEqual(forked.id, source.id);
+          assert.equal(source.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+          const args = forkFake.lastSpawn().args;
+          assert.equal(args[args.indexOf("--fork") + 1], FAKE_SESSION_FILE);
+          assert.include(args, "--no-extensions");
+          assert.include(args, "--no-tools");
+          assert.notInclude(args, "--no-session");
+          assert.deepEqual(
+            forkFake
+              .allRequests()
+              .filter((request) => request.type === "fork")
+              .map((request) => request.entryId),
+            historical ? ["u2"] : [],
+          );
+          assert.isFalse(
+            fake
+              .allRequests()
+              .some((request) => request.type === "fork" || request.type === "clone"),
+          );
+          // ProviderTurnStartService adopts the fork into its pending row.
+          const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
+          yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_settled" });
+          const updated = yield* takeEvent(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.appThreadId === target,
+          );
+          assert.isTrue(
+            updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
+          );
+          yield* takeEvent((event) => event.type === "turn.terminal");
+          yield* runtime.resumeThread({ providerThread: adopted });
+          assert.equal(
+            fake.allRequests().findLast((request) => request.type === "switch_session")
+              ?.sessionPath,
+            forkFile,
+          );
+        }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
 
   it.effect("observes official subagent results without inventing child threads", () =>
     Effect.gen(function* () {
@@ -1476,6 +1575,56 @@ describe("PiAdapterV2", () => {
       assert.equal(snapshot.messages[0]!.text, "hello pi");
       assert.equal(snapshot.messages[1]!.role, "assistant");
       assert.equal(snapshot.messages[1]!.text, "hello back");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps snapshot message identities distinct across native sessions", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const first = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const messages = {
+        messages: [{ role: "user", content: "same text", timestamp: 1700000000000 }],
+      };
+      fake.queueMessages(messages);
+      const a = yield* runtime.readThreadSnapshot({ providerThread: first });
+      fake.queueState({ sessionFile: "/fake/another-session.jsonl" });
+      const second = yield* runtime.ensureThread({
+        threadId: ThreadId.make("second-thread"),
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: {
+          ...first,
+          nativeThreadRef: {
+            driver: PI_PROVIDER,
+            nativeId: "/fake/another-session.jsonl",
+            strength: "strong",
+          },
+        },
+      });
+      fake.queueMessages(messages);
+      const b = yield* runtime.readThreadSnapshot({ providerThread: second });
+      assert.notEqual(a.messages[0]!.id, b.messages[0]!.id);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects a nonpersistent session UUID instead of treating it as a resumable path", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      fake.queueState({ sessionId: "not-a-session-file" });
+      const result = yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
