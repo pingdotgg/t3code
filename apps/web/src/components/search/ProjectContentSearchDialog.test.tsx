@@ -39,7 +39,15 @@ vi.mock("~/state/queries", () => ({
     invalidRegex: false,
     matches:
       state.canReadFiles && query.length > 0
-        ? [{ path: "src/index.ts", lineNumber: 3, lineContent: "match", matchRanges: [] }]
+        ? [
+            {
+              resultIndex: 0,
+              path: "src/index.ts",
+              lineNumber: 3,
+              lineContent: "match",
+              matchRanges: [],
+            },
+          ]
         : [],
   }),
 }));
