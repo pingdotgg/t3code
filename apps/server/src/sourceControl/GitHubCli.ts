@@ -447,6 +447,7 @@ export const make = Effect.gen(function* () {
         args: [
           "pr",
           "create",
+          "--draft",
           "--base",
           input.baseBranch,
           "--head",

@@ -31,6 +31,41 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
+  it.effect("creates GitHub pull requests as drafts", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(processOutput("https://github.com/acme/repo/pull/42")),
+      );
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/draft-first",
+        title: "Draft-first workflow",
+        bodyFile: "/tmp/pr-body.md",
+      });
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: [
+          "pr",
+          "create",
+          "--draft",
+          "--base",
+          "main",
+          "--head",
+          "feature/draft-first",
+          "--title",
+          "Draft-first workflow",
+          "--body-file",
+          "/tmp/pr-body.md",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
     const missingCwd = new VcsProcessSpawnError({
