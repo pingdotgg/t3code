@@ -198,20 +198,18 @@ public final class FeatureRootModel {
         }
     }
 
+    /// New-task drafts of repository projects use workspace keys outside the
+    /// environment prefix, so environment cleanup names them explicitly.
+    private func newTaskLogicalProjectIDs(environmentID: String) -> Set<String> {
+        Set<String>(snapshot.projects.compactMap { project in
+            guard project.environmentID == environmentID,
+                  project.repositoryIdentity != nil else { return nil }
+            return DailyUXCreationContext.logicalProjectID(for: project)
+        })
+    }
+
     public func removeEnvironment(_ id: String) async {
-        var logicalProjectIDs = Set<String>(snapshot.projects.compactMap { project in
-            guard project.environmentID == id, project.repositoryIdentity != nil else {
-                return nil
-            }
-            return DailyUXCreationContext.logicalProjectID(for: project, in: snapshot)
-        })
-        let remainingLogicalProjectIDs = Set<String>(snapshot.projects.compactMap { project in
-            guard project.environmentID != id, project.repositoryIdentity != nil else {
-                return nil
-            }
-            return DailyUXCreationContext.logicalProjectID(for: project, in: snapshot)
-        })
-        logicalProjectIDs.subtract(remainingLogicalProjectIDs)
+        let logicalProjectIDs = newTaskLogicalProjectIDs(environmentID: id)
         await stopOutboxDrain()
         await perform {
             try await client.removeEnvironment(id: id)
@@ -247,24 +245,9 @@ public final class FeatureRootModel {
         let removedEnvironmentIDs = snapshot.environments
             .filter { $0.source == .t3Connect }
             .map(\.id)
-        let removedEnvironmentIDSet = Set(removedEnvironmentIDs)
-        let groupedProjects = Dictionary(
-            grouping: snapshot.projects.filter { $0.repositoryIdentity != nil },
-            by: \.environmentID
-        )
-        let retainedLogicalProjectIDs = Set<String>(snapshot.projects.compactMap { project in
-            guard project.repositoryIdentity != nil,
-                  !removedEnvironmentIDSet.contains(project.environmentID) else {
-                return nil
-            }
-            return DailyUXCreationContext.logicalProjectID(for: project, in: snapshot)
-        })
         let logicalProjectIDs = removedEnvironmentIDs.reduce(into: [String: Set<String>]()) {
             result, environmentID in
-            let projectIDs = Set((groupedProjects[environmentID] ?? []).map {
-                DailyUXCreationContext.logicalProjectID(for: $0, in: snapshot)
-            })
-            result[environmentID] = projectIDs.subtracting(retainedLogicalProjectIDs)
+            result[environmentID] = newTaskLogicalProjectIDs(environmentID: environmentID)
         }
 
         await stopOutboxDrain()

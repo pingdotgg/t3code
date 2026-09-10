@@ -158,7 +158,7 @@ public struct NewThreadView: View {
             persistCurrentDraftImmediately()
             let previousProject = model.snapshot.projects.first { $0.id == projectID }
             let previousGroupID = previousProject.map {
-                DailyUXCreationContext.logicalProjectID(for: $0, in: model.snapshot)
+                DailyUXCreationContext.logicalProjectID(for: $0)
             }
             let replacement = creationProjectGroups.first { $0.id == previousGroupID }?
                 .preferredProject(environmentID: previousProject?.environmentID)
@@ -1064,7 +1064,7 @@ public struct NewThreadView: View {
               draftRestoreContext?.projectID == requestedProjectID else {
             return
         }
-        let saved = try? await draftStore.draft(for: key)
+        let saved = try? await draftStore.newTaskDraft(project: project, in: model.snapshot)
         guard !Task.isCancelled,
               projectID == requestedProjectID,
               draftRestoreContext?.projectID == requestedProjectID else {
@@ -1140,7 +1140,7 @@ public struct NewThreadView: View {
     }
 
     private func draftKey(for project: FeatureProject) -> String {
-        FeatureComposerDraftStore.newTaskKey(project: project, in: model.snapshot)
+        FeatureComposerDraftStore.newTaskKey(project: project)
     }
 
     private var composerDraft: FeatureComposerDraft {

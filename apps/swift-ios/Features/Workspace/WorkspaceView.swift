@@ -871,6 +871,8 @@ struct HomeThreadRowContext: Equatable {
         let projectByID = snapshot.projects.reduce(into: [String: FeatureProject]()) {
             $0[$1.id] = $1
         }
+        // Rows name the checkout the thread runs in, like the creation picker,
+        // so separate checkouts of one repository stay distinguishable.
         let projectGroupNameByID = DailyUXCreationContext.projectGroups(in: snapshot).reduce(
             into: [String: String]()
         ) { result, group in

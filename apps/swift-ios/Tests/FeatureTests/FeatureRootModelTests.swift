@@ -755,7 +755,7 @@ struct FeatureRootModelTests {
         let selected = try #require(DailyUXCreationContext.initialProject(
             in: model.snapshot, requestedProjectID: project.id
         ))
-        let draftKey = FeatureComposerDraftStore.newTaskKey(project: selected, in: model.snapshot)
+        let draftKey = FeatureComposerDraftStore.newTaskKey(project: selected)
         let projectGroups = DailyUXCreationContext.projectGroups(in: model.snapshot)
 
         client.snapshot.connection.state = .disconnected
@@ -770,7 +770,7 @@ struct FeatureRootModelTests {
         #expect(DailyUXCreationContext.initialProject(
             in: model.snapshot, requestedProjectID: selected.id
         )?.id == project.id)
-        #expect(FeatureComposerDraftStore.newTaskKey(project: retained, in: model.snapshot) == draftKey)
+        #expect(FeatureComposerDraftStore.newTaskKey(project: retained) == draftKey)
         #expect(DailyUXCreationContext.projectEnvironmentValidationMessage(
             projectID: selected.id, in: model.snapshot
         ) == nil)
@@ -1115,7 +1115,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func removingAnEnvironmentClearsItsPhysicalAndGroupedDrafts() async throws {
+    func removingAnEnvironmentClearsItsThreadAndNewTaskDrafts() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-draft-cleanup-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1131,9 +1131,7 @@ struct FeatureRootModelTests {
             repositoryIdentity: FeatureRepositoryIdentity(canonicalKey: "github.com/t3/native")
         )
         let physicalKey = "environment:environment-1:thread:one"
-        let logicalKey = FeatureComposerDraftStore.newTaskKey(
-            logicalProjectID: "github.com/t3/native"
-        )
+        let logicalKey = FeatureComposerDraftStore.newTaskKey(project: project)
         let otherKey = "environment:environment-2:thread:two"
         try await drafts.setDraft(FeatureComposerDraft(text: "remove physical"), for: physicalKey)
         try await drafts.setDraft(FeatureComposerDraft(text: "remove logical"), for: logicalKey)
@@ -1198,7 +1196,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func signingOutClearsManagedOutboxEntriesAndGroupedDrafts() async throws {
+    func signingOutClearsManagedOutboxEntriesAndNewTaskDrafts() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-sign-out-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1213,9 +1211,7 @@ struct FeatureRootModelTests {
             path: "/native",
             repositoryIdentity: FeatureRepositoryIdentity(canonicalKey: "github.com/t3/native")
         )
-        let groupedDraftKey = FeatureComposerDraftStore.newTaskKey(
-            logicalProjectID: "github.com/t3/native"
-        )
+        let groupedDraftKey = FeatureComposerDraftStore.newTaskKey(project: project)
         try await drafts.setDraft(FeatureComposerDraft(text: "Private prompt"), for: groupedDraftKey)
         try await outbox.enqueue(
             FeatureQueuedSubmission(
@@ -1263,7 +1259,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func signingOutPreservesGroupedDraftsUsedByDirectEnvironments() async throws {
+    func signingOutPreservesNewTaskDraftsOfDirectEnvironments() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-shared-draft-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1272,12 +1268,26 @@ struct FeatureRootModelTests {
         )
         let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
         let identity = FeatureRepositoryIdentity(canonicalKey: "github.com/t3/native")
-        let groupedDraftKey = FeatureComposerDraftStore.newTaskKey(
-            logicalProjectID: identity.canonicalKey
+        let managedProject = FeatureProject(
+            id: "managed-project",
+            environmentID: "managed-1",
+            name: "Native",
+            path: "/managed/native",
+            repositoryIdentity: identity
         )
-        let managedDraftKey = "environment:managed-1:thread:one"
-        try await drafts.setDraft(FeatureComposerDraft(text: "Keep shared prompt"), for: groupedDraftKey)
-        try await drafts.setDraft(FeatureComposerDraft(text: "Remove managed prompt"), for: managedDraftKey)
+        let manualProject = FeatureProject(
+            id: "manual-project",
+            environmentID: "manual-1",
+            name: "Native",
+            path: "/manual/native",
+            repositoryIdentity: identity
+        )
+        let manualDraftKey = FeatureComposerDraftStore.newTaskKey(project: manualProject)
+        let managedNewTaskKey = FeatureComposerDraftStore.newTaskKey(project: managedProject)
+        let managedThreadKey = "environment:managed-1:thread:one"
+        try await drafts.setDraft(FeatureComposerDraft(text: "Keep manual prompt"), for: manualDraftKey)
+        try await drafts.setDraft(FeatureComposerDraft(text: "Remove managed prompt"), for: managedNewTaskKey)
+        try await drafts.setDraft(FeatureComposerDraft(text: "Remove managed thread"), for: managedThreadKey)
 
         let client = FeatureClientStub()
         client.snapshot = FeatureSnapshot(
@@ -1294,30 +1304,16 @@ struct FeatureRootModelTests {
                     endpoint: "https://manual.example"
                 ),
             ],
-            projects: [
-                .init(
-                    id: "managed-project",
-                    environmentID: "managed-1",
-                    name: "Native",
-                    path: "/managed/native",
-                    repositoryIdentity: identity
-                ),
-                .init(
-                    id: "manual-project",
-                    environmentID: "manual-1",
-                    name: "Native",
-                    path: "/manual/native",
-                    repositoryIdentity: identity
-                ),
-            ]
+            projects: [managedProject, manualProject]
         )
         let model = FeatureRootModel(client: client, outboxStore: outbox, draftStore: drafts)
         await model.reload()
 
         await model.signOutT3Connect()
 
-        #expect(try await drafts.draft(for: groupedDraftKey)?.text == "Keep shared prompt")
-        #expect(try await drafts.draft(for: managedDraftKey) == nil)
+        #expect(try await drafts.draft(for: manualDraftKey)?.text == "Keep manual prompt")
+        #expect(try await drafts.draft(for: managedNewTaskKey) == nil)
+        #expect(try await drafts.draft(for: managedThreadKey) == nil)
         #expect(model.snapshot.projects.map(\.id) == ["manual-project"])
     }
 

@@ -478,13 +478,20 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
         let snapshot = try await fixture.client.initialSnapshot()
-        let groups = DailyUXCreationContext.projectGroups(in: snapshot)
+        let sidebarGroups = DailyUXProjectGrouping.groups(projects: snapshot.projects)
+        let creationGroups = DailyUXCreationContext.projectGroups(in: snapshot)
 
         XCTAssertEqual(Set(snapshot.projects.compactMap(\.repositoryIdentity?.canonicalKey)), [
             identity.canonicalKey,
         ])
-        XCTAssertEqual(groups.count, 1)
-        XCTAssertEqual(Set(groups[0].projects.map(\.environmentID)), ["one", "two"])
+        XCTAssertEqual(sidebarGroups.count, 1)
+        XCTAssertEqual(Set(sidebarGroups[0].projects.map(\.environmentID)), ["one", "two"])
+        // Task creation keeps each computer's checkout selectable on its own.
+        XCTAssertEqual(creationGroups.map(\.projects.count), [1, 1])
+        XCTAssertEqual(
+            Set(creationGroups.flatMap(\.projects).map(\.environmentID)),
+            ["one", "two"]
+        )
         await fixture.client.disconnect()
     }
 
