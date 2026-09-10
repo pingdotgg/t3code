@@ -16,6 +16,7 @@ export const V1_AGENT_METHODS = {
 
 export const V1_CLIENT_METHODS = {
   session_elicitation: "session/elicitation",
+  unstable_session_elicitation: "_session/elicitation",
   session_elicitation_complete: "session/elicitation/complete",
   fs_read_text_file: "fs/read_text_file",
   fs_write_text_file: "fs/write_text_file",
@@ -308,14 +309,15 @@ const CompatElicitationRpc = Rpc.make(CLIENT_METHODS.elicitation_create, {
 });
 
 // Native ACP agents still use the older nested elicitation response.
-const LegacyElicitationRpc = Rpc.make(V1_CLIENT_METHODS.session_elicitation, {
-  payload: AcpSchema.CreateElicitationRequest,
-  success: Schema.Struct({
-    action: AcpSchema.CreateElicitationResponse,
-    _meta: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
-  }),
-  error: AcpSchema.Error,
-});
+const legacyElicitationRpc = <const Method extends string>(method: Method) =>
+  Rpc.make(method, {
+    payload: AcpSchema.CreateElicitationRequest,
+    success: Schema.Struct({
+      action: AcpSchema.CreateElicitationResponse,
+      _meta: Schema.optionalKey(Schema.NullOr(Schema.Record(Schema.String, Schema.Json))),
+    }),
+    error: AcpSchema.Error,
+  });
 
 const ConnectMcpRpc = Rpc.make(CLIENT_METHODS.mcp_connect, {
   payload: AcpSchema.ConnectMcpRequest,
@@ -388,7 +390,8 @@ const KillTerminalV1Rpc = Rpc.make(V1_CLIENT_METHODS.terminal_kill, {
 export const CompatClientRpcs = RpcGroup.make(
   CompatRequestPermissionRpc,
   CompatElicitationRpc,
-  LegacyElicitationRpc,
+  legacyElicitationRpc(V1_CLIENT_METHODS.session_elicitation),
+  legacyElicitationRpc(V1_CLIENT_METHODS.unstable_session_elicitation),
   ConnectMcpRpc,
   MessageMcpRpc,
   DisconnectMcpRpc,

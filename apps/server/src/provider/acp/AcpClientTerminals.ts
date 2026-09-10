@@ -135,6 +135,8 @@ export interface AcpClientTerminals {
 }
 
 export interface AcpClientTerminalsOptions {
+  /** Devin sends shell source in command, rather than an executable plus args. */
+  readonly shellCommands?: boolean | undefined;
   readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly defaultCwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
@@ -146,6 +148,7 @@ export interface AcpClientTerminalsOptions {
 
 function acpTerminalCommand(input: {
   readonly request: EffectAcpSchema.CreateTerminalRequest;
+  readonly shellCommands?: boolean | undefined;
   readonly defaultCwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
   readonly forceKillAfter?: Duration.Input | undefined;
@@ -153,7 +156,7 @@ function acpTerminalCommand(input: {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
     ...(input.environment === undefined ? {} : { env: input.environment }),
-    shell: false,
+    shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
     forceKillAfter: input.forceKillAfter ?? "5 seconds",
   });
 }
@@ -247,6 +250,7 @@ export const makeAcpClientTerminals = (
                 .spawn(
                   acpTerminalCommand({
                     request,
+                    shellCommands: options.shellCommands,
                     defaultCwd: options.defaultCwd,
                     environment,
                     forceKillAfter: options.forceKillAfter,

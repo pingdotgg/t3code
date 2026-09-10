@@ -194,6 +194,10 @@ export interface AcpAdapterV2ExtensionContext {
 export interface AcpAdapterV2Flavor {
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
+  readonly clientCapabilitiesMeta?: Record<string, boolean>;
+  readonly normalizeSessionUpdate?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => EffectAcpSchema.SessionNotification;
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
@@ -427,6 +431,7 @@ export interface AcpAdapterV2Options {
   readonly clientTerminals?: {
     readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly environment?: NodeJS.ProcessEnv;
+    readonly shellCommands?: boolean;
   };
   readonly nativeLogging?: (threadId: ThreadId) => AcpAdapterV2NativeLogging;
   /**
@@ -626,6 +631,7 @@ function acpMcpContext(threadId: ThreadId | null): AcpMcpContext {
         command: process.execPath,
         args: [serverEntrypoint, "acp-mcp-bridge"],
         env: [
+          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
         ],
@@ -1381,6 +1387,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 spawner: options.clientTerminals.childProcessSpawner,
                 defaultCwd: input.runtimePolicy.cwd ?? process.cwd(),
                 environment: options.clientTerminals.environment,
+                shellCommands: options.clientTerminals.shellCommands,
                 environmentForSession: (sessionId) => {
                   const remembered = terminalEnvironmentBySessionId.get(sessionId);
                   if (remembered !== undefined) return remembered;
@@ -1867,6 +1874,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               fs: { readTextFile: true, writeTextFile: true },
               terminal: clientTerminals !== undefined,
               elicitation: { form: {} },
+              ...(flavor.clientCapabilitiesMeta ? { _meta: flavor.clientCapabilitiesMeta } : {}),
             },
             clientInfo: { name: "t3-code", version: "0.0.0" },
             onTermination,
@@ -2336,6 +2344,14 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           subagent.assistantText = mode === "replace" ? text : `${subagent.assistantText}${text}`;
           const now = yield* DateTime.now;
           const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:result`;
+          let ordinal = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
+          if (ordinal === undefined) {
+            ordinal = subagent.nextChildOrdinal++;
+            const allocated = ordinal;
+            yield* Ref.update(itemOrdinals, (current) =>
+              new Map(current).set(nativeItemId, allocated),
+            );
+          }
           const artifacts = makeSubagentConversationArtifacts({
             messageId: providerMessageId(nativeItemId),
             turnItemId: providerTurnItemId(nativeItemId),
@@ -2346,7 +2362,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
             role: "assistant",
             text: subagent.assistantText,
-            ordinal: subagent.nextChildOrdinal,
+            ordinal,
             now,
           });
           yield* emitProviderEvent({ type: "message.updated", driver, message: artifacts.message });
@@ -2781,7 +2797,13 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
         ) {
-          yield* closeTextStreams(context);
+          // An identified message can stream concurrently with tool updates.
+          // Keep its identity until the provider starts another message.
+          if (context.assistant.current?.sourceMessageId == null)
+            yield* closeTextStream(context, "assistant");
+          if (context.reasoning.current?.sourceMessageId == null)
+            yield* closeTextStream(context, "reasoning");
+          yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
           const merged = mergeToolCallState(previous, incoming);
           const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
@@ -3992,14 +4014,54 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 if (event._tag !== "ToolCallUpdated") continue;
                 const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
                 const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
-                if (
-                  subagentUpdate === undefined ||
-                  (subagentUpdate.nativeTaskId !== nativeTaskId &&
-                    subagentUpdate.childSessionId !== notification.sessionId)
-                ) {
+                if (subagentUpdate !== undefined) {
+                  if (
+                    subagentUpdate.nativeTaskId === nativeTaskId ||
+                    subagentUpdate.childSessionId === notification.sessionId
+                  ) {
+                    yield* emitSubagent(context, subagentUpdate);
+                  }
                   continue;
                 }
-                yield* emitSubagent(context, subagentUpdate);
+                const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
+                const merged = mergeToolCallState(context.tools.get(key), toolCall);
+                context.tools.set(key, merged);
+                const now = yield* DateTime.now;
+                const status = toolStatus(merged.status);
+                const startedAt = context.toolStartedAt.get(key) ?? now;
+                context.toolStartedAt.set(key, startedAt);
+                let ordinal = (yield* Ref.get(itemOrdinals)).get(key);
+                if (ordinal === undefined) {
+                  ordinal = subagent.nextChildOrdinal++;
+                  const allocated = ordinal;
+                  yield* Ref.update(itemOrdinals, (current) =>
+                    new Map(current).set(key, allocated),
+                  );
+                }
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    id: providerTurnItemId(key),
+                    threadId: subagent.childThreadId,
+                    runId: null,
+                    nodeId: subagent.childRootNodeId,
+                    providerThreadId: subagent.task.providerThreadId,
+                    providerTurnId: null,
+                    nativeItemRef: { driver, nativeId: key, strength: "strong" },
+                    parentItemId: null,
+                    ordinal,
+                    status,
+                    title: merged.title ?? merged.kind ?? "Tool",
+                    startedAt,
+                    completedAt: completedAtForStatus(status, now),
+                    updatedAt: now,
+                    type: "dynamic_tool",
+                    toolName: merged.title ?? merged.kind ?? "Tool",
+                    input: merged.data.rawInput ?? null,
+                    output: merged.data.rawOutput ?? merged.data.content ?? null,
+                  },
+                });
               }
               return;
             }
@@ -4941,7 +5003,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                 ) ?? Effect.void
               );
             }
-            yield* handleSessionUpdate(notification);
+            yield* handleSessionUpdate(
+              flavor.normalizeSessionUpdate?.(notification) ?? notification,
+            );
           }).pipe(
             Effect.mapError(
               (cause) =>
