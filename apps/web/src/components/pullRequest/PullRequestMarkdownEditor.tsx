@@ -76,7 +76,12 @@ export function PullRequestMarkdownEditor({
         ) {
           event.preventDefault();
           event.stopPropagation();
-          if (!saveDisabled && !event.repeat && readEnvironmentScope(environmentId, AuthSourceControlWriteScope)) onSave(draft);
+          if (
+            !saveDisabled &&
+            !event.repeat &&
+            readEnvironmentScope(environmentId, AuthSourceControlWriteScope)
+          )
+            onSave(draft);
           return;
         }
         if (event.key !== "Escape" || saving) return;
