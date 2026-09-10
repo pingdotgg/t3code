@@ -13,7 +13,8 @@ type EditorDefinition = {
   /**
    * URL scheme for editors that support VS Code's remote deep links
    * (`<scheme>://vscode-remote/ssh-remote+<host><path>`). Only set for VS Code
-   * and forks that ship the Remote-SSH machinery.
+   * and forks that ship the Remote-SSH machinery, plus Zed, which uses its own
+   * `zed://ssh/<host><path>` shape.
    */
   readonly remoteScheme?: string;
 };
@@ -49,7 +50,13 @@ export const EDITORS = [
     launchStyle: "goto",
     remoteScheme: "vscodium",
   },
-  { id: "zed", label: "Zed", commands: ["zed", "zeditor"], launchStyle: "direct-path" },
+  {
+    id: "zed",
+    label: "Zed",
+    commands: ["zed", "zeditor"],
+    launchStyle: "direct-path",
+    remoteScheme: "zed",
+  },
   { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
@@ -95,9 +102,10 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
 };
 
 /**
- * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link that
- * opens `absolutePath` on `host` in the local editor over SSH. Returns
- * undefined for editors without remote deep-link support.
+ * Builds a `<scheme>://vscode-remote/ssh-remote+<host><path>` deep link (Zed
+ * takes `zed://ssh/<host><path>`) that opens `absolutePath` on `host` in the
+ * local editor over SSH. Returns undefined for editors without remote
+ * deep-link support.
  */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
@@ -112,7 +120,10 @@ export const buildRemoteOpenUrl = (input: {
   const posixPath = input.absolutePath.replaceAll("\\", "/");
   const rootedPath = posixPath.startsWith("/") ? posixPath : `/${posixPath}`;
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(input.host)}${encodedPath}`;
+  const encodedHost = encodeURIComponent(input.host);
+  return input.editor === "zed"
+    ? `${scheme}://ssh/${encodedHost}${encodedPath}`
+    : `${scheme}://vscode-remote/ssh-remote+${encodedHost}${encodedPath}`;
 };
 
 /**

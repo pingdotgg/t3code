@@ -23,6 +23,7 @@ const buttonVariants = cva(
         "icon-lg": "size-10 sm:size-9",
         "icon-micro":
           "size-5 rounded-sm p-0 before:rounded-[calc(var(--radius-sm)-1px)] [&_svg:not([class*='size-'])]:size-3",
+        "icon-tiny": "size-4 p-0 [&_svg:not([class*='size-'])]:size-3",
         "icon-sm": "size-8 sm:size-7",
         "icon-xl":
           "size-11 sm:size-10 [&_svg:not([class*='size-'])]:size-5 sm:[&_svg:not([class*='size-'])]:size-4.5",
@@ -85,3 +86,23 @@ function Button({ className, variant, size, render, ...props }: ButtonProps) {
 }
 
 export { Button, buttonVariants };
+
+/** An inline action that keeps the geometry of surrounding text or a graph node. */
+export function InlineButton({
+  className,
+  underline = false,
+  ...props
+}: React.ComponentProps<"button"> & { underline?: boolean }) {
+  return (
+    <button
+      type="button"
+      data-slot="inline-button"
+      className={cn(
+        "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64",
+        underline && "border-b border-transparent hover:border-current",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
