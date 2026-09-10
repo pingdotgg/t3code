@@ -220,6 +220,25 @@ public actor FeatureComposerDraftStore {
         return draft
     }
 
+    /// Loads the new-task draft of one workspace. Before drafts were keyed by
+    /// workspace, one draft served a whole repository group; the first
+    /// workspace of that group to open adopts it, and the old key is dropped so
+    /// sending cannot resurrect it.
+    func newTaskDraft(project: FeatureProject, in snapshot: FeatureSnapshot) throws
+        -> FeatureComposerDraft?
+    {
+        let key = Self.newTaskKey(project: project)
+        var drafts = try loadIfNeeded()
+        if drafts[key] == nil,
+           let legacyKey = Self.repositoryNewTaskKey(project: project, in: snapshot),
+           let legacyDraft = drafts.removeValue(forKey: legacyKey) {
+            drafts[key] = legacyDraft
+            try persist(drafts)
+            loadedDrafts = drafts
+        }
+        return try draft(for: key)
+    }
+
     public func setDraft(_ draft: FeatureComposerDraft, for key: String) throws {
         var drafts = try loadIfNeeded()
         let existingReferences = Dictionary(
@@ -350,25 +369,34 @@ public actor FeatureComposerDraftStore {
         return "environment:\(environment):thread:\(threadID)"
     }
 
+    /// Projects with a repository identity key their new-task draft by physical
+    /// workspace, so alias rows of one checkout share a draft. Other projects
+    /// keep the environment-scoped project key.
     public static func newTaskKey(project: FeatureProject) -> String {
-        let projectID = project.wireID ?? project.id
-        return "environment:\(project.environmentID):new-task:\(projectID)"
-    }
-
-    static func newTaskKey(project: FeatureProject, in snapshot: FeatureSnapshot) -> String {
         guard project.repositoryIdentity != nil else {
-            return newTaskKey(project: project)
+            let projectID = project.wireID ?? project.id
+            return "environment:\(project.environmentID):new-task:\(projectID)"
         }
-        return newTaskKey(
-            logicalProjectID: DailyUXCreationContext.logicalProjectID(
-                for: project,
-                in: snapshot
-            )
-        )
+        return newTaskKey(logicalProjectID: DailyUXCreationContext.logicalProjectID(for: project))
     }
 
     public static func newTaskKey(logicalProjectID: String) -> String {
         "logical-project:\(logicalProjectID):new-task"
+    }
+
+    /// The key new-task drafts used while creation grouped checkouts the way
+    /// the sidebar does. `nil` when the project never had such a key.
+    private static func repositoryNewTaskKey(
+        project: FeatureProject,
+        in snapshot: FeatureSnapshot
+    ) -> String? {
+        guard project.repositoryIdentity != nil else { return nil }
+        let groups = DailyUXProjectGrouping.groups(
+            projects: snapshot.projects,
+            preferencesByEnvironment: snapshot.preferencesByEnvironment ?? [:]
+        )
+        return DailyUXProjectGrouping.group(containing: project.id, in: groups)
+            .map { newTaskKey(logicalProjectID: $0.id) }
     }
 
     private func loadIfNeeded() throws -> [String: PersistedDraft] {

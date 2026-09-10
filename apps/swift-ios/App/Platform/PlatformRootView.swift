@@ -243,10 +243,7 @@ struct PlatformRootView: View {
             do {
                 try await incomingShareCoordinator.importPending(
                     into: project,
-                    draftKey: FeatureComposerDraftStore.newTaskKey(
-                        project: project,
-                        in: model.snapshot
-                    )
+                    draftKey: FeatureComposerDraftStore.newTaskKey(project: project)
                 )
             } catch {
                 importedShareProjectID = nil

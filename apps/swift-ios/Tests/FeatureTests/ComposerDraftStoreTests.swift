@@ -4,6 +4,50 @@ import Testing
 
 @Suite("Composer draft persistence")
 struct ComposerDraftStoreTests {
+    @Test func repositoryDraftMovesToTheFirstOpenedWorkspaceOnce() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("drafts.json")
+        let store = FeatureComposerDraftStore(fileURL: fileURL)
+        let identity = FeatureRepositoryIdentity(canonicalKey: "github.com/example/app")
+        let first = FeatureProject(
+            id: "first", environmentID: "mac", name: "App 1", path: "/code/app-1",
+            repositoryIdentity: identity
+        )
+        let second = FeatureProject(
+            id: "second", environmentID: "mac", name: "App 2", path: "/code/app-2",
+            repositoryIdentity: identity
+        )
+        let snapshot = FeatureSnapshot(projects: [first, second])
+        let repositoryKey = FeatureComposerDraftStore.newTaskKey(
+            logicalProjectID: identity.canonicalKey
+        )
+        let legacy = FeatureComposerDraft(
+            text: "Unsent before updating",
+            attachments: [FeatureDraftAttachment(
+                data: Data([1, 2, 3]), filename: "notes.txt", mimeType: "text/plain"
+            )],
+            selection: FeatureSelection(providerID: "codex", modelID: "gpt-5.6")
+        )
+        let existing = FeatureComposerDraft(text: "Already saved for App 1")
+        try await store.setDraft(legacy, for: repositoryKey)
+        try await store.setDraft(existing, for: FeatureComposerDraftStore.newTaskKey(project: first))
+
+        // A workspace with its own draft leaves the repository draft alone.
+        #expect(try await store.newTaskDraft(project: first, in: snapshot) == existing)
+        #expect(try await store.draft(for: repositoryKey) == legacy)
+        // The first workspace without one adopts it and the old key is gone.
+        #expect(try await store.newTaskDraft(project: second, in: snapshot) == legacy)
+        #expect(try await store.draft(for: repositoryKey) == nil)
+
+        let reloaded = FeatureComposerDraftStore(fileURL: fileURL)
+        #expect(try await reloaded.newTaskDraft(project: first, in: snapshot) == existing)
+        #expect(try await reloaded.newTaskDraft(project: second, in: snapshot) == legacy)
+        try await reloaded.removeDraft(for: FeatureComposerDraftStore.newTaskKey(project: second))
+        #expect(try await reloaded.newTaskDraft(project: second, in: snapshot) == nil)
+    }
+
     @Test func staleComposerSavePreservesUploadedReferenceForSameContent() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
