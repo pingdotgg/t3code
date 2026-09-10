@@ -1718,6 +1718,97 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("retains multiple pull requests and dismissed stack members through rebuilds", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("runtime-multiple-pull-requests");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("multi-pr-create"),
+        threadId,
+        projectId: ProjectId.make("multi-pr-project"),
+        title: "Stack",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "GitHub.com", repository: "Pingdotgg/T3code" };
+      for (const number of [1, 2]) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`multi-pr-link-${number}`),
+          threadId,
+          ...key,
+          number,
+          url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+          source: number === 1 ? "manual" : "stack",
+        });
+      }
+      const linked = yield* orchestrator.getThreadShell(threadId);
+      assert.deepEqual(
+        linked?.pullRequests?.map(({ host, repository, number }) => ({ host, repository, number })),
+        [1, 2].map((number) => ({ host: "github.com", repository: "pingdotgg/t3code", number })),
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("multi-pr-dismiss"),
+        threadId,
+        ...key,
+        number: 2,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("multi-pr-unlink"),
+        threadId,
+        ...key,
+        number: 1,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map(({ number, source }) => ({
+          number,
+          source,
+        })),
+        [{ number: 2, source: "stack-dismissed" }],
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("multi-pr-rediscover"),
+        threadId,
+        ...key,
+        number: 2,
+        url: "https://github.com/pingdotgg/t3code/pull/2",
+        source: "stack",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        "stack-dismissed",
+      );
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        "stack-dismissed",
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("multi-pr-restore"),
+        threadId,
+        ...key,
+        number: 2,
+        url: "https://github.com/pingdotgg/t3code/pull/2",
+        source: "manual",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.source,
+        "manual",
+      );
+    }),
+  );
+
   it.effect("persists rejected command receipts across retries", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;

@@ -372,6 +372,17 @@ export const layerWithOptions = (
                 // re-attaches across a workspace handoff must come back to the
                 // same token or the process's tool calls fail auth.
                 const browserToolsAvailable = yield* agentBrowserAccessEnabled(threadId);
+                const deviceToolsAvailable = Option.isSome(serverSettings)
+                  ? yield* serverSettings.value.getSettings.pipe(
+                      Effect.map((settings) => settings.enableAgentDeviceAccess),
+                      Effect.orElseSucceed(() => false),
+                    )
+                  : false;
+                const capabilities = new Set<
+                  import("../mcp/McpInvocationContext.ts").McpCapability
+                >(["orchestration", "worktree", "pull-requests"]);
+                if (browserToolsAvailable) capabilities.add("preview");
+                if (deviceToolsAvailable) capabilities.add("device");
                 const existing = McpProviderSession.readMcpProviderSession(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -385,7 +396,8 @@ export const layerWithOptions = (
                     resolved.providerInstanceId === providerInstanceId &&
                     // A flipped browser-access setting must not survive through
                     // credential reuse: rotate so the new scope reflects it.
-                    resolved.capabilities.has("preview") === browserToolsAvailable
+                    resolved.capabilities.has("preview") === browserToolsAvailable &&
+                    resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -396,6 +408,7 @@ export const layerWithOptions = (
                   threadId,
                   providerInstanceId,
                   browserToolsAvailable,
+                  capabilities,
                 });
                 McpProviderSession.setMcpProviderSession(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);

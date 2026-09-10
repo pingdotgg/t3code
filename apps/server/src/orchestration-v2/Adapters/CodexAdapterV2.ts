@@ -643,6 +643,7 @@ export function buildCodexTurnStartParams(input: {
   readonly modelSelection: ModelSelection;
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
+  readonly deviceToolsAvailable?: boolean;
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -670,7 +671,10 @@ export function buildCodexTurnStartParams(input: {
               model: input.modelSelection.model,
               reasoningEffort: effort ?? "medium",
             },
-            input.browserToolsAvailable ?? true,
+            {
+              browser: input.browserToolsAvailable ?? true,
+              device: input.deviceToolsAvailable ?? false,
+            },
           );
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
@@ -4991,6 +4995,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 modelSelection: turnInput.modelSelection,
                 hasT3Mcp: mcpSession !== undefined,
                 browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
+                deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
