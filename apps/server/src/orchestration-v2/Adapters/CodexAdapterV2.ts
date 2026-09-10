@@ -5301,7 +5301,14 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   // A null start timestamp acknowledges a queued turn; Codex cannot interrupt it
                   // until turn/started confirms that the native task exists.
                   if (context.nativeStartReady !== undefined) {
-                    yield* Deferred.await(context.nativeStartReady);
+                    const ready = yield* Deferred.await(context.nativeStartReady).pipe(
+                      Effect.timeoutOption("10 seconds"),
+                    );
+                    if (Option.isNone(ready)) {
+                      return yield* toProtocolError(
+                        "Codex did not start the queued turn within 10 seconds; Stop could not be delivered.",
+                      );
+                    }
                   }
                   if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
                     continue;

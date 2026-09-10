@@ -1546,6 +1546,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
   );
 
+  it.effect("bounds Stop when a queued native turn never starts", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "early-stop-thread";
+      const nativeTurnId = "early-stop-turn";
+      const prompt = "Run a command.";
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
+      const transcript = makeCodexReplayTranscript({
+        scenario: "early-stop-never-starts",
+        entries: [
+          ...preamble.slice(0, -2),
+          {
+            type: "emit_inbound",
+            label: "turn/start/queued",
+            frame: {
+              id: 3,
+              result: {
+                turn: {
+                  ...makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  startedAt: null,
+                },
+              },
+            },
+          },
+        ],
+      });
+      let interruptSent = false;
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            if (method === "turn/interrupt") interruptSent = true;
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("early-stop-attempt"),
+          text: prompt,
+        }),
+      );
+      const providerTurnId = (yield* IdAllocatorV2).derive.providerTurn({
+        driver: CODEX_DRIVER_KIND,
+        nativeTurnId,
+      });
+      const interrupt = yield* harness.runtime
+        .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* TestClock.adjust("10 seconds");
+      assert.equal((yield* Fiber.join(interrupt))._tag, "Failure");
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+      assert.lengthOf(harness.terminalEvents(), 1);
+      assert.isFalse(interruptSent, "An unstarted native turn must not receive turn/interrupt");
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
+
   const assistantMessages = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
     events.filter(
       (event): event is Extract<ProviderAdapterV2Event, { type: "message.updated" }> =>
