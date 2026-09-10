@@ -753,7 +753,28 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
+// A notification records an observed event, not whether its payload has reached the agent.
+// Provider delivery, wake policy, and agent-facing instructions belong to the backend.
+export const OrchestrationV2Notification = Schema.Struct({
+  source: Schema.Union([
+    Schema.Struct({
+      kind: Schema.Literal("delegated_task"),
+      taskIds: Schema.Array(NodeId),
+    }),
+    Schema.Struct({
+      kind: Schema.Literals(["background_task", "background_command", "monitor"]),
+      nativeRef: Schema.optional(OrchestrationV2ProviderRef),
+    }),
+  ]),
+  // Item status describes this timeline record; outcome describes the reported work.
+  outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
+  summary: TrimmedNonEmptyString,
+  detail: Schema.optional(Schema.String),
+});
+export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
+
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   id: MessageId,
@@ -979,6 +1000,11 @@ export const OrchestrationV2WebSearchResult = Schema.Struct({
 export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
 
 export const OrchestrationV2TurnItem = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("notification"),
+    ...OrchestrationV2Notification.fields,
+  }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2CreationFields,
@@ -1684,6 +1710,11 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("notification"),
+    ...OrchestrationV2Notification.fields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
     messageId: MessageId,
@@ -2320,6 +2351,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("message.dispatch"),
+    notification: Schema.optional(OrchestrationV2Notification),
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     commandId: CommandId,
