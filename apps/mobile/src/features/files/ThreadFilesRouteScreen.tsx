@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -36,6 +37,7 @@ import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useEnvironmentQuery } from "../../state/query";
+import { showGitignoredFilesAtom } from "../../state/preferences";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import {
@@ -305,6 +307,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, panes, showAuxiliaryPane, togglePrimarySidebar } =
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
+  const includeIgnored = useAtomValue(showGitignoredFilesAtom);
   const isAndroid = Platform.OS === "android";
   const { themeAppearance: highlightTheme, materialYouStyleLayoutActive } =
     useAppearancePreferences();
@@ -319,7 +322,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     environmentId !== null && cwd !== null && !fileInspector.supported
       ? projectEnvironment.listEntries({
           environmentId,
-          input: { cwd },
+          input: { cwd, includeIgnored },
         })
       : null,
   );

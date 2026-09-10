@@ -33,7 +33,11 @@ import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/pu
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import {
+  mobilePreferencesAtom,
+  showGitignoredFilesAtom,
+  updateMobilePreferencesAtom,
+} from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
@@ -576,8 +580,17 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const showGitignoredFiles = useAtomValue(showGitignoredFilesAtom);
   return (
     <SettingsSection title="General">
+      <SettingsSwitchRow
+        icon="folder"
+        label="Show gitignored files"
+        subtitle="Include gitignored files in the file explorer."
+        value={showGitignoredFiles}
+        onValueChange={(value) => savePreferences({ showGitignoredFiles: value })}
+      />
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
       <AutoSettleSettingsRows />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />

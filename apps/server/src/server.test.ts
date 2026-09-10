@@ -6790,6 +6790,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "export const answer = 42;\n",
       );
 
+      yield* fs.makeDirectory(path.join(workspaceDir, "node_modules"));
+      yield* fs.writeFileString(path.join(workspaceDir, "node_modules", "ignored.js"), "");
+
       yield* buildAppUnderTest();
 
       const wsUrl = yield* getWsServerUrl("/ws");
@@ -6797,6 +6800,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           Effect.all({
             listing: client[WS_METHODS.projectsListEntries]({ cwd: workspaceDir }),
+            includingIgnored: client[WS_METHODS.projectsListEntries]({
+              cwd: workspaceDir,
+              includeIgnored: true,
+            }),
             file: client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
               relativePath: "src/index.ts",
@@ -6806,6 +6813,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.isTrue(response.listing.entries.some((entry) => entry.path === "src/index.ts"));
+      assert.isFalse(
+        response.listing.entries.some((entry) => entry.path === "node_modules/ignored.js"),
+      );
+      assert.isTrue(
+        response.includingIgnored.entries.some((entry) => entry.path === "node_modules/ignored.js"),
+      );
       assert.deepEqual(response.file, {
         relativePath: "src/index.ts",
         contents: "export const answer = 42;\n",

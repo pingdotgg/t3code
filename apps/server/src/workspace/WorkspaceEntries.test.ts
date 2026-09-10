@@ -96,6 +96,87 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
+    it.effect(
+      "includes ignored files on request without changing filtered listings or search",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ git: true });
+          yield* writeTextFile(cwd, ".gitignore", "build/\nignored.txt\n");
+          yield* writeTextFile(cwd, "src/index.ts");
+          yield* writeTextFile(cwd, "build/output.js");
+          yield* writeTextFile(cwd, "ignored.txt");
+          yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+          const service = yield* WorkspaceEntries.WorkspaceEntries;
+          const before = yield* service.list({ cwd });
+          const included = yield* service.list({ cwd, includeIgnored: true });
+          expect(included.entries).toEqual(
+            expect.arrayContaining([
+              { path: "src/index.ts", kind: "file" },
+              { path: "build", kind: "directory" },
+              { path: "build/output.js", kind: "file" },
+              { path: "ignored.txt", kind: "file" },
+              { path: "node_modules/pkg/index.js", kind: "file" },
+            ]),
+          );
+          expect(
+            included.entries.some(
+              (entry) => entry.path === ".git" || entry.path.startsWith(".git/"),
+            ),
+          ).toBe(false);
+          expect(included.truncated).toBe(false);
+          const after = yield* service.list({ cwd, includeIgnored: false });
+          expect(after).toEqual(before);
+          expect(
+            after.entries.some(
+              (entry) => entry.path === "ignored.txt" || entry.path.startsWith("build/"),
+            ),
+          ).toBe(false);
+          expect(
+            (yield* service.search({ cwd, query: "ignored", limit: 10 })).entries.map(
+              (entry) => entry.path,
+            ),
+          ).not.toContain("ignored.txt");
+          yield* writeTextFile(cwd, "build/next.js");
+          expect((yield* service.list({ cwd, includeIgnored: true })).entries).toContainEqual({
+            path: "build/next.js",
+            kind: "file",
+          });
+        }),
+    );
+
+    it.effect("includes ignored directories outside git without traversing symlinks", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "node_modules/pkg/index.js");
+        yield* Effect.promise(() => NodeFSP.symlink(cwd, `${cwd}/loop`, "junction"));
+        const service = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* service.list({ cwd, includeIgnored: true });
+        expect(result.entries).toContainEqual({ path: "node_modules/pkg/index.js", kind: "file" });
+        expect(result.entries).toContainEqual({ path: "loop", kind: "file" });
+        expect(result.entries.some((entry) => entry.path.startsWith("loop/"))).toBe(false);
+        expect(result.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("bounds the ignored-file listing and reports truncation", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir();
+        yield* Effect.promise(async () => {
+          for (let start = 0; start < 25_001; start += 100) {
+            await Promise.all(
+              Array.from({ length: Math.min(100, 25_001 - start) }, (_, offset) =>
+                NodeFSP.writeFile(`${cwd}/file-${start + offset}.txt`, ""),
+              ),
+            );
+          }
+        });
+        const service = yield* WorkspaceEntries.WorkspaceEntries;
+        const result = yield* service.list({ cwd, includeIgnored: true });
+        expect(result.entries).toHaveLength(25_000);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
     it.effect("returns the complete cached workspace index", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir();

@@ -191,6 +191,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     requiresThreadAutoSettlement: true,
   },
   {
+    id: "show-gitignored-files",
+    title: "Show gitignored files",
+    to: "/settings/general",
+    searchTerms: ["file explorer ignored .gitignore hidden files directories node_modules"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

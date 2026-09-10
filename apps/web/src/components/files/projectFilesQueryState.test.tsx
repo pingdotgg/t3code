@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  type ClientSettings,
   type ProjectListEntriesResult,
   type ProjectReadFileResult,
 } from "@t3tools/contracts";
@@ -12,6 +13,8 @@ const projectMocks = vi.hoisted(() => ({
   optimisticFile: vi.fn(),
   readFile: vi.fn(),
 }));
+
+const clientSettings = vi.hoisted(() => ({ showGitignoredFiles: false }));
 
 const atomHooks = vi.hoisted(() => ({
   registry: null as {
@@ -66,6 +69,14 @@ vi.mock("react", async (importOriginal) => {
   };
 });
 
+vi.mock("~/hooks/useSettings", async () => {
+  const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts");
+  return {
+    useClientSettings: <A,>(select: (settings: ClientSettings) => A) =>
+      select({ ...DEFAULT_CLIENT_SETTINGS, ...clientSettings }),
+  };
+});
+
 vi.mock("~/state/projects", () => ({
   projectEnvironment: projectMocks,
 }));
@@ -115,6 +126,7 @@ describe("project query refresh", () => {
     projectMocks.optimisticFile.mockReset();
     projectMocks.readFile.mockReset();
     reactHooks.reset();
+    clientSettings.showGitignoredFiles = false;
   });
 
   it("replaces an in-flight initial read when a workspace mutation arrives", async () => {
@@ -169,54 +181,62 @@ describe("project query refresh", () => {
     }
   });
 
-  it("revalidates cached entries when a workspace mutation is observed after mounting", async () => {
-    const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
-    const entriesAtom = Atom.make(
-      Effect.promise(() => {
-        const request = deferred<ProjectListEntriesResult>();
-        requests.push(request);
-        return request.promise;
-      }),
-    ).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(entriesAtom);
-    projectMocks.listEntries.mockReturnValue(entriesAtom);
-    atomHooks.registry = registry;
-    let renderedPaths: readonly string[] = [];
+  it.each([false, true])(
+    "revalidates cached entries after a workspace mutation with ignored files %s",
+    async (showGitignoredFiles) => {
+      clientSettings.showGitignoredFiles = showGitignoredFiles;
+      const requests: Array<ReturnType<typeof deferred<ProjectListEntriesResult>>> = [];
+      const entriesAtom = Atom.make(
+        Effect.promise(() => {
+          const request = deferred<ProjectListEntriesResult>();
+          requests.push(request);
+          return request.promise;
+        }),
+      ).pipe(Atom.swr({ staleTime: 30_000, revalidateOnMount: true }));
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(entriesAtom);
+      projectMocks.listEntries.mockReturnValue(entriesAtom);
+      atomHooks.registry = registry;
+      let renderedPaths: readonly string[] = [];
 
-    const render = (mutationId: string | null) => {
-      reactHooks.beginRender();
-      const query = useProjectEntriesQuery(environmentId, "/repo");
-      renderedPaths = query.data?.entries.map((entry) => entry.path) ?? [];
-      useWorkspaceMutationRefresh({
-        mutationId,
-        refresh: query.refresh,
-        resourceKey: "files:environment-1:/repo",
-      });
-    };
+      const render = (mutationId: string | null) => {
+        reactHooks.beginRender();
+        const query = useProjectEntriesQuery(environmentId, "/repo");
+        expect(projectMocks.listEntries).toHaveBeenLastCalledWith({
+          environmentId,
+          input: { cwd: "/repo", includeIgnored: showGitignoredFiles },
+        });
+        renderedPaths = query.data?.entries.map((entry) => entry.path) ?? [];
+        useWorkspaceMutationRefresh({
+          mutationId,
+          refresh: query.refresh,
+          resourceKey: "files:environment-1:/repo",
+        });
+      };
 
-    try {
-      await flushEffects();
-      expect(requests).toHaveLength(1);
-      requests[0]!.resolve(projectEntries(["src/old.ts"]));
-      await flushEffects();
+      try {
+        await flushEffects();
+        expect(requests).toHaveLength(1);
+        requests[0]!.resolve(projectEntries(["src/old.ts"]));
+        await flushEffects();
 
-      render("mutation-1");
-      expect(renderedPaths).toEqual(["src/old.ts"]);
-      await flushEffects();
-      expect(requests).toHaveLength(2);
+        render("mutation-1");
+        expect(renderedPaths).toEqual(["src/old.ts"]);
+        await flushEffects();
+        expect(requests).toHaveLength(2);
 
-      requests[1]!.resolve(projectEntries(["src/new.ts"]));
-      await flushEffects();
-      render("mutation-1");
-      expect(renderedPaths).toEqual(["src/new.ts"]);
-      expect(requests).toHaveLength(2);
-    } finally {
-      unmount();
-      registry.dispose();
-      atomHooks.registry = null;
-    }
-  });
+        requests[1]!.resolve(projectEntries(["src/new.ts"]));
+        await flushEffects();
+        render("mutation-1");
+        expect(renderedPaths).toEqual(["src/new.ts"]);
+        expect(requests).toHaveLength(2);
+      } finally {
+        unmount();
+        registry.dispose();
+        atomHooks.registry = null;
+      }
+    },
+  );
 
   it("does not issue a file read for a disabled image preview", async () => {
     const requests: Array<ReturnType<typeof deferred<ProjectReadFileResult>>> = [];

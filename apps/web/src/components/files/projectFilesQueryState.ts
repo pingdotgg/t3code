@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
+import { useClientSettings } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
@@ -33,8 +34,12 @@ interface ProjectQueryState<A> {
   readonly refresh: () => void;
 }
 
-function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
-  return projectEnvironment.listEntries({ environmentId, input: { cwd } });
+function getProjectEntriesQueryAtom(
+  environmentId: EnvironmentId,
+  cwd: string,
+  includeIgnored: boolean,
+) {
+  return projectEnvironment.listEntries({ environmentId, input: { cwd, includeIgnored } });
 }
 
 export function getProjectFileQueryAtom(
@@ -129,7 +134,8 @@ export function useProjectEntriesQuery(
   environmentId: EnvironmentId,
   cwd: string,
 ): ProjectQueryState<ProjectListEntriesResult> {
-  const atom = getProjectEntriesQueryAtom(environmentId, cwd);
+  const includeIgnored = useClientSettings((settings) => settings.showGitignoredFiles);
+  const atom = getProjectEntriesQueryAtom(environmentId, cwd, includeIgnored);
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);

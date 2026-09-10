@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectEntry,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
@@ -74,6 +75,7 @@ export const WorkspaceEntriesBrowseError = Schema.Union([
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
 
 export const WorkspaceEntriesError = Schema.Union([
+  WorkspaceEntriesReadDirectoryError,
   WorkspacePaths.WorkspaceRootNotExistsError,
   WorkspacePaths.WorkspaceRootCreateFailedError,
   WorkspacePaths.WorkspaceRootStatFailedError,
@@ -127,6 +129,61 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   }
   return path.resolve(expandHomePathWith(input.cwd, path), input.partialPath);
 });
+
+// The search index always applies ignore rules. Only the opt-in explorer
+// listing walks the filesystem breadth-first, listing top-level directories
+// before their descendants. Never descend into symlinks or .git.
+const listIncludingIgnored = Effect.fn("WorkspaceEntries.listIncludingIgnored")(
+  (cwd: string, path: Path.Path) =>
+    Effect.tryPromise({
+      try: async (signal) => {
+        const entries: ProjectEntry[] = [];
+        const directories = [""];
+        let truncated = false;
+        scan: for (let index = 0; index < directories.length; index++) {
+          signal.throwIfAborted();
+          const parent = directories[index]!;
+          const directory = await NodeFSP.opendir(path.join(cwd, parent));
+          for await (const dirent of directory) {
+            signal.throwIfAborted();
+            if (dirent.name === ".git") continue;
+            if (!dirent.isFile() && !dirent.isDirectory() && !dirent.isSymbolicLink()) continue;
+            if (entries.length === 25_000) {
+              truncated = true;
+              break scan;
+            }
+            const relativePath = parent ? `${parent}/${dirent.name}` : dirent.name;
+            entries.push({ path: relativePath, kind: dirent.isDirectory() ? "directory" : "file" });
+            if (dirent.isDirectory()) directories.push(relativePath);
+          }
+        }
+        return {
+          entries: entries.sort((left, right) => left.path.localeCompare(right.path)),
+          truncated,
+        };
+      },
+      catch: (cause) =>
+        new WorkspaceEntriesReadDirectoryError({
+          cwd,
+          partialPath: ".",
+          parentPath: cwd,
+          cause,
+        }),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: "15 seconds",
+        orElse: () =>
+          Effect.fail(
+            new WorkspaceEntriesReadDirectoryError({
+              cwd,
+              partialPath: ".",
+              parentPath: cwd,
+              cause: "Directory listing timed out after 15 seconds.",
+            }),
+          ),
+      }),
+    ),
+);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -266,6 +323,7 @@ export const make = Effect.gen(function* () {
   const list: WorkspaceEntries["Service"]["list"] = Effect.fn("WorkspaceEntries.list")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      if (input.includeIgnored) return yield* listIncludingIgnored(normalizedCwd, path);
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();

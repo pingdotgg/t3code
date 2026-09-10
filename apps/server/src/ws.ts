@@ -229,6 +229,11 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         failure: "workspace_root_not_directory",
         normalizedCwd: error.normalizedWorkspaceRoot,
       };
+    case "WorkspaceEntriesReadDirectoryError":
+      return {
+        failure: "workspace_read_directory_failed",
+        ...(error.cwd ? { normalizedCwd: error.cwd } : {}),
+      };
     case "WorkspaceSearchIndexCreateFailed":
       return {
         failure: "search_index_create_failed",

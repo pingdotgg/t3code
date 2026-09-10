@@ -66,6 +66,7 @@ const clientSettings: ClientSettings = {
   loadBalancingWeights: { "environment-1": 75, "environment-2": 0 },
   pullRequestMergeMethodOverrides: {},
   timestampFormat: "24-hour",
+  showGitignoredFiles: true,
   wordWrap: true,
 };
 
