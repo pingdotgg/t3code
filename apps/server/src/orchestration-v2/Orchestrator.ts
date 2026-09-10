@@ -52,6 +52,7 @@ import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.t
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "./Notification.ts";
+import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -280,6 +281,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
+    case "notification.delivery.accept":
     case "prepared-run.release":
     case "prepared-run.progress":
     case "prepared-run.fail":
@@ -715,10 +717,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const completionDeliveryRun = (
     projection: OrchestrationV2ThreadProjection,
     delivery: OrchestrationV2DelegatedCompletionDelivery | null | undefined,
-  ) =>
-    delivery === null || delivery === undefined
-      ? undefined
-      : projection.runs.find((candidate) => candidate.userMessageId === delivery.messageId);
+  ) => {
+    if (delivery == null) return undefined;
+    const message = projection.messages.find((candidate) => candidate.id === delivery.messageId);
+    return projection.runs.find((candidate) => candidate.id === message?.runId);
+  };
 
   const completionDeliveryMessage = (
     projection: OrchestrationV2ThreadProjection,
@@ -742,7 +745,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery.taskIds.length === 0 ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        completionDeliveryMessage(projection, delivery) !== undefined
+        (completionDeliveryMessage(projection, delivery) !== undefined &&
+          !isUndeliveredMailboxSteer(projection, delivery.messageId))
       ) {
         return;
       }
@@ -2572,6 +2576,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly createdBy: OrchestrationV2ConversationMessage["createdBy"];
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
+    readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
   }) =>
     Effect.gen(function* () {
@@ -2710,6 +2715,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const message: OrchestrationV2ConversationMessage = {
             createdBy: input.createdBy,
             creationSource: input.creationSource,
+            ...(input.delegatedCompletion === undefined
+              ? {}
+              : { delegatedCompletion: input.delegatedCompletion }),
             ...(input.scheduledTaskId === undefined
               ? {}
               : { scheduledTaskId: input.scheduledTaskId }),
@@ -2769,7 +2777,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             nodeId: messageInput.nodeId,
             providerInstanceId: messageInput.providerInstanceId,
             occurredAt: now,
-            payload: turnItem,
+            payload: notificationTurnItem(turnItem, message, input.projection.subagents),
           });
         });
 
@@ -3380,7 +3388,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           delivery === undefined ||
           delivery.generation !== requestedCompletion.generation ||
           delivery.messageId !== command.messageId ||
-          projection.messages.some((candidate) => candidate.id === command.messageId)
+          (projection.messages.some((candidate) => candidate.id === command.messageId) &&
+            !isUndeliveredMailboxSteer(projection, command.messageId))
         ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -3393,6 +3402,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           generation: delivery.generation,
           taskIds: delivery.taskIds,
         };
+      }
+      // Route durable mailbox deliveries under the thread lock, using the live
+      // session's capabilities. Never interrupt/restart a turn for a notification.
+      if (
+        delegatedCompletion !== undefined &&
+        delegatedCompletion.taskIds.every(
+          (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
+        )
+      ) {
+        const active = projection.runs.find((run) => run.status === "running");
+        const providerThread = projection.providerThreads.find(
+          (row) => row.id === active?.providerThreadId,
+        );
+        const activeTurn = projection.providerTurns.find(
+          (turn) => turn.runAttemptId === active?.activeAttemptId && turn.status === "running",
+        );
+        const activeMessage = projection.messages.find(
+          (message) => message.id === active?.userMessageId,
+        );
+        if (
+          active !== undefined &&
+          activeTurn !== undefined &&
+          providerThread?.providerSessionId != null &&
+          (activeMessage === undefined || !isNativeMaintenanceCommand(activeMessage))
+        ) {
+          const session = yield* providerSessions
+            .get(providerThread.providerSessionId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (
+            Option.isSome(session) &&
+            session.value.providerSession.capabilities.turns.supportsActiveSteering
+          ) {
+            dispatchMode = { type: "steer_active", targetRunId: active.id };
+          }
+        }
       }
       const dispatchText =
         delegatedCompletion === undefined
@@ -3453,7 +3497,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           events,
           effects,
           projection,
-          modelSelection,
+          modelSelection:
+            delegatedCompletion === undefined
+              ? modelSelection
+              : (projection.runs.find((run) => run.id === dispatchMode.targetRunId)
+                  ?.modelSelection ?? modelSelection),
+          delegatedCompletion,
           targetRunId: dispatchMode.targetRunId,
           messageId: command.messageId,
           text: dispatchText,
@@ -5323,8 +5372,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // already made its offer decision under the pre-upgrade policy: under
     // settled_only it offered iff the parent had no live run. Plan a delivery
     // only when the parent has a live run now, which is precisely the case
-    // where finalize skipped. Queue-after-active then sequences it behind that
-    // run. When the parent is not live, finalize already offered and a second
+    // where finalize skipped. The mailbox steers a capable active session or
+    // queues behind that run. When the parent is not live, finalize already
+    // offered and a second
     // offer would wake the parent twice. (If the parent settled in between,
     // this skips a wake that finalize also skipped; a missed wake is cheaper
     // than a duplicate one, and the result is already in the projection.)
@@ -6885,7 +6935,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const delivery = cohort?.delivery ?? null;
     const deliveryRun = completionDeliveryRun(input.parentProjection, delivery);
     if (delivery !== null) {
-      if (deliveryRun?.status === "queued") {
+      if (deliveryRun?.status === "queued" && deliveryRun.userMessageId === delivery?.messageId) {
         const taskIds = Array.from(new Set([...delivery.taskIds, input.task.id]));
         const message = completionDeliveryMessage(input.parentProjection, delivery);
         const nextCohort = {
@@ -7420,6 +7470,102 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  const dispatchNotificationAccepted = Effect.fn("orchestrationV2.notificationAccepted")(function* (
+    command: Extract<OrchestrationV2Command, { type: "notification.delivery.accept" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    const message = projection.messages.find((row) => row.id === command.messageId);
+    const ownership = message?.delegatedCompletion;
+    const parentRun = projection.runs.find((run) => run.id === ownership?.parentRunId);
+    const cohort = parentRun?.delegatedCompletion;
+    const delivery = cohort?.delivery;
+    const now = yield* DateTime.now;
+    const emitEvent = emit(events, command);
+    if (
+      parentRun === undefined ||
+      cohort === undefined ||
+      cohort.disposition !== "open" ||
+      delivery == null ||
+      delivery.messageId !== command.messageId ||
+      delivery.generation !== ownership?.generation
+    ) {
+      yield* emitEvent({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: now,
+        payload: projection.thread,
+      });
+      return;
+    }
+    const parentIsLive = hasLiveRun(projection);
+    const pendingTaskIds =
+      projection.thread.archivedAt === null &&
+      projection.thread.deletedAt === null &&
+      (cohort.settledDeliveryCount ?? 0) < 2
+        ? projection.subagents
+            .filter(
+              (task) =>
+                task.origin === "app_owned" &&
+                task.runId === parentRun.id &&
+                task.completionDelivery?.state === "pending" &&
+                isTerminalDelegatedTaskStatus(task.status) &&
+                (!parentIsLive || task.completionWake === "always"),
+            )
+            .map((task) => task.id)
+        : [];
+    const nextDelivery =
+      pendingTaskIds.length === 0
+        ? null
+        : {
+            generation: cohort.nextGeneration,
+            messageId: yield* mapDelegatedCompletionError(
+              idAllocator.allocate.message({
+                threadId: command.threadId,
+                ordinal: projection.messages.length + 1,
+              }),
+            ),
+            taskIds: pendingTaskIds,
+          };
+    const acceptedIds = new Set(delivery.taskIds);
+    const pendingIds = new Set(pendingTaskIds);
+    for (const task of projection.subagents) {
+      const state = pendingIds.has(task.id)
+        ? "claimed"
+        : acceptedIds.has(task.id) && task.completionDelivery?.state === "claimed"
+          ? "delivered"
+          : undefined;
+      if (state === undefined) continue;
+      yield* emitEvent({
+        type: "subagent.updated",
+        threadId: command.threadId,
+        runId: parentRun.id,
+        nodeId: task.id,
+        driver: task.driver,
+        providerInstanceId: task.providerInstanceId,
+        occurredAt: now,
+        payload: { ...task, completionDelivery: { state, observedByRunId: null }, updatedAt: now },
+      });
+    }
+    // Provider acceptance drains this batch but does not acknowledge its results
+    // or spend an idle-wake allowance. task_status owns acknowledgment.
+    yield* emitEvent({
+      type: "run.updated",
+      threadId: command.threadId,
+      runId: parentRun.id,
+      providerInstanceId: parentRun.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        ...parentRun,
+        delegatedCompletion: {
+          ...cohort,
+          nextGeneration: cohort.nextGeneration + (nextDelivery === null ? 0 : 1),
+          delivery: nextDelivery,
+        },
+      },
+    });
+  });
+
   const dispatchUnsupported = (command: OrchestrationV2Command) =>
     Effect.fail(
       new OrchestratorDispatchError({
@@ -7536,6 +7682,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "message.dispatch":
         yield* dispatchMessage(command, events, effects);
+        break;
+      case "notification.delivery.accept":
+        yield* dispatchNotificationAccepted(command, events);
         break;
       case "prepared-run.release":
         yield* dispatchPreparedRunRelease(command, events, effects);
@@ -7728,6 +7877,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         detail: committed.receipt.error ?? "Previously rejected.",
       });
+    }
+    if (command.type === "notification.delivery.accept") {
+      yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
     if (command.type === "delegated_task.wake-policy") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));

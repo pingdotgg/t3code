@@ -9,6 +9,7 @@ import {
   ProviderContinuationRequests,
 } from "./ProviderContinuationRequests.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
+import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -34,7 +35,7 @@ function currentDelegatedCompletionDelivery(
     delivery === undefined ||
     delivery.generation !== completion.generation ||
     delivery.messageId !== completion.messageId ||
-    alreadyDispatched
+    (alreadyDispatched && !isUndeliveredMailboxSteer(projection, completion.messageId))
   ) {
     return undefined;
   }
@@ -51,9 +52,9 @@ function delegatedCompletionRetryKey(
 /**
  * Drains ProviderContinuationRequests and dispatches an internal
  * message.dispatch per request so the wake turn buffered by the adapter is
- * ingested as a normal run. Dispatches queue_after_active, so a continuation
- * racing a user run simply queues behind it and drains the wake buffer once
- * that run finishes.
+ * ingested as a normal run. Delegated completions are durable mailbox offers:
+ * the orchestrator selects native steering or queued delivery under its thread
+ * lock. Adapter-buffered continuations still queue behind active work.
  */
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
