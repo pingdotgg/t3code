@@ -1,3 +1,9 @@
+import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestKeysEqual,
+  legacyThreadPullRequestKey,
+} from "@t3tools/shared/threadPullRequests";
 import {
   type ChatAttachment,
   CommandId,
@@ -263,6 +269,9 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.pull-request.link":
+    case "thread.pull-request.unlink":
+    case "thread.pull-request-link.sync":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
@@ -1461,6 +1470,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.pull-request.link"
+          | "thread.pull-request.unlink"
+          | "thread.pull-request-link.sync"
           | "thread.pull-request.sync"
           | "thread.title.regeneration.complete"
           | "thread.runtime-mode.set"
@@ -1828,7 +1840,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
               ? {}
-              : { linkedPullRequest: command.linkedPullRequest }),
+              : {
+                  linkedPullRequest: command.linkedPullRequest,
+                  pullRequests: [
+                    ...threadPullRequestsOf(thread).filter(
+                      (link) =>
+                        !(
+                          thread.linkedPullRequest &&
+                          threadPullRequestKeysEqual(
+                            link,
+                            legacyThreadPullRequestKey(thread.linkedPullRequest),
+                          )
+                        ) &&
+                        !(
+                          command.linkedPullRequest &&
+                          threadPullRequestKeysEqual(
+                            link,
+                            legacyThreadPullRequestKey(command.linkedPullRequest),
+                          )
+                        ),
+                    ),
+                    ...(command.linkedPullRequest
+                      ? [
+                          {
+                            ...legacyThreadPullRequestKey(command.linkedPullRequest),
+                            url: command.linkedPullRequest.url,
+                            source: "manual" as const,
+                            linkedAt: DateTime.formatIso(now),
+                            snapshot: null,
+                            stack: null,
+                          },
+                        ]
+                      : []),
+                  ],
+                }),
             // regenerateTitle: true arms the in-flight marker; a landing title
             // or an explicit false (generation failed/abandoned) clears it.
             ...(command.regenerateTitle === true
@@ -1838,13 +1883,115 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             updatedAt: now,
           };
+        case "thread.pull-request.link":
+        case "thread.pull-request.unlink":
+        case "thread.pull-request-link.sync": {
+          const key = normalizeThreadPullRequestKey(command);
+          const links = threadPullRequestsOf(thread);
+          const existing = links.find((link) => threadPullRequestKeysEqual(link, key));
+          let pullRequests = links;
+          if (command.type === "thread.pull-request.link") {
+            const undismisses =
+              existing?.source === "stack-dismissed" &&
+              command.source !== "stack" &&
+              command.source !== "stack-dismissed";
+            if (existing && !undismisses) return thread;
+            const link = existing
+              ? { ...existing, source: command.source, url: command.url }
+              : {
+                  ...key,
+                  url: command.url,
+                  source: command.source,
+                  linkedAt: DateTime.formatIso(now),
+                  snapshot: null,
+                  stack: null,
+                };
+            pullRequests = [
+              ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
+              link,
+            ];
+          } else if (command.type === "thread.pull-request.unlink") {
+            if (!existing) return thread;
+            const belongsToStack =
+              existing.source === "stack" ||
+              existing.stack !== null ||
+              links.some(
+                (link) =>
+                  link.host.toLowerCase() === key.host &&
+                  link.repository.toLowerCase() === key.repository &&
+                  link.stack?.layers.some((layer) => layer.number === key.number),
+              );
+            pullRequests = belongsToStack
+              ? links.map((link) =>
+                  link === existing ? { ...link, source: "stack-dismissed" as const } : link,
+                )
+              : links.filter((link) => link !== existing);
+          } else {
+            if (!existing) return thread;
+            pullRequests = links.map((link) =>
+              link === existing
+                ? { ...link, snapshot: command.snapshot, stack: command.stack }
+                : link,
+            );
+          }
+          return {
+            ...thread,
+            pullRequests,
+            linkedPullRequest:
+              thread.linkedPullRequest &&
+              pullRequests.some(
+                (link) =>
+                  link.source !== "stack-dismissed" &&
+                  threadPullRequestKeysEqual(
+                    link,
+                    legacyThreadPullRequestKey(thread.linkedPullRequest!),
+                  ),
+              )
+                ? thread.linkedPullRequest
+                : null,
+            updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
+          };
+        }
         case "thread.pull-request.sync":
           return {
             ...thread,
             branchPullRequest: command.branchPullRequest,
             ...(command.linkedPullRequest === undefined
               ? {}
-              : { linkedPullRequest: command.linkedPullRequest }),
+              : {
+                  linkedPullRequest: command.linkedPullRequest,
+                  pullRequests: [
+                    ...threadPullRequestsOf(thread).filter(
+                      (link) =>
+                        !(
+                          thread.linkedPullRequest &&
+                          threadPullRequestKeysEqual(
+                            link,
+                            legacyThreadPullRequestKey(thread.linkedPullRequest),
+                          )
+                        ) &&
+                        !(
+                          command.linkedPullRequest &&
+                          threadPullRequestKeysEqual(
+                            link,
+                            legacyThreadPullRequestKey(command.linkedPullRequest),
+                          )
+                        ),
+                    ),
+                    ...(command.linkedPullRequest
+                      ? [
+                          {
+                            ...legacyThreadPullRequestKey(command.linkedPullRequest),
+                            url: command.linkedPullRequest.url,
+                            source: "manual" as const,
+                            linkedAt: DateTime.formatIso(now),
+                            snapshot: null,
+                            stack: null,
+                          },
+                        ]
+                      : []),
+                  ],
+                }),
             updatedAt: thread.updatedAt,
           };
         case "thread.title.regeneration.complete":
@@ -1897,6 +2044,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
+        case "thread.pull-request.link":
+        case "thread.pull-request.unlink":
+        case "thread.pull-request-link.sync":
         case "thread.pull-request.sync":
           return "thread.pull-request-synced" as const;
         case "thread.runtime-mode.set":
@@ -7298,6 +7448,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.active.reorder":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.pull-request.link":
+      case "thread.pull-request.unlink":
+      case "thread.pull-request-link.sync":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":

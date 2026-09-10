@@ -1,3 +1,5 @@
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -13,7 +15,6 @@ import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
-import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -58,7 +59,8 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
       Layer.mock(ProjectionSnapshotQuery)({
         getThreadShellById: () => Effect.succeed(Option.none()),
       }),
-      Layer.mock(OrchestrationEngineService)({}),
+      Layer.mock(OrchestratorV2)({}),
+      Layer.mock(ProjectionStoreV2)({}),
       NodeServices.layer,
     ),
   ),

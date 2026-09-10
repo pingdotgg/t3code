@@ -709,14 +709,14 @@ describe("pull request tool presentation", () => {
       ...link,
       label: "T3-code · list_thread_pull_requests",
     };
-    expect(summarizeToolGroup([link, link, list])).toBe(
+    expect(summarizeToolGroup([link, link, list]).summary).toBe(
       "Linked 2 pull requests and checked linked pull requests",
     );
-    expect(summarizeToolGroup([{ ...link, label: "T3-code · unlink_pull_request" }])).toBe(
+    expect(summarizeToolGroup([{ ...link, label: "T3-code · unlink_pull_request" }]).summary).toBe(
       "Unlinked 1 pull request",
     );
     expect(toolGroupSummaryKind([link, link, list])).toBe("pull-request");
-    expect(summarizeToolGroup([list, list])).toBe("Checked linked pull requests 2 times");
+    expect(summarizeToolGroup([list, list]).summary).toBe("Checked linked pull requests 2 times");
     expect(
       resolveWorkEntryToolPresentation({ label: "mcp__another-server__link_pull_request" }),
     ).toBeNull();
@@ -736,7 +736,7 @@ describe("device group summaries", () => {
     "recognizes %s as device controls",
     (tool) => {
       const entry = deviceEntry(tool);
-      expect(summarizeToolGroup([entry])).toBe("Used device controls 1 time");
+      expect(summarizeToolGroup([entry]).summary).toBe("Used device controls 1 time");
       expect(toolGroupSummaryKind([entry])).toBe("device");
     },
   );
@@ -747,7 +747,7 @@ describe("device group summaries", () => {
         { label: "Ran command", itemType: "command_execution", command: "pwd", tone: "tool" },
         deviceEntry("device_list"),
         deviceEntry("device_open"),
-      ]),
+      ]).summary,
     ).toBe("Ran 1 command and used device controls 2 times");
   });
 
@@ -757,7 +757,7 @@ describe("device group summaries", () => {
       toolData: { toolName: "mcp__t3_code__device_screenshot" },
       viewedImagePath: "/workspace/device.png",
     };
-    expect(summarizeToolGroup([entry])).toBe("Used device controls 1 time");
+    expect(summarizeToolGroup([entry]).summary).toBe("Used device controls 1 time");
     expect(workEntryViewedImagePath(entry)).toBe("/workspace/device.png");
   });
 
@@ -768,7 +768,7 @@ describe("device group summaries", () => {
           ...deviceEntry("device_open"),
           toolData: { server: "another-server", tool: "device_open" },
         },
-      ]),
+      ]).summary,
     ).toBe("Used 1 tool");
   });
 });

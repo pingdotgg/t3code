@@ -1,7 +1,9 @@
 import {
   EnvironmentId,
+  ThreadId,
   WS_METHODS,
   type GitActionProgressEvent,
+  type GitRunStackedActionInput,
   type GitRunStackedActionResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -594,9 +596,10 @@ describe("vcsActionState", () => {
           targetKey,
           interruptedActionId,
         );
+        const rpcInputs = new Array<GitRunStackedActionInput>();
         const client = {
-          [WS_METHODS.gitRunStackedAction]: (input: { readonly actionId: string }) =>
-            input.actionId === successfulTransportActionId
+          [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
+            (rpcInputs.push(input), input.actionId === successfulTransportActionId)
               ? Stream.make(
                   progress({
                     kind: "action_finished",
@@ -659,10 +662,12 @@ describe("vcsActionState", () => {
         const state = vcsRefsCacheStateAtom({ environmentId });
 
         expect(registry.get(state).revision).toBe(0);
+        const threadId = ThreadId.make("thread-stacked-action");
         const successfulResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {
             actionId: successfulActionId,
             action,
+            threadId,
           }),
         );
 
@@ -670,6 +675,10 @@ describe("vcsActionState", () => {
         expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
+        // The server links a created pull request to this thread, so the id must ride along.
+        expect(rpcInputs).toEqual([
+          { actionId: successfulTransportActionId, cwd, action, threadId },
+        ]);
 
         const failedResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {
