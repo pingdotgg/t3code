@@ -294,7 +294,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
          break;
        }
        case RNSScreenStackHeaderSubviewTypeCenter:
-@@ -648,10 +693,470 @@ + (void)updateViewController:(UIViewController *)vc
+@@ -648,10 +693,466 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -407,18 +407,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +    if (@available(iOS 26.0, *)) {
 +      CGFloat horizontalInset = 18.0;
 +      NSNumber *width = mailSearchToolbarConfig[@"width"];
-+      CGFloat hostWidth = chromeHostView.bounds.size.width;
-+      if (hostWidth <= 0.0) {
-+        hostWidth = vc.view.bounds.size.width;
-+      }
-+      if (hostWidth <= 0.0) {
-+        hostWidth = [UIScreen mainScreen].bounds.size.width;
-+      }
-+      CGFloat fallbackWidth = MIN(560.0, MAX(300.0, hostWidth - (horizontalInset * 2.0)));
-+      CGFloat resolvedWidth = width != nil ? width.doubleValue : fallbackWidth;
-+      if (hostWidth > 0.0) {
-+        resolvedWidth = MIN(resolvedWidth, MAX(260.0, hostWidth - 12.0));
-+      }
++      CGFloat preferredWidth = MAX(0.0, width != nil ? width.doubleValue : 560.0);
 +
 +      CGFloat toolbarHeight = 48.0;
 +      CGFloat toolbarRadius = toolbarHeight / 2.0;
@@ -453,13 +442,20 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +          [toolbarHost.bottomAnchor constraintEqualToAnchor:chromeHostView.safeAreaLayoutGuide.bottomAnchor
 +                                                   constant:-toolbarBottomSpacing];
 +      restingBottomConstraint.priority = UILayoutPriorityDefaultHigh;
++      NSLayoutConstraint *preferredWidthConstraint =
++          [toolbarHost.widthAnchor constraintEqualToConstant:preferredWidth];
++      preferredWidthConstraint.priority = UILayoutPriorityDefaultHigh;
 +      [NSLayoutConstraint activateConstraints:@[
 +        [toolbarHost.centerXAnchor constraintEqualToAnchor:chromeHostView.centerXAnchor],
++        [toolbarHost.leadingAnchor constraintGreaterThanOrEqualToAnchor:chromeHostView.safeAreaLayoutGuide.leadingAnchor
++                                                              constant:horizontalInset],
++        [toolbarHost.trailingAnchor constraintLessThanOrEqualToAnchor:chromeHostView.safeAreaLayoutGuide.trailingAnchor
++                                                            constant:-horizontalInset],
 +        [toolbarHost.bottomAnchor constraintLessThanOrEqualToAnchor:chromeHostView.safeAreaLayoutGuide.bottomAnchor
 +                                                           constant:-toolbarBottomSpacing],
 +        keyboardAvoidConstraint,
 +        restingBottomConstraint,
-+        [toolbarHost.widthAnchor constraintEqualToConstant:resolvedWidth],
++        preferredWidthConstraint,
 +        [toolbarHost.heightAnchor constraintEqualToConstant:toolbarHeight],
 +      ]];
 +      [chromeHostView bringSubviewToFront:toolbarHost];
@@ -769,7 +765,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  
    // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items
    // (setting nav bar visibility should be done after `navitem.*BarButtonItems`).
-@@ -784,6 +1289,8 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -784,6 +1285,8 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
  
  - (NSArray<UIBarButtonItem *> *)barButtonItemsFromConfigs:(NSArray<NSDictionary<NSString *, id> *> *)dicts
                                           withCurrentItems:(NSArray<UIBarButtonItem *> *)currentItems
@@ -778,7 +774,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  {
    if (dicts.count == 0) {
      return currentItems;
-@@ -792,7 +1299,200 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -792,7 +1295,200 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    [items addObjectsFromArray:currentItems];
    for (NSUInteger i = 0; i < dicts.count; i++) {
      NSDictionary *dict = dicts[i];
@@ -980,7 +976,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
        RNSBarButtonItem *item = [[RNSBarButtonItem alloc] initWithConfig:dict
            action:^(NSString *buttonId) {
              auto eventEmitter = std::static_pointer_cast<const facebook::react::RNSScreenStackHeaderConfigEventEmitter>(
-@@ -814,19 +1514,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -814,19 +1510,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
            }
            imageLoader:_imageLoader];
        NSNumber *index = dict[@"index"];
@@ -1010,7 +1006,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
          [items insertObject:item atIndex:index.integerValue];
        } else {
          [items addObject:item];
-@@ -836,6 +1540,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+@@ -836,6 +1536,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    return items;
  }
  
@@ -1058,7 +1054,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  RNS_IGNORE_SUPER_CALL_BEGIN
  - (void)insertReactSubview:(RNSScreenStackHeaderSubview *)subview atIndex:(NSInteger)atIndex
  {
-@@ -1023,6 +1768,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1023,6 +1764,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    }
  
    _title = RCTNSStringFromStringNilIfEmpty(newScreenProps.title);
@@ -1067,7 +1063,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
    if (newScreenProps.titleFontFamily != oldScreenProps.titleFontFamily) {
      _titleFontFamily = RCTNSStringFromStringNilIfEmpty(newScreenProps.titleFontFamily);
    }
-@@ -1048,6 +1795,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1048,6 +1791,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    _disableBackButtonMenu = newScreenProps.disableBackButtonMenu;
    _backButtonDisplayMode =
        [RNSConvert UINavigationItemBackButtonDisplayModeFromCppEquivalent:newScreenProps.backButtonDisplayMode];
@@ -1075,7 +1071,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  
    if (newScreenProps.userInterfaceStyle != oldScreenProps.userInterfaceStyle) {
      _userInterfaceStyle = [RNSConvert UIUserInterfaceStyleFromCppEquivalent:newScreenProps.userInterfaceStyle];
-@@ -1094,6 +1842,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
+@@ -1094,6 +1838,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
      _headerRightBarButtonItems = array;
    }
  

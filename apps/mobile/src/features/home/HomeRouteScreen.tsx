@@ -113,7 +113,14 @@ export function HomeRouteScreen() {
           options={
             Platform.OS === "android"
               ? { headerShown: false }
-              : { title: "", headerTitle: "", unstable_headerLeftItems: () => [] }
+              : {
+                  title: "",
+                  headerTitle: "",
+                  unstable_headerLeftItems: () => [],
+                  // Screen options are merged, so unmounting the compact header
+                  // does not clear the toolbar it installed on this route.
+                  unstable_headerToolbarItems: () => [],
+                }
           }
         />
         <WorkspaceSidebarToolbar
