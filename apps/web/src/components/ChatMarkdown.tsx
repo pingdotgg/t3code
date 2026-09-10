@@ -122,7 +122,6 @@ import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-import { MarkdownDiffBlock } from "./MarkdownDiffBlock";
 import { MarkdownMermaidBlock } from "./MarkdownMermaidBlock";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -523,7 +522,6 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
   const raw = match?.[1] ?? "text";
-  if (raw.toLowerCase() === "patch") return "diff";
   // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
   return raw === "gitignore" ? "ini" : raw;
 }
@@ -3113,9 +3111,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
         preview={
-          language.toLowerCase() === "diff" || language.toLowerCase() === "patch" ? (
-            <MarkdownDiffBlock code={codeBlock.code} />
-          ) : language.toLowerCase() === "mermaid" && !isStreaming ? (
+          language.toLowerCase() === "mermaid" && !isStreaming ? (
             <MarkdownMermaidBlock code={codeBlock.code} theme={resolvedTheme} />
           ) : undefined
         }

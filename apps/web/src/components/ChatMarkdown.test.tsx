@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import * as mermaidRendering from "../lib/mermaidRendering";
-import { MarkdownDiffBlock } from "./MarkdownDiffBlock";
 import { MarkdownMermaidBlock } from "./MarkdownMermaidBlock";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
@@ -75,63 +74,11 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
-describe("ChatMarkdown code previews", () => {
-  it.each(["diff", "PATCH"])(
-    "switches %s snippets between preview and source without changing copied code",
-    async (language) => {
-      const source = " unchanged\n-old\n+new\n";
-      const writeText = vi.fn(async (_text: string) => {});
-      vi.stubGlobal("navigator", { clipboard: { writeText } });
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = create(
-            <ChatMarkdown
-              cwd="/tmp/project"
-              text={`\`\`\`${language}\n${source}\`\`\``}
-              parseRawHtml={false}
-            />,
-          );
-        });
-        const preview = renderer!.root.findByType(MarkdownDiffBlock);
-        expect(
-          preview
-            .findAllByType("span")
-            .flatMap((line) => line.children)
-            .join(""),
-        ).toBe(source);
-        const showSource = codeButton(renderer!, "Show source");
-        await act(async () => {
-          showSource.onClick?.({} as Parameters<NonNullable<typeof showSource.onClick>>[0]);
-        });
-        expect(renderer!.root.findAllByType(MarkdownDiffBlock)).toHaveLength(0);
-        const copy = codeButton(renderer!, "Copy code");
-        await act(async () => {
-          copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
-        });
-        expect(writeText).toHaveBeenCalledWith(source);
-        const showPreview = codeButton(renderer!, "Show preview");
-        await act(async () => {
-          showPreview.onClick?.({} as Parameters<NonNullable<typeof showPreview.onClick>>[0]);
-        });
-        expect(
-          renderer!.root
-            .findByType(MarkdownDiffBlock)
-            .findAllByType("span")
-            .flatMap((line) => line.children)
-            .join(""),
-        ).toBe(source);
-      } finally {
-        await act(async () => renderer?.unmount());
-        vi.unstubAllGlobals();
-        vi.restoreAllMocks();
-      }
-    },
-  );
-
+describe("ChatMarkdown Mermaid previews", () => {
   it("renders Mermaid only after streaming ends and lets the user return to its source", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
     const renderDiagram = vi
       .spyOn(mermaidRendering, "renderMermaidDiagram")
       .mockResolvedValue("<svg><text>Draft</text></svg>");
@@ -139,27 +86,40 @@ describe("ChatMarkdown code previews", () => {
     let renderer: ReactTestRenderer | undefined;
     try {
       await act(async () => {
-        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />, {
-          createNodeMock: (element) =>
-            element.type === "div" &&
-            (element.props as ComponentProps<"div">).className === "chat-markdown-mermaid"
-              ? {}
-              : null,
-        });
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={text} isStreaming parseRawHtml={false} />,
+          {
+            createNodeMock: (element) =>
+              element.type === "div" &&
+              (element.props as ComponentProps<"div">).className === "chat-markdown-mermaid"
+                ? {}
+                : null,
+          },
+        );
       });
       expect(renderDiagram).not.toHaveBeenCalled();
       expect(renderer!.root.findAllByType(MarkdownMermaidBlock)).toHaveLength(0);
       await act(async () => {
-        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text} />);
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text} parseRawHtml={false} />);
       });
       expect(
         renderer!.root.findByProps({ role: "img" }).props.dangerouslySetInnerHTML.__html,
       ).toContain("Draft");
+      const copyPreview = codeButton(renderer!, "Copy code");
+      await act(async () => {
+        copyPreview.onClick?.({} as Parameters<NonNullable<typeof copyPreview.onClick>>[0]);
+      });
+      expect(writeText).toHaveBeenLastCalledWith("flowchart LR\nDraft-->Review\n");
       const showSource = codeButton(renderer!, "Show source");
       await act(async () => {
         showSource.onClick?.({} as Parameters<NonNullable<typeof showSource.onClick>>[0]);
       });
       expect(renderer!.root.findAllByProps({ role: "img" })).toHaveLength(0);
+      const copySource = codeButton(renderer!, "Copied");
+      await act(async () => {
+        copySource.onClick?.({} as Parameters<NonNullable<typeof copySource.onClick>>[0]);
+      });
+      expect(writeText).toHaveBeenLastCalledWith("flowchart LR\nDraft-->Review\n");
       const showPreview = codeButton(renderer!, "Show preview");
       await act(async () => {
         showPreview.onClick?.({} as Parameters<NonNullable<typeof showPreview.onClick>>[0]);

@@ -6,19 +6,9 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
-## Diffs and diagrams
+## Mermaid diagrams
 
-On web and desktop, use a fenced `diff` or `patch` block to display additions and
-removals. Short snippets work without file headers:
-
-````markdown
-```diff
--const retries = 1;
-+const retries = 3;
-```
-````
-
-Use a `mermaid` fence to display a diagram:
+On web and desktop, use a `mermaid` fence to display a diagram:
 
 ````markdown
 ```mermaid
