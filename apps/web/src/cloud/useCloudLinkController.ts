@@ -1,6 +1,6 @@
 import { useAuth } from "@clerk/react";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import { AuthRelayReadScope, AuthRelayWriteScope } from "@t3tools/contracts";
+import { EnvironmentId, AuthRelayReadScope, AuthRelayWriteScope } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -86,10 +86,11 @@ export function useCloudLinkController() {
       reportUpdateFailure(new Error("Local environment is not ready yet."));
       return false;
     }
+    const environmentId = EnvironmentId.make(target.environmentId);
     const canManageLink = () => {
       if (
-        !readEnvironmentScope(target.environmentId, AuthRelayReadScope) ||
-        !readEnvironmentScope(target.environmentId, AuthRelayWriteScope)
+        !readEnvironmentScope(environmentId, AuthRelayReadScope) ||
+        !readEnvironmentScope(environmentId, AuthRelayWriteScope)
       ) {
         reportUpdateFailure(
           new Error("This connection needs permission to view and manage T3 Connect settings."),
