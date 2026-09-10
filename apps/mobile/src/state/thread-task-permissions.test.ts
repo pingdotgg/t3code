@@ -36,6 +36,7 @@ const state = vi.hoisted(() => ({
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: () => {},
+  useRef: <A>(current: A) => ({ current }),
   useMemo: <A>(factory: () => A) => factory(),
   useState: <A>(initial: A | (() => A)) => [
     typeof initial === "function" ? (initial as () => A)() : initial,
@@ -47,6 +48,7 @@ vi.mock("@effect/atom-react", async () => {
   const { appAtomRegistry } = await import("./atom-registry");
   return { useAtomValue: <A>(atom: Atom.Atom<A>) => appAtomRegistry.get(atom) };
 });
+vi.mock("./entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("./session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.grantedEnvironments.has(environmentId),
@@ -85,6 +87,7 @@ vi.mock("./composer-attachment-uploads", async () => {
   return {
     composerAttachmentUploadsAtom: Atom.make({}),
     composerAttachmentUploadBlockReason: () => null,
+    composerAttachmentsStillUploading: () => false,
   };
 });
 vi.mock("./use-composer-drafts", async () => {
@@ -93,6 +96,7 @@ vi.mock("./use-composer-drafts", async () => {
     composerDraftsAtom: Atom.make({}),
     getComposerDraftSnapshot: () => state.draft,
     clearComposerDraftContent: state.clearDraft,
+    clearComposerDraft: state.clearDraft,
     setComposerDraftText: (_key: string, text: string) => {
       state.draft.text = text;
     },
