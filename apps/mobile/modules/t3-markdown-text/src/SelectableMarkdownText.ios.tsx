@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 
 import {
@@ -84,10 +84,8 @@ export function SelectableMarkdownText({
           the resulting single-line width instead of reflowing it. */}
         <View style={{ flexShrink: 1, minWidth: 0, marginTop, marginBottom }}>
           {chunks.map((chunk, index) => {
-            // Android inline images drift when one Text mixes paragraph and list
-            // spacer line heights. Keep those layouts in separate native blocks.
             const content =
-              chunk.kind === "rich" || Platform.OS === "android" ? (
+              chunk.kind === "rich" ? (
                 <NativeMarkdownBlock
                   node={chunk.node}
                   skills={skills}

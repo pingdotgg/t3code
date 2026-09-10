@@ -222,10 +222,6 @@ export function NativeMarkdownSelectableText(props: {
       }
     }
 
-    if (Platform.OS === "android" && (run.fileIcon || linkIcon)) {
-      text = `\u00A0${text}`;
-    }
-
     return { key: `${signature}:${occurrence}`, run, text, linkIcon };
   });
   // T3MarkdownText only rebuilds its attributed string during native layout. A

@@ -4,11 +4,7 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
-import {
-  nativeMarkdownBlockSpacing,
-  nativeMarkdownDocumentRuns,
-  nativeMarkdownListItemBlocks,
-} from "./nativeMarkdownText";
+import { nativeMarkdownDocumentRuns, nativeMarkdownListItemBlocks } from "./nativeMarkdownText";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios";
 import type {
   MarkdownCodeHighlighter,
@@ -599,28 +595,17 @@ export function NativeMarkdownBlock(props: {
   switch (props.node.type) {
     case "document":
       return (
-        <View>
+        <View style={{ gap: 8 }}>
           {(props.node.children ?? []).map((child, index) => (
-            <View
+            <NativeMarkdownBlock
               key={nodeKey(child, index)}
-              style={{
-                paddingTop:
-                  Platform.OS === "android"
-                    ? nativeMarkdownBlockSpacing(props.node.children?.[index - 1], child)
-                    : index > 0
-                      ? 8
-                      : 0,
-              }}
-            >
-              <NativeMarkdownBlock
-                node={child}
-                skills={props.skills}
-                textStyle={props.textStyle}
-                highlightCode={props.highlightCode}
-                onLinkPress={props.onLinkPress}
-                depth={depth}
-              />
-            </View>
+              node={child}
+              skills={props.skills}
+              textStyle={props.textStyle}
+              highlightCode={props.highlightCode}
+              onLinkPress={props.onLinkPress}
+              depth={depth}
+            />
           ))}
         </View>
       );
