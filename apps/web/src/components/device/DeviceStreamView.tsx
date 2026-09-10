@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
-import { Spinner } from "~/components/ui/spinner";
+import { DeviceLoadingView } from "./DeviceLoadingView";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
 import {
   createDeviceStreamClient,
@@ -32,6 +32,8 @@ export function DeviceStreamView(props: {
   readonly environmentId: EnvironmentId;
   readonly platform: DevicePlatform;
   readonly deviceId: string;
+  readonly deviceName?: string;
+  readonly deviceDescription?: string;
   readonly visible: boolean;
   readonly hostId: string;
   /** Draw accessibility element frames over the screen. */
@@ -315,12 +317,14 @@ export function DeviceStreamView(props: {
         </div>
       ) : null}
       {status !== "streaming" ? (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 text-sm text-muted-foreground">
-          {status === "connecting" ? <Spinner /> : null}
-          <span>{status === "error" ? (detail ?? "Stream failed.") : "Connecting to device…"}</span>
-          {status === "connecting" && detail ? (
-            <span className="max-w-xs text-center text-xs opacity-70">{detail}</span>
-          ) : null}
+        <div className="pointer-events-none absolute inset-0">
+          <DeviceLoadingView
+            name={props.deviceName ?? "Device"}
+            description={props.deviceDescription ?? ""}
+            stage="stream"
+            message={status === "error" ? (detail ?? "Stream failed.") : "Connecting video…"}
+            error={status === "error"}
+          />
         </div>
       ) : null}
     </div>

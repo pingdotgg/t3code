@@ -4143,7 +4143,9 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !supportsThreadPullRequests) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   }, [activeThreadRef, supportsThreadPullRequests]);
-  const { state: deviceState } = useDeviceState(activeThreadRef?.environmentId ?? null);
+  const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
+    activeThreadRef?.environmentId ?? null,
+  );
   const [deviceSetupThread, setDeviceSetupThread] = useState<ScopedThreadRef | null>(null);
   const addDeviceSurface = useCallback(() => {
     if (!activeThreadRef) return;
@@ -4153,24 +4155,53 @@ export default function ChatView(props: ChatViewProps) {
     }
     useRightPanelStore.getState().open(activeThreadRef, "device");
   }, [activeThreadRef, deviceState.onboardingCompleted, deviceState.hostStatus]);
-  // An agent's `device_open` surfaces in every client the same way a
-  // `preview_open` does: the thread starts a device or gains a session and the panel
-  // opens on it. Closing the last session leaves the tab in place so the
-  // user keeps their picker; only new sessions raise the panel.
-  const threadDeviceSessionCount = activeThreadRef
-    ? deviceState.sessions.filter((session) => session.threadId === activeThreadRef.threadId)
-        .length +
-      (deviceState.bootingDevices?.filter((device) => device.threadId === activeThreadRef.threadId)
-        .length ?? 0)
-    : 0;
-  const previousDeviceSessionCount = useRef(threadDeviceSessionCount);
+  // Reconcile new server sessions into separate tabs, including sessions opened
+  // by an agent or another client. The first snapshot is a baseline: persisted
+  // tabs restore themselves, and existing sessions must not resurrect closed tabs.
+  const previousDeviceSessions = useRef(new Map<string, Set<string>>());
   useEffect(() => {
-    const previous = previousDeviceSessionCount.current;
-    previousDeviceSessionCount.current = threadDeviceSessionCount;
-    if (!activeThreadRef || threadDeviceSessionCount <= previous) return;
-    if (shouldUseRightPanelSheet) return;
-    useRightPanelStore.getState().open(activeThreadRef, "device");
-  }, [activeThreadRef, shouldUseRightPanelSheet, threadDeviceSessionCount]);
+    if (!activeThreadRef || !deviceStateLoaded) return;
+    const threadKey = `${activeThreadRef.environmentId}:${activeThreadRef.threadId}`;
+    const sessions = deviceState.sessions.filter(
+      (session) => session.threadId === activeThreadRef.threadId,
+    );
+    const key = (session: (typeof sessions)[number]) => `${session.hostId}:${session.deviceId}`;
+    const previous = previousDeviceSessions.current.get(threadKey);
+    previousDeviceSessions.current.set(threadKey, new Set(sessions.map(key)));
+    if (!previous || shouldUseRightPanelSheet) return;
+    for (const session of sessions) {
+      if (previous?.has(key(session))) continue;
+      const existing = useRightPanelStore
+        .getState()
+        .byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces.some(
+          (surface) =>
+            surface.kind === "device" &&
+            surface.target?.hostId === session.hostId &&
+            surface.target.deviceId === session.deviceId,
+        );
+      if (existing) continue;
+      const device = deviceState.devices.find(
+        (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
+      );
+      if (!device) continue;
+      useRightPanelStore.getState().openDevice(
+        activeThreadRef,
+        {
+          hostId: session.hostId,
+          deviceId: session.deviceId,
+          platform: device.platform,
+          name: device.name,
+        },
+        true,
+      );
+    }
+  }, [
+    activeThreadRef,
+    deviceStateLoaded,
+    shouldUseRightPanelSheet,
+    deviceState.sessions,
+    deviceState.devices,
+  ]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -8153,7 +8184,8 @@ export default function ChatView(props: ChatViewProps) {
         <DevicePanel
           mode="embedded"
           threadRef={activeThreadRef}
-          deviceId={null}
+          key={renderedRightPanelSurface.id}
+          surface={renderedRightPanelSurface}
           visible={rightPanelOpen}
           onDismissSetup={() => {
             closeRightPanelSurface(renderedRightPanelSurface);
@@ -8725,6 +8757,10 @@ export default function ChatView(props: ChatViewProps) {
           terminalLabelsById={activeTerminalLabelsById}
           onActivate={activateRightPanelSurface}
           onCloseSurface={closeRightPanelSurface}
+          onRenameDevice={(surfaceId, title) => {
+            if (activeThreadRef)
+              useRightPanelStore.getState().renameDevice(activeThreadRef, surfaceId, title);
+          }}
           onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
@@ -8779,6 +8815,10 @@ export default function ChatView(props: ChatViewProps) {
             terminalLabelsById={activeTerminalLabelsById}
             onActivate={activateRightPanelSurface}
             onCloseSurface={closeRightPanelSurface}
+            onRenameDevice={(surfaceId, title) => {
+              if (activeThreadRef)
+                useRightPanelStore.getState().renameDevice(activeThreadRef, surfaceId, title);
+            }}
             onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
