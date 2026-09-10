@@ -1,3 +1,4 @@
+import { resolveThreadProviderInstance } from "../threads/thread-provider-instance";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { createThreadMovePlanner } from "../threads/threadOrder";
 import {
@@ -55,7 +56,6 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2SnoozedShelfHeader,
 } from "../threads/thread-list-v2-items";
-import { resolveThreadProviderInstance } from "../threads/thread-provider-instance";
 import {
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
@@ -842,6 +842,13 @@ export function HomeScreen(props: HomeScreenProps) {
       const thread = item.item.thread;
       const movePlanner = item.item.pinned ? threadMovePlanners.pinned : threadMovePlanners.active;
       const movedId = `${thread.environmentId}:${thread.id}`;
+      const provider = serverConfigs
+        .get(thread.environmentId)
+        ?.providers.find(
+          (candidate) =>
+            candidate.instanceId ===
+            (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+        );
       return (
         <ThreadListV2Row
           onNewThreadOnBranch={props.onNewThreadOnBranch}
@@ -864,6 +871,7 @@ export function HomeScreen(props: HomeScreenProps) {
             serverConfigs.get(thread.environmentId)?.providers,
           )}
           providerInstance={resolveThreadProviderInstance(serverConfigs, thread)}
+          providerIconUrl={provider?.iconUrl}
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)

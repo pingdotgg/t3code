@@ -25,6 +25,7 @@ import {
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2ShellSnapshot,
@@ -69,6 +70,10 @@ const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
 );
 const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(OrchestrationV2ProviderThread);
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
+const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
+  OrchestrationV2ProviderCapabilities,
+);
+
 const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
   OrchestrationV2SubscribeThreadInput,
 );
@@ -130,6 +135,110 @@ describe("orchestration V2 contracts", () => {
     });
     expect(legacyDecoded.afterSequence).toBe(12);
     expect("acceptBoundedSnapshot" in legacyDecoded).toBe(false);
+  });
+
+  it("decodes persisted capability snapshots that predate runtimePolicy", () => {
+    // Events written before the field existed must replay; absent decodes to
+    // the weaker client-boundary guarantee so history never overclaims.
+    const legacyCapabilities = {
+      sessions: {
+        supportsMultipleProviderThreadsPerSession: false,
+        supportsModelSwitchInSession: false,
+        supportsProviderSwitchingViaHandoff: true,
+        supportsRuntimeModeSwitchInSession: false,
+        pendingRequestsSurviveRestart: false,
+      },
+      threads: {
+        canCreateEmptyThread: true,
+        canReadThreadSnapshot: false,
+        canRollbackThread: true,
+        canForkThread: false,
+        canForkFromTurn: false,
+        canForkFromSubagentThread: false,
+        exposesNativeThreadId: true,
+      },
+      turns: {
+        exposesNativeTurnId: false,
+        emitsTurnStarted: true,
+        emitsTurnCompleted: true,
+        supportsInterrupt: true,
+        supportsActiveSteering: false,
+        supportsSteeringByInterruptRestart: true,
+        supportsQueuedMessages: true,
+        terminalStatusQuality: "strong",
+      },
+      streaming: {
+        streamsAssistantText: true,
+        streamsReasoning: true,
+        streamsToolOutput: true,
+        streamsPlanText: false,
+        emitsMessageCompleted: true,
+      },
+      tools: {
+        exposesToolItemIds: true,
+        emitsToolStarted: true,
+        emitsToolCompleted: true,
+        emitsToolOutput: true,
+        supportsMcpTools: false,
+        supportsDynamicToolCallbacks: false,
+      },
+      approvals: {
+        supportsCommandApproval: true,
+        supportsFileReadApproval: true,
+        supportsFileChangeApproval: true,
+        supportsApplyPatchApproval: false,
+        approvalsHaveNativeRequestIds: false,
+        approvalCallbacksAreLiveOnly: true,
+        approvalsCanOriginateFromSubagents: false,
+      },
+      planning: {
+        emitsPlanUpdated: true,
+        emitsTodoList: true,
+        emitsProposedPlan: false,
+        supportsStructuredQuestions: true,
+        planDeltasHaveItemIds: false,
+      },
+      subagents: {
+        supportsSubagents: false,
+        exposesSubagentThreadIds: false,
+        emitsSubagentLifecycle: false,
+        canWaitForSubagents: false,
+        canCloseSubagents: false,
+        canForkSubagentThread: false,
+      },
+      context: {
+        acceptsSystemContext: false,
+        acceptsDeveloperContext: false,
+        acceptsSyntheticUserContext: true,
+        canGenerateSummaries: true,
+        canConsumeHandoffSummaries: true,
+        supportsDeltaHandoff: true,
+        supportsFullThreadHandoff: true,
+        maxRecommendedHandoffChars: null,
+      },
+      checkpointing: {
+        appCanCheckpointFilesystem: true,
+        supportsNestedCheckpointScopes: true,
+        providerCanRollbackConversation: true,
+        providerRollbackReturnsSnapshot: true,
+        providerCanReadConversationSnapshot: false,
+      },
+      identity: {
+        nativeThreadIds: "strong",
+        nativeTurnIds: "weak",
+        nativeItemIds: "weak",
+        nativeRequestIds: "weak",
+      },
+    };
+
+    const decoded = decodeOrchestrationV2ProviderCapabilities(legacyCapabilities);
+    expect(decoded.runtimePolicy).toEqual({ enforcement: "client-boundary" });
+
+    const explicit = decodeOrchestrationV2ProviderCapabilities({
+      ...legacyCapabilities,
+      runtimePolicy: { enforcement: "native" },
+    });
+    expect(explicit.runtimePolicy).toEqual({ enforcement: "native" });
   });
 
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
@@ -777,6 +886,8 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(providerThread.pendingBackgroundTasks).toEqual([]);
+    expect(providerThread.contextUsage).toBeNull();
+    expect(providerThread.nativeMetadata).toBeNull();
 
     const runtimeThread = decodeOrchestrationV2ProviderThread({
       id: "provider-thread-2",
@@ -796,6 +907,8 @@ describe("orchestration V2 contracts", () => {
       updatedAt: now,
     });
     expect(runtimeThread.pendingBackgroundTasks).toEqual([]);
+    expect(runtimeThread.contextUsage).toBeNull();
+    expect(runtimeThread.nativeMetadata).toBeNull();
   });
 
   it("decodes historical thread shell JSON without pendingBackgroundTasks as empty roster", () => {

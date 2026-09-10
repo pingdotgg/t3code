@@ -186,7 +186,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           );
           yield* runtime.handleElicitation(() =>
             reject("Antigravity text generation requested user input.").pipe(
-              Effect.as({ action: { action: "decline" as const } }),
+              Effect.as({ action: "decline" as const }),
             ),
           );
           yield* runtime.handleReadTextFile(rejectToolRequest);

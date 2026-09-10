@@ -245,6 +245,7 @@ function makeProviderAdapter(
     >;
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
+      readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
@@ -258,7 +259,7 @@ function makeProviderAdapter(
     openSession: (input) =>
       Effect.gen(function* () {
         if (options.beforeOpen !== undefined) {
-          yield* options.beforeOpen({ providerSessionId: input.providerSessionId });
+          yield* options.beforeOpen(input);
         }
         if (options.mcpConfigs !== undefined) {
           yield* Ref.update(options.mcpConfigs, (configs) => [
@@ -345,6 +346,7 @@ function makeTestLayer(input: {
   >;
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
+    readonly initialProviderItemIdentityVersion?: 2;
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
@@ -690,6 +692,62 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
           state,
           idleTimeoutMs: 60_000,
           beforeOpen,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const firstThreadId = ThreadId.make("thread-provider-session-manager-logout-a");
+      const secondThreadId = ThreadId.make("thread-provider-session-manager-logout-b");
+      const firstProviderSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: firstThreadId,
+      });
+      const secondProviderSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: secondThreadId,
+      });
+
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+        ],
+      });
+      yield* manager.open({
+        threadId: firstThreadId,
+        providerSessionId: firstProviderSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId: secondThreadId,
+        providerSessionId: secondProviderSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      yield* manager.closeInstance(modelSelection.instanceId);
+
+      assert.isTrue(Option.isNone(yield* manager.get(firstProviderSessionId)));
+      assert.isTrue(Option.isNone(yield* manager.get(secondProviderSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 60_000,
         }),
       ),
     );
@@ -2370,6 +2428,87 @@ it.effect("ProviderSessionManagerV2 persists session-scoped runtime requests wit
 
     yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000 })));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 preserves item identity during eager native session activation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-request-expire",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-request-expire",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* eventSink.write({
+          events: (yield* makePendingRuntimeRequestEvents({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            providerThread,
+            now,
+          })).events,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          initialNativeThreadId: "native-import",
+          initialProviderItemIdentityVersion: 2,
+        });
+        yield* manager.release({
+          providerSessionId,
+          reason: "runtime_error",
+          detail: "process exited",
+        });
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const request = projection.runtimeRequests.at(-1);
+        const requestNode = projection.nodes.find((node) => node.id === request?.nodeId);
+        const requestTurnItem = projection.turnItems.find(
+          (item) => item.type === "approval_request" && item.requestId === request?.id,
+        );
+
+        assert.equal(request?.status, "expired");
+        assert.equal(request?.responseCapability.type, "not_resumable");
+        assert.equal(requestNode?.status, "failed");
+        assert.equal(requestTurnItem?.status, "failed");
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 1000,
+            beforeOpen: (input) =>
+              Effect.sync(() => assert.equal(input.initialProviderItemIdentityVersion, 2)),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(

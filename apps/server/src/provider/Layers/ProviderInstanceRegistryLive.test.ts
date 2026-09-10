@@ -45,16 +45,15 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver, type CodexDriverEnv } from "../Drivers/CodexDriver.ts";
-import { CursorDriver } from "../Drivers/CursorDriver.ts";
-import { GrokDriver } from "../Drivers/GrokDriver.ts";
-import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
+import { CursorDriver, type CursorDriverEnv } from "../Drivers/CursorDriver.ts";
+import { GrokDriver, type GrokDriverEnv } from "../Drivers/GrokDriver.ts";
+import { OpenCodeDriver, type OpenCodeDriverEnv } from "../Drivers/OpenCodeDriver.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
@@ -519,7 +518,9 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry<BuiltInDriversEnv>({
+      const { registry } = yield* makeProviderInstanceRegistry<
+        CodexDriverEnv | ClaudeDriverEnv | CursorDriverEnv | GrokDriverEnv | OpenCodeDriverEnv
+      >({
         drivers: [CodexDriver, ClaudeDriver, CursorDriver, GrokDriver, OpenCodeDriver],
         configMap,
       });
