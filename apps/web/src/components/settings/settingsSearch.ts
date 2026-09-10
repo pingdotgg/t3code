@@ -90,7 +90,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Projects",
   "/settings/general": "General",
-  "/settings/voice": "Voice",
   "/settings/appearance": "Appearance",
   "/settings/chat": "Chat",
   "/settings/diffs": "Diffs & pull requests",
@@ -109,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
+  "/settings/voice": "Voice",
   "/settings/archived": "Archive",
 };
 
