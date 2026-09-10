@@ -1,0 +1,69 @@
+diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h
+index 86035915aa330d2011e7c3027ae315c689e40f58..3d43e949550e1bc1311c38d11a7920c237a41018 100644
+--- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h
++++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h
+@@ -22,6 +22,7 @@ struct LayoutAnimation {
+   Tag parentTag;
+   std::optional<double> opacity;
+   bool isViewAlreadyMounted = false;
++  bool isExitingWhenSettled = false;
+   int count = 1;
+   LayoutAnimation &operator=(const LayoutAnimation &other) = default;
+ 
+diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp
+index bc62f8fc31a1d3b08353df514bf4f954c6279ceb..0c16264538a13ae8b7bd4fd11e1227d8580c5c65 100644
+--- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp
++++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp
+@@ -290,6 +290,7 @@ std::optional<SurfaceId> LayoutAnimationsProxy_Experimental::endLayoutAnimation(
+   if (--layoutAnimation.count > 0) {
+     return {};
+   }
++  layoutAnimation.isExitingWhenSettled = shouldRemove;
+   maybeSettledAnimationTags_.insert(tag);
+   auto surfaceId = layoutAnimation.finalView.surfaceId;
+ 
+@@ -407,7 +408,8 @@ void LayoutAnimationsProxy_Experimental::addOngoingAnimations(SurfaceId surfaceI
+ 
+     const auto layoutAnimationIt = layoutAnimations_.find(tag);
+ 
+-    if (layoutAnimationIt == layoutAnimations_.end() || layoutAnimationIt->second.isSettled()) {
++    if (layoutAnimationIt == layoutAnimations_.end() ||
++        (layoutAnimationIt->second.isSettled() && layoutAnimationIt->second.isExitingWhenSettled)) {
+       continue;
+     }
+ 
+@@ -554,6 +556,8 @@ void LayoutAnimationsProxy_Experimental::maybeCancelAnimation(const int tag) con
+   }
+   if (layoutAnimationIt->second.isSettled()) {
+     // Already settled - cleanupAnimations will erase it together with its updateMap entry.
++    // Do not flush a pending Update after the caller queues this view for removal.
++    layoutAnimationIt->second.isExitingWhenSettled = true;
+     return;
+   }
+   layoutAnimations_.erase(layoutAnimationIt);
+diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp
+index 9402e3e5ba4859ed344901b8b5884b9f708dd82b..2b1e4294ef798b7b6aabd04cc6663aae8297d034 100644
+--- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp
++++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp
+@@ -119,6 +119,7 @@ std::optional<SurfaceId> LayoutAnimationsProxy_Legacy::endLayoutAnimation(int ta
+   if (--layoutAnimation.count > 0) {
+     return {};
+   }
++  layoutAnimation.isExitingWhenSettled = shouldRemove;
+   maybeSettledAnimationTags_.insert(tag);
+   auto surfaceId = layoutAnimation.finalView.surfaceId;
+ 
+@@ -414,12 +415,7 @@ void LayoutAnimationsProxy_Legacy::addOngoingAnimations(SurfaceId surfaceId, Sha
+     auto layoutAnimationIt = layoutAnimations_.find(tag);
+ 
+     if (layoutAnimationIt == layoutAnimations_.end() ||
+-        // A settled animation is normally cleaned up without applying further
+-        // updates. The exception is a flaky entering animation whose opacity was
+-        // never restored (the view wasn't mounted in time) - we still need to
+-        // apply that pending opacity, otherwise the view stays invisible. Only
+-        // entering animations carry an opacity value.
+-        (layoutAnimationIt->second.isSettled() && !layoutAnimationIt->second.opacity.has_value())) {
++        (layoutAnimationIt->second.isSettled() && layoutAnimationIt->second.isExitingWhenSettled)) {
+       continue;
+     }
+ 

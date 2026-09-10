@@ -179,6 +179,8 @@ patchedDependencies:
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
+  # Preserve the final layout frame. Backport of [#10171](https://github.com/software-mansion/react-native-reanimated/pull/10171).
+  react-native-reanimated@4.5.1: patches/react-native-reanimated@4.5.1.patch
   react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
 
