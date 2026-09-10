@@ -549,3 +549,104 @@ describe("decodeItemContentJson", () => {
     ).toEqual({ contents: "b2xk", isBinary: true });
   });
 });
+
+/**
+ * Every other fixture in this file is written from Azure's published contract. These are the
+ * shapes a real organisation answered with, read back through `az devops invoke` rather than
+ * `az rest`: the extension hands over the route's own body with one key of its own added, and a
+ * live repository leaves out fields the contract documents.
+ */
+describe("what az devops invoke answers with", () => {
+  it("reads the envelope the extension adds its own continuation token to", () => {
+    // Set on every JSON body it returns, from a response header these routes do not send, so it
+    // arrives as null rather than not at all. Nothing reads it, and it must not fail the decode.
+    expect(
+      expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
+    ).toEqual([]);
+
+    expect(
+      expectSuccess(
+        decodeIterationsJson(
+          asJson({
+            count: 1,
+            continuation_token: null,
+            value: [
+              {
+                id: 1,
+                sourceRefCommit: { commitId: "f4031105213c68f197cd46ea303bb5e72acc889a" },
+                commonRefCommit: { commitId: "acbc805382edd6c38b8d6de6ba9f9bba9da4ad35" },
+              },
+            ],
+          }),
+        ),
+      ),
+    ).toEqual([
+      {
+        id: 1,
+        headCommit: "f4031105213c68f197cd46ea303bb5e72acc889a",
+        mergeBaseCommit: "acbc805382edd6c38b8d6de6ba9f9bba9da4ad35",
+      },
+    ]);
+  });
+
+  it("keeps the files of a change that names neither their object type nor their page after it", () => {
+    // A live iteration states `changeType`, `item.path` and `item.objectId` and nothing else: no
+    // `gitObjectType`, no `isFolder`, and no `nextSkip` on the only page. Each of those absences
+    // is what the defaults in the decoder are for, and reading any of them as stated would drop
+    // every file of every Azure change request.
+    const page = expectSuccess(
+      decodeIterationChangesJson(
+        asJson({
+          continuation_token: null,
+          changeEntries: [
+            { changeType: "add", item: { path: "/DEMO.md", objectId: "EC005DB24" } },
+            { changeType: "edit", item: { path: "/README.md", objectId: "8F8047A49" } },
+          ],
+        }),
+      ),
+    );
+
+    expect(page.nextSkip).toBeNull();
+    expect(page.changes).toEqual([
+      {
+        path: "DEMO.md",
+        oldPath: "DEMO.md",
+        changeKind: "new",
+        objectId: "EC005DB24",
+        originalObjectId: null,
+      },
+      {
+        path: "README.md",
+        oldPath: "README.md",
+        changeKind: "change",
+        objectId: "8F8047A49",
+        originalObjectId: null,
+      },
+    ]);
+  });
+
+  it("reads a text file whose content type Azure calls a stream", () => {
+    // `contentMetadata` comes back for a markdown file with `application/octet-stream` on it and
+    // no `isBinary` at all, so the content type is not the field to ask, and its absence is the
+    // answer that the text is text.
+    expect(
+      expectSuccess(
+        decodeItemContentJson(
+          asJson({
+            path: "/README.md",
+            objectId: "8f8047a49",
+            gitObjectType: "blob",
+            content: "# T3Demo\n",
+            contentMetadata: {
+              contentType: "application/octet-stream",
+              encoding: 65001,
+              extension: "md",
+              fileName: "README.md",
+            },
+            continuation_token: null,
+          }),
+        ),
+      ),
+    ).toEqual({ contents: "# T3Demo\n", isBinary: false });
+  });
+});
