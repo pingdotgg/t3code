@@ -325,6 +325,7 @@ for (const scenario of [
       const registry = yield* makeRegistry({
         remotes: [{ name: "origin", url: "git@code.example.test:team/project.git" }],
         process: {
+          /** Simulates mixed-account GitHub auth output while leaving other provider probes empty. */
           run: ({ command }) =>
             Effect.succeed(
               processOutput(

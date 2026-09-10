@@ -229,6 +229,7 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
       ],
       providers: [
         fakeProvider("github", {
+          /** Supplies a PR only after verifying discovery retained the Enterprise repository target. */
           listChangeRequests: ({ host, repository }) => {
             assert.strictEqual(host, "code.example.test");
             assert.strictEqual(repository, "team/project");
@@ -240,6 +241,7 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
           },
         }),
       ],
+      /** Exercises real GitHub host refinement with synthetic auth, without contacting a server. */
       resolveHandle: ({ cwd, context }) => {
         assert.ok(context);
         const provider = GitHubSourceControlProvider.discovery.refineUnknownRemote({
