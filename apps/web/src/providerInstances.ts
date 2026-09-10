@@ -149,17 +149,21 @@ export function deriveProviderInstanceEntries(
  * the thread's own environment.
  */
 export function deriveProviderEntriesByEnvironment(
-  providersByEnvironment: Iterable<readonly [string, ReadonlyArray<ServerProvider>]>,
+  providersByEnvironment: Iterable<
+    readonly [
+      string,
+      ReadonlyArray<ServerProvider>,
+      Pick<ServerSettings, "providerInstances" | "providers">?,
+    ]
+  >,
 ): ReadonlyMap<string, ReadonlyMap<string, ProviderInstanceEntry>> {
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
-  for (const [environmentId, providers] of providersByEnvironment) {
+  for (const [environmentId, providers, settings] of providersByEnvironment) {
+    const derived = deriveProviderInstanceEntries(providers);
+    const entries = settings ? applyProviderInstanceSettings(derived, settings) : derived;
     byEnvironment.set(
       environmentId,
-      new Map(
-        deriveProviderInstanceEntries(providers).map(
-          (entry) => [entry.instanceId as string, entry] as const,
-        ),
-      ),
+      new Map(entries.map((entry) => [entry.instanceId as string, entry] as const)),
     );
   }
   return byEnvironment;
