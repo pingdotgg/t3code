@@ -44,6 +44,7 @@ function makeReadModel(): OrchestrationReadModel {
         proposedPlans: [],
         activities: [],
         checkpoints: [],
+        pullRequests: [],
         session: null,
       },
     ],
