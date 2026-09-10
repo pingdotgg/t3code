@@ -6,13 +6,14 @@ checkmark button to transcribe. Select the X button to cancel. The transcript is
 into the composer for editing and is never sent automatically.
 
 On web and desktop, T3 Code transcribes recordings on the connected T3
-environment. The first recording asks before downloading a 48 MiB English model
-to that environment. If the desktop app is using its bundled environment,
-everything stays on the same computer. If the environment is remote, the audio
-is sent to that machine for transcription.
+environment. Before recording for the first time, open Settings, then Voice to
+download and select a transcription model. Models vary in download size,
+supported languages, speed, and accuracy. If the desktop app is using its
+bundled environment, everything stays on the same computer. If the environment
+is remote, the audio is sent to that machine for transcription.
 
-Open Settings, then Voice to choose the microphone used by this browser or app,
-see the model installed on the primary environment, or remove that model.
+In Voice settings, you can also choose the microphone used by this browser or
+app, switch between downloaded models, or remove models from the environment.
 
 On iOS 26 or newer, transcription uses Apple's on-device speech model instead of
 the environment service.

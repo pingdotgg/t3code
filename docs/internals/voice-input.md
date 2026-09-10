@@ -12,8 +12,9 @@ Clients supply recorder and transcriber implementations.
 - Web and desktop record with browser media APIs. The client converts the
   recording to 16 kHz mono Float32 PCM and sends it through the authenticated
   environment HTTP connection.
-- The environment downloads and verifies Moonshine Streaming Tiny on first use,
-  runs it through transcribe.cpp, and returns only transcript text.
+- The environment runs the selected transcription model through transcribe.cpp
+  and returns only transcript text. Users manage model downloads and selection in
+  Settings > Voice.
 
 The desktop app normally connects to its bundled server, so capture and
 transcription stay on the same computer. A client connected to a remote
