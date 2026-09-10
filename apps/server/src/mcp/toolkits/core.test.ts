@@ -9,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 
 import { OrchestratorProjectionError } from "../../orchestration-v2/Orchestrator.ts";
@@ -26,7 +28,9 @@ import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
-it("publishes unique tool names with object-root inputs", () => {
+const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
+
+it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
   for (const toolkit of [
     OrchestratorToolkit,
@@ -41,7 +45,10 @@ it("publishes unique tool names with object-root inputs", () => {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);
       names.add(tool.name);
-      expect(Tool.getJsonSchema(tool)).toMatchObject({ type: "object" });
+      const schema = Tool.getJsonSchema(tool);
+      expect(schema).toMatchObject({ type: "object" });
+      // The published tool catalog must also work with providers without $ref support.
+      expect(JSON.stringify(schema), tool.name).not.toContain('"$ref"');
     }
   }
 });
@@ -151,8 +158,21 @@ it.effect("resolves reused attachment references from stored metadata", () =>
       name: "original.png",
       mimeType: "image/png",
       sizeBytes: 12,
+      source: {
+        kind: "snap-shot",
+        capturedAt: "2026-09-10T00:00:00.000Z",
+        appName: "Terminal",
+        windowTitle: "Test",
+        accessibility: { format: "flat-text", text: "Stored context", truncated: false },
+      },
     });
-    const forged = { ...stored, name: "changed.jpg", mimeType: "image/jpeg", sizeBytes: 99 };
+    const forged = yield* decodeMcpAttachmentInput({
+      type: "image",
+      id: stored.id,
+      name: "changed.jpg",
+      mimeType: "image/jpeg",
+      sizeBytes: 99,
+    });
     const result = yield* AttachmentHandlers.resolveAttachmentReferences([forged], [stored]);
     expect(result).toEqual([stored]);
     const failure = yield* AttachmentHandlers.resolveAttachmentReferences(
