@@ -7,4 +7,11 @@ export const config: VercelConfig = {
   installCommand: "npm install -g vite-plus && vp install --filter '@t3tools/marketing...'",
   buildCommand: "vp run --filter @t3tools/marketing build",
   outputDirectory: "dist",
+  redirects: [
+    {
+      source: "/app",
+      destination: "https://app.t3.codes",
+      permanent: true,
+    },
+  ],
 };
