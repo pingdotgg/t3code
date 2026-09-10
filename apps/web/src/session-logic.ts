@@ -569,6 +569,25 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
+    if (item.type === "notification") {
+      entries.push({
+        id: item.id,
+        kind: "work",
+        createdAt,
+        entry: {
+          id: item.id,
+          createdAt,
+          runId: item.runId,
+          label: item.summary,
+          tone: "info",
+          itemType: item.type,
+          structuredPayload: item,
+          projectedItem: row,
+        },
+        ...attemptMetadata,
+      });
+      continue;
+    }
     if (item.type === "user_message" || item.type === "assistant_message") {
       const message: ChatMessage = {
         id: item.messageId,

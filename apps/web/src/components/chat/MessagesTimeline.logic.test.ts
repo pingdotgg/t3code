@@ -3519,3 +3519,109 @@ describe("linked timeline resources", () => {
     ]);
   });
 });
+
+it.each([true, false])(
+  "keeps a wake notification visible outside folded work, working=%s",
+  (isWorking) => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "user_message")!;
+    if (source.item.type !== "user_message") throw new Error("Expected user message fixture");
+    const notification = {
+      ...source,
+      item: {
+        ...source.item,
+        type: "notification" as const,
+        source: { kind: "background_task" as const },
+        outcome: "completed" as const,
+        summary: "Delegated task finished",
+      },
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: fixture.visibleTurnItems.map((row) =>
+        row === source ? notification : row,
+      ),
+      optimisticMessages: [],
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      isWorking,
+      runningRunId: fixture.runId,
+      activeTurnStartedAt: fixture.time(0),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(
+      rows.some(
+        (row) =>
+          row.kind === "work" &&
+          row.groupedEntries.some((entry) => entry.label === "Delegated task finished"),
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each([true, false])(
+  "keeps completed responses folded across notification wakes, working=%s",
+  (isWorking) => {
+    const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+    const work = (id: string, run: string, second: number, notification = false) => ({
+      kind: "work" as const,
+      id,
+      createdAt: time(second),
+      entry: {
+        id,
+        runId: RunId.make(run),
+        createdAt: time(second),
+        label: id,
+        tone: "info" as const,
+        ...(notification ? { itemType: "notification" as const } : {}),
+      },
+    });
+    const answer = (id: string, run: string, second: number) => ({
+      kind: "message" as const,
+      id,
+      createdAt: time(second),
+      message: {
+        id: MessageId.make(id),
+        role: "assistant" as const,
+        text: id,
+        runId: RunId.make(run),
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: false,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        work("launch-tools", "initial", 1),
+        answer("launched", "initial", 5),
+        work("notification-a", "wake-a", 20, true),
+        work("read-a", "wake-a", 21),
+        answer("ack-a", "wake-a", 25),
+        work("notification-b", "wake-b", 40, true),
+        work("read-b", "wake-b", 41),
+        ...(!isWorking ? [answer("ack-b", "wake-b", 45)] : []),
+      ],
+      latestRun: {
+        runId: RunId.make("wake-b"),
+        status: isWorking ? "running" : "completed",
+        startedAt: time(40),
+        completedAt: isWorking ? null : time(45),
+      },
+      isWorking,
+      activeTurnStartedAt: time(40),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    const ids = rows.map((row) => row.id);
+    expect(ids).toContain("turn-fold:initial");
+    expect(ids).not.toContain("launch-tools");
+    expect(ids).toContain("turn-fold:wake-a");
+    expect(ids.indexOf("notification-a")).toBeLessThan(ids.indexOf("turn-fold:wake-a"));
+    expect(ids.indexOf("turn-fold:wake-a")).toBeLessThan(ids.indexOf("ack-a"));
+    const boundary = isWorking ? "working-indicator-row" : "turn-fold:wake-b";
+    expect(ids).toContain(boundary);
+    expect(ids.indexOf("notification-b")).toBeLessThan(ids.indexOf(boundary));
+    if (isWorking) expect(rows.find((row) => row.id === boundary)?.createdAt).toBe(time(40));
+  },
+);

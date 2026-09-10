@@ -2422,6 +2422,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(request?.threadId, harness.threadId);
           assert.equal(request?.providerThreadId, harness.providerThread.id);
           assert.equal(request?.driver, CODEX_DRIVER_KIND);
+          assert.deepEqual(request?.notification, {
+            source: { kind: "background_command" },
+            outcome: "completed",
+            summary: "Background command finished",
+            detail: BG_COMMAND,
+          });
           assert.equal(
             request?.detail,
             `Background command completed (exit 0): ${BG_COMMAND}\n\n` +
