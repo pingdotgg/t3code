@@ -117,6 +117,21 @@ describe("serializeRenderedMarkdownFragment", () => {
     vi.unstubAllGlobals();
   });
 
+  it("copies shadow-rendered code alone as text and with prose as a fenced block", () => {
+    const block = new FakeElement("DIV", [], {
+      "data-markdown-code": "const answer = 42;\nconsole.log(answer);\n",
+      "data-language": "typescript",
+    }).append(new FakeElement("DIFFS-CONTAINER"));
+    const container = new FakeElement("DIV").append(block);
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "const answer = 42;\nconsole.log(answer);",
+    );
+    container.append(new FakeElement("P").append(new FakeText("Done.")));
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      "```typescript\nconst answer = 42;\nconsole.log(answer);\n```\n\nDone.",
+    );
+  });
+
   it("wraps inline code in backticks", () => {
     const paragraph = new FakeElement("P").append(
       new FakeText("run "),

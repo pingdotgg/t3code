@@ -127,7 +127,10 @@ function MockFileDiff(props: {
 }
 
 vi.mock("@pierre/diffs/react", () => {
-  return { FileDiff: MockFileDiff };
+  return {
+    FileDiff: MockFileDiff,
+    File: ({ file }: { file: import("@pierre/diffs").FileContents }) => <pre>{file.contents}</pre>,
+  };
 });
 
 vi.mock("../DiffWorkerPoolProvider", () => ({

@@ -260,6 +260,33 @@ describe("code-view worker lifecycle", () => {
     );
   });
 
+  it("publishes colored code after hydrating a plain-text view", async () => {
+    await act(async () => {
+      renderer = create(renderViews(1));
+    });
+    const pool = [...testState.pools.keys()][0]!;
+    await act(async () => testState.pools.get(pool));
+    const file = { name: "hydrated.ts", contents: "const answer = 42;\n" };
+    let publish: (html: string) => void = () => {};
+    const updated = new Promise<string>((resolve) => {
+      publish = resolve;
+    });
+    const fileRenderer = new FileRenderer(
+      { theme: "pierre-dark" },
+      () => {
+        const result = fileRenderer.renderFile(file);
+        if (result) publish(fileRenderer.renderPartialHTML(result.contentAST));
+      },
+      pool,
+    );
+    try {
+      fileRenderer.hydrate(file);
+      expect(await updated).toContain("color:");
+    } finally {
+      fileRenderer.cleanUp();
+    }
+  });
+
   it("renders through Pierre's main-thread fallback when worker creation fails", async () => {
     testState.failWorkers = true;
     await act(async () => {
