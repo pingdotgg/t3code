@@ -1107,10 +1107,10 @@ function TerminalActionButton({
         render={
           <button
             type="button"
-            className={cn(className, "disabled:opacity-45 disabled:cursor-not-allowed")}
-            onClick={onClick}
+            className={cn(className, disabled && "opacity-45 cursor-not-allowed")}
+            onClick={disabled ? undefined : onClick}
             aria-label={label}
-            disabled={disabled}
+            aria-disabled={disabled}
           />
         }
       >
