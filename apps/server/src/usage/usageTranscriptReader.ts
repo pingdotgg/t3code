@@ -17,15 +17,19 @@
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import {
   initialCodexScanState,
+  int,
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseCopilotLine,
   parseGrokLine,
+  parseTimestampMs,
   type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
@@ -100,8 +104,21 @@ function fnv1a(buffer: Buffer): number {
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
-  options?: { readonly fileName?: string },
+  options?: { readonly fileName?: string; readonly provider?: UsageProviderKind },
 ): Promise<readonly TranscriptFile[]> {
+  if (options?.provider === "copilot") {
+    const dbPath = NodePath.join(root, "session-store.db");
+    try {
+      const stats = await NodeFSP.stat(dbPath);
+      if (stats.mtimeMs >= sinceMs) {
+        return [{ path: dbPath, size: stats.size, mtimeMs: stats.mtimeMs }];
+      }
+      return [];
+    } catch {
+      // Fall through to walk .jsonl files in session-state if session-store.db does not exist
+    }
+  }
+
   const found: TranscriptFile[] = [];
   const fileName = options?.fileName;
 
@@ -195,6 +212,22 @@ export async function readTranscriptRecords(
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
 ): Promise<TranscriptParseResult | null> {
+  if (provider === "copilot" && filePath.endsWith(".db")) {
+    const dbRecords = readCopilotDbRecords(filePath);
+    if (dbRecords === null) return null;
+    return {
+      records: dbRecords,
+      tailRecords: [],
+      position: {
+        resumeOffset: 0,
+        guardLength: 0,
+        guardHash: 0,
+        codexState: null,
+      },
+      resumed: false,
+    };
+  }
+
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
@@ -233,6 +266,20 @@ export async function readTranscriptRecords(
       if (!mightCarryUsage(line, provider)) return;
       if (provider === "grok") {
         for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
+        return;
+      }
+      if (provider === "copilot") {
+        const record = parseCopilotLine(line);
+        if (record !== null) {
+          if (record.sessionId.length === 0) {
+            const base = NodePath.basename(filePath, ".jsonl");
+            const sessionId =
+              base === "events" ? NodePath.basename(NodePath.dirname(filePath)) : base;
+            out.push({ ...record, sessionId });
+          } else {
+            out.push(record);
+          }
+        }
         return;
       }
       const record = parseClaudeLine(line);
@@ -309,5 +356,57 @@ export async function readTranscriptRecords(
     return null;
   } finally {
     await handle.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Reads usage records directly from Copilot's `session-store.db` SQLite database.
+ */
+export function readCopilotDbRecords(filePath: string): readonly UsageRecord[] | null {
+  try {
+    const db = new NodeSqlite.DatabaseSync(filePath, { readOnly: true });
+    try {
+      const stmt = db.prepare(`
+        SELECT id, session_id, model, input_tokens, output_tokens, cache_read_tokens,
+               cache_write_tokens, reasoning_tokens, created_at
+        FROM assistant_usage_events
+        ORDER BY id ASC
+      `);
+      const rows = stmt.all() as readonly Record<string, unknown>[];
+      const records: UsageRecord[] = [];
+      for (const row of rows) {
+        const timestampMs = parseTimestampMs(row["created_at"]);
+        if (timestampMs === null) continue;
+        const inputTokens = int(row["input_tokens"]);
+        const cachedInputTokens = int(row["cache_read_tokens"]);
+        const cacheCreationTokens = int(row["cache_write_tokens"]);
+        const outputTokens = int(row["output_tokens"]);
+        const reasoningTokens = int(row["reasoning_tokens"]);
+        const uncachedInputTokens = Math.max(
+          0,
+          inputTokens - cachedInputTokens - cacheCreationTokens,
+        );
+        records.push({
+          provider: "copilot",
+          timestampMs,
+          model: typeof row["model"] === "string" ? row["model"] : "copilot",
+          sessionId: typeof row["session_id"] === "string" ? row["session_id"] : "",
+          totals: {
+            uncachedInputTokens,
+            cachedInputTokens,
+            cacheCreationTokens,
+            outputTokens,
+            reasoningTokens,
+          },
+          reportedCostUsd: null,
+          dedupeKey: `copilot:${row["session_id"]}:${row["id"]}`,
+        });
+      }
+      return records;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
   }
 }

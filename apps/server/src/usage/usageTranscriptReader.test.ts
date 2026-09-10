@@ -4,10 +4,11 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
-import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
+import { afterEach, assert, beforeEach, describe, expect, it } from "@effect/vitest";
 
-import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { readCopilotDbRecords, readTranscriptRecords } from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -206,5 +207,78 @@ describe("readTranscriptRecords resume", () => {
 
   it("returns null for an unreadable file", async () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
+  });
+});
+
+describe("readCopilotDbRecords", () => {
+  let tempDir: string;
+  let dbPath: string;
+
+  beforeEach(async () => {
+    tempDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "copilot-usage-test-"));
+    dbPath = NodePath.join(tempDir, "session-store.db");
+  });
+
+  afterEach(async () => {
+    await NodeFSP.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("reads and maps assistant_usage_events records accurately", () => {
+    const db = new NodeSqlite.DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE assistant_usage_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        turn_index INTEGER NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL,
+        output_tokens INTEGER NOT NULL,
+        cache_read_tokens INTEGER NOT NULL,
+        cache_write_tokens INTEGER NOT NULL,
+        reasoning_tokens INTEGER NOT NULL,
+        total_nano_aiu INTEGER NOT NULL,
+        token_details_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    db.exec(`
+      INSERT INTO assistant_usage_events (
+        session_id, turn_index, model, input_tokens, output_tokens,
+        cache_read_tokens, cache_write_tokens, reasoning_tokens,
+        total_nano_aiu, token_details_json, created_at
+      ) VALUES (
+        'sess-abc-123', 0, 'gpt-5.4-mini', 1200, 150,
+        800, 100, 45,
+        15000, '[]', '2026-09-10T14:22:18.431Z'
+      );
+    `);
+    db.close();
+
+    const records = readCopilotDbRecords(dbPath);
+    expect(records).not.toBeNull();
+    expect(records).toHaveLength(1);
+
+    const first = records?.[0];
+    expect(first).toBeDefined();
+    if (!first) throw new Error("expected record");
+
+    expect(first.provider).toBe("copilot");
+    expect(first.model).toBe("gpt-5.4-mini");
+    expect(first.sessionId).toBe("sess-abc-123");
+    expect(first.dedupeKey).toBe("copilot:sess-abc-123:1");
+    expect(first.totals).toEqual({
+      uncachedInputTokens: 300, // 1200 - 800 - 100
+      cachedInputTokens: 800,
+      cacheCreationTokens: 100,
+      outputTokens: 150,
+      reasoningTokens: 45,
+    });
+    expect(first.timestampMs).toBe(Date.parse("2026-09-10T14:22:18.431Z"));
+  });
+
+  it("returns null when database cannot be opened or table does not exist", () => {
+    const records = readCopilotDbRecords("/nonexistent/path/session-store.db");
+    expect(records).toBeNull();
   });
 });

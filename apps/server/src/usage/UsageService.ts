@@ -259,6 +259,11 @@ export const make = Effect.gen(function* () {
       grokHomeEnv.length > 0
         ? path.resolve(expandHomePath(grokHomeEnv))
         : path.join(NodeOS.homedir(), ".grok");
+    const copilotHomeEnv = hostEnvironment["COPILOT_HOME"]?.trim() ?? "";
+    const copilotDir =
+      copilotHomeEnv.length > 0
+        ? path.resolve(expandHomePath(copilotHomeEnv))
+        : path.join(NodeOS.homedir(), ".copilot");
 
     return [
       { provider: "claude" as const, dir: claudeDir },
@@ -268,6 +273,7 @@ export const make = Effect.gen(function* () {
         dir: path.join(grokHome, "sessions"),
         fileName: "updates.jsonl",
       },
+      { provider: "copilot" as const, dir: copilotDir },
     ];
   });
 
@@ -398,7 +404,7 @@ export const make = Effect.gen(function* () {
         continue;
       }
       const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+        listTranscriptFiles(dir, windowStartMs, { fileName, provider }),
       );
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
       for (const file of files) {

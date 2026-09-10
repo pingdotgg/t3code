@@ -5,6 +5,7 @@ import {
   initialCodexScanState,
   parseClaudeLine,
   parseCodexLine,
+  parseCopilotLine,
   parseGrokLine,
   totalTokens,
 } from "./usageTranscripts.ts";
@@ -562,5 +563,47 @@ describe("parseGrokLine", () => {
 
     const records = parseGrokLine(line);
     expect(records[0]?.timestampMs).toBe(1_786_372_566_000);
+  });
+});
+
+describe("parseCopilotLine", () => {
+  it("extracts token totals and dedupe key from session.usage_checkpoint", () => {
+    const raw = JSON.stringify({
+      type: "session.usage_checkpoint",
+      id: "chk_123",
+      timestamp: "2026-09-10T14:22:18.431Z",
+      data: {
+        promptCacheBreakState: [
+          {
+            lastActiveModel: "gpt-5.4-mini",
+            models: {
+              "gpt-5.4-mini": {
+                prompt_tokens: 1500,
+                cache_read: 1000,
+                cache_write: 200,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const record = parseCopilotLine(raw);
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("copilot");
+    expect(record?.model).toBe("gpt-5.4-mini");
+    expect(record?.dedupeKey).toBe("copilot:chk_123");
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 300,
+      cachedInputTokens: 1000,
+      cacheCreationTokens: 200,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    });
+  });
+
+  it("returns null for non-checkpoint events or malformed json", () => {
+    expect(parseCopilotLine(JSON.stringify({ type: "session.turn_start" }))).toBeNull();
+    expect(parseCopilotLine("not json")).toBeNull();
   });
 });

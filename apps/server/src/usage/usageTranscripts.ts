@@ -70,6 +70,13 @@ export function totalTokens(totals: UsageTokenTotals): number {
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
   if (provider === "claude") return line.includes('"usage"');
   if (provider === "grok") return line.includes('"turn_completed"');
+  if (provider === "copilot") {
+    return (
+      line.includes('"session.usage_checkpoint"') ||
+      line.includes('"assistant_usage_events"') ||
+      line.includes('"input_tokens"')
+    );
+  }
   return line.includes('"token_count"');
 }
 
@@ -485,4 +492,77 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
   return results;
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* GitHub Copilot                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Parses one line of a Copilot CLI transcript (events.jsonl).
+ */
+export function parseCopilotLine(line: string): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+
+  const record = parsed as Record<string, unknown>;
+  if (record["type"] !== "session.usage_checkpoint") return null;
+
+  const timestampMs = parseTimestampMs(record["timestamp"]);
+  if (timestampMs === null) return null;
+
+  const data = record["data"];
+  if (typeof data !== "object" || data === null) return null;
+  const dataRecord = data as Record<string, unknown>;
+
+  const promptCacheBreakState = dataRecord["promptCacheBreakState"];
+  if (!Array.isArray(promptCacheBreakState) || promptCacheBreakState.length === 0) return null;
+
+  const firstBreak = promptCacheBreakState[0];
+  if (typeof firstBreak !== "object" || firstBreak === null) return null;
+  const breakRecord = firstBreak as Record<string, unknown>;
+
+  const models = breakRecord["models"];
+  if (typeof models !== "object" || models === null) return null;
+  const modelsRecord = models as Record<string, unknown>;
+
+  const lastActiveModel =
+    typeof breakRecord["lastActiveModel"] === "string"
+      ? breakRecord["lastActiveModel"]
+      : Object.keys(modelsRecord)[0];
+  if (!lastActiveModel) return null;
+
+  const modelEntry = modelsRecord[lastActiveModel];
+  if (typeof modelEntry !== "object" || modelEntry === null) return null;
+  const modelEntryRecord = modelEntry as Record<string, unknown>;
+
+  const promptTokens = int(modelEntryRecord["prompt_tokens"]);
+  const cachedInputTokens = int(modelEntryRecord["cache_read"]);
+  const cacheCreationTokens = int(modelEntryRecord["cache_write"]);
+  const uncachedInputTokens = Math.max(0, promptTokens - cachedInputTokens - cacheCreationTokens);
+
+  const dedupeKey = typeof record["id"] === "string" ? `copilot:${record["id"]}` : null;
+
+  return {
+    provider: "copilot",
+    timestampMs,
+    model: lastActiveModel,
+    sessionId: "",
+    totals: {
+      uncachedInputTokens,
+      cachedInputTokens,
+      cacheCreationTokens,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    },
+    reportedCostUsd: null,
+    dedupeKey,
+  };
+}
+
 export { EMPTY_TOTALS };
+
