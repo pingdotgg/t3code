@@ -1,4 +1,5 @@
 import {
+  type OrchestrationV2Notification,
   MessageId,
   ProviderDriverKind,
   ProviderThreadId,
@@ -16,6 +17,7 @@ export interface ProviderContinuationRequest {
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
+  readonly notification?: OrchestrationV2Notification;
   /**
    * Durable ownership for an app-owned delegated-task completion delivery.
    * The continuation worker re-reads the cohort before dispatching so a later

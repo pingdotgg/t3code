@@ -655,11 +655,13 @@ function timelineEntryFoldRunId(entry: TimelineEntry): RunId | null {
  * A promptless provider restart replaces the native turn without adding a
  * user message. Keep every provider turn since the latest user message in one
  * visual response until the replacement turn settles. A steer has its own
- * user message, so it naturally starts a new visual response.
+ * user message; an automatic wake has a notification. Both start a new visual response.
  */
-function lastUserMessageIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
+function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
   return timelineEntries.findLastIndex(
-    (entry) => entry.kind === "message" && entry.message.role === "user",
+    (entry) =>
+      (entry.kind === "message" && entry.message.role === "user") ||
+      (entry.kind === "work" && entry.entry.itemType === "notification"),
   );
 }
 
@@ -678,8 +680,12 @@ function deriveActiveVisualResponseRunIds(input: {
     return runIds;
   }
 
-  const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
-  for (let index = latestUserMessageIndex + 1; index < input.timelineEntries.length; index += 1) {
+  const latestResponseBoundaryIndex = lastResponseBoundaryIndex(input.timelineEntries);
+  for (
+    let index = latestResponseBoundaryIndex + 1;
+    index < input.timelineEntries.length;
+    index += 1
+  ) {
     const runId = timelineEntryRunId(input.timelineEntries[index]!);
     if (runId !== null) {
       runIds.add(runId);
@@ -716,7 +722,7 @@ function deriveTurnFolds(input: {
     terminalEntry: Extract<TimelineEntry, { kind: "message" }> | null;
     hasStreamingMessage: boolean;
     /**
-     * The user message that kicked the turn off. Entry timestamps alone
+     * The user message or notification that kicked the turn off. Entry timestamps alone
      * undercount the duration (the first entry appears only once the
      * provider starts producing output), and a turn cut short by a steer may
      * hold a single instantaneous commentary message.
@@ -727,8 +733,11 @@ function deriveTurnFolds(input: {
 
   let pendingUserBoundary: string | null = null;
   for (const entry of input.timelineEntries) {
-    if (entry.kind === "message" && entry.message.role === "user") {
-      pendingUserBoundary = entry.message.createdAt;
+    if (
+      (entry.kind === "message" && entry.message.role === "user") ||
+      (entry.kind === "work" && entry.entry.itemType === "notification")
+    ) {
+      pendingUserBoundary = entry.createdAt;
       continue;
     }
     const runId = timelineEntryFoldRunId(entry);
@@ -790,6 +799,7 @@ function deriveTurnFolds(input: {
       if (timelineEntryIsPersistentResourceCard(entry)) {
         continue;
       }
+      if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {
@@ -1004,12 +1014,12 @@ export function deriveMessagesTimelineRows(input: {
     entry.runId === unsettledRunId;
 
   // The active run's header row ("Working for ...") anchors right after the
-  // latest user message, or at the run's first owned work entry when one
+  // latest user message or notification, or at the run's first owned work entry when one
   // already rendered above it.
   let activeTurnHeaderIndex = input.timelineEntries.length;
   if (input.isWorking) {
-    const latestUserMessageIndex = lastUserMessageIndex(input.timelineEntries);
-    activeTurnHeaderIndex = latestUserMessageIndex + 1;
+    const latestResponseBoundaryIndex = lastResponseBoundaryIndex(input.timelineEntries);
+    activeTurnHeaderIndex = latestResponseBoundaryIndex + 1;
   }
 
   // Contiguous trailing work entries of the active run collapse into one live
@@ -1026,6 +1036,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.tone === "error" ||
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
+        entry.entry.itemType === "notification" ||
         entry.entry.runId == null ||
         !activeVisualResponseRunIds.has(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||
@@ -1084,12 +1095,11 @@ export function deriveMessagesTimelineRows(input: {
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
   const appendWorkingRow = () => {
-    const latestUserMessage = input.timelineEntries[lastUserMessageIndex(input.timelineEntries)];
+    const latestResponseBoundary =
+      input.timelineEntries[lastResponseBoundaryIndex(input.timelineEntries)];
     const visualResponseStartedAt =
-      activeVisualResponseRunIds.size > 1 &&
-      latestUserMessage?.kind === "message" &&
-      latestUserMessage.message.role === "user"
-        ? latestUserMessage.message.createdAt
+      activeVisualResponseRunIds.size > 1 && latestResponseBoundary !== undefined
+        ? latestResponseBoundary.createdAt
         : input.activeTurnStartedAt;
     nextRows.push({
       kind: "working",
@@ -1193,7 +1203,8 @@ export function deriveMessagesTimelineRows(input: {
       if (
         timelineEntry.entry.tone === "error" ||
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
-        timelineEntry.entry.itemType === "system_notice"
+        timelineEntry.entry.itemType === "system_notice" ||
+        timelineEntry.entry.itemType === "notification"
       ) {
         nextRows.push({
           kind: "work",
@@ -1215,6 +1226,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.tone === "error" ||
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
+          nextEntry.entry.itemType === "notification" ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           collapsedSupersededEntryIds.has(nextEntry.id) ||

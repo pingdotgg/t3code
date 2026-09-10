@@ -147,6 +147,11 @@ export const workerLive = Layer.effectDiscard(
           threadId: request.threadId,
           messageId,
           text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+          notification: request.notification ?? {
+            source: { kind: "background_task" },
+            outcome: "updated",
+            summary: "Background activity updated",
+          },
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",

@@ -106,6 +106,13 @@ describe("thread workflows", () => {
       thread: { id: "thread", activeProviderThreadId: null },
       runs: [
         {
+          id: "provider-wake",
+          status: "queued",
+          userMessageId: "provider-wake",
+          ordinal: 4,
+          queuePosition: 3,
+        },
+        {
           id: "automatic",
           status: "queued",
           userMessageId: "message-automatic",
@@ -121,6 +128,15 @@ describe("thread workflows", () => {
         },
       ],
       messages: [
+        {
+          id: "provider-wake",
+          text: "Model-facing text",
+          notification: {
+            source: { kind: "monitor" },
+            outcome: "updated",
+            summary: "Monitor updated",
+          },
+        },
         {
           id: "message-automatic",
           text: "A delegated task reached a terminal state.",

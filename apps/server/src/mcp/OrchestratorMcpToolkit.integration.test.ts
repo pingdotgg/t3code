@@ -2733,6 +2733,22 @@ describe("orchestrator MCP toolkit", () => {
             if (activeSuccessorRun === undefined) {
               return yield* Effect.die(new Error("Late completion successor did not start."));
             }
+            expect(activeSuccessor.turnItems).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  type: "notification",
+                  runId: activeSuccessorRun.id,
+                  source: { kind: "delegated_task", taskIds: successorDelivery.taskIds },
+                  outcome: "cancelled",
+                }),
+              ]),
+            );
+            expect(
+              activeSuccessor.turnItems.some(
+                (item) =>
+                  item.type === "user_message" && item.messageId === successorDelivery.messageId,
+              ),
+            ).toBe(false);
             const thirdLateChildProjection = yield* waitForProjection(
               orchestrator,
               thirdLateTask.childThreadId,
