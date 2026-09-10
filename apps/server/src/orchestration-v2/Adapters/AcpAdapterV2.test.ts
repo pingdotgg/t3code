@@ -857,6 +857,14 @@ describe("AcpAdapterV2", () => {
                     },
                     {
                       sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Checking the code." },
+                      _meta: {
+                        "cognition.ai/streamingMessageId": "child-progress",
+                        "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                      },
+                    },
+                    {
+                      sessionUpdate: "agent_message_chunk",
                       content: { type: "text", text: "ONE" },
                       _meta: {
                         "cognition.ai/streamingMessageId": "child-result",
@@ -878,7 +886,7 @@ describe("AcpAdapterV2", () => {
                         "cognition.ai/subagent_completed": {
                           agentId: "child-a",
                           success: true,
-                          summary: "ONE",
+                          summary: "Final report: ONE",
                           depth: 1,
                         },
                       },
@@ -942,7 +950,15 @@ describe("AcpAdapterV2", () => {
       );
       const task = tasks.at(-1);
       assert.equal(task?.status, "completed");
-      assert.equal(task?.result, "ONE");
+      assert.equal(task?.result, "Final report: ONE");
+      const childMessages = new Map(
+        items.flatMap((item) =>
+          item.threadId === task?.childThreadId && item.type === "assistant_message"
+            ? [[item.id, item.text] as const]
+            : [],
+        ),
+      );
+      assert.deepEqual([...childMessages.values()], ["Checking the code.", "ONE"]);
       assert.equal(task?.prompt, "Run pwd, then reply ONE.");
       assert.isTrue(
         items.some(
@@ -964,7 +980,7 @@ describe("AcpAdapterV2", () => {
       const childAnswers = items.filter(
         (item) => item.threadId === task?.childThreadId && item.type === "assistant_message",
       );
-      assert.equal(new Set(childAnswers.map((item) => item.ordinal)).size, 1);
+      assert.equal(new Set(childAnswers.map((item) => item.ordinal)).size, 2);
       const parentTools = items.filter(
         (item) => item.threadId === threadId && item.type === "dynamic_tool",
       );
