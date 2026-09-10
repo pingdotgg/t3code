@@ -3,10 +3,12 @@ import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
+import { markdownPlainText } from "@t3tools/client-runtime/markdown-plain-text";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import type { ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
+import { fitNotificationText, jsonByteLength } from "./notificationText.ts";
 
 export function isTerminalPhase(state: RelayAgentActivityState): boolean {
   return state.phase === "completed" || state.phase === "failed";
@@ -102,18 +104,31 @@ export function sanitizeApnsNotificationPayload(
   return {
     ...notification,
     title: truncateText(notification.title, MAX_SUMMARY_TEXT_LENGTH),
-    body: truncateText(notification.body, MAX_SUMMARY_TEXT_LENGTH),
+    body: notification.body.trim(),
     deepLink: sanitizeDeepLink(notification.deepLink),
   };
 }
 
+export function completionBodyForResponse(response: string | undefined): string {
+  // Bound each stored aggregate row as well as the eventual push payload.
+  // Several raw answers in one delivery job can exceed the queue's size limit.
+  return fitNotificationText(
+    markdownPlainText(response ?? ""),
+    (body) => jsonByteLength(body) <= 4096,
+  );
+}
+
 export function notificationForActivity(
-  row: RelayAgentActivityAggregateRow,
+  row: RelayAgentActivityAggregateRow & Pick<RelayAgentActivityState, "completionResponse">,
 ): ApnsNotificationPayload {
   const activity = sanitizeAgentActivityAggregateRow(row);
   return sanitizeApnsNotificationPayload({
     title: activity.threadTitle,
-    body: `${activity.status}: ${activity.projectTitle}`,
+    body:
+      (activity.phase === "completed"
+        ? activity.completionBody?.trim() || completionBodyForResponse(row.completionResponse)
+        : "") ||
+      truncateText(`${activity.status}: ${activity.projectTitle}`, MAX_SUMMARY_TEXT_LENGTH),
     environmentId: activity.environmentId,
     threadId: activity.threadId,
     deepLink: activity.deepLink,

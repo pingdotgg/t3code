@@ -154,6 +154,14 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
         ...base,
         type: "thread.message-sent",
+        payload: { threadId: "thread-1", role: "assistant", streaming: false },
+      } as unknown as OrchestrationEvent),
+    ).toBe(true);
+
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.message-sent",
         payload: {
           threadId: "thread-1" as ThreadId,
           streaming: true,
@@ -406,7 +414,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         exp: 200,
         environmentId: state.environmentId,
         threadId: state.threadId,
-        state,
+        state: { ...state, phase: "completed", completionResponse: "Final answer.\n\nTests pass." },
       } satisfies RelayAgentActivityPublishProofPayload;
       const proof = yield* AgentAwarenessRelay.signRelayAgentActivityPublishProof({
         privateKey: keyPair.privateKey,
@@ -422,7 +430,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           nowEpochSeconds: 150,
         });
 
-      expect(yield* verify(proof)).toMatchObject({ jti: "nonce-1", state });
+      expect(yield* verify(proof)).toMatchObject({ jti: "nonce-1", state: payload.state });
 
       const [header, body, signature = ""] = proof.split(".");
       const corruptedSignature = `${signature.startsWith("a") ? "b" : "a"}${signature.slice(1)}`;

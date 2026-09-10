@@ -72,6 +72,7 @@ export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boo
   }
   switch (event.type) {
     case "thread.message-sent":
+      return event.payload.role === "assistant" && !event.payload.streaming;
     case "thread.turn-start-requested":
       // These events express intent to start work, but the shell still contains
       // the previous turn's terminal state until the provider acknowledges the
@@ -409,12 +410,21 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* snapshotQuery.getProjectShellById(thread.value.projectId)
       : Option.none<OrchestrationProjectShell>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    let snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
     });
+    if (snapshot.state?.phase === "completed") {
+      const response = yield* snapshotQuery.getThreadCompletionResponse(threadId);
+      if (Option.isSome(response) && response.value.trim()) {
+        snapshot = {
+          ...snapshot,
+          state: { ...snapshot.state, completionResponse: response.value.trim() },
+        };
+      }
+    }
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (publishedStateByThread.get(threadId) === publishIdentity) {

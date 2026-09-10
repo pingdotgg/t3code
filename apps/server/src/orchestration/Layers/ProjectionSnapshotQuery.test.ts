@@ -52,6 +52,41 @@ const projectionSnapshotLayer = it.layer(
 );
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
+  it.effect("reads only the latest turn's final answer and bounds large responses", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("completion-response-test");
+      yield* sql`INSERT INTO projection_turns
+        (thread_id, turn_id, assistant_message_id, state, requested_at, checkpoint_files_json)
+        VALUES (${threadId}, 'response-turn', 'response-message', 'completed',
+          '2026-09-10T00:00:00.000Z', '[]')`;
+      yield* sql`INSERT INTO projection_thread_messages
+        (thread_id, turn_id, message_id, role, text, is_streaming, created_at, updated_at)
+        VALUES (${threadId}, 'response-turn', 'response-message', 'assistant', 'Final answer.',
+          0, '2026-09-10T00:00:00.000Z', '2026-09-10T00:00:00.000Z')`;
+      assert.deepEqual(
+        yield* query.getThreadCompletionResponse(threadId),
+        Option.some("Final answer."),
+      );
+      yield* sql`UPDATE projection_thread_messages SET is_streaming = 1
+        WHERE message_id = 'response-message'`;
+      assert.deepEqual(yield* query.getThreadCompletionResponse(threadId), Option.none());
+      yield* sql`UPDATE projection_thread_messages SET is_streaming = 0, text = ${"🤖".repeat(16001)}
+        WHERE message_id = 'response-message'`;
+      assert.deepEqual(
+        yield* query.getThreadCompletionResponse(threadId),
+        Option.some("🤖".repeat(16000) + "…"),
+      );
+      yield* sql`INSERT INTO projection_turns
+        (thread_id, turn_id, state, requested_at, checkpoint_files_json)
+        VALUES (${threadId}, 'newer-turn', 'completed', '2026-09-10T00:01:00.000Z', '[]')`;
+      assert.deepEqual(yield* query.getThreadCompletionResponse(threadId), Option.none());
+      yield* sql`DELETE FROM projection_turns WHERE thread_id = ${threadId}`;
+      yield* sql`DELETE FROM projection_thread_messages WHERE thread_id = ${threadId}`;
+    }),
+  );
+
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

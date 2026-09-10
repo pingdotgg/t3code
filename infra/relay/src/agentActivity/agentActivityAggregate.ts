@@ -9,6 +9,7 @@ import {
   isTerminalPhase,
   MAX_ACTIVITY_ROWS,
   sanitizeAgentActivityAggregateState,
+  completionBodyForResponse,
 } from "./agentActivityPayloads.ts";
 
 export function statusForPhase(phase: RelayAgentActivityState["phase"]): string {
@@ -33,6 +34,8 @@ export function statusForPhase(phase: RelayAgentActivityState["phase"]): string 
 }
 
 function aggregateRowForState(state: RelayAgentActivityState) {
+  const completionBody =
+    state.phase === "completed" ? completionBodyForResponse(state.completionResponse) : "";
   return {
     environmentId: state.environmentId,
     threadId: state.threadId,
@@ -41,6 +44,7 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     modelTitle: state.modelTitle,
     phase: state.phase,
     status: statusForPhase(state.phase),
+    ...(completionBody ? { completionBody } : {}),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
   };

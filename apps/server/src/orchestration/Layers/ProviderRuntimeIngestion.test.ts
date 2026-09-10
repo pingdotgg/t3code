@@ -385,6 +385,8 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => testRuntime.runPromise(snapshotQuery.getSnapshot()),
+      readCompletionResponse: () =>
+        testRuntime.runPromise(snapshotQuery.getThreadCompletionResponse(asThreadId("thread-1"))),
       readThreadShell: () =>
         testRuntime.runPromise(
           snapshotQuery
@@ -2316,6 +2318,47 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.proposedPlans).toEqual([
       expect.objectContaining({ planMarkdown: "# Replacement plan", createdAt: replacementTime }),
     ]);
+  });
+
+  it("saves the final answer before publishing the terminal session", async () => {
+    const harness = await createHarness();
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-09-10T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("notification-turn"),
+    };
+    await harness.emitAndDrain([
+      { ...base, type: "turn.started", eventId: asEventId("notification-start") },
+      {
+        ...base,
+        type: "content.delta",
+        eventId: asEventId("notification-delta"),
+        itemId: asItemId("notification-answer"),
+        payload: { streamKind: "assistant_text", delta: "Final answer.\n\nTests pass." },
+      },
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("notification-end"),
+        payload: { state: "completed" },
+      },
+    ]);
+    expect(await harness.readCompletionResponse()).toEqual(
+      Option.some("Final answer.\n\nTests pass."),
+    );
+    const events = await Effect.runPromise(Stream.runCollect(harness.engine.readEvents(0)));
+    const answer = events.find(
+      (event) =>
+        event.type === "thread.message-sent" &&
+        event.payload.role === "assistant" &&
+        !event.payload.streaming,
+    );
+    const completed = events.findLast(
+      (event) => event.type === "thread.session-set" && event.payload.session.status === "ready",
+    );
+    expect(answer?.sequence).toBeDefined();
+    expect(completed?.sequence).toBeGreaterThan(answer!.sequence);
   });
 
   it("buffers assistant deltas with one lifecycle query per event until completion", async () => {

@@ -480,9 +480,13 @@ describe("Android delivery routing", () => {
     },
   );
 
-  it.effect("keeps completion alerts working with ongoing activity disabled", () => {
+  it.effect("sends the final answer with ongoing activity disabled", () => {
     const h = harness();
-    h.current.state = { ...state, phase: "completed" };
+    h.current.state = {
+      ...state,
+      phase: "completed",
+      completionResponse: "**Fixed.**\n\nTests pass.",
+    };
     h.current.target.preferences_json = encodeJson({
       ...preferences,
       liveActivitiesEnabled: false,
@@ -493,7 +497,7 @@ describe("Android delivery routing", () => {
       expect(h.sent[0]?.data).toMatchObject({
         active: "false",
         alert_title: "Fix notifications",
-        alert_body: "Done: Project",
+        alert_body: "Fixed.\n\nTests pass.",
       });
       expect(h.sent[0]?.data.user_id).toBe("user");
     }).pipe(Effect.provide(h.layer));
@@ -631,6 +635,21 @@ describe("Android delivery routing", () => {
     expect(androidActivityData(aggregateFor([state])).activity_expires_at).toBe(
       String(2 * 60 * 60 * 1000),
     );
+  });
+
+  it("keeps full answers that fit and shortens large answers at a sentence boundary", () => {
+    const base = {
+      t3_kind: "agent_activity",
+      alert_title: "Thread",
+      alert_path: "/threads/env/thread",
+      alert_id: "completion",
+    };
+    const full = "Ready.\n\n" + "Tests pass. ".repeat(120);
+    expect(fitFcmData({ ...base, alert_body: full }).alert_body).toBe(full);
+    const data = fitFcmData({ ...base, alert_body: "Ready. " + "🤖".repeat(2000) });
+    expect(data.alert_body).toBe("Ready.…");
+    expect(data.alert_path).toBe(base.alert_path);
+    expect(new TextEncoder().encode(JSON.stringify(data)).length).toBeLessThanOrEqual(3800);
   });
 
   it("fits five Unicode rows and a grouped alert in the FCM budget without corrupting text or routes", () => {

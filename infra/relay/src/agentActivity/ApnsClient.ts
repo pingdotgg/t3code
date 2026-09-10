@@ -11,6 +11,7 @@ import { ApnsEnvironment as ApnsEnvironmentSchema, type ApnsCredentials } from "
 import type { ApnsLiveActivityAlert, ApnsNotificationPayload } from "./apnsDeliveryJobs.ts";
 import { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import { fitNotificationText, jsonByteLength } from "./notificationText.ts";
 
 export { ApnsJwtEncodingError, ApnsJwtSigningError } from "./apnsJwt.ts";
 
@@ -86,9 +87,34 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   ),
 );
 function contentState(state: RelayAgentActivityAggregateState) {
-  return {
+  // Responses belong in the alert only, not in the widget's serialized props.
+  const activities = state.activities.map(({ completionBody: _body, ...row }) => row);
+  const content = () => ({
     name: LIVE_ACTIVITY_NAME,
-    props: JSON.stringify(state),
+    props: JSON.stringify({ ...state, activities }),
+  });
+  // Leave room for the APNs envelope and alert when several rows contain
+  // long Unicode titles. The aggregate count still includes hidden rows.
+  while (activities.length > 1 && jsonByteLength(content()) > 3000) activities.pop();
+  return content();
+}
+
+function fitApnsPayload<T extends { aps: { alert?: { title: string; body: string } } }>(
+  payload: T,
+): T {
+  const alert = payload.aps.alert;
+  if (!alert) return payload;
+  const body = fitNotificationText(
+    alert.body,
+    (candidate) =>
+      jsonByteLength({
+        ...payload,
+        aps: { ...payload.aps, alert: { ...alert, body: candidate } },
+      }) <= 4096,
+  );
+  return {
+    ...payload,
+    aps: { ...payload.aps, alert: { ...alert, body } },
   };
 }
 
@@ -130,7 +156,7 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
       token: input.token,
       event: input.event,
       priority: "10",
-      payload: {
+      payload: fitApnsPayload({
         aps: {
           timestamp,
           event: "end",
@@ -139,7 +165,7 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
           "dismissal-date":
             timestamp + (input.state ? DISMISS_AFTER_SECONDS : CONTENTLESS_DISMISS_AFTER_SECONDS),
         },
-      },
+      }),
     };
   }
 
@@ -150,7 +176,7 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
     // Alerting updates must land immediately; routine redraws stay at the
     // budget-friendly low priority.
     priority: input.event === "update" && !input.alert ? "5" : "10",
-    payload: {
+    payload: fitApnsPayload({
       aps: {
         timestamp,
         event: input.event,
@@ -169,7 +195,7 @@ function makeLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLiveA
         "content-state": contentState(state),
         "stale-date": timestamp + STALE_AFTER_SECONDS,
       },
-    },
+    }),
   };
 }
 
@@ -180,7 +206,7 @@ function makePushNotificationRequest(input: {
   return {
     token: input.token,
     priority: "10",
-    payload: {
+    payload: fitApnsPayload({
       aps: {
         alert: {
           title: input.notification.title,
@@ -191,7 +217,7 @@ function makePushNotificationRequest(input: {
       environmentId: input.notification.environmentId,
       threadId: input.notification.threadId,
       deepLink: input.notification.deepLink,
-    },
+    }),
   };
 }
 

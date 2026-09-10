@@ -6,7 +6,10 @@ import {
   attentionTransitionRows,
   terminalTransitionRows,
   shouldAlertForActivity,
+  alertForActivityRows,
 } from "./agentActivityAlerts.ts";
+import { notificationForActivity } from "./agentActivityPayloads.ts";
+import { jsonByteLength } from "./notificationText.ts";
 
 const state: RelayAgentActivityState = {
   environmentId: EnvironmentId.make("env"),
@@ -31,6 +34,55 @@ const aggregate = (states: RelayAgentActivityState[]) =>
   makeAggregateState({ activeStates: states, terminalState: null, nowMs: 0 })!;
 
 describe("shared agent activity policy", () => {
+  it("uses the final answer for a single completion and thread titles for a group", () => {
+    const row = aggregate([
+      {
+        ...state,
+        phase: "completed",
+        completionResponse: "**Fixed.**\n\n- Tests pass\n- Ready to review",
+      },
+    ]).activities[0]!;
+    const expected = { title: "Thread", body: "Fixed.\n\n• Tests pass\n• Ready to review" };
+    expect(notificationForActivity(row)).toMatchObject({
+      ...expected,
+      deepLink: state.deepLink,
+    });
+    expect(alertForActivityRows([row])).toEqual(expected);
+    expect(alertForActivityRows([row, { ...row, threadTitle: "Second" }])).toEqual({
+      title: "2 agents finished",
+      body: "Thread, Second",
+    });
+    for (const completionResponse of [undefined, "  ", "<!-- empty -->"]) {
+      expect(
+        notificationForActivity({ ...row, completionBody: undefined, completionResponse }).body,
+      ).toBe("Done: Project");
+    }
+    expect(notificationForActivity({ ...row, phase: "failed", status: "Failed" }).body).toBe(
+      "Failed: Project",
+    );
+  });
+
+  it("keeps several long answers within the delivery queue budget", () => {
+    const next = aggregate(
+      Array.from({ length: 5 }, (_, index) => ({
+        ...state,
+        threadId: ThreadId.make(`thread-${index}`),
+        phase: "completed",
+        completionResponse: "🤖".repeat(16000),
+      })),
+    );
+    expect(jsonByteLength(next)).toBeLessThan(25000);
+    expect(next.activities).toHaveLength(5);
+    const literal = aggregate([
+      {
+        ...state,
+        phase: "completed",
+        completionResponse: "Keep `**literal**`.",
+      },
+    ]).activities[0]!;
+    expect(notificationForActivity(literal).body).toBe("Keep **literal**.");
+  });
+
   it.each(["waiting_for_approval", "waiting_for_input"] as const)(
     "keeps an older %s ahead of five running rows",
     (phase) => {

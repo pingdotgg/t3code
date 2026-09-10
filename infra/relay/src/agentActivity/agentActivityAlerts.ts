@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import { notificationForActivity } from "./agentActivityPayloads.ts";
 
 export interface AgentActivityAlert {
   readonly title: string;
@@ -110,7 +111,8 @@ export function alertForActivityRows(
   const first = rows[0];
   if (!first) return null;
   if (rows.length === 1) {
-    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
+    const { title, body } = notificationForActivity(first);
+    return { title, body };
   }
   return {
     title: `${rows.length} agents ${isAttentionPhase(first.phase) ? "need attention" : "finished"}`,
