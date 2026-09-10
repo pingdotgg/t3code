@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  sourceControlRepositorySelector,
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
@@ -159,4 +160,35 @@ describe("isSshRemoteUrl", () => {
     expect(isSshRemoteUrl("")).toBe(false);
     expect(isSshRemoteUrl("deploy@github.com/project/repo")).toBe(false);
   });
+});
+
+it("names an Azure DevOps repository by its own name, not its project path", () => {
+  // `az repos pr list --repository` takes a name and detects the organisation and project from
+  // the checkout; the recorded `org/project/_git/repo` path is refused, and the repository then
+  // reads as unavailable on the page.
+  const selector = sourceControlRepositorySelector({
+    provider: "azure-devops",
+    displayName: "contoso/payments/_git/checkout",
+    owner: "contoso",
+    name: "checkout",
+  });
+  expect(selector).toBe("checkout");
+});
+
+it("falls back to the path's last segment where an Azure identity has no name", () => {
+  const selector = sourceControlRepositorySelector({
+    provider: "azure-devops",
+    displayName: "contoso/payments/_git/checkout",
+  });
+  expect(selector).toBe("checkout");
+});
+
+it("keeps a GitLab identity's whole path, because a nested group is part of the name", () => {
+  const selector = sourceControlRepositorySelector({
+    provider: "gitlab",
+    displayName: "group/subgroup/service",
+    owner: "group",
+    name: "service",
+  });
+  expect(selector).toBe("group/subgroup/service");
 });
