@@ -183,7 +183,7 @@ struct PlatformIncomingShareTests {
     }
 
     @Test
-    func groupedProjectImportUsesTheSameDraftKeyAsTheComposer() async throws {
+    func repositoryProjectImportUsesTheComposerWorkspaceDraftKey() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -193,8 +193,7 @@ struct PlatformIncomingShareTests {
         let project = Self.project(
             repositoryIdentity: FeatureRepositoryIdentity(canonicalKey: "github.com/t3/example")
         )
-        let snapshot = FeatureSnapshot(projects: [project])
-        let draftKey = FeatureComposerDraftStore.newTaskKey(project: project, in: snapshot)
+        let draftKey = FeatureComposerDraftStore.newTaskKey(project: project)
         let envelope = Self.envelope(text: "Keep shared context")
         let pipeline = PlatformIncomingSharePipeline(
             source: PlatformIncomingShareSource(
@@ -218,11 +217,9 @@ struct PlatformIncomingShareTests {
 
         _ = try await pipeline.importEnvelope(envelope, into: project, draftKey: draftKey)
 
-        #expect(draftKey == "logical-project:github.com/t3/example:new-task")
+        #expect(draftKey == "logical-project:environment:/repo:new-task")
         #expect(try await store.draft(for: draftKey)?.text == "Keep shared context")
-        #expect(
-            try await store.draft(for: FeatureComposerDraftStore.newTaskKey(project: project)) == nil
-        )
+        #expect(try await store.draft(for: "environment:environment:new-task:project") == nil)
     }
 
     @Test
