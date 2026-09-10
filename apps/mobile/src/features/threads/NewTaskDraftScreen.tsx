@@ -31,7 +31,6 @@ import {
   ComposerActionButton,
   ComposerInlineControl,
   ComposerToolbarRow,
-  ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
@@ -1352,21 +1351,23 @@ export function NewTaskDraftScreen(props: {
                     onPickMedia={handlePickMedia}
                     onPickFiles={handlePickFiles}
                   />
-                  <ComposerToolbarScroller align="end" contentPaddingRight={0} fadeSurface="sheet">
-                    <ComposerInlineControl
-                      accessibilityLabel="Model and reasoning settings"
-                      disabled={isComposerInteractionLocked}
-                      emphasized
-                      iconNode={
-                        <ProviderIcon
-                          provider={flow.selectedModelOption?.providerDriver}
-                          size={16}
-                        />
-                      }
-                      label={flow.selectedModelOption?.label ?? "Choose model"}
-                      maxWidth={152}
-                      onPress={settingsSheetPresentation.open}
-                    />
+                  <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
+                    <View className="min-w-0 shrink">
+                      <ComposerInlineControl
+                        accessibilityLabel="Model and reasoning settings"
+                        disabled={isComposerInteractionLocked}
+                        emphasized
+                        iconNode={
+                          <ProviderIcon
+                            provider={flow.selectedModelOption?.providerDriver}
+                            size={16}
+                          />
+                        }
+                        label={flow.selectedModelOption?.label ?? "Choose model"}
+                        maxWidth="100%"
+                        onPress={settingsSheetPresentation.open}
+                      />
+                    </View>
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
@@ -1387,7 +1388,7 @@ export function NewTaskDraftScreen(props: {
                         showChevron={false}
                       />
                     ) : null}
-                  </ComposerToolbarScroller>
+                  </View>
                 </>
               )}
               <ComposerDictationPrimaryAction

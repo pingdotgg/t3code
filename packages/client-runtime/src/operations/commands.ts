@@ -935,3 +935,32 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     ...(attachments === undefined ? {} : { attachments }),
   });
 });
+
+export type LinkThreadPullRequestInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.pull-request.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadPullRequestInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.pull-request.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPullRequest")(
+  function* (input: LinkThreadPullRequestInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.pull-request.link",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
+export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThreadPullRequest")(
+  function* (input: UnlinkThreadPullRequestInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.pull-request.unlink",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
