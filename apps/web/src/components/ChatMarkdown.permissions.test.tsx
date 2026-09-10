@@ -81,6 +81,7 @@ vi.mock("../state/threads", () => ({
   threadEnvironment: { updateMetadata: "updateMetadata" },
 }));
 vi.mock("../state/entities", () => ({
+  useServerConfigs: () => new Map([[threadRef.environmentId, serverConfig]]),
   readThreadShell: () => ({ linkedPullRequest: state.linkedPullRequest }),
   useProjects: () => [{ id: linkedPullRequest.projectId, environmentId: threadRef.environmentId }],
 }));
