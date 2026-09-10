@@ -1,5 +1,6 @@
 import type {
   RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
   RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
@@ -42,6 +43,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
 import { withSpanAttributes } from "../observability.ts";
+import { statusForPhase } from "./agentActivityAggregate.ts";
 
 import {
   alertForAttentionTransition,
@@ -201,19 +203,28 @@ function shouldUpdateLiveActivity(input: {
 // Completions replayed long after the fact (server restarts republish every
 // recently-finished thread) must not ring the device again.
 
-function notificationForAggregate(input: {
+function notificationForDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly notificationState?: RelayAgentActivityState | null;
   readonly nowMs: number;
 }): ApnsNotificationPayload | null {
-  if (!input.target.push_token || input.aggregate === null) {
+  if (!input.target.push_token) {
     return null;
   }
   const preferences = parsePreferences(input.target.preferences_json);
   if (!preferences?.notificationsEnabled) {
     return null;
   }
-  const activity = input.aggregate.activities[0];
+  // The card's first row can be another thread, and its row limit can hide
+  // the published thread entirely. Alert on the event, not the card's order.
+  const activity =
+    input.notificationState === undefined
+      ? input.aggregate?.activities[0]
+      : input.notificationState && {
+          ...input.notificationState,
+          status: statusForPhase(input.notificationState.phase),
+        };
   if (!activity) {
     return null;
   }
@@ -308,6 +319,7 @@ function chooseLiveActivityDelivery(input: {
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
+  readonly notificationState?: RelayAgentActivityState | null;
   readonly nowMs: number;
   readonly replay?: boolean;
 }): ChosenDelivery | null {
@@ -318,7 +330,7 @@ function chooseDelivery(input: {
   if (liveActivityDelivery) {
     return liveActivityDelivery;
   }
-  const notification = input.replay ? null : notificationForAggregate(input);
+  const notification = input.replay ? null : notificationForDelivery(input);
   return notification && input.target.push_token
     ? {
         kind: "push_notification",
@@ -522,6 +534,7 @@ export class ApnsDeliveries extends Context.Service<
     readonly sendForTarget: (input: {
       readonly target: LiveActivities.TargetRow;
       readonly aggregate: RelayAgentActivityAggregateState | null;
+      readonly notificationState?: RelayAgentActivityState | null;
       readonly nowMs: number;
       readonly replay?: boolean;
     }) => Effect.Effect<RelayDeliveryResult | null, ApnsDeliveryError>;
@@ -1103,7 +1116,7 @@ export const make = Effect.gen(function* () {
     sendPushNotificationForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
       const now = yield* DateTime.now;
-      const notification = notificationForAggregate({
+      const notification = notificationForDelivery({
         target: input.target,
         aggregate: input.aggregate,
         nowMs: now.epochMilliseconds,
@@ -1122,12 +1135,7 @@ export const make = Effect.gen(function* () {
     }),
     sendForTarget: Effect.fnUntraced(function* (input) {
       if (!config.apns) return null;
-      const delivery = chooseDelivery({
-        target: input.target,
-        aggregate: input.aggregate,
-        nowMs: input.nowMs,
-        replay: input.replay ?? false,
-      });
+      const delivery = chooseDelivery(input);
       if (!delivery) {
         return null;
       }
@@ -1142,13 +1150,7 @@ export const make = Effect.gen(function* () {
         });
         return result;
       }
-      const notification = input.replay
-        ? null
-        : notificationForAggregate({
-            target: input.target,
-            aggregate: input.aggregate,
-            nowMs: input.nowMs,
-          });
+      const notification = input.replay ? null : notificationForDelivery(input);
       // The end event doubles as the "task finished" moment. When a companion
       // push notification is about to ring the device (below), the activity end
       // stays silent; otherwise the end itself carries the alert so LA-only

@@ -34,6 +34,9 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 import * as ApnsClient from "./ApnsClient.ts";
 import * as ApnsProviderTokens from "./ApnsProviderTokens.ts";
+import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
+import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
+import { FcmDeliveries } from "./FcmDeliveries.ts";
 
 const config = RelayConfiguration.RelayConfiguration.of({
   relayIssuer: "https://relay.example.test",
@@ -179,7 +182,7 @@ function makeLayer(input: {
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(AgentActivityRows.AgentActivityRows, {
           upsert: () => Effect.void,
@@ -257,6 +260,79 @@ function makeLayer(input: {
 }
 
 describe("ApnsDeliveries", () => {
+  for (const liveActivitiesEnabled of [false, true]) {
+    for (const phase of ["completed", "failed"] as const) {
+      it.effect(
+        `queues the published ${phase} thread while other work runs, Live Activities ${liveActivitiesEnabled ? "unarmed" : "disabled"}`,
+        () => {
+          const queuedJobs: SignedApnsDeliveryJob[] = [];
+          const finished = { ...state, phase };
+          const device = {
+            ...target,
+            push_token: "push-token",
+            activity_push_token: liveActivitiesEnabled ? null : target.activity_push_token,
+            preferences_json: liveActivitiesEnabled ? enabledPreferences : disabledPreferences,
+          };
+          const otherWork = Array.from({ length: phase === "completed" ? 1 : 5 }, (_, index) => ({
+            ...state,
+            threadId: `other-${index}` as RelayAgentActivityState["threadId"],
+          }));
+          return Effect.gen(function* () {
+            const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+            yield* publisher.publish({
+              environmentId: finished.environmentId,
+              environmentPublicKey: "key",
+              threadId: finished.threadId,
+              state: finished,
+            });
+            expect(
+              queuedJobs
+                .filter((job) => job.payload.kind === "push_notification")
+                .map((job) => job.payload.notification),
+            ).toMatchObject([{ threadId: finished.threadId, phase }]);
+          }).pipe(
+            Effect.provide(
+              AgentActivityPublisher.layer.pipe(
+                Layer.provide(
+                  makeLayer({
+                    attempts: [],
+                    queuedJobs,
+                    activityStates: [...otherWork, finished],
+                    currentTargets: [device],
+                  }),
+                ),
+                Layer.provide(
+                  Layer.succeed(FcmDeliveries, {
+                    enqueue: () => Effect.succeed(null),
+                    process: () => Effect.void,
+                  }),
+                ),
+                Layer.provide(
+                  Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
+                    upsert: () => Effect.void,
+                    listUsersForEnvironment: () => Effect.succeed([device.user_id]),
+                    listDeliveryUsersForEnvironment: () =>
+                      Effect.succeed([
+                        {
+                          userId: device.user_id,
+                          notificationsEnabled: true,
+                          liveActivitiesEnabled: true,
+                        },
+                      ]),
+                    listPublicKeysForEnvironment: () => Effect.succeed([]),
+                    listForUser: () => Effect.succeed([]),
+                    getForUser: () => Effect.succeed(null),
+                    revokeForUser: () => Effect.succeed(false),
+                  }),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+  }
+
   it.effect("skips Apple delivery when an Android-only relay disables APNs", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];

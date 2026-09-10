@@ -91,6 +91,7 @@ export const make = Effect.gen(function* () {
             apnsDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
+              notificationState: input.deliveryUser.liveActivitiesEnabled ? input.state : null,
               nowMs: input.nowMs,
             }),
             notificationOnlyAggregate === null
