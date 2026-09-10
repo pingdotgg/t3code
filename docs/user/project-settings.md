@@ -33,3 +33,29 @@ upstream.
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Exclude directories from workspace search
+
+Create a `.ignore` file in the workspace root to exclude generated files or large directories from the Files panel, filename search, and content search.
+It uses Git ignore syntax and works in plain directories and Subversion or Mercurial working copies as well as Git repositories.
+For example:
+
+```gitignore
+build/
+.gradle/
+platforms/
+obj/
+bin/
+```
+
+Choose patterns that match generated output in your project; an excluded directory will not appear in workspace search.
+Remove a pattern to include that directory again.
+If results still reflect the old rules, restart the T3 Code server for that environment to rebuild its workspace index.
+For a remote environment, edit the `.ignore` file on the machine that hosts the workspace.
+
+Existing `.gitignore` rules also apply when the workspace is inside a Git repository.
+A `.gitignore` file alone has no effect in a non-Git workspace; use `.ignore` there.
+Subversion's `.svn` and Mercurial's `.hg` metadata directories are already excluded without an ignore file.
+
+These exclusions control T3 Code's workspace index, not which files an agent can access.
+Excluding unnecessary directories reduces scanning work, but a sufficiently large workspace can still reach the index scan timeout.
