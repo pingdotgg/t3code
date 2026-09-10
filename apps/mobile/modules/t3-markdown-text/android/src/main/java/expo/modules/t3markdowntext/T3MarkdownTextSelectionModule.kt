@@ -3,6 +3,8 @@ package expo.modules.t3markdowntext
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.text.Spannable
+import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ReplacementSpan
 import android.view.ActionMode
@@ -17,6 +19,14 @@ import kotlin.math.max
 import kotlin.math.min
 
 private const val OBJECT_REPLACEMENT_CHARACTER = "\uFFFC"
+
+// Match React Native's measurement buffer. Android orders tied line-height
+// spans differently in SpannableString, shifting inline images once RN's
+// span priorities are exhausted.
+private object MarkdownSpannableFactory : Spannable.Factory() {
+  override fun newSpannable(source: CharSequence): Spannable =
+    SpannableStringBuilder(source)
+}
 
 private fun copyTextWithoutInlineImages(
   text: CharSequence,
@@ -85,6 +95,7 @@ class T3MarkdownTextSelectionModule : Module() {
         if (currentCallback is SanitizingSelectionActionModeCallback) {
           return@runOnUiQueueThread
         }
+        textView.setSpannableFactory(MarkdownSpannableFactory)
         textView.customSelectionActionModeCallback =
           SanitizingSelectionActionModeCallback(textView, currentCallback)
       }
