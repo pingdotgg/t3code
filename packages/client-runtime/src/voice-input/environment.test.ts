@@ -74,7 +74,11 @@ for (const url of [
 
 it.effect("does not send browser cookies with bearer-authenticated voice requests", () =>
   Effect.gen(function* () {
-    const fetch = vi.fn(async () => Response.json({ text: "hello" }));
+    let credentials: RequestCredentials | undefined;
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      credentials = init?.credentials;
+      return Response.json({ text: "hello" });
+    });
     yield* transcribeEnvironmentPcm(
       prepared("https://remote.example", { _tag: "Bearer", token: "secret" }),
       new Uint8Array(4),
@@ -82,8 +86,10 @@ it.effect("does not send browser cookies with bearer-authenticated voice request
       Effect.provide(FetchHttpClient.layer),
       Effect.provideService(FetchHttpClient.Fetch, fetch),
     );
-    const requestInit = fetch.mock.calls[0]?.[1];
-    expect(requestInit).toEqual(expect.objectContaining({ redirect: "error" }));
-    expect(requestInit?.credentials).toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ redirect: "error" }),
+    );
+    expect(credentials).toBeUndefined();
   }),
 );
