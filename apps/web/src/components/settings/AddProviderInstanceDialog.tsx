@@ -129,6 +129,7 @@ export function AddProviderInstanceDialog({
   );
   const [selectedAcp, setSelectedAcp] = useState<AcpRegistrySearchAgent | null>(null);
   const [isManualAcpConfiguration, setIsManualAcpConfiguration] = useState(false);
+  const [isRegistryLoading, setIsRegistryLoading] = useState(false);
   // Driver-specific config drafts keyed by driver so toggling between drivers
   // during the same dialog session does not lose in-progress input.
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
@@ -331,7 +332,11 @@ export function AddProviderInstanceDialog({
           )}
         </WizardHeader>
 
-        <WizardPanel>
+        <WizardPanel
+          holdHeight={
+            isAcpRegistry && wizardStep === 1 && !isManualAcpConfiguration && isRegistryLoading
+          }
+        >
           <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
             <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
               Driver
@@ -437,6 +442,7 @@ export function AddProviderInstanceDialog({
                   providerInstances={settings.providerInstances}
                   onPrepared={handleAcpPrepared}
                   onManualConfiguration={handleManualAcpConfiguration}
+                  onLoadingChange={setIsRegistryLoading}
                 />
                 {hasAttemptedSubmit && acpSelectionError ? (
                   <p className="mt-2 text-[11px] text-destructive">{acpSelectionError}</p>
