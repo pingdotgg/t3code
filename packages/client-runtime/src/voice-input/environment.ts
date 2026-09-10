@@ -106,7 +106,7 @@ export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     prepared,
-    method: "DELETE",
+    method: "POST",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.removeModel(),
     run: ({ client, headers }) => client.voice.removeModel({ headers, payload: { modelId } }),
   });

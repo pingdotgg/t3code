@@ -75,10 +75,16 @@ export class SpeechBusyError extends Schema.TaggedError<SpeechBusyError>()("Spee
   operation: Schema.String,
 }) {}
 
+export class SpeechModelNotFoundError extends Schema.TaggedError<SpeechModelNotFoundError>()(
+  "SpeechModelNotFoundError",
+  { modelId: Schema.String },
+) {}
+
 type SpeechError =
   | SpeechOperationError
   | SpeechInvalidAudioError
   | SpeechUnsupportedPlatformError
+  | SpeechModelNotFoundError
   | SpeechBusyError;
 
 const isSpeechError = Schema.is(
@@ -86,6 +92,7 @@ const isSpeechError = Schema.is(
     SpeechInvalidAudioError,
     SpeechUnsupportedPlatformError,
     SpeechBusyError,
+    SpeechModelNotFoundError,
     SpeechOperationError,
   ]),
 );
@@ -163,7 +170,7 @@ export const make = Effect.gen(function* () {
 
   const download = async (modelId: string) => {
     const definition = getSpeechModel(modelId);
-    if (!definition) throw new Error("unknown speech model");
+    if (!definition) throw new SpeechModelNotFoundError({ modelId });
     if (downloading && downloading.modelId !== modelId)
       throw new SpeechBusyError({ operation: "model download" });
     const controller = new AbortController();
@@ -206,6 +213,7 @@ export const make = Effect.gen(function* () {
           }
           model = loaded;
           loadedModelId = definition.id;
+          loading = undefined;
           return loaded;
         })
         .catch((error) => {
@@ -291,12 +299,13 @@ export const make = Effect.gen(function* () {
     models: attempt("model listing", listModels),
     downloadModel: (modelId) =>
       exclusive("model download", async () => {
+        if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         await download(modelId);
         return currentStatus();
       }),
     selectModel: (modelId) =>
       exclusive("model selection", async () => {
-        if (!getSpeechModel(modelId)) throw new Error("unknown speech model");
+        if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
         await model?.dispose();
         model = undefined;
         loadedModelId = undefined;
@@ -320,6 +329,11 @@ export const make = Effect.gen(function* () {
             throw new SpeechOperationError({ operation: "model preparation", cause });
           });
           const result = await loaded.transcribe(pcm, { timestamps: "none" }).catch((cause) => {
+            if (model === loaded) {
+              model = undefined;
+              loadedModelId = undefined;
+              loading = undefined;
+            }
             throw new SpeechOperationError({ operation: "inference", cause });
           });
           return result.text.trim();
@@ -330,7 +344,7 @@ export const make = Effect.gen(function* () {
     removeModel: (modelId) =>
       exclusive("model removal", async () => {
         const definition = getSpeechModel(modelId);
-        if (!definition) throw new Error("unknown speech model");
+        if (!definition) throw new SpeechModelNotFoundError({ modelId });
         await loading?.catch(() => undefined);
         if (loadedModelId === modelId) {
           await model?.dispose();

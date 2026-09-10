@@ -69,6 +69,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );
@@ -82,9 +83,16 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.selectModel")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          yield* speech
-            .selectModel(args.payload.modelId)
-            .pipe(Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")));
+          yield* speech.selectModel(args.payload.modelId).pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
           return yield* speech.models.pipe(
             Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
           );
@@ -117,6 +125,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );
@@ -134,6 +143,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               SpeechUnsupportedPlatformError: () =>
                 failEnvironmentInvalidRequest("speech_unavailable"),
               SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
               SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );

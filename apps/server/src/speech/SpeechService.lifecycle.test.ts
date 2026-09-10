@@ -14,7 +14,8 @@ const native = vi.hoisted(() => ({
   dispose: vi.fn(),
   transcribe: vi.fn(async () => ({ text: "hello" })),
 }));
-vi.mock("./native.ts", () => ({ loadNativeSpeechModel: async () => native }));
+const loadNative = vi.hoisted(() => vi.fn(async () => native));
+vi.mock("./native.ts", () => ({ loadNativeSpeechModel: loadNative }));
 vi.mock("./model.ts", () => ({
   DEFAULT_SPEECH_MODEL_ID: "test-model",
   SPEECH_MODELS: [
@@ -70,6 +71,17 @@ it.effect("preserves invalid PCM errors through the service boundary", () =>
       _tag: "SpeechInvalidAudioError",
       byteLength: 3,
     });
+  }),
+);
+it.effect("reloads the native model after inference fails", () =>
+  Effect.gen(function* () {
+    native.transcribe.mockRejectedValueOnce(new Error("worker stopped"));
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      expect(Result.isFailure(yield* Effect.result(speech.transcribe(pcm())))).toBe(true);
+      expect(yield* speech.transcribe(pcm())).toBe("hello");
+      expect(loadNative).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer));
   }),
 );
 it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
