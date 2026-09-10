@@ -3545,9 +3545,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads WHERE provider_thread_id = ${run.providerThreadId}`;
             const turnRows =
               yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
-          WHERE provider_turn_id = (
-            SELECT provider_turn_id FROM orchestration_v2_projection_run_attempts WHERE attempt_id = ${run.activeAttemptId}
-          ) AND status = 'running'`;
+          WHERE provider_thread_id = ${run.providerThreadId}
+            AND run_attempt_id = ${run.activeAttemptId}
+            AND node_id = ${run.rootNodeId}
+            AND status = 'running'`;
             return {
               run,
               providerThread:
@@ -4548,16 +4549,17 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           if (projection === undefined)
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           const run = projection.runs.find((run) => run.status === "running");
-          const attempt = projection.attempts.find(
-            (attempt) => attempt.id === run?.activeAttemptId,
-          );
           return {
             run,
             providerThread: projection.providerThreads.find(
               (thread) => thread.id === run?.providerThreadId,
             ),
             providerTurn: projection.providerTurns.find(
-              (turn) => turn.id === attempt?.providerTurnId && turn.status === "running",
+              (turn) =>
+                turn.providerThreadId === run?.providerThreadId &&
+                turn.runAttemptId === run?.activeAttemptId &&
+                turn.nodeId === run?.rootNodeId &&
+                turn.status === "running",
             ),
           };
         }),
