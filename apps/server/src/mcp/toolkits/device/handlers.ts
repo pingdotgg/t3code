@@ -134,6 +134,9 @@ const handlers = {
         .filter((session) => session.threadId === scope.threadId)
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
       return {
+        hostStatuses: Object.fromEntries(
+          Object.entries(state.hostStatuses).filter(([id]) => !hostId || id === hostId),
+        ),
         hosts: hostId ? state.hosts.filter((host) => host.id === hostId) : state.hosts,
         devices: hostId
           ? state.devices.filter((device) => device.hostId === hostId)

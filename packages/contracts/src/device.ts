@@ -25,6 +25,27 @@ export type DeviceHostId = typeof DeviceHostId.Type;
 /** The server machine. Always present; other host kinds are future work. */
 export const LOCAL_DEVICE_HOST_ID = "local" as DeviceHostId;
 
+/** SSH aliases and key paths are resolved on the environment server. */
+export const SshDeviceHostConfig = Schema.Struct({
+  id: DeviceHostId.check(
+    Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
+    Schema.makeFilter((id) => id !== "local" || "The local host id is reserved."),
+  ),
+  label: TrimmedNonEmptyString,
+  target: TrimmedNonEmptyString.check(Schema.isPattern(/^[^\s-][^\s]*$/)),
+  identityFile: Schema.optional(TrimmedNonEmptyString),
+  port: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
+});
+export type SshDeviceHostConfig = typeof SshDeviceHostConfig.Type;
+
+export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(
+  Schema.makeFilter(
+    (hosts) =>
+      new Set(hosts.map((host) => host.id)).size === hosts.length ||
+      "Device host ids must be unique.",
+  ),
+);
+
 /** Simulator udid or adb serial (an AVD name while it is not running). */
 export const DeviceId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 export type DeviceId = typeof DeviceId.Type;
@@ -55,7 +76,7 @@ export type DevicePlatformAvailability = typeof DevicePlatformAvailability.Type;
 
 export const DeviceHostSummary = Schema.Struct({
   id: DeviceHostId,
-  kind: Schema.Literals(["local"]),
+  kind: Schema.Literals(["local", "ssh"]),
   label: TrimmedNonEmptyString,
   platforms: Schema.Array(DevicePlatformAvailability),
   hubInstalled: Schema.Boolean,
@@ -424,6 +445,7 @@ export type DeviceError = typeof DeviceError.Type;
 // panel describe devices the same way.
 
 export const DeviceToolListResult = Schema.Struct({
+  hostStatuses: DeviceServiceState.fields.hostStatuses,
   hosts: Schema.Array(DeviceHostSummary),
   devices: Schema.Array(DeviceSummary),
   /** Devices already open in this thread's Device panel. */

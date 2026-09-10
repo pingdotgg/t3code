@@ -16,6 +16,7 @@ const makeReady = (
 ) => {
   const calls: Call[] = [];
   const ready: DeviceHostReady = {
+    nodePath: process.execPath,
     hub: { origin: "http://127.0.0.1:1" },
     helpers,
     run: (command, args, options) => {

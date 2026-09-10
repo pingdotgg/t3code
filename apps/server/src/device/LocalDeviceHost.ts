@@ -644,6 +644,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    nodePath: process.execPath,
     run,
     helpers: running.helpers,
   });

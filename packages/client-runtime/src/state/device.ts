@@ -28,6 +28,10 @@ export function createDeviceEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    testHost: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:test-host",
+      tag: WS_METHODS.deviceTestHost,
+    }),
     list: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:list",
       tag: WS_METHODS.deviceList,

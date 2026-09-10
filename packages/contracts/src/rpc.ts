@@ -189,6 +189,8 @@ import {
   DeviceDetailInput,
   DeviceError,
   DeviceListInput,
+  SshDeviceHostConfig,
+  DeviceHostSummary,
   DeviceOpenInput,
   DeviceServiceState,
   DeviceSession,
@@ -328,6 +330,7 @@ export const WS_METHODS = {
   // Device methods
   deviceConfigure: "device.configure",
   deviceList: "device.list",
+  deviceTestHost: "device.testHost",
   deviceOpen: "device.open",
   deviceClose: "device.close",
   deviceShutdown: "device.shutdown",
@@ -1101,6 +1104,12 @@ const WsSubscribeDiscoveredLocalServersRpc = Rpc.make(WS_METHODS.subscribeDiscov
   stream: true,
 });
 
+const WsDeviceTestHostRpc = Rpc.make(WS_METHODS.deviceTestHost, {
+  payload: SshDeviceHostConfig,
+  success: DeviceHostSummary,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceListRpc = Rpc.make(WS_METHODS.deviceList, {
   payload: DeviceListInput,
   success: DeviceServiceState,
@@ -1380,6 +1389,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,
   WsDeviceListRpc,
+  WsDeviceTestHostRpc,
   WsDeviceOpenRpc,
   WsDeviceCloseRpc,
   WsDeviceShutdownRpc,

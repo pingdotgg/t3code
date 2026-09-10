@@ -25,9 +25,9 @@ import * as Semaphore from "effect/Semaphore";
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
-const DEVICE_HUB_VERSION = "0.9.0";
+export const DEVICE_HUB_VERSION = "0.9.0";
 const AGENT_DEVICE_PACKAGE = "agent-device";
-const AGENT_DEVICE_VERSION = "0.20.10";
+export const AGENT_DEVICE_VERSION = "0.20.10";
 
 const INSTALL_TIMEOUT = Duration.minutes(10);
 const installLock = Semaphore.makeUnsafe(1);

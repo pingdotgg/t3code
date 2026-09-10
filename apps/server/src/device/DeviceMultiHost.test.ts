@@ -1,5 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -10,6 +12,7 @@ it.effect("keeps hosts independent when serials collide and another host fails",
   Effect.gen(function* () {
     const host = (id: string, failed = false): DeviceHost["Service"] => {
       const ready = {
+        nodePath: process.execPath,
         hub: { origin: `http://${id}` },
         agentDevice: { baseUrl: `http://${id}`, token: "test", entryPath: "/agent-device" },
         run: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
@@ -20,10 +23,10 @@ it.effect("keeps hosts independent when serials collide and another host fails",
         summary: Effect.succeed({
           id,
           label: id,
-          kind: "local",
+          kind: id === "b" ? "ssh" : "local",
           hubInstalled: true,
           agentDeviceInstalled: true,
-          platforms: [{ platform: "android", available: true }],
+          platforms: id === "b" ? [] : [{ platform: "android", available: true }],
         }),
         platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
         ensureReady: () =>
@@ -59,9 +62,19 @@ it.effect("keeps hosts independent when serials collide and another host fails",
       ),
     );
     const hosts = new Map(["a", "b", "offline"].map((id) => [id, host(id, id === "offline")]));
-    const service = yield* makeWithHosts(hosts).pipe(
-      Effect.provideService(HttpClient.HttpClient, http),
-    );
+    const writeStarted = yield* Deferred.make<void>();
+    const finishWrite = yield* Deferred.make<void>();
+    const order: string[] = [];
+    const service = yield* makeWithHosts(hosts, undefined, () =>
+      Effect.gen(function* () {
+        order.push("write started");
+        yield* Deferred.succeed(writeStarted, undefined);
+        yield* Deferred.await(finishWrite);
+        order.push("write finished");
+        return "/host-config.json";
+      }),
+    ).pipe(Effect.provideService(HttpClient.HttpClient, http));
+    expect(yield* service.agentReadinessIfSupported("b")).not.toBeNull();
     const listed = yield* service.list;
     expect(listed.devices.map((device) => device.hostId).sort()).toEqual(["a", "b"]);
     expect(listed.hostStatuses.offline?.status).toBe("failed");
@@ -74,8 +87,35 @@ it.effect("keeps hosts independent when serials collide and another host fails",
     expect(state.sessions.map((session) => session.hostId)).toEqual(["b"]);
     expect(state.hostStatuses.a?.status).toBe("ready");
     expect(state.hostStatuses.offline?.status).toBe("failed");
-    yield* service.agentReadinessIfSupported("b");
-    expect((yield* service.state).hostStatuses.b?.status).toBe("ready");
+    const targeting = yield* service
+      .agentTarget({ threadId, hostId: "b", deviceId: "emulator-5554" })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(writeStarted);
+    const replacing = yield* service
+      .withLifecycleLock(
+        Effect.gen(function* () {
+          order.push("replace");
+          hosts.set("b", host("b"));
+          yield* service.refreshHosts;
+        }),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.succeed(finishWrite, undefined);
+    yield* Fiber.join(targeting);
+    yield* Fiber.join(replacing);
+    expect(order).toEqual(["write started", "write finished", "replace"]);
+    const replaced = yield* service.state;
+    expect(replaced.sessions).toEqual([]);
+    expect(replaced.devices.map((device) => device.hostId)).toEqual(["a"]);
+    expect(replaced.hostStatuses.b).toBeUndefined();
+    yield* service.open({ threadId, hostId: "b", deviceId: "emulator-5554", platform: "android" });
+    hosts.delete("b");
+    yield* service.refreshHosts;
+    yield* service.setHostStatus("b", { status: "ready" });
+    expect((yield* service.state).hostStatuses.b).toBeUndefined();
+    expect((yield* service.state).sessions).toEqual([]);
+    yield* service.agentReadinessIfSupported("a");
+    expect((yield* service.state).hostStatuses.a?.status).toBe("ready");
     yield* service.configure({ enabled: false });
     expect((yield* service.state).hostStatuses).toEqual({});
   }).pipe(

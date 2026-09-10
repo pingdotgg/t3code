@@ -15,6 +15,9 @@ installed, the setup screen says so and reuses it.
 
 Choose a running device to watch it, or choose **Start** next to a stopped
 device to boot it. The panel shows when you or an agent starts a device.
+Each device opens in its own tab. Use **+ → Device** to open another, and
+double-click a tab name or choose **Rename** from its context menu to rename it.
+Only the visible tab streams video; switching tabs keeps both devices running.
 Turn off the device hub in **Settings → Integrations → Devices** to stop the
 helper processes; simulators and emulators keep running until you power them
 off.
@@ -29,7 +32,8 @@ After installing them, restart the environment server and refresh devices.
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
 iOS, and power off. Close the tab to stop watching; the device keeps running
-unless you power it off.
+unless you power it off. Closed tabs stay closed after a reload. To watch the
+device again, choose it from **+ → Device**.
 
 ## Tools
 
@@ -61,3 +65,26 @@ The device stream goes through the environment server, so it works over the
 local network, Tailscale, and T3 Connect. Live video needs a secure page
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
 still-image stream and Android cannot show video.
+
+## SSH device hosts
+
+In Settings → Integrations → Devices, select one connected environment
+and add a host under **Device hosts**. Enter an SSH alias or `user@host`, with
+an optional identity file and port. These resolve on the environment server,
+so use the SSH configuration and keys available there. Password prompts are
+not supported.
+
+**Test connection** checks SSH, Node, npm, and platform tools without installing
+anything. The first device listing installs pinned device tools on the host.
+Node 22 or newer and npm must be available to non-interactive SSH commands.
+T3 checks common Homebrew and Android SDK locations; custom installations need
+the appropriate PATH and ANDROID_HOME on the host.
+
+The picker identifies devices by host when several hosts are configured.
+Connections recover after interruptions. Removing a host closes its device
+sessions and stops its T3 helpers when reachable; simulators keep running.
+
+T3 provides discovery, streaming, and control. Arrange app builds,
+installation, and connectivity to development servers such as Metro separately.
+A simulator on another machine cannot reach Metro through your environment's
+localhost without forwarding or another reachable address.

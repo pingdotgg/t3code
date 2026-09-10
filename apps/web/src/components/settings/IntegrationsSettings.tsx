@@ -1,3 +1,4 @@
+import { DeviceHostsSettings } from "./DeviceHostsSettings";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
@@ -12,6 +13,7 @@ import {
   type BrowserLinkTarget,
   type BrowserProfile,
   type EnvironmentId,
+  type SshDeviceHostConfig,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -584,17 +586,74 @@ function AgentBrowserAccessSetting() {
 
 function DeviceIntegrationSettings() {
   const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
+  const { environments } = useEnvironments();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected =
+    environments.find((environment) => environment.environmentId === selectedId) ??
+    environments.find(
+      (environment) => environment.environmentId === primaryEnvironment?.environmentId,
+    ) ??
+    environments[0];
+  const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
+  const environmentId = connected ? selected.environmentId : null;
+
+  return (
+    <SettingsSection id="devices" title="Devices">
+      {environments.length > 1 ? (
+        <SettingsRow
+          title="Environment"
+          description="Device support and hosts are shared by all projects in this environment."
+          control={
+            <Select
+              value={selected?.environmentId ?? ""}
+              onValueChange={(value) => setSelectedId(value)}
+            >
+              <SelectTrigger size="sm" aria-label="Device environment">
+                <SelectValue>{selected?.label ?? "Select environment"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {environments.map((environment) => (
+                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                    {environment.label}
+                    {environment.connection.phase === "connected" ? "" : " · Offline"}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      ) : null}
+      <DeviceIntegrationControls
+        key={selected?.environmentId ?? "none"}
+        environmentId={environmentId}
+        hosts={selected?.serverConfig?.settings.deviceHosts ?? []}
+        enabled={selected?.serverConfig?.settings.enableDeviceSupport ?? false}
+        agentAccessEnabled={selected?.serverConfig?.settings.enableAgentDeviceAccess ?? false}
+      />
+    </SettingsSection>
+  );
+}
+
+function DeviceIntegrationControls({
+  environmentId,
+  hosts,
+  enabled,
+  agentAccessEnabled,
+}: {
+  environmentId: EnvironmentId | null;
+  hosts: ReadonlyArray<SshDeviceHostConfig>;
+  enabled: boolean;
+  agentAccessEnabled: boolean;
+}) {
   const { state, loaded } = useDeviceState(environmentId);
   const configure = useAtomCommand(deviceEnvironment.configure);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [pending, setPending] = useState<"hub" | "check" | "agent" | null>(null);
-  const enabled = state.hostStatus !== "disabled";
   const busy = state.hostStatus === "installing" || state.hostStatus === "starting";
   const [platformsRevealed, setPlatformsRevealed] = useState(false);
   // Keep diagnostics visible through subsequent agent setup and refresh phases.
   if (platformsRevealed && !enabled) setPlatformsRevealed(false);
-  if (!platformsRevealed && state.hostStatus === "ready" && pending !== "hub") {
+  if (enabled && !platformsRevealed && state.hostStatus === "ready" && pending !== "hub") {
     setPlatformsRevealed(true);
   }
 
@@ -615,7 +674,7 @@ function DeviceIntegrationSettings() {
   };
 
   return (
-    <SettingsSection id="devices" title="Devices">
+    <>
       <SettingsRow
         {...searchableSetting("device-hub")}
         description={deviceHubDescription}
@@ -674,7 +733,7 @@ function DeviceIntegrationSettings() {
           <>
             {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
             <Switch
-              checked={state.agentAccessEnabled}
+              checked={agentAccessEnabled}
               disabled={!loaded || !environmentId || !enabled || busy || pending !== null}
               aria-label="Agent device access"
               onCheckedChange={(checked) =>
@@ -689,7 +748,8 @@ function DeviceIntegrationSettings() {
           {state.hostStatusDetail}
         </p>
       ) : null}
-    </SettingsSection>
+      <DeviceHostsSettings environmentId={environmentId} hosts={hosts} />
+    </>
   );
 }
 

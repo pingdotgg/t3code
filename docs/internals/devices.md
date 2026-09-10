@@ -3,8 +3,7 @@
 The environment server owns simulators and emulators the way it owns
 terminals: discovery, streaming, and agent access all run there, and every
 client reaches them through the environment connection. This is what makes the
-Device panel work over Tailscale and T3 Connect, and what will let a device
-host on another machine slot in later.
+Device panel work over Tailscale and T3 Connect, including when an SSH host runs the devices.
 
 ## Two external tools, one seam
 
@@ -21,8 +20,8 @@ native addon, and a crash there must not take the server down.
 Everything platform-specific sits behind
 [`DeviceHost`](../../apps/server/src/device/DeviceHost.ts). The service, the
 proxy, and the MCP tools only see a hub origin and an agent-device endpoint.
-An SSH or cloud host would forward those two things to the server and change
-nothing above it.
+SSH hosts forward both endpoints to server loopback. Every proxied request
+also carries the host id; device ids alone are not unique across hosts.
 
 ## The hub is never exposed
 
@@ -57,9 +56,8 @@ screenshot capture and stream tuning.
 The `device_*` toolkit is deliberately four tools: list, open, screenshot, and
 close. Driving happens through the `agent-device` CLI, which has the semantic
 snapshot model agents need and stays current with its own releases. T3 prepends
-a shim directory to the provider's PATH and sets
-`AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN` so the
-agent never handles the endpoint or token.
+a shim directory to the provider's PATH. The CLI installs on the environment
+server even when that server cannot run simulators. Hosts start on demand.
 
 That environment is fixed when the provider subprocess spawns, so
 [`prepareMcpSession`](../../apps/server/src/provider/Layers/ProviderService.ts)
