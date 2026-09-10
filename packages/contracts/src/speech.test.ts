@@ -8,10 +8,20 @@ const decodeTranscription = Schema.decodeUnknownSync(EnvironmentSpeechTranscript
 
 describe("environment speech contracts", () => {
   it("accepts supported and unsupported statuses", () => {
-    expect(decodeStatus({ supported: true, state: "ready", model: "Moonshine" })).toEqual({
+    expect(
+      decodeStatus({
+        supported: true,
+        state: "ready",
+        modelId: "handy-computer/moonshine-tiny-gguf",
+        model: "Moonshine Tiny",
+        size: 35_466_912,
+      }),
+    ).toEqual({
       supported: true,
       state: "ready",
-      model: "Moonshine",
+      modelId: "handy-computer/moonshine-tiny-gguf",
+      model: "Moonshine Tiny",
+      size: 35_466_912,
     });
     expect(decodeStatus({ supported: false, reason: "unsupported platform" })).toEqual({
       supported: false,

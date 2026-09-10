@@ -193,7 +193,7 @@ export const SPEECH_MODELS = [
 export const DEFAULT_SPEECH_MODEL_ID = "handy-computer/parakeet-unified-en-0.6b-gguf";
 export const getSpeechModel = (modelId: string): SpeechModel | undefined =>
   SPEECH_MODELS.find((model) => model.id === modelId);
-export const speechModelPath = (directory: string, model: SpeechModel): string =>
+const speechModelPath = (directory: string, model: SpeechModel): string =>
   NodePath.join(directory, model.filename);
 
 async function hasExpectedModel(directory: string, model: SpeechModel): Promise<boolean> {
