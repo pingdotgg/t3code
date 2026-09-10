@@ -1,3 +1,4 @@
+import { McpAttachmentInput } from "../attachment/input.ts";
 import {
   NonNegativeInt,
   ModelSelection,
@@ -8,8 +9,6 @@ import {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   RuntimeMode,
   ProviderInteractionMode,
-  ChatImageAttachment,
-  ChatFileAttachment,
   Project,
   ProjectCreatePayload,
   ProjectUpdatePayload,
@@ -98,11 +97,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     interactionMode: Schema.optional(ProviderInteractionMode),
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
     message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),
-    attachments: Schema.optional(
-      Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachment])).check(
-        Schema.isMaxLength(8),
-      ),
-    ),
+    attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
