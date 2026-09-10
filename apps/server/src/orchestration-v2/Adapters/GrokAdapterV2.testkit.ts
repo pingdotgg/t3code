@@ -25,7 +25,7 @@ import { GROK_DEFAULT_INSTANCE_ID, GROK_PROVIDER, makeGrokAdapterV2 } from "./Gr
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeUnknownSync(GrokSettings)({});
 
-export function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscript) {
+function makeGrokProviderAdapterRegistryReplayLayer(transcript: AcpReplayTranscript) {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(`grok-${transcript.scenario}`).pipe(Effect.orDie),

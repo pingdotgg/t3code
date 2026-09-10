@@ -60,7 +60,7 @@ import {
 } from "./AcpAdapterV2.ts";
 
 export const GROK_PROVIDER = ProviderDriverKind.make("grok");
-export const GROK_DRIVER_KIND = GROK_PROVIDER;
+const GROK_DRIVER_KIND = GROK_PROVIDER;
 export const GROK_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(GROK_DRIVER_KIND);
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
@@ -115,7 +115,7 @@ export interface GrokAdapterV2Options {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
-export const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensions"]> = ({
+const registerGrokAcpExtensions: NonNullable<AcpAdapterV2Flavor["registerExtensions"]> = ({
   runtime,
   requestUserInput,
   applyBackgroundTaskMutation,
@@ -333,7 +333,7 @@ export const GrokAdapterV2Driver: ProviderAdapterDriver<GrokSettings, GrokAdapte
   ),
 };
 
-export const layer: Layer.Layer<
+const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
   | ChildProcessSpawner.ChildProcessSpawner
