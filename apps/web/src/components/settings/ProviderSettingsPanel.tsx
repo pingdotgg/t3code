@@ -872,6 +872,7 @@ export function EnvironmentProviderSettings({
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
         onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}
         readOnly={readOnly}
+        canWriteSettings={canWriteSettings}
         setup={
           mode === "editor" && row.driver === "antigravity" ? (
             <ProviderSetupSection

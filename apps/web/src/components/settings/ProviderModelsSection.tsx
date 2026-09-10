@@ -131,6 +131,7 @@ interface ProviderModelsSectionProps {
    */
   readonly customModels: ReadonlyArray<CustomModelDefinition>;
   readonly canManageCustomModels: boolean;
+  readonly canWritePreferences?: boolean;
   /** Server-returned model slugs hidden from the model picker. */
   readonly hiddenModels: ReadonlyArray<string>;
   /** Model slugs favorited for this provider instance. */
@@ -165,6 +166,7 @@ export function ProviderModelsSection({
   models,
   customModels,
   canManageCustomModels,
+  canWritePreferences = true,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -276,13 +278,14 @@ export function ProviderModelsSection({
   };
 
   const setHidden = (slug: string, hidden: boolean) => {
-    if (hidden === hiddenModelSet.has(slug)) return;
+    if (!canWritePreferences || hidden === hiddenModelSet.has(slug)) return;
     onHiddenModelsChange(
       hidden ? [...hiddenModels, slug] : hiddenModels.filter((model) => model !== slug),
     );
   };
 
   const handleToggleFavorite = (slug: string) => {
+    if (!canWritePreferences) return;
     if (favoriteModelSet.has(slug)) {
       onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
       return;
@@ -299,6 +302,7 @@ export function ProviderModelsSection({
         ? "hidden"
         : "visible";
   const handleMove = (slug: string, direction: -1 | 1) => {
+    if (!canWritePreferences) return;
     const index = displayModels.findIndex((model) => model.slug === slug);
     const nextIndex = index + direction;
     if (index < 0 || nextIndex < 0 || nextIndex >= displayModels.length) return;
@@ -323,6 +327,7 @@ export function ProviderModelsSection({
                 ? "text-yellow-500 hover:text-yellow-600"
                 : "text-muted-foreground/40 hover:text-muted-foreground",
             )}
+            disabled={!canWritePreferences}
             onClick={() => handleToggleFavorite(model.slug)}
             aria-label={`${isFavorite ? "Remove" : "Add"} ${model.name} ${
               isFavorite ? "from" : "to"
@@ -357,7 +362,7 @@ export function ProviderModelsSection({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  disabled={!options.canMoveUp}
+                  disabled={!canWritePreferences || !options.canMoveUp}
                   onClick={() => handleMove(model.slug, -1)}
                   aria-label={`Move ${model.name} up`}
                 />
@@ -373,7 +378,7 @@ export function ProviderModelsSection({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  disabled={!options.canMoveDown}
+                  disabled={!canWritePreferences || !options.canMoveDown}
                   onClick={() => handleMove(model.slug, 1)}
                   aria-label={`Move ${model.name} down`}
                 />
@@ -442,7 +447,7 @@ export function ProviderModelsSection({
         <Switch
           size="sm"
           checked={!isHidden}
-          disabled={model.isCustom}
+          disabled={!canWritePreferences || model.isCustom}
           onCheckedChange={(checked) => setHidden(model.slug, !checked)}
           aria-label={`Show ${model.name} in the model picker`}
         />

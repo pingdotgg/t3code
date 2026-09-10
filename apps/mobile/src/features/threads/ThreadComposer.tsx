@@ -854,7 +854,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           </Animated.View>
         </ComposerSurface>
 
-        {!props.canOperateThread ? (
+        {props.connectionState === "connected" && !props.canOperateThread ? (
           <Text className="pt-2 text-xs text-foreground-muted">
             This connection cannot control this task. You can still edit your draft.
           </Text>
