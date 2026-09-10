@@ -14,7 +14,12 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
+import {
+  useNavigation,
+  usePreventRemove,
+  useRoute,
+  type RouteProp,
+} from "@react-navigation/native";
 import {
   createNativeStackNavigator,
   type NativeStackNavigationProp,
@@ -26,6 +31,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -69,6 +75,7 @@ import {
   pendingModelAfterPress,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
+import { refreshThreadSettingsRouteSession } from "./thread-settings-route-state";
 
 /**
  * Everyday harnesses start expanded; every other provider (OpenRouter catalogs
@@ -317,6 +324,8 @@ type ThreadSettingsSubmenuPage =
   | { readonly kind: "runtime" };
 
 type ThreadSettingsSessionProps = {
+  readonly title?: string;
+  readonly commitLabel?: string;
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -326,15 +335,27 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly onCommitModel?: (option: ModelOption) => boolean | Promise<boolean>;
+  readonly onCommitSucceeded?: () => void;
+  readonly requiresModelSelection?: boolean;
+  readonly showRuntimeOption?: boolean;
+  readonly footerAction?: {
+    readonly label: string;
+    readonly detail: string;
+    readonly onPress: () => void;
+  };
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
   readonly ownerId: string;
+  readonly presentationId?: string;
+  readonly purpose?: "settings" | "fork";
 };
 
 type ExistingThreadSettingsRouteContextValue = {
   readonly session: ExistingThreadSettingsRouteSession | null;
   readonly present: (session: ExistingThreadSettingsRouteSession) => void;
+  readonly refresh: (session: ExistingThreadSettingsRouteSession) => void;
   readonly clear: (ownerId: string) => void;
 };
 
@@ -347,10 +368,16 @@ export function ExistingThreadSettingsRouteProvider(props: { readonly children: 
   const present = useCallback((nextSession: ExistingThreadSettingsRouteSession) => {
     setSession(nextSession);
   }, []);
+  const refresh = useCallback((nextSession: ExistingThreadSettingsRouteSession) => {
+    setSession((current) => refreshThreadSettingsRouteSession(current, nextSession));
+  }, []);
   const clear = useCallback((ownerId: string) => {
     setSession((current) => (current?.ownerId === ownerId ? null : current));
   }, []);
-  const value = useMemo(() => ({ session, present, clear }), [clear, present, session]);
+  const value = useMemo(
+    () => ({ session, present, refresh, clear }),
+    [clear, present, refresh, session],
+  );
 
   return (
     <ExistingThreadSettingsRouteContext.Provider value={value}>
@@ -370,11 +397,16 @@ export function useExistingThreadSettingsRoutePresentation() {
 }
 
 type ThreadSettingsSessionValue = {
+  readonly title: string;
+  readonly commitLabel: string;
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly onCommitSucceeded?: () => void;
+  readonly showRuntimeOption: boolean;
+  readonly footerAction?: ThreadSettingsSessionProps["footerAction"];
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
@@ -383,7 +415,9 @@ type ThreadSettingsSessionValue = {
   readonly searchQuery: string;
   readonly showLegacy: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
-  readonly commitPendingModel: () => boolean;
+  readonly canCommit: boolean;
+  readonly commitPendingModel: () => Promise<boolean>;
+  readonly isCommitting: boolean;
   readonly isApplied: (option: ModelOption) => boolean;
   readonly isDisplayed: (option: ModelOption) => boolean;
   readonly pressModel: (option: ModelOption) => void;
@@ -406,6 +440,8 @@ function ThreadSettingsSessionProvider(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+  const [isCommitting, setIsCommitting] = useState(false);
+  const isCommittingRef = useRef(false);
 
   const isApplied = useCallback(
     (option: ModelOption) =>
@@ -439,7 +475,10 @@ function ThreadSettingsSessionProvider(
     () => props.providerGroups.some((group) => group.models.some((model) => model.isLegacy)),
     [props.providerGroups],
   );
-  const commitPendingModel = useCallback(() => {
+  const commitPendingModel = useCallback(async () => {
+    if (isCommittingRef.current || (props.requiresModelSelection && !pendingModel)) {
+      return false;
+    }
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Alert.alert(
@@ -449,10 +488,22 @@ function ThreadSettingsSessionProvider(
         return false;
       }
       void Haptics.selectionAsync();
-      props.onSelectModel(pendingModel);
+      isCommittingRef.current = true;
+      setIsCommitting(true);
+      try {
+        const committed = props.onCommitModel
+          ? await props.onCommitModel(pendingModel)
+          : (props.onSelectModel(pendingModel), true);
+        if (!committed) {
+          return false;
+        }
+      } finally {
+        isCommittingRef.current = false;
+        setIsCommitting(false);
+      }
     }
     return true;
-  }, [pendingModel, props.onSelectModel, props.providerGroups]);
+  }, [pendingModel, props]);
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {
@@ -498,14 +549,21 @@ function ThreadSettingsSessionProvider(
 
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
+      title: props.title ?? "Thread settings",
+      commitLabel: props.commitLabel ?? (pendingModel ? "Save" : "Done"),
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
       providerGroups: props.providerGroups,
       runtimeMode: props.runtimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      onCommitSucceeded: props.onCommitSucceeded,
+      showRuntimeOption: props.showRuntimeOption !== false,
+      footerAction: props.footerAction,
       displayedDescriptors,
       providerExpansionOverrides,
       hasLegacyModels,
+      canCommit: !isCommitting && (!props.requiresModelSelection || pendingModel !== null),
+      isCommitting,
       pendingModel,
       providerFilter,
       searchQuery,
@@ -529,8 +587,15 @@ function ThreadSettingsSessionProvider(
       isApplied,
       isDisplayed,
       props.environmentId,
+      props.commitLabel,
+      props.footerAction,
+      props.onCommitSucceeded,
       props.providerInstanceId,
+      props.requiresModelSelection,
+      props.showRuntimeOption,
+      props.title,
       pendingModel,
+      isCommitting,
       pressModel,
       providerFilter,
       props.onUpdateRuntimeMode,
@@ -713,59 +778,90 @@ function ThreadSettingsOptionsItem(props: {
     Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
       ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
       : 0;
+  const showsOptions = session.displayedDescriptors.length > 0 || session.showRuntimeOption;
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
-      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">Options</Text>
-      <Animated.View
-        className="mx-4 overflow-hidden rounded-2xl bg-card"
-        layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-      >
-        {session.displayedDescriptors.map((descriptor) => {
-          if (descriptor.type === "select") {
-            return (
-              <Animated.View
-                key={descriptor.id}
-                entering={
-                  props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
-                }
-                exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
-                layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-              >
+      {showsOptions ? (
+        <>
+          <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
+            Options
+          </Text>
+          <Animated.View
+            className="mx-4 overflow-hidden rounded-2xl bg-card"
+            layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+          >
+            {session.displayedDescriptors.map((descriptor) => {
+              if (descriptor.type === "select") {
+                return (
+                  <Animated.View
+                    key={descriptor.id}
+                    entering={
+                      props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
+                    }
+                    exiting={
+                      props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined
+                    }
+                    layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+                  >
+                    <DisclosureRow
+                      label={descriptor.label}
+                      value={getProviderOptionCurrentLabel(descriptor)}
+                      onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
+                    />
+                  </Animated.View>
+                );
+              }
+              return (
+                <Animated.View
+                  key={descriptor.id}
+                  entering={
+                    props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
+                  }
+                  exiting={
+                    props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined
+                  }
+                  layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+                >
+                  <SwitchRow
+                    label={descriptor.label}
+                    value={descriptor.currentValue ?? false}
+                    onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
+                  />
+                </Animated.View>
+              );
+            })}
+            {session.showRuntimeOption ? (
+              <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
                 <DisclosureRow
-                  label={descriptor.label}
-                  value={getProviderOptionCurrentLabel(descriptor)}
-                  onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
+                  isLast
+                  label="Runtime"
+                  value={
+                    RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)
+                      ?.label
+                  }
+                  onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
                 />
               </Animated.View>
-            );
-          }
-          return (
-            <Animated.View
-              key={descriptor.id}
-              entering={props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined}
-              exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
-              layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-            >
-              <SwitchRow
-                label={descriptor.label}
-                value={descriptor.currentValue ?? false}
-                onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
-              />
-            </Animated.View>
-          );
-        })}
-        <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
-          <DisclosureRow
-            isLast
-            label="Runtime"
-            value={
-              RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
-            }
-            onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
-          />
-        </Animated.View>
-      </Animated.View>
+            ) : null}
+          </Animated.View>
+        </>
+      ) : null}
+
+      {session.footerAction ? (
+        <Pressable
+          accessibilityRole="button"
+          className="mx-4 mt-6 rounded-2xl bg-card px-4 py-3 active:bg-subtle"
+          onPress={session.footerAction.onPress}
+        >
+          <Text className="text-base font-t3-medium text-foreground">
+            {session.footerAction.label}
+          </Text>
+          <Text className="mt-0.5 text-sm leading-5 text-foreground-muted">
+            {session.footerAction.detail}
+          </Text>
+        </Pressable>
+      ) : null}
 
       {Platform.OS !== "ios" && session.hasLegacyModels ? (
         <>
@@ -1006,6 +1102,9 @@ function ThreadSettingsModelsScreen() {
     [refreshProvidersCommand],
   );
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
+  const [commitSucceeded, setCommitSucceeded] = useState(false);
+  const removalBlocked = session.isCommitting;
+  usePreventRemove(removalBlocked, () => undefined);
   const refreshProviders = useCallback(() => {
     if (!session.environmentId || isRefreshingProviders) return;
     setIsRefreshingProviders(true);
@@ -1015,10 +1114,27 @@ function ThreadSettingsModelsScreen() {
       if (error) Alert.alert("Could not refresh models", error);
     });
   }, [isRefreshingProviders, refreshProviderCatalog, session.environmentId]);
-  const commitAndClose = useCallback(() => {
-    if (!session.commitPendingModel()) return;
+  const commitAndClose = useCallback(async () => {
+    if (!(await session.commitPendingModel())) return;
+    if (session.onCommitSucceeded) {
+      setCommitSucceeded(true);
+      return;
+    }
     presentation.onClose();
   }, [presentation, session]);
+  const onCommitSucceeded = session.onCommitSucceeded;
+  useEffect(() => {
+    if (removalBlocked || !commitSucceeded || !onCommitSucceeded) {
+      return;
+    }
+    const frame = requestAnimationFrame(onCommitSucceeded);
+    return () => cancelAnimationFrame(frame);
+  }, [commitSucceeded, onCommitSucceeded, removalBlocked]);
+  const close = useCallback(() => {
+    if (!removalBlocked) {
+      presentation.onClose();
+    }
+  }, [presentation, removalBlocked]);
   const filterMenu = useMemo(
     () => ({
       title: "Model filters",
@@ -1069,13 +1185,14 @@ function ThreadSettingsModelsScreen() {
               onPress: refreshProviders,
             },
             {
-              accessibilityLabel: session.pendingModel ? "Save thread settings" : "Done",
+              accessibilityLabel: session.commitLabel,
+              disabled: !session.canCommit,
               icon: "checkmark",
-              onPress: commitAndClose,
+              onPress: () => void commitAndClose(),
             },
           ]}
-          onBack={presentation.onClose}
-          title="Thread settings"
+          onBack={close}
+          title={session.title}
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1085,6 +1202,7 @@ function ThreadSettingsModelsScreen() {
           session.showLegacy,
         ]}
         options={{
+          title: session.title,
           unstable_headerToolbarItems: usesNativeMailSearchToolbar
             ? () => [
                 createNativeMailSearchToolbarItem({
@@ -1127,9 +1245,9 @@ function ThreadSettingsModelsScreen() {
       />
       <NativeHeaderToolbar placement="left">
         <NativeHeaderToolbar.Button
-          accessibilityLabel="Cancel thread settings"
+          accessibilityLabel={`Cancel ${session.title.toLowerCase()}`}
           label="Cancel"
-          onPress={presentation.onClose}
+          onPress={close}
         />
       </NativeHeaderToolbar>
       <NativeHeaderToolbar placement="right">
@@ -1141,9 +1259,10 @@ function ThreadSettingsModelsScreen() {
           separateBackground
         />
         <NativeHeaderToolbar.Button
-          accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
-          label={session.pendingModel ? "Save" : "Done"}
-          onPress={commitAndClose}
+          accessibilityLabel={session.commitLabel}
+          disabled={!session.canCommit}
+          label={session.isCommitting ? `${session.commitLabel}…` : session.commitLabel}
+          onPress={() => void commitAndClose()}
         />
       </NativeHeaderToolbar>
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
@@ -1275,7 +1394,7 @@ export function ExistingThreadSettingsRouteScreen() {
   const { ownerId: _ownerId, ...settings } = session;
 
   return (
-    <ThreadSettingsSessionProvider {...settings}>
+    <ThreadSettingsSessionProvider key={session.presentationId ?? session.ownerId} {...settings}>
       <ThreadSettingsPickerNavigator onClose={() => navigation.goBack()} />
     </ThreadSettingsSessionProvider>
   );

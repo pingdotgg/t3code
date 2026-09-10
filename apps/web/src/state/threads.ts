@@ -7,7 +7,8 @@ import {
   type EnvironmentThreadState,
   createThreadEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/threads";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
+import { WS_METHODS, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -16,6 +17,10 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentSnapshotAtom } from "./shell";
 
 export const threadEnvironment = createThreadEnvironmentAtoms(connectionAtomRuntime);
+export const forkThread = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:threads:fork",
+  tag: WS_METHODS.threadsFork,
+});
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,

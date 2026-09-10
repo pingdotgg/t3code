@@ -146,6 +146,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import { openForkThreadDialog } from "../forkThreadDialog";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -3993,6 +3994,8 @@ export default function Sidebar() {
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
+        const supportsThreadForking =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadForking === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4011,6 +4014,7 @@ export default function Sidebar() {
               isRunning:
                 thread.session?.status === "running" && thread.session.activeTurnId != null,
               supports: {
+                forking: supportsThreadForking,
                 settlement: supportsSettlement,
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
@@ -4030,6 +4034,9 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
+          case "fork-thread":
+            openForkThreadDialog(threadRef);
+            return;
           case "project-settings": {
             const projectGroup = projectGroupsRef.current.find((group) =>
               group.memberProjectRefs.some(

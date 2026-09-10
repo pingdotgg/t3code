@@ -10,6 +10,8 @@ import type {
   ServerConfig as T3ServerConfig,
   UsageLimitsReport,
 } from "@t3tools/contracts";
+import { ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
@@ -46,6 +48,9 @@ import Animated, {
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { uuidv4 } from "../../lib/uuid";
+import { forkThreadCommand } from "../../state/thread-fork";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
@@ -70,6 +75,7 @@ import {
   buildModelOptions,
   groupByProvider,
   isModelSelectionUnavailable,
+  type ModelOption,
 } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -90,6 +96,7 @@ import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
 } from "./ThreadSettingsSheet";
+import { forkThreadIdForSelection } from "./thread-settings-route-state";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
@@ -252,8 +259,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     editorRef: inputRef,
     isEditorFocused: isFocused,
   });
+  const openThreadSettingsSheet = settingsSheetPresentation.open;
+  const dismissThreadSettingsSheet = settingsSheetPresentation.onDismissed;
   const settingsRoutePresentation = useExistingThreadSettingsRoutePresentation();
+  const presentThreadSettingsRoute = settingsRoutePresentation.present;
+  const refreshThreadSettingsRoute = settingsRoutePresentation.refresh;
+  const clearThreadSettingsRoute = settingsRoutePresentation.clear;
   const settingsRoutePresentedRef = useRef(false);
+  const pendingForkThreadIdRef = useRef<ThreadId | null>(null);
+  const completedForkThreadIdRef = useRef<ThreadId | null>(null);
+  const attemptedForkSelectionKeyRef = useRef<string | null>(null);
+  const forkThreadMutation = useAtomCommand(forkThreadCommand, { reportFailure: false });
   const wasExpandedBeforePreviewRef = useRef(false);
   const inFlightThreadIdsRef = useRef(new Set<string>());
   const { onExpandedChange } = props;
@@ -485,40 +501,154 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     [currentModelOption?.capabilities, currentModelSelection.options],
   );
   const settingsOwnerId = composerOwnerKey;
+  const commitFork = useCallback(
+    async (option: ModelOption) => {
+      const currentThreadId = pendingForkThreadIdRef.current;
+      if (currentThreadId === null) {
+        return false;
+      }
+      const selectionKey = JSON.stringify(option.selection);
+      const newThreadId = forkThreadIdForSelection({
+        threadId: currentThreadId,
+        attemptedSelectionKey: attemptedForkSelectionKeyRef.current,
+        nextSelectionKey: selectionKey,
+        createThreadId: () => ThreadId.make(uuidv4()),
+      });
+      pendingForkThreadIdRef.current = newThreadId;
+      attemptedForkSelectionKeyRef.current = selectionKey;
+      const result = await forkThreadMutation({
+        environmentId: props.environmentId,
+        input: {
+          sourceThreadId: props.selectedThread.id,
+          newThreadId,
+          modelSelection: option.selection,
+        },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not fork conversation",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The conversation could not be forked.",
+        );
+        return false;
+      }
+      completedForkThreadIdRef.current = result.value.threadId;
+      return true;
+    },
+    [forkThreadMutation, props.environmentId, props.selectedThread.id],
+  );
+  const openForkedThread = useCallback(() => {
+    const threadId = completedForkThreadIdRef.current;
+    if (threadId === null) {
+      return;
+    }
+    completedForkThreadIdRef.current = null;
+    pendingForkThreadIdRef.current = null;
+    attemptedForkSelectionKeyRef.current = null;
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(props.environmentId),
+        threadId: String(threadId),
+      }),
+    );
+  }, [navigation, props.environmentId]);
+  const openForkSettings = useCallback(() => {
+    const newThreadId = ThreadId.make(uuidv4());
+    pendingForkThreadIdRef.current = newThreadId;
+    completedForkThreadIdRef.current = null;
+    attemptedForkSelectionKeyRef.current = null;
+    presentThreadSettingsRoute({
+      ownerId: settingsOwnerId,
+      presentationId: `${settingsOwnerId}:fork:${newThreadId}`,
+      purpose: "fork",
+      title: "Fork conversation",
+      commitLabel: "Fork",
+      environmentId: props.environmentId,
+      providerGroups: providerGroups.flatMap((group) => {
+        const models = group.models.filter(
+          (option) =>
+            option.selection.instanceId !== currentModelSelection.instanceId ||
+            option.selection.model !== currentModelSelection.model,
+        );
+        return models.length > 0 ? [{ ...group, models }] : [];
+      }),
+      selectedModel: null,
+      onSelectModel: () => undefined,
+      optionDescriptors: [],
+      onUpdateOptionSelections: () => undefined,
+      runtimeMode: currentRuntimeMode,
+      onUpdateRuntimeMode: () => undefined,
+      onCommitModel: commitFork,
+      onCommitSucceeded: openForkedThread,
+      requiresModelSelection: true,
+      showRuntimeOption: false,
+    });
+  }, [
+    commitFork,
+    currentModelSelection.instanceId,
+    currentModelSelection.model,
+    currentRuntimeMode,
+    openForkedThread,
+    props.environmentId,
+    providerGroups,
+    settingsOwnerId,
+    presentThreadSettingsRoute,
+  ]);
+  const onUpdateModelSelection = props.onUpdateModelSelection;
+  const onUpdateRuntimeMode = props.onUpdateRuntimeMode;
+  const supportsThreadForking = props.serverConfig?.environment.capabilities.threadForking === true;
   const settingsRouteSession = useMemo<ExistingThreadSettingsRouteSession>(
     () => ({
       ownerId: settingsOwnerId,
+      purpose: "settings",
       environmentId: props.environmentId,
       providerInstanceId: currentModelSelection.instanceId,
       providerGroups: threadProviderGroups,
       selectedModel: currentModelSelection,
-      onSelectModel: (option) => props.onUpdateModelSelection(option.selection),
+      onSelectModel: (option) => onUpdateModelSelection(option.selection),
       optionDescriptors: providerOptionDescriptors,
       onUpdateOptionSelections: (options) =>
-        props.onUpdateModelSelection({ ...currentModelSelection, options }),
+        onUpdateModelSelection({ ...currentModelSelection, options }),
       runtimeMode: currentRuntimeMode,
-      onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      onUpdateRuntimeMode,
+      ...(supportsThreadForking
+        ? {
+            footerAction: {
+              label: "Fork conversation with another provider/model",
+              detail: "Create a new thread with this context. The original stays unchanged.",
+              onPress: openForkSettings,
+            },
+          }
+        : {}),
     }),
     [
       currentModelSelection,
       currentRuntimeMode,
-      props.onUpdateModelSelection,
-      props.onUpdateRuntimeMode,
+      onUpdateModelSelection,
+      onUpdateRuntimeMode,
+      openForkSettings,
+      props.environmentId,
       providerOptionDescriptors,
       settingsOwnerId,
+      supportsThreadForking,
       threadProviderGroups,
     ],
   );
   const openSettings = useCallback(() => {
-    settingsRoutePresentation.present(settingsRouteSession);
-    settingsSheetPresentation.open();
-  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.open]);
+    pendingForkThreadIdRef.current = null;
+    completedForkThreadIdRef.current = null;
+    attemptedForkSelectionKeyRef.current = null;
+    presentThreadSettingsRoute(settingsRouteSession);
+    openThreadSettingsSheet();
+  }, [openThreadSettingsSheet, presentThreadSettingsRoute, settingsRouteSession]);
 
   useEffect(() => {
     if (settingsSheetPresentation.isActive) {
-      settingsRoutePresentation.present(settingsRouteSession);
+      refreshThreadSettingsRoute(settingsRouteSession);
     }
-  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.isActive]);
+  }, [refreshThreadSettingsRoute, settingsRouteSession, settingsSheetPresentation.isActive]);
 
   useEffect(() => {
     if (!settingsSheetPresentation.isVisible || settingsRoutePresentedRef.current) {
@@ -536,9 +666,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       }
 
       settingsRoutePresentedRef.current = false;
-      settingsSheetPresentation.onDismissed();
-      settingsRoutePresentation.clear(settingsOwnerId);
-    }, [settingsOwnerId, settingsRoutePresentation.clear, settingsSheetPresentation.onDismissed]),
+      pendingForkThreadIdRef.current = null;
+      completedForkThreadIdRef.current = null;
+      attemptedForkSelectionKeyRef.current = null;
+      dismissThreadSettingsSheet();
+      clearThreadSettingsRoute(settingsOwnerId);
+    }, [clearThreadSettingsRoute, dismissThreadSettingsSheet, settingsOwnerId]),
   );
 
   useEffect(
