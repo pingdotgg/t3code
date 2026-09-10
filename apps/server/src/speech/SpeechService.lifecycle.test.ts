@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { HostProcessPlatform, HostProcessArchitecture } from "@t3tools/shared/hostProcess";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const native = vi.hoisted(() => ({
@@ -15,13 +16,36 @@ const native = vi.hoisted(() => ({
 }));
 vi.mock("./native.ts", () => ({ loadNativeSpeechModel: async () => native }));
 vi.mock("./model.ts", () => ({
-  SPEECH_MODEL: { name: "test" },
+  DEFAULT_SPEECH_MODEL_ID: "test-model",
+  SPEECH_MODELS: [
+    {
+      id: "test-model",
+      name: "test",
+      description: "test",
+      size: 4,
+      languages: ["en"],
+      accuracy: 1,
+      speed: 1,
+      recommended: true,
+    },
+  ],
+  getSpeechModel: () => ({
+    id: "test-model",
+    name: "test",
+    description: "test",
+    size: 4,
+    languages: ["en"],
+    accuracy: 1,
+    speed: 1,
+    recommended: true,
+  }),
   downloadSpeechModel: async () => "test.gguf",
   isSpeechModelReady: async () => true,
   removeSpeechModel: async () => {},
 }));
 const layer = SpeechService.layer.pipe(
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-review-" })),
+  Layer.provide(ServerSettings.layerTest({ speechModelId: "test-model" })),
   Layer.provide(NodeServices.layer),
 );
 const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
@@ -79,7 +103,7 @@ it.effect("retains ownership of native work after its request is interrupted", (
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(request);
       expect(native.dispose).not.toHaveBeenCalled();
-      const removal = yield* Effect.result(speech.removeModel);
+      const removal = yield* Effect.result(speech.removeModel("test-model"));
       expect(Result.isFailure(removal) && removal.failure).toMatchObject({
         _tag: "SpeechBusyError",
       });

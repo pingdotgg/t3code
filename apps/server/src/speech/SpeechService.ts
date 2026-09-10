@@ -1,4 +1,4 @@
-import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -7,12 +7,15 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { loadNativeSpeechModel } from "./native.ts";
 import {
+  DEFAULT_SPEECH_MODEL_ID,
   downloadSpeechModel,
+  getSpeechModel,
   isSpeechModelReady,
   removeSpeechModel,
-  SPEECH_MODEL,
+  SPEECH_MODELS,
 } from "./model.ts";
 
 const SAMPLE_RATE = 16_000;
@@ -90,7 +93,7 @@ const isSpeechError = Schema.is(
 type LoadedModel = {
   readonly transcribe: (
     pcm: Float32Array,
-    options: { readonly timestamps: "none"; readonly language: "en" },
+    options: { readonly timestamps: "none"; readonly language?: string },
   ) => Promise<{ readonly text: string }>;
   readonly dispose: () => Promise<void>;
 };
@@ -99,8 +102,19 @@ export class SpeechService extends Context.Service<
   SpeechService,
   {
     readonly status: Effect.Effect<EnvironmentSpeechStatus, SpeechOperationError>;
+    readonly models: Effect.Effect<
+      { readonly models: ReadonlyArray<EnvironmentSpeechModel> },
+      SpeechOperationError
+    >;
+    readonly downloadModel: (
+      modelId: string,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly selectModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly cancelDownload: (
+      modelId: string,
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly transcribe: (pcmBytes: Uint8Array) => Effect.Effect<string, SpeechError>;
-    readonly removeModel: Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
 >()("t3/speech/SpeechService") {}
 
@@ -116,11 +130,16 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   const architecture = yield* HostProcessArchitecture;
   const config = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
   const unsupportedReason = supported(platform, architecture);
   const modelDirectory = path.join(config.stateDir, "speech", "models");
   let model: LoadedModel | undefined;
+  let loadedModelId: string | undefined;
   let loading: Promise<LoadedModel> | undefined;
+  let downloading:
+    | { modelId: string; downloaded: number; verifying: boolean; controller: AbortController }
+    | undefined;
   let activeTranscriptions = 0;
   let activeOperation: Promise<unknown> | undefined;
   let closing = false;
@@ -132,27 +151,69 @@ export const make = Effect.gen(function* () {
       lifetime.abort();
       await model?.dispose();
       model = undefined;
+      loadedModelId = undefined;
       loading = undefined;
     }),
   );
 
+  const selectedModel = async () => {
+    const settings = await Effect.runPromise(serverSettings.getSettings);
+    return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+  };
+
+  const download = async (modelId: string) => {
+    const definition = getSpeechModel(modelId);
+    if (!definition) throw new Error("unknown speech model");
+    if (downloading && downloading.modelId !== modelId)
+      throw new SpeechBusyError({ operation: "model download" });
+    const controller = new AbortController();
+    downloading = { modelId, downloaded: 0, verifying: false, controller };
+    const abort = () => controller.abort();
+    lifetime.signal.addEventListener("abort", abort, { once: true });
+    try {
+      const modelPath = await downloadSpeechModel(
+        modelDirectory,
+        definition,
+        controller.signal,
+        (downloaded) => {
+          if (downloading?.modelId === modelId) downloading.downloaded = downloaded;
+        },
+      );
+      if (downloading?.modelId === modelId) downloading.verifying = true;
+      return modelPath;
+    } finally {
+      lifetime.signal.removeEventListener("abort", abort);
+      if (downloading?.modelId === modelId) downloading = undefined;
+    }
+  };
+
   const loadModel = async () => {
-    if (model) return model;
-    loading ??= downloadSpeechModel(modelDirectory, lifetime.signal)
-      .then(async (modelPath) => {
-        const loaded = await loadNativeSpeechModel(modelPath, lifetime.signal);
-        if (closing) {
-          await loaded.dispose();
-          throw new SpeechBusyError({ operation: "model preparation" });
-        }
-        model = loaded;
-        return loaded;
-      })
-      .catch((error) => {
-        loading = undefined;
-        throw error;
-      });
-    return loading;
+    const definition = await selectedModel();
+    if (model && loadedModelId === definition.id) return model;
+    if (model) {
+      await model.dispose();
+      model = undefined;
+      loadedModelId = undefined;
+    }
+    const pending =
+      loading ??
+      download(definition.id)
+        .then(async (modelPath) => {
+          const loaded = await loadNativeSpeechModel(modelPath, lifetime.signal);
+          if (closing) {
+            await loaded.dispose();
+            throw new SpeechBusyError({ operation: "model preparation" });
+          }
+          model = loaded;
+          loadedModelId = definition.id;
+          return loaded;
+        })
+        .catch((error) => {
+          loading = undefined;
+          throw error;
+        });
+    loading = pending;
+    return pending;
   };
 
   const attempt = <A>(operation: string, run: () => Promise<A>) =>
@@ -179,20 +240,75 @@ export const make = Effect.gen(function* () {
 
   const currentStatus = async (): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
+    const definition = await selectedModel();
     return {
       supported: true,
       state:
         activeTranscriptions > 0
           ? "transcribing"
-          : (await isSpeechModelReady(modelDirectory))
+          : (await isSpeechModelReady(modelDirectory, definition))
             ? "ready"
             : "missing-model",
-      model: SPEECH_MODEL.name,
+      modelId: definition.id,
+      model: definition.name,
+      size: definition.size,
+    };
+  };
+
+  const listModels = async () => {
+    const selected = await selectedModel();
+    return {
+      models: await Promise.all(
+        SPEECH_MODELS.map(async (definition) => {
+          const ready = await isSpeechModelReady(modelDirectory, definition);
+          const operation = downloading?.modelId === definition.id ? downloading : undefined;
+          return {
+            id: definition.id,
+            name: definition.name,
+            description: definition.description,
+            size: definition.size,
+            languages: definition.languages,
+            accuracy: definition.accuracy,
+            speed: definition.speed,
+            recommended: definition.recommended,
+            active: selected.id === definition.id,
+            state: operation
+              ? operation.verifying
+                ? ("verifying" as const)
+                : ("downloading" as const)
+              : ready
+                ? ("installed" as const)
+                : ("downloadable" as const),
+            ...(operation ? { downloaded: operation.downloaded } : {}),
+          };
+        }),
+      ),
     };
   };
 
   return SpeechService.of({
     status: attempt("status", currentStatus),
+    models: attempt("model listing", listModels),
+    downloadModel: (modelId) =>
+      exclusive("model download", async () => {
+        await download(modelId);
+        return currentStatus();
+      }),
+    selectModel: (modelId) =>
+      exclusive("model selection", async () => {
+        if (!getSpeechModel(modelId)) throw new Error("unknown speech model");
+        await model?.dispose();
+        model = undefined;
+        loadedModelId = undefined;
+        loading = undefined;
+        await Effect.runPromise(serverSettings.updateSettings({ speechModelId: modelId }));
+        return currentStatus();
+      }),
+    cancelDownload: (modelId) =>
+      attempt("model download cancellation", async () => {
+        if (downloading?.modelId === modelId) downloading.controller.abort();
+        return currentStatus();
+      }),
     transcribe: (pcmBytes) =>
       exclusive("transcription", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
@@ -203,24 +319,28 @@ export const make = Effect.gen(function* () {
           const loaded = await loadModel().catch((cause) => {
             throw new SpeechOperationError({ operation: "model preparation", cause });
           });
-          const result = await loaded
-            .transcribe(pcm, { timestamps: "none", language: "en" })
-            .catch((cause) => {
-              throw new SpeechOperationError({ operation: "inference", cause });
-            });
+          const result = await loaded.transcribe(pcm, { timestamps: "none" }).catch((cause) => {
+            throw new SpeechOperationError({ operation: "inference", cause });
+          });
           return result.text.trim();
         } finally {
           activeTranscriptions -= 1;
         }
       }),
-    removeModel: exclusive("model removal", async () => {
-      await loading?.catch(() => undefined);
-      await model?.dispose();
-      model = undefined;
-      loading = undefined;
-      await removeSpeechModel(modelDirectory);
-      return currentStatus();
-    }),
+    removeModel: (modelId) =>
+      exclusive("model removal", async () => {
+        const definition = getSpeechModel(modelId);
+        if (!definition) throw new Error("unknown speech model");
+        await loading?.catch(() => undefined);
+        if (loadedModelId === modelId) {
+          await model?.dispose();
+          model = undefined;
+          loadedModelId = undefined;
+          loading = undefined;
+        }
+        await removeSpeechModel(modelDirectory, definition);
+        return currentStatus();
+      }),
   });
 });
 

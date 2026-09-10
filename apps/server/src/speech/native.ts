@@ -107,7 +107,7 @@ export async function loadNativeSpeechModel(
   return {
     transcribe: async (
       pcm: Float32Array,
-      options: { readonly timestamps: "none"; readonly language: "en" },
+      options: { readonly timestamps: "none"; readonly language?: string },
     ) => {
       const result = await send({ kind: "transcribe", pcm, options });
       if (typeof result.text !== "string") throw new Error("Invalid speech process response.");

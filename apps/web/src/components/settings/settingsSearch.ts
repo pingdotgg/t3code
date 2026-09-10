@@ -490,9 +490,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "local-voice-input",
-    title: "Local voice input",
+    title: "Transcription models",
     to: "/settings/voice",
     desktopOnly: true,
+    searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
   },
   {
     id: "microphone",

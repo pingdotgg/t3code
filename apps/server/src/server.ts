@@ -814,7 +814,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provideMerge(PeerLinks.layer),
     ),
   ),
-  Layer.provide(SpeechService.layer),
+  Layer.provide(SpeechService.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
   Layer.provide(layerCommandReadiness),

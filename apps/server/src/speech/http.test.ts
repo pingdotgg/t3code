@@ -42,8 +42,12 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
       Layer.provide(
         Layer.succeed(SpeechService.SpeechService, {
           status: Effect.succeed({ supported: false as const, reason: "test" }),
+          models: Effect.succeed({ models: [] }),
+          downloadModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          selectModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
+          cancelDownload: () => Effect.succeed({ supported: false as const, reason: "test" }),
           transcribe,
-          removeModel: Effect.succeed({ supported: false as const, reason: "test" }),
+          removeModel: () => Effect.succeed({ supported: false as const, reason: "test" }),
         }),
       ),
     );
@@ -110,8 +114,12 @@ it.each([
     );
     const service = Layer.succeed(SpeechService.SpeechService, {
       status: Effect.succeed({ supported: false as const, reason: "test" }),
+      models: Effect.succeed({ models: [] }),
+      downloadModel: () => Effect.fail(error),
+      selectModel: () => Effect.fail(error),
+      cancelDownload: () => Effect.fail(error),
       transcribe: () => Effect.fail(error),
-      removeModel: Effect.fail(error),
+      removeModel: () => Effect.fail(error),
     });
     const api = HttpApi.make("environment").add(EnvironmentVoiceHttpApi);
     const { handler, dispose } = HttpRouter.toWebHandler(

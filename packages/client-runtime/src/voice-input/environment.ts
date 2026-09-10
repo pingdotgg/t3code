@@ -7,7 +7,7 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { makeEnvironmentHttpApiClient, makeEnvironmentHttpApiUrlBuilder } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
-const VOICE_REQUEST_TIMEOUT_MS = 10 * 60_000;
+const VOICE_REQUEST_TIMEOUT_MS = 30 * 60_000;
 type EnvironmentApiClient = Effect.Success<ReturnType<typeof makeEnvironmentHttpApiClient>>;
 
 const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(function* <A, E>(input: {
@@ -59,6 +59,42 @@ export const getEnvironmentSpeechStatus = (prepared: PreparedConnection) =>
     run: ({ client, headers }) => client.voice.status({ headers }),
   });
 
+export const getEnvironmentSpeechModels = (prepared: PreparedConnection) =>
+  request({
+    prepared,
+    method: "GET",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.models(),
+    run: ({ client, headers }) => client.voice.models({ headers }),
+  });
+
+export const downloadEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.downloadModel(),
+    run: ({ client, headers }) => client.voice.downloadModel({ headers, payload: { modelId } }),
+  });
+
+export const selectEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
+  request({
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.selectModel(),
+    run: ({ client, headers }) => client.voice.selectModel({ headers, payload: { modelId } }),
+  });
+
+export const cancelEnvironmentSpeechModelDownload = (
+  prepared: PreparedConnection,
+  modelId: string,
+) =>
+  request({
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.cancelModelDownload(),
+    run: ({ client, headers }) =>
+      client.voice.cancelModelDownload({ headers, payload: { modelId } }),
+  });
+
 export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint8Array) =>
   request({
     prepared,
@@ -67,10 +103,10 @@ export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint
     run: ({ client, headers }) => client.voice.transcribe({ headers, payload: pcm }),
   });
 
-export const removeEnvironmentSpeechModel = (prepared: PreparedConnection) =>
+export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     prepared,
     method: "DELETE",
     path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.removeModel(),
-    run: ({ client, headers }) => client.voice.removeModel({ headers }),
+    run: ({ client, headers }) => client.voice.removeModel({ headers, payload: { modelId } }),
   });

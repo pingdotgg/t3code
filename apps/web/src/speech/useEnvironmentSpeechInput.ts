@@ -161,7 +161,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!freshStatus.supported) return;
     if (freshStatus.state === "missing-model") {
       const confirmed = await ensureLocalApi().dialogs.confirm(
-        "Download a 48 MiB English speech model to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.",
+        `Download ${freshStatus.model} (${Math.round(freshStatus.size / 1024 / 1024)} MB) to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.`,
       );
       if (!confirmed) return;
     }

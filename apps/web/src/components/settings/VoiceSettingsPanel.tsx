@@ -1,17 +1,32 @@
 import {
+  cancelEnvironmentSpeechModelDownload,
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
   removeEnvironmentSpeechModel,
+  selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
+import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  CheckIcon,
+  DownloadIcon,
+  GlobeIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { ensureLocalApi } from "../../localApi";
 import { runtime } from "../../lib/runtime";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { usePreparedConnection } from "../../state/session";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
@@ -19,6 +34,97 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 
 const SYSTEM_DEFAULT = "system-default";
 const deviceValue = (id: string) => `device:${id}`;
+const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+
+function ModelCard(props: {
+  readonly model: EnvironmentSpeechModel;
+  readonly busy: boolean;
+  readonly onDownload: () => void;
+  readonly onSelect: () => void;
+  readonly onCancel: () => void;
+  readonly onDelete: () => void;
+}) {
+  const { model } = props;
+  const downloading = model.state === "downloading" || model.state === "verifying";
+  const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
+  return (
+    <div
+      className={`rounded-lg border px-3.5 py-3 ${model.active ? "border-accent/50 bg-accent/5" : "border-border/70 bg-card/30"}`}
+    >
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-medium">{model.name}</span>
+            {model.active ? (
+              <Badge variant="secondary">
+                <CheckIcon className="mr-1 size-3" />
+                Active
+              </Badge>
+            ) : null}
+            {model.recommended ? <Badge variant="outline">Recommended</Badge> : null}
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{model.description}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <GlobeIcon className="size-3" />
+              {model.languages.length === 1 ? "English" : `${model.languages.length} languages`}
+            </span>
+            <span>{formatSize(model.size)}</span>
+            <span>Accuracy {model.accuracy}</span>
+            <span>Speed {model.speed}</span>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {downloading ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`Cancel ${model.name} download`}
+              onClick={props.onCancel}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : model.state === "downloadable" ? (
+            <Button size="sm" disabled={props.busy} onClick={props.onDownload}>
+              <DownloadIcon className="mr-1.5 size-3.5" />
+              Download
+            </Button>
+          ) : !model.active ? (
+            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
+              Use model
+            </Button>
+          ) : null}
+          {model.state === "installed" ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              disabled={props.busy || downloading}
+              aria-label={`Delete ${model.name}`}
+              onClick={props.onDelete}
+            >
+              <Trash2Icon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      {downloading ? (
+        <div className="mt-3">
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full bg-accent transition-[width] duration-200"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <div className="mt-1 text-[11px] text-muted-foreground">
+            {model.state === "verifying"
+              ? "Verifying download…"
+              : `${Math.round(progress)}% downloaded`}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function VoiceSettingsPanel() {
   const environmentId = usePrimaryEnvironmentId();
@@ -29,9 +135,11 @@ export function VoiceSettingsPanel() {
     readonly prepared: NonNullable<typeof prepared>;
     readonly value: EnvironmentSpeechStatus;
   } | null>(null);
+  const [models, setModels] = useState<readonly EnvironmentSpeechModel[]>([]);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
-  const [removingModel, setRemovingModel] = useState(false);
+  const [operation, setOperation] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   const refreshMicrophones = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -50,6 +158,16 @@ export function VoiceSettingsPanel() {
     }
   }, []);
 
+  const refreshModels = useCallback(async () => {
+    if (!prepared) return;
+    const [nextStatus, nextModels] = await Promise.all([
+      runtime.runPromise(getEnvironmentSpeechStatus(prepared)),
+      runtime.runPromise(getEnvironmentSpeechModels(prepared)),
+    ]);
+    setStatus({ prepared, value: nextStatus });
+    setModels(nextModels.models);
+  }, [prepared]);
+
   useEffect(() => {
     void refreshMicrophones();
     const mediaDevices = navigator.mediaDevices;
@@ -60,25 +178,44 @@ export function VoiceSettingsPanel() {
   }, [refreshMicrophones]);
 
   useEffect(() => {
-    if (!prepared) return;
-    let disposed = false;
-    void runtime
-      .runPromise(getEnvironmentSpeechStatus(prepared))
-      .then((value) => {
-        if (!disposed) setStatus({ prepared, value });
-      })
-      .catch(() => {
-        if (!disposed) setStatus(null);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [prepared]);
+    void refreshModels().catch(() => {
+      setStatus(null);
+      setModels([]);
+    });
+  }, [refreshModels]);
+  useEffect(() => {
+    if (!operation) return;
+    const timer = window.setInterval(() => void refreshModels().catch(() => undefined), 350);
+    return () => window.clearInterval(timer);
+  }, [operation, refreshModels]);
 
+  const runModelOperation = (modelId: string, run: () => Promise<unknown>) => {
+    setOperation(modelId);
+    void run()
+      .then(refreshModels)
+      .catch((error) =>
+        toastManager.add({
+          type: "error",
+          title: "Could not update transcription model",
+          description: error instanceof Error ? error.message : String(error),
+        }),
+      )
+      .finally(() => setOperation(null));
+  };
   const selectedIsUnavailable = Boolean(
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
   );
   const currentStatus = status?.prepared === prepared ? status.value : null;
+  const filteredModels = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return needle
+      ? models.filter((model) =>
+          `${model.name} ${model.description}`.toLowerCase().includes(needle),
+        )
+      : models;
+  }, [models, query]);
+  const installed = filteredModels.filter((model) => model.state !== "downloadable");
+  const available = filteredModels.filter((model) => model.state === "downloadable");
 
   return (
     <SettingsPageContainer>
@@ -96,10 +233,11 @@ export function VoiceSettingsPanel() {
                 value={selectedMicrophone ? deviceValue(selectedMicrophone) : SYSTEM_DEFAULT}
                 disabled={loadingMicrophones}
                 onValueChange={(value) => {
-                  if (!value) return;
-                  updateClientSettings({
-                    voiceMicrophone: value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
-                  });
+                  if (value)
+                    updateClientSettings({
+                      voiceMicrophone:
+                        value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
+                    });
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Microphone" className="min-w-0 flex-1">
@@ -134,46 +272,103 @@ export function VoiceSettingsPanel() {
             </div>
           }
         />
-        <SettingsRow
-          {...searchableSetting("local-voice-input")}
-          description={
-            currentStatus?.supported
-              ? currentStatus.state === "missing-model"
-                ? "Downloads a 48 MiB English model on first use. Recordings are sent to this T3 environment and deleted after transcription."
-                : `${currentStatus.model} is installed on this T3 environment.`
-              : (currentStatus?.reason ?? "Connect to a current T3 environment to use voice input.")
-          }
-          control={
-            currentStatus?.supported && currentStatus.state !== "missing-model" ? (
-              <Button
-                variant="destructive-outline"
-                size="sm"
-                disabled={removingModel || currentStatus.state === "transcribing"}
-                onClick={() => {
-                  if (!prepared) return;
-                  setRemovingModel(true);
-                  void runtime
-                    .runPromise(removeEnvironmentSpeechModel(prepared))
-                    .then((value) => setStatus({ prepared, value }))
-                    .catch((error) =>
-                      toastManager.add({
-                        type: "error",
-                        title: "Could not remove speech model",
-                        description: error instanceof Error ? error.message : String(error),
-                      }),
-                    )
-                    .finally(() => setRemovingModel(false));
-                }}
-              >
-                Remove model
-              </Button>
-            ) : (
-              <span className="text-xs text-muted-foreground">
-                {currentStatus?.supported ? "Download on first use" : "Unavailable"}
-              </span>
-            )
-          }
-        />
+      </SettingsSection>
+      <SettingsSection title="Transcription Models" id={searchableSetting("local-voice-input").id}>
+        <p className="text-xs text-muted-foreground">
+          Models run on the connected T3 environment. Recordings are deleted after transcription.
+        </p>
+        {currentStatus?.supported && prepared ? (
+          <div className="space-y-4">
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search transcription models"
+                className="h-8 pl-8 text-xs"
+              />
+            </div>
+            {installed.length > 0 ? (
+              <div className="space-y-2">
+                <h3 className="text-xs font-medium text-muted-foreground">Your models</h3>
+                {installed.map((model) => (
+                  <ModelCard
+                    key={model.id}
+                    model={model}
+                    busy={operation !== null}
+                    onDownload={() =>
+                      runModelOperation(model.id, () =>
+                        runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
+                      )
+                    }
+                    onSelect={() =>
+                      runModelOperation(model.id, () =>
+                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                      )
+                    }
+                    onCancel={() =>
+                      void runtime
+                        .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                        .then(refreshModels)
+                    }
+                    onDelete={() =>
+                      void ensureLocalApi()
+                        .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
+                        .then((confirmed) => {
+                          if (confirmed)
+                            runModelOperation(model.id, () =>
+                              runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
+                            );
+                        })
+                    }
+                  />
+                ))}
+              </div>
+            ) : null}
+            {available.length > 0 ? (
+              <div className="space-y-2">
+                <h3 className="text-xs font-medium text-muted-foreground">Available models</h3>
+                {available.map((model) => (
+                  <ModelCard
+                    key={model.id}
+                    model={model}
+                    busy={operation !== null}
+                    onDownload={() =>
+                      runModelOperation(model.id, async () => {
+                        await runtime.runPromise(
+                          downloadEnvironmentSpeechModel(prepared, model.id),
+                        );
+                        await runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id));
+                      })
+                    }
+                    onSelect={() =>
+                      runModelOperation(model.id, () =>
+                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                      )
+                    }
+                    onCancel={() =>
+                      void runtime
+                        .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                        .then(refreshModels)
+                    }
+                    onDelete={() => undefined}
+                  />
+                ))}
+              </div>
+            ) : null}
+            {filteredModels.length === 0 ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                No models match your search.
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+            {currentStatus && !currentStatus.supported
+              ? currentStatus.reason
+              : "Connect to a current T3 environment to manage transcription models."}
+          </div>
+        )}
       </SettingsSection>
     </SettingsPageContainer>
   );
