@@ -133,6 +133,30 @@ describe("buildCommandPaletteProjectMetadata", () => {
     expect(metadata.environmentLabels).toEqual(["Build box"]);
   });
 
+  it("deduplicates distinct environments with the same label", () => {
+    const secondRemoteEnvironmentId = EnvironmentId.make("environment-build-box-2");
+    const metadata = buildCommandPaletteProjectMetadata({
+      projects: [
+        {
+          environmentId: remoteEnvironmentId,
+          title: "T3 Code",
+          workspaceRoot: "/srv/t3code",
+        },
+        {
+          environmentId: secondRemoteEnvironmentId,
+          title: "T3 Code mirror",
+          workspaceRoot: "/srv/mirror/t3code",
+        },
+      ],
+      locationByEnvironmentId: new Map([
+        [remoteEnvironmentId, { label: "Build box" }],
+        [secondRemoteEnvironmentId, { label: "Build box" }],
+      ]),
+    });
+
+    expect(metadata.environmentLabels).toEqual(["Build box"]);
+  });
+
   it("uses a human-readable fallback when presentation data is unavailable", () => {
     const metadata = buildCommandPaletteProjectMetadata({
       projects: [

@@ -191,17 +191,15 @@ export function buildCommandPaletteProjectMetadata(input: {
   readonly locationByEnvironmentId: ReadonlyMap<EnvironmentId, { readonly label: string }>;
 }) {
   const searchTerms: string[] = [];
-  const environmentLabelById = new Map<EnvironmentId, string>();
+  const environmentLabels = new Set<string>();
 
   for (const project of input.projects) {
     const label = input.locationByEnvironmentId.get(project.environmentId)?.label ?? "Remote";
     searchTerms.push(project.title, project.workspaceRoot, label);
-    if (!environmentLabelById.has(project.environmentId)) {
-      environmentLabelById.set(project.environmentId, label);
-    }
+    environmentLabels.add(label);
   }
 
-  return { searchTerms, environmentLabels: [...environmentLabelById.values()] };
+  return { searchTerms, environmentLabels: [...environmentLabels] };
 }
 
 export function buildProjectActionItems(input: {
