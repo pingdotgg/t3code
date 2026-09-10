@@ -91,7 +91,8 @@ export function useThreadSettingsSheetPresentation(input: {
     focusRestoreIdRef.current += 1;
     clearDismissRestoreTimer();
     restorePendingRef.current = false;
-    restoreFocusAfterDismissRef.current = input.isEditorFocused || KeyboardController.isVisible();
+    restoreFocusAfterDismissRef.current =
+      phase === "restoring" || input.isEditorFocused || KeyboardController.isVisible();
     setPhase("opening");
 
     const openingId = openingIdRef.current + 1;
@@ -109,7 +110,7 @@ export function useThreadSettingsSheetPresentation(input: {
       }
       setPhase("visible");
     });
-  }, [clearDismissRestoreTimer, input.editorRef, input.isEditorFocused]);
+  }, [clearDismissRestoreTimer, input.editorRef, input.isEditorFocused, phase]);
 
   const restoreEditorFocus = useCallback(() => {
     const focusRestoreId = focusRestoreIdRef.current + 1;
