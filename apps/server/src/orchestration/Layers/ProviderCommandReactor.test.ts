@@ -59,6 +59,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as UsageLimitReservations from "../UsageLimitReservations.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   providerErrorLabelFromInstanceHint,
@@ -174,7 +175,9 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
+    readonly afterActivityAppend?: (kind: string) => Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
+    readonly listSessionsEffect?: ProviderServiceShape["listSessions"];
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -358,7 +361,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
-      listSessions: () => Effect.succeed(runtimeSessions),
+      listSessions: input?.listSessionsEffect ?? (() => Effect.succeed(runtimeSessions)),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -435,7 +438,14 @@ describe("ProviderCommandReactor", () => {
               command.type === "thread.session.set" && command.session.status === "ready"
                 ? (input?.beforeReadySessionDispatch?.() ?? Effect.void)
                 : Effect.void
-            ).pipe(Effect.andThen(engine.dispatch(command)));
+            ).pipe(
+              Effect.andThen(engine.dispatch(command)),
+              Effect.tap(() =>
+                command.type === "thread.activity.append"
+                  ? (input?.afterActivityAppend?.(command.activity.kind) ?? Effect.void)
+                  : Effect.void,
+              ),
+            );
           },
           get streamDomainEvents() {
             return engine.streamDomainEvents;
@@ -448,6 +458,7 @@ describe("ProviderCommandReactor", () => {
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(UsageLimitReservations.layer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
@@ -615,6 +626,65 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  effectIt.effect(
+    "records admission lookup failures and accepts the next turn without a leaked reservation",
+    () =>
+      Effect.gen(function* () {
+        let failLookup = true;
+        const failureChecked = yield* Deferred.make<void>();
+        const retryChecked = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            listSessionsEffect: () =>
+              (failLookup
+                ? Effect.die(
+                    new ProviderAdapterRequestError({
+                      provider: "codex",
+                      method: "listSessions",
+                      detail: "Runtime temporarily unavailable",
+                    }),
+                  )
+                : Effect.succeed([])
+              ).pipe(
+                Effect.ensuring(
+                  Deferred.succeed(failLookup ? failureChecked : retryChecked, undefined),
+                ),
+              ),
+          }),
+        );
+        const send = (suffix: string) =>
+          harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-admission-${suffix}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: asMessageId(`message-admission-${suffix}`),
+              role: "user",
+              text: "Continue this task",
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: "2026-01-01T00:00:01.000Z",
+          });
+        yield* send("failure");
+        yield* Deferred.await(failureChecked);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        const snapshot = yield* Effect.promise(harness.readModel);
+        const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+        expect(
+          thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+        ).toBe(true);
+        expect(thread?.session?.status).toBe("error");
+        failLookup = false;
+        yield* send("retry");
+        yield* Deferred.await(retryChecked);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      }),
+  );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
