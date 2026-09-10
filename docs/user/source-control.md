@@ -17,6 +17,10 @@ Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 gh auth login
 ```
 
+For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code recognizes
+custom server names from your authenticated GitHub CLI accounts when you open the pull request
+page for an added project.
+
 ### GitLab
 
 Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:

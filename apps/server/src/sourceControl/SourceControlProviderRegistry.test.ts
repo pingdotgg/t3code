@@ -293,3 +293,86 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     assert.strictEqual(provider.kind, "azure-devops");
   }),
 );
+
+for (const scenario of [
+  {
+    name: "authenticated custom host",
+    host: "code.example.test",
+    state: "success",
+    expected: "github",
+  },
+  {
+    name: "case-insensitive custom host",
+    host: "CODE.EXAMPLE.TEST",
+    state: "success",
+    expected: "github",
+  },
+  {
+    name: "unrelated authenticated host",
+    host: "other.example.test",
+    state: "success",
+    expected: "unknown",
+  },
+  {
+    name: "failed custom-host account",
+    host: "code.example.test",
+    state: "error",
+    expected: "unknown",
+  },
+]) {
+  it.effect(`resolves GitHub Enterprise remotes with ${scenario.name}`, () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "git@code.example.test:team/project.git" }],
+        process: {
+          run: ({ command }) =>
+            Effect.succeed(
+              processOutput(
+                command === "gh"
+                  ? JSON.stringify({
+                      hosts: {
+                        "github.com": [
+                          {
+                            host: "github.com",
+                            login: "cloud-user",
+                            state: "success",
+                            active: true,
+                          },
+                        ],
+                        [scenario.host]: [
+                          {
+                            host: scenario.host,
+                            login: "enterprise-user",
+                            state: scenario.state,
+                            active: true,
+                          },
+                        ],
+                      },
+                    })
+                  : "",
+                {
+                  stderr: "warning: unrelated account failed",
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                },
+              ),
+            ),
+        },
+      });
+      const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+      assert.strictEqual(handle.provider.kind, scenario.expected);
+      assert.strictEqual(handle.context?.provider.baseUrl, "https://code.example.test");
+      assert.strictEqual(handle.context?.remoteUrl, "git@code.example.test:team/project.git");
+    }),
+  );
+}
+
+it.effect("leaves custom hosts unknown when GitHub auth JSON is unavailable", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://code.example.test/team/project.git" }],
+      process: { run: () => Effect.succeed(processOutput("invalid JSON")) },
+    });
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    assert.strictEqual(provider.kind, "unknown");
+  }),
+);
