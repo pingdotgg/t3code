@@ -33,6 +33,10 @@ vi.mock("react", async (importOriginal) => {
       if (cleanup) lifecycle.cleanups.push(cleanup);
     },
     useRef: reactHookHarness.useRef,
+    useLayoutEffect: (effect: () => void | (() => void)) => {
+      const cleanup = effect();
+      if (cleanup) lifecycle.cleanups.push(cleanup);
+    },
     useState: reactHookHarness.useState,
   };
 });
