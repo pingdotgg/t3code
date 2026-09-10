@@ -2378,7 +2378,7 @@ export default function Sidebar() {
     () =>
       deriveProviderEntriesByEnvironment(
         [...serverConfigs].map(
-          ([environmentId, config]) => [environmentId, config.providers] as const,
+          ([environmentId, config]) => [environmentId, config.providers, config.settings] as const,
         ),
       ),
     [serverConfigs],
