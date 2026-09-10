@@ -189,7 +189,8 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
     rules: [
       "Branch should describe the requested work from the user message.",
       "Keep it short and specific (2-6 words).",
-      "Use plain words only, no issue prefixes and no punctuation-heavy text.",
+      "Return descriptive branch words only; the server adds configured category and issue prefixes.",
+      "Use plain words and avoid punctuation-heavy text.",
       "If images are attached, use them as primary context for visual/UI issues.",
     ],
     message: input.message,

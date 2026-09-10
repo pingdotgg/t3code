@@ -121,6 +121,7 @@ describe("buildBranchNamePrompt", () => {
 
     expect(result.prompt).toContain("User message:");
     expect(result.prompt).toContain("Fix the login timeout bug");
+    expect(result.prompt).toContain("the server adds configured category and issue prefixes");
     expect(result.prompt).not.toContain("Attachment metadata:");
   });
 

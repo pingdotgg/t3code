@@ -42,6 +42,7 @@ import {
   type QuitConfirmationMode,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -571,6 +572,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix
+        ? ["Worktree branch prefix"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -610,6 +614,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
+      settings.worktreeBranchPrefix,
       settings.diffIgnoreWhitespace,
       settings.diffLayout,
       settings.proactivePanelsEnabled,
@@ -730,6 +735,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      worktreeBranchPrefix: DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2609,6 +2615,41 @@ export function GeneralSettingsPanel() {
                 updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
               }
               aria-label="Start new worktrees from origin by default"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("worktree-branch-prefix")}
+          description="Prefix for generated worktree branch names. Jira keys from the first message are added automatically. Leave blank for no prefix."
+          resetAction={
+            settings.worktreeBranchPrefix !== DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix ? (
+              <SettingResetButton
+                label="worktree branch prefix"
+                onClick={() =>
+                  updateSettings({
+                    worktreeBranchPrefix: DEFAULT_UNIFIED_SETTINGS.worktreeBranchPrefix,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={settings.worktreeBranchPrefix}
+              placeholder="No prefix"
+              spellCheck={false}
+              aria-label="Worktree branch prefix"
+              onCommit={(value) => {
+                const worktreeBranchPrefix = /[a-z0-9]/i.test(value)
+                  ? sanitizeBranchFragment(value)
+                  : "";
+                if (worktreeBranchPrefix !== settings.worktreeBranchPrefix) {
+                  updateSettings({ worktreeBranchPrefix });
+                }
+              }}
             />
           }
         />

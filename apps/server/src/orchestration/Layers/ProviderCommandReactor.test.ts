@@ -173,6 +173,7 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly worktreeBranchPrefix?: string;
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -475,7 +476,13 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest(
+          input?.worktreeBranchPrefix === undefined
+            ? {}
+            : { worktreeBranchPrefix: input.worktreeBranchPrefix },
+        ),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -2221,72 +2228,93 @@ describe("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: prompt });
   });
 
-  it("generates a worktree branch name for the first turn", async () => {
-    const harness = await createHarness();
-    const now = "2026-01-01T00:00:00.000Z";
-    const prompt = `Add a safer reconnect backoff. ${serializeAssistantCitation(assistantCitation)}`;
-    const statusRefreshed = await harness.runEffect(Deferred.make<void>());
-    const refreshStatus = harness.refreshStatus.getMockImplementation()!;
-    harness.refreshStatus.mockImplementation((cwd) =>
-      refreshStatus(cwd).pipe(Effect.tap(() => Deferred.succeed(statusRefreshed, undefined))),
-    );
+  it.each([
+    {
+      prefix: undefined,
+      request: "Add a safer reconnect backoff.",
+      generated: "feature/reconnect-backoff",
+      expected: "t3code/feature/reconnect-backoff",
+    },
+    {
+      prefix: "my-team",
+      request: "Add a safer reconnect backoff.",
+      generated: "t3code/feature/reconnect-backoff",
+      expected: "my-team/feature/reconnect-backoff",
+    },
+    {
+      prefix: "feature",
+      request: "FE-1234 Update the readme.",
+      generated: "t3code/feature/fe-1234-update-readme",
+      expected: "feature/FE-1234-update-readme",
+    },
+    {
+      prefix: "",
+      request: "Update the readme for https://jira.example.com/browse/FE-1234.",
+      generated: "update-readme",
+      expected: "FE-1234-update-readme",
+    },
+  ])(
+    "generates a worktree branch with prefix $prefix for $request",
+    async ({ prefix, request, generated, expected }) => {
+      const harness = await createHarness(
+        prefix === undefined ? undefined : { worktreeBranchPrefix: prefix },
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+      const prompt = `${request} ${serializeAssistantCitation(assistantCitation)}`;
+      const statusRefreshed = await harness.runEffect(Deferred.make<void>());
+      const refreshStatus = harness.refreshStatus.getMockImplementation()!;
+      harness.refreshStatus.mockImplementation((cwd) =>
+        refreshStatus(cwd).pipe(Effect.tap(() => Deferred.succeed(statusRefreshed, undefined))),
+      );
 
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.meta.update",
-        commandId: CommandId.make("cmd-thread-branch"),
-        threadId: ThreadId.make("thread-1"),
-        branch: "t3code/1234abcd",
-        worktreePath: "/tmp/provider-project-worktree",
-      }),
-    );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-thread-branch"),
+          threadId: ThreadId.make("thread-1"),
+          branch: "t3code/1234abcd",
+          worktreePath: "/tmp/provider-project-worktree",
+        }),
+      );
 
-    harness.generateBranchName.mockImplementation((input: unknown) =>
-      Effect.succeed({
-        branch:
-          typeof input === "object" &&
-          input !== null &&
-          "modelSelection" in input &&
-          typeof input.modelSelection === "object" &&
-          input.modelSelection !== null &&
-          "model" in input.modelSelection &&
-          typeof input.modelSelection.model === "string"
-            ? `feature/${input.modelSelection.model}`
-            : "feature/generated",
-      }),
-    );
+      harness.generateBranchName.mockReturnValue(Effect.succeed({ branch: generated }));
 
-    await harness.runEffect(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-branch-model"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-branch-model"),
-          role: "user",
-          text: prompt,
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: now,
-      }),
-    );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-branch-model"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-branch-model"),
+            role: "user",
+            text: prompt,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
 
-    await harness.runEffect(Deferred.await(statusRefreshed));
-    await harness.drain();
-    expect(harness.generateBranchName.mock.calls[0]?.[0].message).toBe(
-      `Add a safer reconnect backoff. ${assistantQuoteText}`,
-    );
-    expect(harness.generateBranchName.mock.calls[0]?.[0].message).not.toContain("t3-citation://");
-    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
-    const readModel = await harness.readModel();
-    expect(
-      readModel.threads
-        .find((entry) => entry.id === ThreadId.make("thread-1"))
-        ?.messages.find((entry) => entry.id === asMessageId("user-message-branch-model"))?.text,
-    ).toBe(prompt);
-  });
+      await harness.runEffect(Deferred.await(statusRefreshed));
+      await harness.drain();
+      expect(harness.generateBranchName.mock.calls[0]?.[0].message).toBe(
+        `${request} ${assistantQuoteText}`,
+      );
+      expect(harness.generateBranchName.mock.calls[0]?.[0].message).not.toContain("t3-citation://");
+      expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+      expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
+        oldBranch: "t3code/1234abcd",
+        newBranch: expected,
+      });
+      const readModel = await harness.readModel();
+      expect(
+        readModel.threads
+          .find((entry) => entry.id === ThreadId.make("thread-1"))
+          ?.messages.find((entry) => entry.id === asMessageId("user-message-branch-model"))?.text,
+      ).toBe(prompt);
+    },
+  );
 
   it("recreates a missing worktree from the thread branch before starting a turn", async () => {
     const harness = await createHarness();

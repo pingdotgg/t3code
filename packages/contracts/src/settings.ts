@@ -267,6 +267,12 @@ export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 
+const WorktreeBranchPrefix = TrimmedString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^(?:[a-z0-9](?:[a-z0-9/_-]*[a-z0-9])?)?$/),
+  Schema.makeFilter((value) => !value.includes("//") || "must not contain adjacent slashes"),
+);
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -1032,6 +1038,9 @@ export const ServerSettings = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
+  worktreeBranchPrefix: WorktreeBranchPrefix.pipe(
+    Schema.withDecodingDefault(Effect.succeed("t3code")),
+  ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -1277,6 +1286,7 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  worktreeBranchPrefix: Schema.optionalKey(WorktreeBranchPrefix),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(
