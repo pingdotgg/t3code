@@ -983,6 +983,18 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
             ...(_meta === undefined ? {} : { _meta }),
           })),
         ),
+      [AcpRpcs.V1_CLIENT_METHODS.unstable_session_elicitation]: (payload, { requestId }) =>
+        runHandler(
+          coreHandlers.elicitation,
+          payload,
+          AcpRpcs.V1_CLIENT_METHODS.unstable_session_elicitation,
+          requestContext(requestId, AcpRpcs.V1_CLIENT_METHODS.unstable_session_elicitation),
+        ).pipe(
+          Effect.map(({ _meta, ...action }) => ({
+            action,
+            ...(_meta === undefined ? {} : { _meta }),
+          })),
+        ),
       [CLIENT_METHODS.elicitation_create]: (payload, { requestId }) =>
         runHandler(
           coreHandlers.elicitation,
