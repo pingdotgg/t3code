@@ -96,6 +96,15 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
   }
 }
 
+export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
+  "OrchestratorCommandRejectedError",
+  { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return `Orchestration command ${this.commandType} (${this.commandId}) was rejected before commit.`;
+  }
+}
+
 export class OrchestratorProjectionError extends Schema.TaggedError<OrchestratorProjectionError>()(
   "OrchestratorProjectionError",
   {
@@ -174,6 +183,7 @@ export function canReplayCommandReceipt(
 
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
+  OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
   OrchestratorProviderAdapterError,
@@ -7825,7 +7835,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.catch((cause) =>
         Effect.gen(function* () {
           const rejectedAt = yield* DateTime.now;
-          yield* eventSink
+          const receipt = yield* eventSink
             .commitRejectedCommand({
               commandId: command.commandId,
               threadId: commandThreadId(command),
@@ -7843,6 +7853,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   }),
               ),
             );
+          if (
+            command.type === "queued-run.edit" &&
+            receipt.status === "rejected" &&
+            cause._tag === "OrchestratorDispatchError"
+          ) {
+            return yield* new OrchestratorCommandRejectedError({
+              commandId: cause.commandId,
+              commandType: cause.commandType,
+              cause: cause.cause,
+            });
+          }
           return yield* cause;
         }),
       ),
