@@ -18,6 +18,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
@@ -28,6 +29,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const theme = useUniwindTheme();
   const foregroundColor = theme["--color-foreground"];
@@ -64,8 +66,18 @@ export function ThreadFileNavigatorPane(props: {
           type: "button" as const,
           width: 44,
         },
+        {
+          accessibilityLabel: "Close files",
+          icon: { name: "xmark", type: "sfSymbol" as const },
+          identifier: "thread-file-navigator-close",
+          onPress: toggleAuxiliaryPane,
+          sharesBackground: false,
+          tintColor: foregroundColor,
+          type: "button" as const,
+          width: 44,
+        },
       ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [entriesQuery.refresh, foregroundColor],
+    [entriesQuery.refresh, foregroundColor, toggleAuxiliaryPane],
   );
 
   const fileTree = (
@@ -158,6 +170,15 @@ export function ThreadFileNavigatorPane(props: {
               tintColorClassName={"accent-icon-muted"}
               type="monochrome"
             />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close files"
+            hitSlop={8}
+            className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
+            onPress={toggleAuxiliaryPane}
+          >
+            <SymbolView name="xmark" size={14} tintColorClassName="accent-icon-muted" />
           </Pressable>
         </View>
         <View className="flex-row items-center gap-2 border-t border-border px-3 py-2">
