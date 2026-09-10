@@ -73,7 +73,7 @@ it.effect("always grants pull-requests and gates preview on the request", () =>
         .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
         .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
+    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests", "simulator"]);
     expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
   }),
 );
