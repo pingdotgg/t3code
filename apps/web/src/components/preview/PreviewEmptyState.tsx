@@ -12,6 +12,7 @@ interface Props {
   threadRef: ScopedThreadRef;
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
+  preferredBaseUrl?: string | null;
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
   onOpenUrl: (url: string) => void;
@@ -21,6 +22,7 @@ export function PreviewEmptyState({
   threadRef,
   environmentId,
   configuredUrls,
+  preferredBaseUrl,
   recentEntries,
   onRemoveRecent,
   onOpenUrl,
@@ -28,6 +30,7 @@ export function PreviewEmptyState({
   const servers = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
+    preferredBaseUrl,
   });
   const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
 

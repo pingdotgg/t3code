@@ -96,6 +96,7 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
+import { useDesktopPreviewBaseUrl } from "../state/desktopPreviewBaseUrl";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
 import { previewEnvironment } from "../state/preview";
@@ -416,6 +417,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
+  const desktopPreviewBaseUrl = useDesktopPreviewBaseUrl(thread.environmentId);
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -445,7 +447,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       event.stopPropagation();
       navigateToThread(threadRef);
       void (async () => {
-        const result = await openDiscoveredPort({ threadRef, port, openPreview });
+        const result = await openDiscoveredPort({
+          threadRef,
+          port,
+          openPreview,
+          preferredBaseUrl: desktopPreviewBaseUrl,
+        });
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -460,7 +467,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         );
       })();
     },
-    [discoveredPorts, navigateToThread, openPreview, threadRef],
+    [desktopPreviewBaseUrl, discoveredPorts, navigateToThread, openPreview, threadRef],
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;

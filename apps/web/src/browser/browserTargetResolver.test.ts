@@ -160,6 +160,30 @@ describe("browser target resolver", () => {
     ).toBe("http://192.168.1.25:3000/app");
   });
 
+  it("uses the selected advertised endpoint for remote local servers", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(
+        EnvironmentId.make("environment-1"),
+        "localhost:5173/app?mode=test#results",
+        "http://192.168.1.25:3773",
+      ),
+    ).toBe("http://192.168.1.25:5173/app?mode=test#results");
+  });
+
+  it("keeps remote local servers on localhost when network access is disabled", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    expect(
+      resolveDiscoveredServerUrl(
+        EnvironmentId.make("environment-1"),
+        "localhost:5173/app",
+        "http://localhost",
+      ),
+    ).toBe("http://localhost:5173/app");
+  });
+
   it("preserves localhost server-picker values when the prepared base is 127.0.0.1", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");

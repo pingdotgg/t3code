@@ -14,8 +14,13 @@ export async function openDiscoveredPort<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly port: DiscoveredLocalServer;
   readonly openPreview: OpenPreviewMutation<E>;
+  readonly preferredBaseUrl?: string | null;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
-  const resolvedUrl = resolveDiscoveredServerUrl(input.threadRef.environmentId, input.port.url);
+  const resolvedUrl = resolveDiscoveredServerUrl(
+    input.threadRef.environmentId,
+    input.port.url,
+    input.preferredBaseUrl,
+  );
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,

@@ -47,6 +47,10 @@ import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
+  endpointDefaultPreferenceKey,
+  selectDefaultAdvertisedEndpoint,
+} from "~/state/desktopNetworkAccess";
+import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
@@ -452,53 +456,8 @@ function toDesktopClientSessionRecord(clientSession: AuthClientSession): ServerC
   };
 }
 
-function selectPairingEndpoint(
-  endpoints: ReadonlyArray<AdvertisedEndpoint>,
-  defaultEndpointKey?: string | null,
-): AdvertisedEndpoint | null {
-  const availableEndpoints = endpoints.filter((endpoint) => endpoint.status !== "unavailable");
-  if (defaultEndpointKey) {
-    const selectedEndpoint = availableEndpoints.find(
-      (endpoint) => endpointDefaultPreferenceKey(endpoint) === defaultEndpointKey,
-    );
-    if (selectedEndpoint) {
-      return selectedEndpoint;
-    }
-  }
-  return (
-    availableEndpoints.find((endpoint) => endpoint.isDefault) ??
-    availableEndpoints.find((endpoint) => endpoint.reachability !== "loopback") ??
-    availableEndpoints.find((endpoint) => endpoint.compatibility.hostedHttpsApp === "compatible") ??
-    null
-  );
-}
-
 function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.id.startsWith("tailscale-magicdns:");
-}
-
-function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): string {
-  if (endpoint.id.startsWith("desktop-loopback:")) {
-    return "desktop-core:loopback:http";
-  }
-  if (endpoint.id.startsWith("desktop-lan:")) {
-    return "desktop-core:lan:http";
-  }
-  if (endpoint.id.startsWith("tailscale-ip:")) {
-    return "tailscale:ip:http";
-  }
-  if (isTailscaleHttpsEndpoint(endpoint)) {
-    return "tailscale:magicdns:https";
-  }
-
-  let scheme = "unknown";
-  try {
-    scheme = new URL(endpoint.httpBaseUrl).protocol.replace(/:$/u, "");
-  } catch {
-    // Keep the stored preference stable even if a custom endpoint is malformed.
-  }
-
-  return `${endpoint.provider.id}:${endpoint.reachability}:${scheme}:${endpoint.label}`;
 }
 
 function resolveAdvertisedEndpointPairingUrl(
@@ -589,7 +548,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     [endpointUrl, credential],
   );
   const endpointPairingUrl = useMemo(() => {
-    const endpoint = selectPairingEndpoint(endpoints, defaultEndpointKey);
+    const endpoint = selectDefaultAdvertisedEndpoint(endpoints, defaultEndpointKey);
     return endpoint && credential
       ? resolveAdvertisedEndpointPairingUrl(endpoint, credential)
       : null;
@@ -708,7 +667,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     defaultEndpointKey,
   );
   const qrPairingUrl = selectedQrOption?.url ?? shareablePairingUrl;
-  // With no endpoint list the fallback is never loopback: selectPairingEndpoint
+  // With no endpoint list the fallback is never loopback: selectDefaultAdvertisedEndpoint
   // skips loopback and the current-origin fallback is guarded by
   // isLoopbackHostname, so only an explicit loopback selection hides the QR.
   const canRenderQrForSelection = selectedQrOption?.qrShareable ?? true;
@@ -2432,13 +2391,16 @@ export function ConnectionsSettings() {
     isLocalBackendNetworkAccessible || tailscaleHttpsEndpoint?.status === "available";
   const defaultDesktopNetworkAdvertisedEndpoint = useMemo(
     () =>
-      selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
+      selectDefaultAdvertisedEndpoint(
+        visibleDesktopNetworkAdvertisedEndpoints,
+        defaultAdvertisedEndpointKey,
+      ),
     [defaultAdvertisedEndpointKey, visibleDesktopNetworkAdvertisedEndpoints],
   );
   const defaultDesktopAdvertisedEndpoint = useMemo(
     () =>
       defaultDesktopNetworkAdvertisedEndpoint ??
-      selectPairingEndpoint(
+      selectDefaultAdvertisedEndpoint(
         tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : [],
         defaultAdvertisedEndpointKey,
       ),
