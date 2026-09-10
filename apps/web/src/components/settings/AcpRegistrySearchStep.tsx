@@ -9,7 +9,7 @@ import type {
   ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { ExternalLinkIcon, SearchIcon } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
@@ -51,6 +51,7 @@ interface AcpRegistrySearchStepProps {
   readonly providerInstances: Readonly<Record<string, ProviderInstanceConfig>>;
   readonly onPrepared: (agent: AcpRegistrySearchAgent) => void;
   readonly onManualConfiguration: () => void;
+  readonly onLoadingChange?: (loading: boolean) => void;
 }
 
 function applyAcpRegistryPrepareResult(
@@ -70,6 +71,7 @@ export function AcpRegistrySearchStep({
   providerInstances,
   onPrepared,
   onManualConfiguration,
+  onLoadingChange,
 }: AcpRegistrySearchStepProps) {
   const [query, setQuery] = useState("");
   // An empty registry query is the compact compatible catalog. Start there so
@@ -131,6 +133,11 @@ export function AcpRegistrySearchStep({
   const isInitialSearch = search.isPending && results === null;
   const isRefreshing = search.isPending && results !== null;
   const resultCount = results?.length ?? 0;
+
+  useLayoutEffect(() => {
+    onLoadingChange?.(search.isPending);
+    return () => onLoadingChange?.(false);
+  }, [onLoadingChange, search.isPending]);
 
   return (
     <section className="grid gap-3" aria-labelledby="acp-registry-search-heading">
