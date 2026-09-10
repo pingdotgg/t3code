@@ -9,19 +9,28 @@ process.on("message", async (message) => {
     if (message.kind === "load") {
       const { TranscribeModel } = await import(message.moduleUrl);
       model = await TranscribeModel.load(message.path, { backend: "cpu" });
-      process.send({ ok: true });
+      process.send({ type: "t3-speech-reply", ok: true });
     } else {
       const result = await model.transcribe(message.pcm, message.options);
-      process.send({ ok: true, text: result.text });
+      process.send({ type: "t3-speech-reply", ok: true, text: result.text });
     }
   } catch (error) {
-    process.send({ ok: false, error: String(error) });
+    process.send({
+      type: "t3-speech-reply",
+      ok: false,
+      error: error instanceof Error ? error.stack ?? error.message : String(error),
+    });
   }
 });
 process.on("disconnect", () => process.exit(0));
 `;
 
-type Reply = { ok: boolean; text?: string; error?: string };
+type Reply = {
+  readonly type: "t3-speech-reply";
+  readonly ok: boolean;
+  readonly text?: string;
+  readonly error?: string;
+};
 
 export async function loadNativeSpeechModel(
   path: string,
@@ -51,11 +60,19 @@ export async function loadNativeSpeechModel(
     signal.removeEventListener("abort", stop);
     exited.resolve();
   });
-  child.on("message", (message: Reply) => {
+  child.on("message", (message: unknown) => {
+    if (
+      typeof message !== "object" ||
+      message === null ||
+      !("type" in message) ||
+      message.type !== "t3-speech-reply"
+    )
+      return;
+    const reply = message as Reply;
     const request = pending;
     pending = undefined;
-    if (message.ok) request?.resolve(message);
-    else request?.reject(new Error(message.error ?? "Native speech failed."));
+    if (reply.ok) request?.resolve(reply);
+    else request?.reject(new Error(reply.error ?? "Native speech failed."));
   });
   function stop() {
     fail(new Error("Speech process stopped."));
