@@ -1,9 +1,12 @@
 import { ApprovalRequestId } from "@t3tools/contracts";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import type { PendingUserInput } from "../../session-logic";
+import { Collapsible } from "../ui/collapsible";
 
 const prompt: PendingUserInput = {
   requestId: ApprovalRequestId.make("request-1"),
@@ -23,11 +26,11 @@ const prompt: PendingUserInput = {
   dismissible: true,
 };
 
-function renderPanel(pendingUserInput: PendingUserInput = prompt) {
+function renderPanel(pendingUserInput: PendingUserInput = prompt, isResponding = false) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
       pendingUserInputs={[pendingUserInput]}
-      respondingRequestIds={[]}
+      respondingRequestIds={isResponding ? [pendingUserInput.requestId] : []}
       answers={{}}
       questionIndex={0}
       onToggleOption={() => {}}
@@ -37,7 +40,52 @@ function renderPanel(pendingUserInput: PendingUserInput = prompt) {
   );
 }
 
+async function renderInteractivePanel(
+  pendingUserInput: PendingUserInput,
+  onToggleOption: (questionId: string, optionValue: string) => void,
+  onAdvance: () => void,
+) {
+  let renderer!: ReactTestRenderer;
+  await act(() => {
+    renderer = create(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[pendingUserInput]}
+        respondingRequestIds={[]}
+        answers={{}}
+        questionIndex={0}
+        onToggleOption={onToggleOption}
+        onAdvance={onAdvance}
+        onDismiss={() => {}}
+      />,
+    );
+  });
+  return renderer;
+}
+
+function textContent(node: ReactTestInstance): string {
+  return node.children
+    .map((child) => (typeof child === "string" ? child : textContent(child)))
+    .join("");
+}
+
 describe("ComposerPendingUserInputPanel", () => {
+  let renderer: ReactTestRenderer | undefined;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+  });
+
+  afterEach(async () => {
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
   it("renders the header as a disclosure control for the question body", () => {
     const markup = renderPanel();
 
@@ -67,4 +115,221 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Incremental");
     expect(markup).toContain("Big bang");
   });
+
+  it("uses readable plain text for the collapsed preview", async () => {
+    const pendingUserInput = {
+      ...prompt,
+      questions: [
+        {
+          ...prompt.questions[0]!,
+          question:
+            "Please open [AWS sign-in link](https://example.com/signin?state=example) and confirm **when ready**.",
+        },
+      ],
+    } satisfies PendingUserInput;
+
+    renderer = await renderInteractivePanel(
+      pendingUserInput,
+      () => {},
+      () => {},
+    );
+    const collapsible = renderer.root.findByType(Collapsible);
+    await act(() => collapsible.props.onOpenChange(false));
+
+    const preview = renderer.root.findByProps({ "data-pending-user-input-preview": true });
+    const previewText = textContent(preview);
+    expect(previewText).toContain("Please open AWS sign-in link and confirm when ready.");
+    expect(previewText).not.toContain("https://example.com/signin");
+    expect(previewText).not.toContain("**");
+  });
+
+  it("renders inline formatting and removes unsafe option links", () => {
+    const pendingUserInput = {
+      ...prompt,
+      questions: [
+        {
+          ...prompt.questions[0]!,
+          options: [
+            {
+              label: "**Bold option**",
+              description: "Use `inline code` and [help](https://example.com/help).",
+              value: "provider-choice",
+            },
+            {
+              label: "Safe fallback",
+              description: "[bad link](javascript:alert(1))",
+              value: "fallback-choice",
+            },
+          ],
+        },
+      ],
+    } satisfies PendingUserInput;
+
+    const markup = renderPanel(pendingUserInput);
+
+    expect(markup).toContain("<strong>Bold option</strong>");
+    expect(markup).toContain("<code>inline code</code>");
+    expect(markup).toContain('data-pending-user-input-link="true"');
+    expect(markup).toContain('href="https://example.com/help"');
+    expect(markup).not.toContain('href="javascript:');
+    expect(markup).toContain("bad link");
+  });
+
+  it("keeps option links separate from selection and auto-advance", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", {
+      setTimeout,
+      clearTimeout,
+    });
+    const onToggleOption = vi.fn();
+    const onAdvance = vi.fn();
+
+    renderer = await renderInteractivePanel(
+      {
+        ...prompt,
+        questions: [
+          {
+            ...prompt.questions[0]!,
+            options: [
+              {
+                label: "Choose **this**",
+                description: "Read [the help](https://example.com/help).",
+                value: "raw-provider-value",
+              },
+            ],
+          },
+        ],
+      },
+      onToggleOption,
+      onAdvance,
+    );
+
+    const link = renderer.root.findByProps({ "data-pending-user-input-link": true });
+    expect(link.type).toBe("a");
+    expect(link.props.href).toBe("https://example.com/help");
+    // A native link must not live inside a selection button or clickable row.
+    for (let parent = link.parent; parent; parent = parent.parent) {
+      expect(parent.type).not.toBe("button");
+      expect(parent.props.onClick).toBeUndefined();
+    }
+    const stopPropagation = vi.fn();
+    await act(() => link.props.onKeyDown({ key: "Enter", stopPropagation }));
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    await act(() => vi.advanceTimersByTime(200));
+    expect(onToggleOption).not.toHaveBeenCalled();
+    expect(onAdvance).not.toHaveBeenCalled();
+
+    const optionButton = renderer.root
+      .findAllByType("button")
+      .find((button) => button.props["aria-pressed"] !== undefined);
+    expect(optionButton).toBeDefined();
+    await act(() => optionButton?.props.onClick());
+    expect(onToggleOption).toHaveBeenCalledWith("question-1", "raw-provider-value");
+    expect(onAdvance).not.toHaveBeenCalled();
+
+    await act(() => vi.advanceTimersByTime(200));
+    expect(onAdvance).toHaveBeenCalledOnce();
+  });
+
+  it("flattens block Markdown and resolves reference links in previews", async () => {
+    renderer = await renderInteractivePanel(
+      {
+        ...prompt,
+        questions: [
+          {
+            ...prompt.questions[0]!,
+            question: [
+              "# Heading",
+              "Read [the **guide**][guide] &amp; `a_b`.  \nNext line.",
+              "> A quote",
+              "- First\n- Second",
+              "| Name | Status |\n| --- | --- |\n| Build | Ready |",
+              "![Diagram](https://example.com/image.png)",
+              "[guide]: https://example.com/path_(nested)",
+            ].join("\n\n"),
+          },
+        ],
+      },
+      () => {},
+      () => {},
+    );
+    await act(() => renderer!.root.findByType(Collapsible).props.onOpenChange(false));
+    const preview = renderer.root.findByProps({ "data-pending-user-input-preview": true });
+    expect(textContent(preview).replace(/\s+/g, " ").trim()).toBe(
+      "Heading Read the guide & a_b. Next line. A quote First Second Name Status Build Ready Diagram",
+    );
+    expect(
+      preview.findAll((node) =>
+        ["a", "strong", "em", "code", "br", "img", "table"].includes(String(node.type)),
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("preserves inline formatting and accessible labels while responding", () => {
+    const markup = renderPanel(
+      {
+        ...prompt,
+        questions: [
+          {
+            ...prompt.questions[0]!,
+            options: [
+              {
+                label: "**Bold** *emphasis* ~~old~~",
+                description: "Read [help](https://example.com/help).",
+              },
+            ],
+          },
+        ],
+      },
+      true,
+    );
+    expect(markup).toContain("<strong>Bold</strong>");
+    expect(markup).toContain("<em>emphasis</em>");
+    expect(markup).toContain("<del>old</del>");
+    const button = markup.match(/<button[^>]*aria-pressed="false"[^>]*>/)?.[0];
+    expect(button).toContain('disabled=""');
+    const labelId = button?.match(/aria-labelledby="([^"]+)"/)?.[1];
+    const descriptionId = button?.match(/aria-describedby="([^"]+)"/)?.[1];
+    expect(labelId).toBeDefined();
+    expect(descriptionId).toBeDefined();
+    expect(markup).toContain(`id="${labelId}"`);
+    expect(markup).toContain(`id="${descriptionId}"`);
+  });
+
+  it.each([false, true])(
+    "keeps raw fallback labels and cleans up auto-advance (multiSelect=%s)",
+    async (multiSelect) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("window", { setTimeout, clearTimeout });
+      const onToggleOption = vi.fn();
+      const onAdvance = vi.fn();
+      renderer = await renderInteractivePanel(
+        {
+          ...prompt,
+          questions: [
+            {
+              ...prompt.questions[0]!,
+              multiSelect,
+              options: [{ label: "**Raw label**", description: "" }],
+            },
+          ],
+        },
+        onToggleOption,
+        onAdvance,
+      );
+      const button = renderer.root
+        .findAllByType("button")
+        .find((node) => node.props["aria-pressed"] !== undefined)!;
+      await act(() => button.props.onClick());
+      expect(onToggleOption).toHaveBeenCalledWith("question-1", "**Raw label**");
+      if (multiSelect) {
+        await act(() => vi.advanceTimersByTime(200));
+        expect(onAdvance).not.toHaveBeenCalled();
+      }
+      await act(() => renderer!.unmount());
+      renderer = undefined;
+      await act(() => vi.advanceTimersByTime(200));
+      expect(onAdvance).not.toHaveBeenCalled();
+    },
+  );
 });

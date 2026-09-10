@@ -1,5 +1,8 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useCallback, useEffect, useId, useRef, useState } from "react";
+import type { Components } from "react-markdown";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -9,6 +12,81 @@ import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+
+function MarkdownText({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+}
+
+function MarkdownBlockText({ children }: { children?: ReactNode }) {
+  return <>{children} </>;
+}
+
+// Flatten block boundaries without joining words or adding layout to the card.
+const inlineMarkdownComponents = {
+  p: MarkdownBlockText,
+  h1: MarkdownBlockText,
+  h2: MarkdownBlockText,
+  h3: MarkdownBlockText,
+  h4: MarkdownBlockText,
+  h5: MarkdownBlockText,
+  h6: MarkdownBlockText,
+  li: MarkdownBlockText,
+  th: MarkdownBlockText,
+  td: MarkdownBlockText,
+  br: () => " ",
+  img: ({ alt }) => alt,
+  a: ({ href, children }) =>
+    href ? (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="pointer-events-auto text-primary underline underline-offset-2"
+        data-pending-user-input-link
+        onKeyDown={(event) => event.stopPropagation()}
+      >
+        {children}
+      </a>
+    ) : (
+      children
+    ),
+} satisfies Components;
+const plainMarkdownComponents = {
+  ...inlineMarkdownComponents,
+  a: MarkdownText,
+  strong: MarkdownText,
+  em: MarkdownText,
+  del: MarkdownText,
+  code: MarkdownText,
+} satisfies Components;
+const inlineMarkdownElements = [
+  ...Object.keys(inlineMarkdownComponents),
+  "strong",
+  "em",
+  "del",
+  "code",
+];
+const remarkPlugins = [remarkGfm];
+
+const PendingUserInputMarkdown = memo(function PendingUserInputMarkdown({
+  text,
+  plainText = false,
+}: {
+  text: string;
+  plainText?: boolean;
+}) {
+  return (
+    <ReactMarkdown
+      allowedElements={inlineMarkdownElements}
+      unwrapDisallowed
+      remarkPlugins={remarkPlugins}
+      skipHtml
+      components={plainText ? plainMarkdownComponents : inlineMarkdownComponents}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+});
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
@@ -66,6 +144,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 }) {
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
+  const optionA11yIdPrefix = useId();
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
@@ -191,8 +270,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
+            <span
+              className="min-w-0 flex-1 truncate text-secondary-label"
+              data-pending-user-input-preview
+            >
+              <PendingUserInputMarkdown text={activeQuestion.question} plainText />
             </span>
           ) : null}
         </ComposerBanner.Content>
@@ -243,8 +325,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 isOptimisticallySelected ||
                 (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
               const shortcutKey = index < 9 ? index + 1 : null;
+              const labelId = `${optionA11yIdPrefix}-label-${index}`;
+              const descriptionId = `${optionA11yIdPrefix}-description-${index}`;
               const className = cn(
-                "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
+                "group relative flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150",
                 isSelected
                   ? "bg-muted/55 text-foreground"
                   : "bg-transparent text-foreground/85 hover:bg-muted/30",
@@ -252,11 +336,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 !isResponding && "cursor-pointer",
               );
               const content = (
-                <>
-                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                    <span className="text-sm font-medium">{option.label}</span>
+                <div className="relative z-10 flex min-w-0 flex-1 items-center gap-2 pointer-events-none">
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span id={labelId} className="text-sm font-medium">
+                      <PendingUserInputMarkdown text={option.label} />
+                    </span>
                     {option.description && option.description !== option.label ? (
-                      <span className="text-secondary-label text-[11px]">{option.description}</span>
+                      <span id={descriptionId} className="text-secondary-label text-[11px]">
+                        <PendingUserInputMarkdown text={option.description} />
+                      </span>
                     ) : null}
                   </div>
                   {isSelected ? (
@@ -270,20 +358,29 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       {shortcutKey}
                     </kbd>
                   ) : null}
-                </>
+                </div>
               );
+              // The full-row button and links are siblings. Text clicks reach the
+              // button; links opt into pointer events without selecting an answer.
               return (
-                <button
-                  key={`${activeQuestion.id}:${optionValue}`}
-                  type="button"
-                  disabled={isResponding}
-                  onClick={() => {
-                    handleOptionSelection(activeQuestion.id, optionValue);
-                  }}
-                  className={className}
-                >
+                <div key={`${activeQuestion.id}:${optionValue}`} className={className}>
+                  <button
+                    type="button"
+                    disabled={isResponding}
+                    aria-pressed={isSelected}
+                    aria-labelledby={labelId}
+                    aria-describedby={
+                      option.description && option.description !== option.label
+                        ? descriptionId
+                        : undefined
+                    }
+                    onClick={() => {
+                      handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                    className="absolute inset-0 z-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-primary/25"
+                  />
                   {content}
-                </button>
+                </div>
               );
             })}
           </div>

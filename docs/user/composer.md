@@ -6,6 +6,15 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+## Answer agent questions
+
+On web and desktop, collapse a question from its header to show a one-line text
+preview. Markdown links appear as their labels in the preview.
+
+Answer options support inline Markdown, including emphasis, code, and links.
+Opening a link in an option does not select that option or advance the question.
+Select the option itself when you are ready to answer.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can
