@@ -1,5 +1,5 @@
 import { ApprovalRequestId } from "@t3tools/contracts";
-import { act } from "react";
+import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -7,6 +7,55 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import type { PendingUserInput } from "../../session-logic";
 import { Collapsible } from "../ui/collapsible";
+
+vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("../../hooks/useSettings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../hooks/useSettings")>();
+  const settings = actual.getClientSettings();
+  return {
+    ...actual,
+    useClientSettings: (select?: (value: typeof settings) => unknown) =>
+      select ? select(settings) : settings,
+  };
+});
+vi.mock("../ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({
+      render,
+      children,
+    }: ComponentProps<typeof import("../ui/tooltip").TooltipTrigger>) {
+      if (!isValidElement(render)) return <>{children}</>;
+      return children === undefined ? render : cloneElement(render, undefined, children);
+    },
+    TooltipPopup: () => null,
+  };
+});
+vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  usePreparedConnection: () => ({ _tag: "Loading" }),
+}));
+vi.mock("../../state/entities", () => ({
+  readThreadShell: () => null,
+  useProjects: () => [],
+  useServerConfigs: () => new Map(),
+}));
+vi.mock("../../remoteOpen", () => ({
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+}));
+vi.mock("../../editorPreferences", () => ({
+  useOpenInPreferredEditor: () => vi.fn(),
+  usePreferredEditor: () => [null, vi.fn()],
+}));
+vi.mock("~/lib/openPullRequestLink", () => ({
+  findProjectOnChangeRequestHost: () => undefined,
+  parseChangeRequestUrl: () => null,
+  useOpenChangeRequestLink: () => vi.fn(),
+}));
 
 const prompt: PendingUserInput = {
   requestId: ApprovalRequestId.make("request-1"),
@@ -114,6 +163,28 @@ describe("ComposerPendingUserInputPanel", () => {
     expect(markup).toContain("Which approach should the migration take?");
     expect(markup).toContain("Incremental");
     expect(markup).toContain("Big bang");
+  });
+
+  it("renders expanded questions as Markdown instead of exposing source syntax", () => {
+    const markup = renderPanel({
+      ...prompt,
+      questions: [
+        {
+          ...prompt.questions[0]!,
+          question:
+            "Open [AWS sign-in link](https://example.com/signin?state=example) and confirm **when ready**.\n\n### Checks\n\n- Run `tests`\n\n> Review first.\n\n| Check | Result |\n| --- | --- |\n| Build | Ready |\n\n```text\nready\n```",
+        },
+      ],
+    });
+    expect(markup).toContain('href="https://example.com/signin?state=example"');
+    expect(markup).toContain("<strong>when ready</strong>");
+    expect(markup).toContain("<h3");
+    expect(markup).toContain("<ul");
+    expect(markup).toContain("<blockquote");
+    expect(markup).toContain("<table");
+    expect(markup).toContain("<pre");
+    expect(markup).not.toContain("[AWS sign-in link](");
+    expect(markup).not.toContain("**when ready**");
   });
 
   it("uses readable plain text for the collapsed preview", async () => {
