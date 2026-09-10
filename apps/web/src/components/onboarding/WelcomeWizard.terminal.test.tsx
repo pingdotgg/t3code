@@ -95,6 +95,8 @@ vi.mock("../ui/dialog", () => ({
 }));
 vi.mock("../ui/wizard", () => ({
   WizardPanel: "div",
+  WizardPopup: "div",
+  WizardHeader: "div",
   WizardSteps: ({ onStepChange }: { onStepChange: (step: number) => void }) => (
     <button onClick={() => onStepChange(0)}>Back</button>
   ),
