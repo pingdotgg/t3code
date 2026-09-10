@@ -104,6 +104,29 @@ function isSameKeybindingRule(left: KeybindingRule, right: KeybindingRule): bool
   );
 }
 
+const LEGACY_PREVIEW_TOGGLE_DEFAULT: KeybindingRule = {
+  key: "mod+shift+j",
+  command: "preview.toggle",
+};
+const CURRENT_PREVIEW_TOGGLE_DEFAULT: KeybindingRule = {
+  key: "mod+shift+v",
+  command: "preview.toggle",
+};
+
+/** Moves an unchanged former default while preserving every customized rule. */
+function migrateChangedDefaultKeybindings(config: readonly KeybindingRule[]): {
+  readonly keybindings: readonly KeybindingRule[];
+  readonly changed: boolean;
+} {
+  let changed = false;
+  const keybindings = config.map((rule) => {
+    if (!isSameKeybindingRule(rule, LEGACY_PREVIEW_TOGGLE_DEFAULT)) return rule;
+    changed = true;
+    return CURRENT_PREVIEW_TOGGLE_DEFAULT;
+  });
+  return { keybindings, changed };
+}
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -488,7 +511,8 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const migratedConfig = migrateChangedDefaultKeybindings(runtimeConfig.keybindings);
+      const customConfig = migratedConfig.keybindings;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -526,6 +550,7 @@ const make = Effect.gen(function* () {
         });
       }
       if (missingDefaults.length === 0) {
+        if (migratedConfig.changed) yield* writeConfigAtomically(customConfig);
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
@@ -555,6 +580,7 @@ const make = Effect.gen(function* () {
         });
       }
       if (defaultsToAppend.length === 0) {
+        if (migratedConfig.changed) yield* writeConfigAtomically(customConfig);
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }

@@ -7,8 +7,8 @@ yourself. Agents get the same device through `device_*` tools and the
 
 ## Open a device
 
-Open the right panel in a project thread and choose **Device**. On first use,
-the panel walks through three steps: starting the device hub, checking iOS and
+Choose **Device** from a workspace pane's **+** menu. On narrow windows, open the tool sheet and
+choose **Device** there. On first use, the setup walks through three steps: starting the device hub, checking iOS and
 Android support, and choosing whether agents may control devices. Opening the
 panel alone does not download or start anything. If the hub is already
 installed, the setup screen says so and reuses it.
@@ -48,7 +48,7 @@ back from the device after a change.
 
 ## Agents and devices
 
-When an agent opens a device, the panel opens in web and desktop clients connected
+When an agent opens a device, its workspace tab opens in web and desktop clients connected
 to the thread. Mobile clients show device activity in the thread timeline. Agents drive the device through the `agent-device` command line. T3
 Code installs and starts it only after **Agent device access** is enabled. iOS
 taps build a small test runner on first use, which takes a couple of minutes
