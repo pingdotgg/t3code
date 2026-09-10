@@ -8,6 +8,7 @@ import {
   isPrimaryEnvironmentProtocolUnsupportedError,
   isPrimaryEnvironmentUrlInvalidError,
   readPrimaryEnvironmentTarget,
+  readOptionalPrimaryEnvironmentTarget,
   resolvePrimaryEnvironmentHttpUrl,
   resolveInitialPrimaryEnvironmentDescriptor,
   resetPrimaryEnvironmentDescriptorForTests,
@@ -274,5 +275,23 @@ describe("environmentBootstrap", () => {
       protocol: "file:",
       message: "The window-origin primary environment target uses unsupported protocol file:.",
     });
+  });
+
+  it("returns no primary target for a client-only desktop without using the custom origin", () => {
+    vi.stubGlobal("window", {
+      location: new URL("t3code://app/"),
+      history: { replaceState: vi.fn() },
+      desktopBridge: {
+        getBackendModeState: () => ({
+          effectiveMode: "client-only",
+          configuredMode: "client-only",
+          cliOverride: null,
+          source: "settings",
+        }),
+        getLocalEnvironmentBootstraps: () => [],
+      },
+    });
+
+    expect(readOptionalPrimaryEnvironmentTarget()).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 const DesktopSettingsPatch = Schema.Struct({
+  backendMode: Schema.optionalKey(Schema.Literals(["managed", "client-only"])),
   linuxPasswordStore: Schema.optionalKey(
     Schema.Literals(["auto", "gnome-libsecret", "kwallet", "kwallet5", "kwallet6"]),
   ),
@@ -105,6 +106,7 @@ describe("DesktopSettings", () => {
     assert.deepEqual(
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
+        backendMode: "managed",
         linuxPasswordStore: "auto",
         mainWindowBounds: null,
         mainWindowMaximized: false,
@@ -125,6 +127,7 @@ describe("DesktopSettings", () => {
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
+          backendMode: "client-only",
           linuxPasswordStore: "gnome-libsecret",
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
@@ -134,6 +137,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          backendMode: "client-only",
           linuxPasswordStore: "gnome-libsecret",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -162,6 +166,10 @@ describe("DesktopSettings", () => {
         assert.isTrue(updateChannel.changed);
         assert.equal(updateChannel.settings.updateChannel, "nightly");
         assert.equal(updateChannel.settings.updateChannelConfiguredByUser, true);
+
+        const backendMode = yield* settings.setBackendMode("managed");
+        assert.isTrue(backendMode.changed);
+        assert.equal(backendMode.settings.backendMode, "managed");
       }),
     ),
   );
@@ -241,6 +249,7 @@ describe("DesktopSettings", () => {
         );
 
         assert.deepEqual(yield* settings.load, {
+          backendMode: "managed",
           linuxPasswordStore: "auto",
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
@@ -297,6 +306,7 @@ describe("DesktopSettings", () => {
           );
 
           assert.deepEqual(yield* settings.load, {
+            backendMode: "managed",
             linuxPasswordStore: "auto",
             mainWindowBounds: null,
             mainWindowMaximized: false,
@@ -322,11 +332,13 @@ describe("DesktopSettings", () => {
 
         yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
         yield* settings.setServerExposureMode("network-accessible");
+        yield* settings.setBackendMode("client-only");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
+          backendMode: "client-only",
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
@@ -345,6 +357,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          backendMode: "managed",
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -373,6 +386,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          backendMode: "managed",
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -400,6 +414,7 @@ describe("DesktopSettings", () => {
         });
 
         assert.deepEqual(yield* settings.load, {
+          backendMode: "managed",
           linuxPasswordStore: "auto",
           mainWindowBounds: null,
           mainWindowMaximized: false,

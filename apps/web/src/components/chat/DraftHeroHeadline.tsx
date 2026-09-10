@@ -14,8 +14,11 @@ import {
   buildSidebarProjectSnapshots,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
-import { ProjectFavicon } from "../ProjectFavicon";
+import {
+  useAppOwnsLocalEnvironment,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -43,6 +46,7 @@ export function DraftHeroHeadline({
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const ownsLocalEnvironment = useAppOwnsLocalEnvironment();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
@@ -67,6 +71,7 @@ export function DraftHeroHeadline({
           projects,
           settings: projectGroupingSettings,
           primaryEnvironmentId,
+          ownsLocalEnvironment,
           resolveEnvironmentLabel: (environmentId) =>
             environmentLabelById.get(environmentId) ?? null,
         }),
@@ -75,6 +80,7 @@ export function DraftHeroHeadline({
       ),
     [
       environmentLabelById,
+      ownsLocalEnvironment,
       primaryEnvironmentId,
       projectGroupingSettings,
       projectSortOrder,
@@ -165,13 +171,7 @@ export function DraftHeroHeadline({
         >
           {projectPickerEntries.map(({ group }) => {
             return (
-              <MenuRadioItem
-                key={group.projectKey}
-                value={group.projectKey}
-                closeOnClick
-                className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-              >
-                <ProjectFavicon project={group} className="size-4 shrink-0" />
+              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
                 <Tooltip>
                   <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
                     {group.displayName}

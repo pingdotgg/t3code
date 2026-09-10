@@ -14,7 +14,8 @@ import { Atom } from "effect/unstable/reactivity";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
+import { isRemoteEnvironmentId } from "../environmentPresence";
+import { useEnvironment, useEnvironmentPresenceScope } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -674,10 +675,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
     threadId: thread.id,
   });
   const environment = useEnvironment(thread.environmentId);
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  // No primary (the hosted app) means every thread is remote, and the machine
-  // glyph is what tells the environments apart.
-  const isRemoteThread = thread.environmentId !== primaryEnvironmentId;
+  const presenceScope = useEnvironmentPresenceScope();
+  const isRemoteThread = isRemoteEnvironmentId(thread.environmentId, presenceScope);
   const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
   const remoteMachine = resolveEnvironmentMachineKind(environment?.serverConfig ?? null);

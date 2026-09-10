@@ -33,6 +33,7 @@ import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { useSettingsEnvironment } from "../../hooks/useSettingsEnvironment";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
 import {
@@ -279,6 +280,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
+  const { environmentId: settingsEnvironmentId, selectEnvironment } = useSettingsEnvironment();
   const options = useMemo(
     () => buildProviderEnvironmentOptions(environments, primaryEnvironmentId),
     [environments, primaryEnvironmentId],
@@ -286,9 +288,26 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   // Raw user intent; the effective selection is re-derived every render so a
   // device that drops out of the catalog falls back without erasing the pick —
   // if it reappears (e.g. after a reconnect) the selection is restored.
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
-    target.environmentId ?? primaryEnvironmentId,
+  const [selectedEnvironmentId, setSelectedEnvironmentIdState] = useState<EnvironmentId | null>(
+    target.environmentId ?? settingsEnvironmentId ?? primaryEnvironmentId,
   );
+  const setSelectedEnvironmentId = useCallback(
+    (environmentId: EnvironmentId) => {
+      setSelectedEnvironmentIdState(environmentId);
+      selectEnvironment(environmentId);
+    },
+    [selectEnvironment],
+  );
+  const appliedRouteTargetRef = useRef<EnvironmentId | undefined>(undefined);
+  useEffect(() => {
+    if (
+      target.environmentId !== undefined &&
+      appliedRouteTargetRef.current !== target.environmentId
+    ) {
+      appliedRouteTargetRef.current = target.environmentId;
+      selectEnvironment(target.environmentId);
+    }
+  }, [selectEnvironment, target.environmentId]);
   const targetEnvironmentMissing =
     target.environmentId !== undefined &&
     selectedEnvironmentId === target.environmentId &&
@@ -319,7 +338,12 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     ) {
       setSelectedEnvironmentId(searchableEnvironmentId);
     }
-  }, [searchTargetId, searchableEnvironmentId, selectedEnvironmentCanRenderSettings]);
+  }, [
+    searchTargetId,
+    searchableEnvironmentId,
+    setSelectedEnvironmentId,
+    selectedEnvironmentCanRenderSettings,
+  ]);
   const onlyPrimaryDevice =
     options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
   const deviceTabs =

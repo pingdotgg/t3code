@@ -1,6 +1,54 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
+import type {
+  AdvertisedEndpoint,
+  DesktopBridge,
+  DesktopWslState,
+  EnvironmentId,
+  RunningLocalServer,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+
+export function environmentPairingBaseUrl(entry: ConnectionCatalogEntry): string | null {
+  switch (entry.target._tag) {
+    case "PrimaryConnectionTarget":
+      return entry.target.httpBaseUrl;
+    case "BearerConnectionTarget":
+      return Option.isSome(entry.profile) && entry.profile.value._tag === "BearerConnectionProfile"
+        ? entry.profile.value.httpBaseUrl
+        : null;
+    case "RelayConnectionTarget":
+    case "SshConnectionTarget":
+      return null;
+  }
+}
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+export interface LocalServerPairingCandidate {
+  readonly server: RunningLocalServer;
+  readonly pairAgain: boolean;
+  readonly alreadyPaired: boolean;
+}
+
+export function selectLocalServerPairingCandidates(
+  servers: ReadonlyArray<RunningLocalServer>,
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connection: { readonly phase: string };
+  }>,
+): ReadonlyArray<LocalServerPairingCandidate> {
+  return servers.map((server) => {
+    const savedEnvironment = environments.find(
+      (environment) => environment.environmentId === server.environmentId,
+    );
+    return {
+      server,
+      pairAgain:
+        savedEnvironment !== undefined && savedEnvironment.connection.phase !== "connected",
+      alreadyPaired: savedEnvironment?.connection.phase === "connected",
+    };
+  });
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so
