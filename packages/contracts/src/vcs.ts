@@ -78,6 +78,7 @@ export const VcsProcessExitFailureKind = Schema.Literals([
   "not-found",
   "rate-limited",
   "command-failed",
+  "state-rule",
 ]);
 export type VcsProcessExitFailureKind = typeof VcsProcessExitFailureKind.Type;
 

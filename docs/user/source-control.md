@@ -92,6 +92,33 @@ reopening a declined pull request.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
 
+### Track Issues Beside the Work
+
+**Browse every tracker in one place**
+
+- The **Issues** page lists issues across all the projects in your environment, filtered by state,
+  by whether they are assigned to you, raised by you or mention you, and by project, host or label
+- Free-text search asks the host itself, so it finds issues that are not on screen yet
+- Supports GitHub Issues, GitLab Issues, Bitbucket Issues, and Azure DevOps work items. What each
+  host cannot do is simply not offered rather than failing when pressed
+
+**Read and act on one without leaving T3 Code**
+
+- Open several issues as tabs in the right panel, beside a thread or on the page
+- Read the description and the conversation, comment, close (with a reason where the host
+  records one), reopen, rename, edit the body, and change labels and assignees
+- File a new issue from the **New issue** button
+- The change requests that reference an issue are listed on it, and the issues a pull request
+  cites or closes are listed on the pull request — either one opens the other beside it
+
+**Hand one to an agent**
+
+- **Solve** starts a thread on the issue, with the issue attached as context
+- **Ask** and **Explain** answer a question about the issue without changing any code
+- **Add to composer** attaches the issue to a thread you are already in, rather than starting a
+  new one
+- Issue content is marked as untrusted context. Review it before sending it to an agent.
+
 ## Linked pull requests
 
 A thread can hold several pull requests, including reviews from another repository on the same host.

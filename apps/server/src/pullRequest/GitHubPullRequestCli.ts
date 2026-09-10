@@ -6,6 +6,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
   resolvePullRequestAuthorFilter,
+  type IssueLink,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -31,9 +32,13 @@ import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
   ADD_REACTION_GRAPHQL_MUTATION,
+  buildCitedIssuesGraphQlQuery,
   buildReviewSubmissionJson,
   buildReviewerRequestJson,
   decodeActorAvatarsJson,
+  decodeCitedIssuesJson,
+  decodeLinkedIssuesJson,
+  type GitHubLinkedIssues,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
   decodePullRequestFilesJson,
@@ -56,6 +61,8 @@ import {
   buildPullRequestStackMembershipsGraphQlQuery,
   decodePullRequestStackMembershipsJson,
   encodeGraphQlRequestJson,
+  LINKED_ISSUES_GRAPHQL_QUERY,
+  LINKED_ISSUES_MAX_ROWS,
   pullRequestSearchGraphQlQuery,
   PULL_REQUEST_SEARCH_MAX_ROWS,
   PULL_REQUEST_ACTIVITY_JSON_FIELDS,
@@ -97,6 +104,7 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
+import type { IssueReference } from "./issueReferences.ts";
 import type { ProviderChangeRequestSummary, ProviderListCursor } from "./PullRequestProvider.ts";
 
 /**
@@ -577,6 +585,23 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly host: string;
     }) => Effect.Effect<GitHubRepositoryAccess, GitHubPullRequestCliError>;
+
+    readonly listLinkedIssues: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubLinkedIssues, GitHubPullRequestCliError>;
+
+    /**
+     * The issues a pull request's own words name, looked up so that only ones which exist — and
+     * are issues rather than pull requests — reach the section. One request for the batch.
+     */
+    readonly listCitedIssues: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly references: ReadonlyArray<IssueReference>;
+    }) => Effect.Effect<ReadonlyArray<IssueLink>, GitHubPullRequestCliError>;
 
     /** The viewer's standing on its own, for deciding a write without reading the whole detail. */
     readonly getViewerAccess: (input: {
@@ -2076,6 +2101,36 @@ export const make = Effect.gen(function* () {
                 );
           }),
         ),
+
+    listLinkedIssues: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "listLinkedIssues",
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+          ["-F", `first=${LINKED_ISSUES_MAX_ROWS}`],
+        ],
+        query: LINKED_ISSUES_GRAPHQL_QUERY,
+        decode: decodeLinkedIssuesJson,
+      });
+    },
+
+    listCitedIssues: (input) => {
+      const query = buildCitedIssuesGraphQlQuery(input.references);
+      return query === null
+        ? Effect.succeed<ReadonlyArray<IssueLink>>([])
+        : graphqlRead({
+            cwd: input.cwd,
+            host: input.host,
+            operation: "listCitedIssues",
+            query,
+            decode: decodeCitedIssuesJson,
+          });
+    },
 
     getViewerAccess: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);

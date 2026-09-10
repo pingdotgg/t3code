@@ -39,17 +39,45 @@ const baseInput = {
 
 const captureProcessResult = (
   result: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  input: VcsProcess.VcsProcessInput = baseInput,
 ) =>
   VcsProcess.make.pipe(
     Effect.provideService(
       ProcessRunner.ProcessRunner,
       ProcessRunner.ProcessRunner.of({ run: () => result }),
     ),
-    Effect.flatMap((service) => service.run(baseInput)),
+    Effect.flatMap((service) => service.run(input)),
     Effect.flip,
   );
 
 describe("VcsProcess.run", () => {
+  it.effect("identifies Azure state rules without exposing process output", () =>
+    Effect.gen(function* () {
+      for (const [command, stderr, failureKind] of [
+        ["az", "TF401320: Rule Error for field State. secret", "state-rule"],
+        ["az", "TF401320: Rule Error for field Title. secret", "command-failed"],
+        ["az", "connection lost secret", "command-failed"],
+        ["git", "TF401320: Rule Error for field State. secret", "command-failed"],
+      ] as const) {
+        const error = yield* captureProcessResult(
+          Effect.succeed({
+            stdout: "",
+            stderr,
+            code: ChildProcessSpawner.ExitCode(1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+          { ...baseInput, command },
+        );
+        expect(error).toMatchObject({ failureKind });
+        expect(error.message).not.toContain("secret");
+      }
+    }),
+  );
+
   it.effect("bounds a synthetic burst of GitHub API processes", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();

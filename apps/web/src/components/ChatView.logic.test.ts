@@ -47,6 +47,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveSourceControlSurfaceCapability,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -528,6 +529,20 @@ describe("artifact template composer insertion", () => {
     const prompt = "Create a document using this $artifact-template-hello-world about…";
 
     expect(codexArtifactTemplatePromptToAppend(prompt, helloWorldTemplate)).toBeNull();
+  });
+});
+
+describe("source-control surface capability", () => {
+  it.each([
+    { state: "unknown", input: { capabilityKnown: false, supported: false }, expected: "loading" },
+    {
+      state: "unsupported",
+      input: { capabilityKnown: true, supported: false },
+      expected: "unavailable",
+    },
+    { state: "supported", input: { capabilityKnown: true, supported: true }, expected: "ready" },
+  ] as const)("returns $expected for a $state capability", ({ input, expected }) => {
+    expect(resolveSourceControlSurfaceCapability(input)).toBe(expected);
   });
 });
 

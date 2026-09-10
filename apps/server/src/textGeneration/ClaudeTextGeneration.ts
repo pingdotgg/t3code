@@ -25,6 +25,8 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildWorkItemMatchPrompt,
+  buildWorkItemTaskPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -102,7 +104,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateWorkItemTask"
+      | "findWorkItemMatches",
     value: unknown,
     detail: string,
   ): Effect.Effect<string, TextGenerationError> =>
@@ -132,7 +136,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateWorkItemTask"
+      | "findWorkItemMatches";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -408,10 +414,37 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
+  const generateWorkItemTask: TextGeneration.TextGeneration["Service"]["generateWorkItemTask"] =
+    Effect.fn("ClaudeTextGeneration.generateWorkItemTask")(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemTaskPrompt(input);
+      const generated = yield* runClaudeJson({
+        operation: "generateWorkItemTask",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+      return { prompt: generated.prompt.trim() };
+    });
+
+  const findWorkItemMatches: TextGeneration.TextGeneration["Service"]["findWorkItemMatches"] =
+    Effect.fn("ClaudeTextGeneration.findWorkItemMatches")(function* (input) {
+      const { prompt, outputSchema } = buildWorkItemMatchPrompt(input);
+      return yield* runClaudeJson({
+        operation: "findWorkItemMatches",
+        cwd: input.cwd,
+        prompt,
+        outputSchemaJson: outputSchema,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateWorkItemTask,
+    findWorkItemMatches,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

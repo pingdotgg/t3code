@@ -66,6 +66,21 @@ function notes(count: number, firstId: number): string {
   );
 }
 
+function closingIssues(count: number, firstNumber: number): string {
+  return JSON.stringify(
+    Array.from({ length: count }, (_, index) => {
+      const number = firstNumber + index;
+      return {
+        iid: number,
+        title: `Issue ${number}`,
+        web_url: `https://gitlab.com/acme/web/-/issues/${number}`,
+        state: "opened",
+        references: { full: `acme/web#${number}` },
+      };
+    }),
+  );
+}
+
 /** Who opened the merge request, and somebody already reviewing it. */
 const author = { id: 1, username: "bilal" };
 const reviewer = { id: 5, username: "octocat" };
@@ -910,6 +925,37 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(argsOfCall(1).join(" ")).toContain("page=2");
       assert.strictEqual(comments.length, 102);
       assert.isFalse(truncated);
+    }),
+  );
+
+  it.effect("walks closing issues until GitLab answers with a short page", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(closingIssues(100, 1))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(closingIssues(2, 101))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const issues = yield* cli.listLinkedIssues({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      assert.strictEqual(issues.links.length, 102);
+      assert.strictEqual(issues.links[0]?.number, 1);
+      assert.strictEqual(issues.links[101]?.number, 102);
+      assert.isFalse(issues.truncated);
+      expect(argsOfCall(0).join(" ")).toContain("page=1");
+      expect(argsOfCall(1).join(" ")).toContain("page=2");
+    }),
+  );
+
+  it.effect("bounds closing issue pages and reports the incomplete list", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output(closingIssues(100, 1))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* cli.listLinkedIssues({ cwd: "/w", repository: "acme/web", number: 7 });
+      assert.isTrue(result.truncated);
+      assert.strictEqual(mockedExecute.mock.calls.length, 10);
     }),
   );
 

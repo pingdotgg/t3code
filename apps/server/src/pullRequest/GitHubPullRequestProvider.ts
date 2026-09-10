@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type {
+  IssueLink,
   PullRequestActor,
   PullRequestCapabilities,
   PullRequestCheck,
@@ -19,6 +20,11 @@ import {
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
+import {
+  mergeIssueLinks,
+  parseIssueReferences,
+  unlinkedIssueReferences,
+} from "./issueReferences.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -209,6 +215,37 @@ export const make = Effect.gen(function* () {
       cause: error,
     });
 
+  /**
+   * The issues the pull request's own words name, resolved before any of them is shown: a number
+   * in a body is not proof that an issue exists, and a dead row in this section is worse than an
+   * absent one.
+   *
+   * Weaker than what GitHub itself reported, so a lookup that fails leaves the section with the
+   * host's own links rather than taking the detail down with it. What the host already reported is
+   * dropped first, which is what keeps an ordinary `Closes #12` from costing a request at all.
+   */
+  const citedIssues = (
+    input: { readonly cwd: string; readonly repository: string; readonly host: string },
+    pullRequest: { readonly title: string; readonly body: string },
+    hostLinks: ReadonlyArray<IssueLink>,
+  ): Effect.Effect<ReadonlyArray<IssueLink>> => {
+    const references = unlinkedIssueReferences(
+      parseIssueReferences({
+        kind: "github",
+        host: input.host,
+        repository: input.repository,
+        title: pullRequest.title,
+        body: pullRequest.body,
+      }),
+      hostLinks,
+    );
+    return references.length === 0
+      ? Effect.succeed([])
+      : cli
+          .listCitedIssues({ cwd: input.cwd, host: input.host, references })
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<IssueLink> => []));
+  };
+
   const provider: PullRequestProviderApi = {
     kind: "github",
     capabilities: CAPABILITIES,
@@ -373,38 +410,52 @@ export const make = Effect.gen(function* () {
           // A small permissions query replaces the deeply paginated review-thread walk on the
           // core path. Writes ask again immediately before mutating, so this is presentation.
           cli.getViewerAccess(input),
+          // A section of links is worth less than the pull request it hangs off: an install that
+          // answers nothing useful here leaves the section empty rather than blanking the detail.
+          cli
+            .listLinkedIssues(input)
+            .pipe(Effect.orElseSucceed(() => ({ links: [], truncated: false }))),
         ],
-        { concurrency: 3 },
+        { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
-          ...detail.pullRequest,
-          checks: withWorkflowApprovals(
-            detail.pullRequest.checks,
-            detail.workflowApprovals.runs,
-            detail.workflowApprovals.unavailable,
+        Effect.flatMap(([detail, repository, viewerAccess, linkedIssues]) =>
+          citedIssues(input, detail.pullRequest, linkedIssues.links).pipe(
+            Effect.map((cited): ProviderChangeRequestDetail => ({
+              ...detail.pullRequest,
+              checks: withWorkflowApprovals(
+                detail.pullRequest.checks,
+                detail.workflowApprovals.runs,
+                detail.workflowApprovals.unavailable,
+              ),
+              ...(detail.workflowApprovals.unavailable
+                ? {}
+                : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
+
+              reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
+                login,
+                name: null,
+                avatarUrl: null,
+              })),
+              mergeCapabilities: repository.mergeCapabilities,
+              viewerPermissions: gitHubViewerPermissions({
+                ...viewerAccess,
+                canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
+              }),
+              linkedIssues: mergeIssueLinks(linkedIssues.links, cited),
+              linkedIssuesTruncated: linkedIssues.truncated,
+              baseComparison:
+                detail.comparison === null || detail.comparison.behindBy === null
+                  ? "unknown"
+                  : detail.comparison.behindBy > 0
+                    ? "behind"
+                    : "up-to-date",
+              ...(detail.comparison?.behindBy == null
+                ? {}
+                : { behindBy: detail.comparison.behindBy }),
+            })),
           ),
-          ...(detail.workflowApprovals.unavailable
-            ? {}
-            : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
-          reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
-            login,
-            name: null,
-            avatarUrl: null,
-          })),
-          mergeCapabilities: repository.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...viewerAccess,
-            canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
-          }),
-          baseComparison:
-            detail.comparison === null || detail.comparison.behindBy === null
-              ? "unknown"
-              : detail.comparison.behindBy > 0
-                ? "behind"
-                : "up-to-date",
-          ...(detail.comparison?.behindBy == null ? {} : { behindBy: detail.comparison.behindBy }),
-        })),
+        ),
       ),
 
     getChangeRequestActivity: (input) =>

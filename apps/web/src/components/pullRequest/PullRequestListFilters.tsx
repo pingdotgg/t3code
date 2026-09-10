@@ -62,7 +62,7 @@ export interface PullRequestFilterOption<Value extends string> {
   readonly unavailable?: string | undefined;
 }
 
-export function PullRequestFilterOptionIcon<Value extends string>({
+function PullRequestFilterOptionIcon<Value extends string>({
   option,
 }: {
   option: PullRequestFilterOption<Value>;
@@ -126,8 +126,6 @@ export function PullRequestSearchInput({
  * count whenever any filter is off its default, so a narrowed list is never a mystery.
  */
 const ALL_PROJECTS_VALUE = "all";
-/** MenuRadioGroup wants a string, so "every host" wears the one value no host can be. */
-const ALL_HOSTS_VALUE = "";
 /** The same trick for the servers, which are named by an id no empty string can collide with. */
 const ALL_SERVERS_VALUE = "";
 /** The unset value of each narrowing group, which no filter of theirs is named after. */
@@ -401,9 +399,6 @@ export function PullRequestFiltersMenu({
   onFilters,
   authorOptions = [],
   labelOptions = [],
-  host,
-  hostOptions,
-  onHost,
   server,
   serverOptions,
   onServer,
@@ -425,13 +420,6 @@ export function PullRequestFiltersMenu({
   onFilters: (filters: PullRequestListFilters) => void;
   authorOptions?: ReadonlyArray<PullRequestAuthorFacet>;
   labelOptions?: ReadonlyArray<PullRequestLabelFacet>;
-  host: string | undefined;
-  /**
-   * Includes the "all hosts" entry, whose value is the empty string. With fewer than two real
-   * hosts there is nothing to switch between, so the whole group stays out of the menu.
-   */
-  hostOptions: ReadonlyArray<PullRequestFilterOption<string>>;
-  onHost: (host: string | undefined) => void;
   server: EnvironmentId | undefined;
   /**
    * Includes the "all servers" entry, whose value is the empty string. With one server there is
@@ -460,7 +448,6 @@ export function PullRequestFiltersMenu({
   const filterCount = [
     state !== "open",
     involvement !== "all",
-    host,
     server,
     projectId,
     filters.draft,
@@ -565,17 +552,6 @@ export function PullRequestFiltersMenu({
           options={CHECKS_OPTIONS}
           onChange={(checks) => updateFilter("checks", checks)}
         />
-        {hostOptions.length > 2 ? (
-          <>
-            <MenuSeparator />
-            <PullRequestFilterRadioSubmenu
-              label="Host"
-              value={host ?? ALL_HOSTS_VALUE}
-              options={hostOptions}
-              onChange={(next) => onHost(next === ALL_HOSTS_VALUE ? undefined : next)}
-            />
-          </>
-        ) : null}
         {serverOptions.length > 2 ? (
           <>
             <MenuSeparator />

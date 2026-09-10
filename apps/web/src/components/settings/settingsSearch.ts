@@ -403,6 +403,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow open drive preview tools sessions"],
   },
   {
+    id: "linear",
+    title: "Issue Tracking",
+    to: "/settings/integrations",
+    searchTerms: [
+      "linear issue tracking issues tracker integration API key accounts teams project mapping connect disconnect",
+    ],
+  },
+  {
     id: "device-hosts",
     title: "Device hosts",
     to: "/settings/integrations",

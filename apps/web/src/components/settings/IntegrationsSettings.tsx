@@ -40,6 +40,7 @@ import { Link } from "@tanstack/react-router";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
+import { LinearIntegrationSettings } from "./LinearIntegrationSettings";
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -1339,6 +1340,7 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <LinearIntegrationSettings />
       <SettingsSection id="browser" title="Browser">
         {/* Server-authoritative, so it stays editable on any client anchored to
             a server; `serverScoped` covers the hosted app, which has none. It
