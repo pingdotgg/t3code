@@ -209,6 +209,19 @@ describe("thread workspace tabs", () => {
     expect(threadReordered).toBe(surfaceReordered);
   });
 
+  test("keeps repeatable surface instance ids as independent tabs", () => {
+    const initial = createThreadWorkspaceTabFields(["diff"]);
+    const next = transitionThreadWorkspaceTabs(initial, {
+      _tag: "ReconcileSurfaceTabs",
+      surfaceIds: ["diff", "diff:2", "diff:3"],
+    });
+
+    expect(findSurfaceTabs(next, "diff")).toHaveLength(1);
+    expect(findSurfaceTabs(next, "diff:2")).toHaveLength(1);
+    expect(findSurfaceTabs(next, "diff:3")).toHaveLength(1);
+    expect(new Set(Object.values(next.tabsById).map((tab) => tab.id)).size).toBe(4);
+  });
+
   test("moves tabs into existing groups without creating another split", () => {
     const initial = createThreadWorkspaceTabFields(["files", "diff"]);
     const filesTab = findSurfaceTabs(initial, "files")[0]!;

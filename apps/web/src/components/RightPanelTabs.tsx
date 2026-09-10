@@ -648,9 +648,9 @@ function surfaceTitle(
 ): string {
   switch (surface.kind) {
     case "diff":
-      return "Diff";
+      return repeatableSurfaceTitle(surface.id, "Diff");
     case "files":
-      return "Files";
+      return repeatableSurfaceTitle(surface.id, "Files");
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -663,9 +663,9 @@ function surfaceTitle(
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
-      return "Pull requests";
+      return repeatableSurfaceTitle(surface.id, "Pull requests");
     case "agents":
-      return "Agents";
+      return repeatableSurfaceTitle(surface.id, "Agents");
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -679,6 +679,11 @@ function surfaceTitle(
       }
     }
   }
+}
+
+function repeatableSurfaceTitle(id: string, title: string): string {
+  const separatorIndex = id.lastIndexOf(":");
+  return separatorIndex < 0 ? title : `${title} ${id.slice(separatorIndex + 1)}`;
 }
 
 function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {

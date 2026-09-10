@@ -12,6 +12,9 @@ choose what opens there. A tab's context menu can copy it into a split, move it 
 move it to an adjacent pane. Drag tabs within a row to reorder them, onto another tab row to move
 them, onto a pane edge to create a split, or onto a pane center to swap pane layouts.
 
+The **+** menu can open multiple independent Diff, Files, Agents, or Linked pull requests tabs. Tabs
+backed by resources, such as browser sessions and terminals, remain independent per resource.
+
 Drag a divider to resize panes, use the arrow keys while its resize handle is focused, or
 double-click the divider to restore a 50/50 split. Closing the last tab in a non-root pane collapses
 that split. Empty panes show a close button.

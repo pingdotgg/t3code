@@ -4189,22 +4189,22 @@ export default function ChatView(props: ChatViewProps) {
   );
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
-    useRightPanelStore.getState().open(activeThreadRef, "diff");
+    useRightPanelStore.getState().openNewSurface(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
-    useRightPanelStore.getState().open(activeThreadRef, "files");
+    useRightPanelStore.getState().openNewSurface(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
-    useRightPanelStore.getState().open(activeThreadRef, "agents");
+    useRightPanelStore.getState().openNewSurface(activeThreadRef, "agents");
   }, [activeThreadRef]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const addPullRequestsSurface = useCallback(() => {
     if (!activeThreadRef || !supportsThreadPullRequests) return;
-    useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
+    useRightPanelStore.getState().openNewSurface(activeThreadRef, "pull-requests");
   }, [activeThreadRef, supportsThreadPullRequests]);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,

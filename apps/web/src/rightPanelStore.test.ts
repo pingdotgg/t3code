@@ -439,6 +439,47 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens repeatable tool surfaces with distinct instance ids", () => {
+    const store = useRightPanelStore.getState();
+    store.openNewSurface(refA, "diff");
+    store.openNewSurface(refA, "diff");
+    store.openNewSurface(refA, "files");
+    store.openNewSurface(refA, "files");
+    store.openNewSurface(refA, "agents");
+    store.openNewSurface(refA, "agents");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "diff", kind: "diff" },
+      { id: "diff:2", kind: "diff" },
+      { id: "files", kind: "files" },
+      { id: "files:2", kind: "files" },
+      { id: "agents", kind: "agents" },
+      { id: "agents:2", kind: "agents" },
+    ]);
+  });
+
+  it("replaces only the active explorer when multiple explorers are open", () => {
+    const store = useRightPanelStore.getState();
+    store.openNewSurface(refA, "files");
+    store.openNewSurface(refA, "files");
+    store.openFile(refA, "src/index.ts");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "files", kind: "files" },
+      {
+        id: "file:src/index.ts",
+        kind: "file",
+        relativePath: "src/index.ts",
+        revealLine: null,
+        revealRequestId: 1,
+      },
+    ]);
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
