@@ -261,6 +261,73 @@ function makeLayer(input: {
 
 describe("ApnsDeliveries", () => {
   for (const liveActivitiesEnabled of [false, true]) {
+    for (const [phase, maxAgeMs] of [
+      ["waiting_for_input", 24 * 60 * 60 * 1_000],
+      ["waiting_for_approval", 24 * 60 * 60 * 1_000],
+      ["completed", 2 * 60 * 1_000],
+      ["failed", 2 * 60 * 1_000],
+    ] as const) {
+      for (const expired of [false, true]) {
+        it.effect(
+          `${expired ? "skips" : "queues"} the published ${phase} alert ${expired ? "after" : "at"} its age limit, Live Activities ${liveActivitiesEnabled ? "unarmed" : "disabled"}`,
+          () => {
+            const queuedJobs: SignedApnsDeliveryJob[] = [];
+            return Effect.gen(function* () {
+              const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+              yield* deliveries.sendForTarget({
+                target: {
+                  ...target,
+                  push_token: "push-token",
+                  activity_push_token: liveActivitiesEnabled ? null : target.activity_push_token,
+                  preferences_json: liveActivitiesEnabled
+                    ? enabledPreferences
+                    : disabledPreferences,
+                },
+                aggregate: null,
+                notificationState: { ...state, phase },
+                nowMs: maxAgeMs + (expired ? 1 : 0),
+              });
+              expect(
+                queuedJobs.filter((job) => job.payload.kind === "push_notification"),
+              ).toHaveLength(expired ? 0 : 1);
+            }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
+          },
+        );
+      }
+    }
+  }
+
+  for (const scenario of ["deleted", "replay", "muted", "event muted"] as const) {
+    it.effect(`keeps a ${scenario} published input state silent`, () => {
+      const queuedJobs: SignedApnsDeliveryJob[] = [];
+      return Effect.gen(function* () {
+        const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+        yield* deliveries.sendForTarget({
+          target: {
+            ...target,
+            push_token: "push-token",
+            activity_push_token: null,
+            preferences_json: JSON.stringify({
+              ...JSON.parse(enabledPreferences),
+              notificationsEnabled: scenario !== "muted",
+              notifyOnInput: scenario !== "event muted",
+            }),
+          },
+          aggregate: {
+            ...aggregate,
+            activities: [{ ...aggregate.activities[0]!, phase: "waiting_for_input" }],
+          },
+          notificationState:
+            scenario === "deleted" ? null : { ...state, phase: "waiting_for_input" },
+          replay: scenario === "replay",
+          nowMs: 0,
+        });
+        expect(queuedJobs).toEqual([]);
+      }).pipe(Effect.provide(makeLayer({ attempts: [], queuedJobs })));
+    });
+  }
+
+  for (const liveActivitiesEnabled of [false, true]) {
     for (const phase of ["completed", "failed"] as const) {
       it.effect(
         `queues the published ${phase} thread while other work runs, Live Activities ${liveActivitiesEnabled ? "unarmed" : "disabled"}`,
@@ -643,6 +710,7 @@ describe("ApnsDeliveries", () => {
             last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
           },
           aggregate: waitingAggregate,
+          notificationState: { ...state, phase: "waiting_for_input" },
           nowMs: 5_000,
         });
 
@@ -2059,8 +2127,13 @@ describe("fast completion delivery", () => {
     };
     return Effect.gen(function* () {
       const d = yield* ApnsDeliveries.ApnsDeliveries;
-      yield* d.sendForTarget({ target: device, aggregate, nowMs: 0 });
-      yield* d.sendForTarget({ target: device, aggregate: done, nowMs: 0 });
+      yield* d.sendForTarget({ target: device, aggregate, notificationState: state, nowMs: 0 });
+      yield* d.sendForTarget({
+        target: device,
+        aggregate: done,
+        notificationState: { ...state, phase: "completed" },
+        nowMs: 0,
+      });
       expect(
         queuedJobs.some((x) => x.payload.alert !== null && x.payload.alert !== undefined),
       ).toBe(true);

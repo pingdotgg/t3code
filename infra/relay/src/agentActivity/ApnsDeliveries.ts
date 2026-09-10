@@ -216,6 +216,12 @@ function notificationForDelivery(input: {
   if (!preferences?.notificationsEnabled) {
     return null;
   }
+  if (
+    input.notificationState &&
+    isExpiredAgentActivityState(input.notificationState, input.nowMs)
+  ) {
+    return null;
+  }
   // The card's first row can be another thread, and its row limit can hide
   // the published thread entirely. Alert on the event, not the card's order.
   const activity =
