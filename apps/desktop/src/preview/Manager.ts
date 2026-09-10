@@ -627,7 +627,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   );
 
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
-  const annotationSendEnabled = new WeakMap<Electron.WebContents, boolean>();
+  const annotationSendEnabled = new Map<string, boolean>();
   const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
@@ -2050,6 +2050,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const closeTabUnlocked = Effect.fn("PreviewManager.closeTabUnlocked")(function* (tabId: string) {
     if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
     clearPendingRecording(tabId);
+    annotationSendEnabled.delete(tabId);
     yield* Effect.all(
       [
         cancelPickElement(tabId),
@@ -2147,9 +2148,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       // changed. Only push its zoom back down — Chromium may have just handed
       // this guest the app window's zoom level.
       yield* assertTabZoom(tabId);
-      yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
-        wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
-      );
+      yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
+        wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme);
+        wc.send(ANNOTATION_SEND_ENABLED_CHANNEL, annotationSendEnabled.get(tabId) === true);
+      });
       return;
     }
     const replacedWebContentsId =
@@ -2256,9 +2258,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     // syncTabAudible's ownership check, so re-read and reconcile through the
     // same path the event uses.
     yield* syncTabAudible(tabId, wc, yield* readAudible);
-    yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () =>
-      wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme),
-    );
+    yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
+      wc.send(ANNOTATION_THEME_CHANNEL, annotationTheme);
+      wc.send(ANNOTATION_SEND_ENABLED_CHANNEL, annotationSendEnabled.get(tabId) === true);
+    });
     const latestNavStatus = (yield* SynchronizedRef.get(tabsRef)).get(tabId)?.navStatus;
     if (
       pendingUrl &&
@@ -2451,7 +2454,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     yield* attempt({ operation: "setAnnotationSendEnabled", tabId, webContentsId: wc.id }, () => {
-      annotationSendEnabled.set(wc, enabled);
+      annotationSendEnabled.set(tabId, enabled);
       wc.send(ANNOTATION_SEND_ENABLED_CHANNEL, enabled);
     });
   });
@@ -2534,7 +2537,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }
           const cropRect = normalizeCaptureRect(args[1]);
           const submission =
-            args[2] === "send" && annotationSendEnabled.get(wc) === true ? "send" : "attach";
+            args[2] === "send" && annotationSendEnabled.get(tabId) === true ? "send" : "attach";
           runFork(
             captureAnnotationScreenshot(tabId, wc, cropRect).pipe(
               // The renderer cannot tell a dropped crop from a comment-only
@@ -2596,7 +2599,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             wc.once("destroyed", onDestroyed);
             wc.once("did-start-navigation", onNavigated);
             if (!wc.isFocused()) wc.focus();
-            wc.send(START_PICK_CHANNEL, annotationTheme, annotationSendEnabled.get(wc) === true);
+            wc.send(START_PICK_CHANNEL, annotationTheme, annotationSendEnabled.get(tabId) === true);
           });
         });
         runFork(

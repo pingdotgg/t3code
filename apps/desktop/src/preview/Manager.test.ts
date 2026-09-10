@@ -3547,7 +3547,7 @@ describe("PreviewManager", () => {
           getSize: () => ({ width: 10, height: 10 }),
         }));
         const guests = new Map(
-          [42, 43].map(
+          [42, 43, 44].map(
             (id) =>
               [
                 id,
@@ -3600,6 +3600,18 @@ describe("PreviewManager", () => {
           expect(result?.annotation.id).toBe(annotation.id);
           expect(result?.submission).toBe(expected);
         }
+        yield* manager.registerWebview("tab_a", 44);
+        const replacementPick = yield* manager.pickElement("tab_a").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        picked.get(44)?.({}, annotation, null, "send");
+        expect((yield* Fiber.join(replacementPick))?.submission).toBe("send");
+        yield* manager.closeTab("tab_a");
+        yield* manager.createTab("tab_a");
+        yield* manager.registerWebview("tab_a", 44);
+        const reopenedPick = yield* manager.pickElement("tab_a").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        picked.get(44)?.({}, annotation, null, "send");
+        expect((yield* Fiber.join(reopenedPick))?.submission).toBe("attach");
       }),
     ),
   );
