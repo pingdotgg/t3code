@@ -91,6 +91,11 @@ offline environments and older servers keep their previous values. If connected
 environments disagree, **Apply to all** copies your current settings to those named
 in the warning. Changing a rule does not reopen already settled threads.
 
+## Returning to a thread
+
+When you switch between threads on web or desktop, each conversation keeps your reading position.
+Positions belong to the current client session and are not shared across devices.
+
 ## Link a pull request
 
 The server finds the PR for each unsettled thread's saved branch, even when your

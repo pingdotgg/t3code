@@ -107,6 +107,11 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
+import {
+  clearTimelineScrollPosition,
+  readTimelineScrollPosition,
+  rememberTimelineScrollPosition,
+} from "../../timelineScrollState";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
@@ -405,6 +410,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const [initialScrollOffset] = useState(() => readTimelineScrollPosition(routeThreadKey));
+  const [restoringSavedPosition, setRestoringSavedPosition] = useState(
+    initialScrollOffset !== null,
+  );
+  const pendingScrollPositionRef = useRef<number | null>(null);
+  const scrollPositionFrameRef = useRef<number | null>(null);
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const expandCitedTurn = useCallback((turnId: TurnId) => {
@@ -659,6 +670,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    if (!citationPositioning) {
+      if (restoringSavedPosition && state) {
+        setRestoringSavedPosition(false);
+      } else if (isAtEnd === true) {
+        pendingScrollPositionRef.current = null;
+        if (scrollPositionFrameRef.current !== null) {
+          cancelAnimationFrame(scrollPositionFrameRef.current);
+          scrollPositionFrameRef.current = null;
+        }
+        clearTimelineScrollPosition(routeThreadKey);
+      } else if (isAtEnd === false && state?.scroll !== undefined) {
+        pendingScrollPositionRef.current = state.scroll;
+        if (scrollPositionFrameRef.current === null) {
+          scrollPositionFrameRef.current = requestAnimationFrame(() => {
+            scrollPositionFrameRef.current = null;
+            const pendingScrollTop = pendingScrollPositionRef.current;
+            pendingScrollPositionRef.current = null;
+            if (pendingScrollTop !== null) {
+              rememberTimelineScrollPosition(routeThreadKey, pendingScrollTop);
+            }
+          });
+        }
+      }
+    }
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
@@ -704,7 +739,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     minimapStripMap,
     onIsAtEndChange,
     reportContentOverflow,
+    restoringSavedPosition,
+    routeThreadKey,
   ]);
+
+  useEffect(() => {
+    const mountedList = listRef.current;
+    return () => {
+      pendingScrollPositionRef.current = null;
+      if (scrollPositionFrameRef.current !== null) {
+        cancelAnimationFrame(scrollPositionFrameRef.current);
+        scrollPositionFrameRef.current = null;
+      }
+      if (citationPositioning) return;
+      const state = mountedList?.getState?.();
+      const isAtEnd = resolveTimelineIsAtEnd(state);
+      if (isAtEnd === true) {
+        clearTimelineScrollPosition(routeThreadKey);
+      } else if (isAtEnd === false && state?.scroll !== undefined) {
+        rememberTimelineScrollPosition(routeThreadKey, state.scroll);
+      }
+    };
+  }, [citationPositioning, listRef, routeThreadKey]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -844,7 +900,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd={citationRequest === null}
+            initialScrollAtEnd={citationRequest === null && initialScrollOffset === null}
+            {...(initialScrollOffset !== null ? { initialScrollOffset } : {})}
             // Legend needs a data refresh to mount new pins without a scroll event.
             {...(readyCitationRequest ? { dataVersion: readyCitationRequest.key } : {})}
             {...(citationAlwaysRender ? { alwaysRender: citationAlwaysRender } : {})}
@@ -854,6 +911,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEnd={
               citationPositioning ||
               anchoredEndSpace ||
+              restoringSavedPosition ||
               !liveFollowEnabled ||
               disclosureToggleSettling
                 ? false

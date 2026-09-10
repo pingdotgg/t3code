@@ -237,6 +237,7 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
+import { readTimelineScrollPosition } from "~/timelineScrollState";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import { getProviderModelCapabilities } from "../providerModels";
 import {
@@ -5218,12 +5219,15 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
 
   useEffect(() => {
+    const restoringSavedPosition = readTimelineScrollPosition(routeThreadKey) !== null;
     setPullRequestDialogState(null);
-    isAtEndRef.current = true;
+    isAtEndRef.current = !restoringSavedPosition;
     timelineScrollIntentRef.current = null;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
+    timelineScrollModeRef.current = restoringSavedPosition ? "free-scrolling" : "following-end";
+    liveFollowUserScrollGenerationRef.current = restoringSavedPosition
+      ? null
+      : anchorUserScrollGenerationRef.current;
+    setTimelineLiveFollowEnabled(!restoringSavedPosition);
     pendingTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
@@ -5231,7 +5235,7 @@ export default function ChatView(props: ChatViewProps) {
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [activeThread?.id, routeThreadKey]);
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
@@ -8373,7 +8377,7 @@ export default function ChatView(props: ChatViewProps) {
                 onCiteAssistantText={citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={activeThread.id}
+                key={routeThreadKey}
                 isWorking={isWorking}
                 isPreparingWorktree={isPreparingWorktree}
                 isCompacting={isCompacting}
