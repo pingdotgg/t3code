@@ -2127,7 +2127,10 @@ function providerFailureFromResult(
   const apiErrorStatus = message.api_error_status ?? null;
   return makeProviderFailure({
     message: listedError ?? structuredError ?? failureHint ?? message.result,
-    code: apiErrorStatus === null ? "sdk_result_error" : `api_error_${apiErrorStatus}`,
+    code:
+      apiErrorStatus === null
+        ? (message.terminal_reason ?? "sdk_result_error")
+        : `api_error_${apiErrorStatus}`,
     class: "provider_error",
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
   });
@@ -4994,10 +4997,12 @@ export function makeClaudeAdapterV2(
             });
           }
 
-          // An is_error result's text is the error message; it belongs on the
-          // terminal-failure item, not on a synthetic assistant message.
+          // Failed result text belongs on the terminal-failure item, including
+          // structured failures whose SDK result still has is_error=false.
           const resultText =
-            message.type === "result" && message.subtype === "success" && message.is_error
+            message.type === "result" &&
+            ((message.subtype === "success" && message.is_error) ||
+              terminalStatusFromResult(message) === "failed")
               ? null
               : resultTextFromSdkMessage(message);
           if (
