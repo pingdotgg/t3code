@@ -8,6 +8,7 @@ import {
   DownloadIcon,
   LockIcon,
   LockOpenIcon,
+  ExternalLinkIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -21,6 +22,9 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
+  type AcpRegistryUrlAuthAction,
+  type EnvironmentId,
+  type ProjectId,
   type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
@@ -48,6 +52,7 @@ import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/Provider
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -109,6 +114,12 @@ function providerEnvironmentsEqual(
 function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefinition> {
   if (config === null || typeof config !== "object") return [];
   return readCustomModelEntries((config as Record<string, unknown>).customModels);
+}
+
+function readConfigString(config: unknown, key: string): string | null {
+  if (config === null || typeof config !== "object") return null;
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
 /**
@@ -472,7 +483,18 @@ interface ProviderInstanceCardProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;
+  readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
+  readonly environmentId?: EnvironmentId | undefined;
+  readonly acpProjects?:
+    | ReadonlyArray<{
+        readonly id: ProjectId;
+        readonly title: string;
+        readonly workspaceRoot: string;
+      }>
+    | undefined;
 }
+
+const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 
 /**
  * Renders one provider instance as either a compact selectable list row or
@@ -481,7 +503,7 @@ interface ProviderInstanceCardProps {
  *
  * Behavior notes:
  *   - `liveProvider` is matched by the caller via `instanceId`; when no
- *     match is available (e.g. the server hasn't probed yet, or the
+ *     match is available (e.g. the server hasn't checked it yet, or the
  *     driver is not shipped by the current build) the card still renders
  *     with a neutral "checking" summary.
  *   - Unknown drivers (`driverOption === undefined`) get a read-only
@@ -514,6 +536,9 @@ export function ProviderInstanceCard({
   onModelOrderChange,
   onRunUpdate,
   isUpdating = false,
+  onAcceptUrlAuth,
+  environmentId,
+  acpProjects = EMPTY_ACP_PROJECTS,
 }: ProviderInstanceCardProps) {
   const enabled = resolveProviderInstanceEnabled(instance);
   // A locally disabled provider reads "Disabled" with a muted dot even if its
@@ -533,6 +558,7 @@ export function ProviderInstanceCard({
       : null;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const urlAuthAction = liveProvider?.auth.action;
   const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
@@ -566,7 +592,7 @@ export function ProviderInstanceCard({
     : null;
   const customModels =
     instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
-  // Server-returned models may lag behind settings writes. Treat probe
+  // Server-returned models may lag behind settings writes. Treat server
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
   const modelsForDisplay = deriveProviderModelsForDisplay({
@@ -653,6 +679,8 @@ export function ProviderInstanceCard({
       driverKind={driverKind}
       displayName={displayName}
       accentColor={accentColor}
+      acpRegistryAgentId={readConfigString(instance.config, "agentId") ?? undefined}
+      acpRegistryIconUrl={readConfigString(instance.config, "registryIconUrl") ?? undefined}
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
@@ -923,7 +951,34 @@ export function ProviderInstanceCard({
         <SettingsRow
           title="Display name"
           status={
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">{editorStatusNode}</div>
+            <>
+              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
+                {editorStatusNode}
+              </div>
+              {urlAuthAction && onAcceptUrlAuth ? (
+                <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+                  <p>{urlAuthAction.message}</p>
+                  <code className="break-all text-[11px]">{urlAuthAction.url}</code>
+                  <Button
+                    render={
+                      <a
+                        href={urlAuthAction.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => onAcceptUrlAuth(urlAuthAction)}
+                      />
+                    }
+                    size="xs"
+                    variant="outline"
+                    className="w-fit"
+                    disabled={readOnly}
+                  >
+                    <ExternalLinkIcon />
+                    Continue authentication
+                  </Button>
+                </div>
+              ) : null}
+            </>
           }
           control={
             <div
@@ -1007,6 +1062,15 @@ export function ProviderInstanceCard({
                 onRemove={removeEnvironmentField}
               />
             ))}
+            {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+              <AcpSessionManagementSection
+                environmentId={environmentId}
+                instanceId={instanceId}
+                provider={liveProvider}
+                projects={acpProjects}
+                readOnly={readOnly}
+              />
+            ) : null}
           </div>
         ) : null}
         <SettingsRow

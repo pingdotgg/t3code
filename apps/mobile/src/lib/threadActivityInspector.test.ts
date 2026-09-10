@@ -189,7 +189,7 @@ describe("buildThreadActivityInspector", () => {
       newStr: "RAW_AFTER",
     };
     const model = buildThreadActivityInspector(activityFor(item), EMPTY_V2_ITEM_SUPPORT, threadId);
-    expect(model.fileLinks).toEqual([{ label: item.fileName, path: item.fileName }]);
+    expect(model.fileLinks).toEqual([{ label: `modify ${item.fileName}`, path: item.fileName }]);
     expect(model.fields).toContainEqual({ label: "Changes", value: "+2 −1" });
     expect(model.blocks).toEqual([]);
     expect(model.structuredDetails).not.toContain("RAW_");
