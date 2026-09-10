@@ -62,34 +62,55 @@ export const make = Effect.gen(function* () {
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   };
 
+  const isWithinRequestedWorkspaceRoot = (candidate: string, root: string) => {
+    const relative = path.relative(root, candidate);
+    return (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    );
+  };
+
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
     operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
     cwd: string,
+    configuredWorkspaceRoot?: string,
   ) {
-    const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
+    const [candidate, workspaceRoot, worktreesRoot, requestedWorkspaceRoot] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
       canonicalizePath(config.worktreesDir),
+      configuredWorkspaceRoot === undefined
+        ? Effect.succeed(null)
+        : canonicalizePath(configuredWorkspaceRoot),
     ]);
 
-    if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
-      return;
+    if (!isWithinRoot(candidate, workspaceRoot) && !isWithinRoot(candidate, worktreesRoot)) {
+      return yield* new VcsRepositoryDetectionError({
+        operation,
+        cwd,
+        detail:
+          operation === "ReviewService.getDiffPreview"
+            ? "Review diff preview cwd must stay within the configured workspace root."
+            : "Review diff file contents cwd must stay within the configured workspace root.",
+      });
     }
 
-    return yield* new VcsRepositoryDetectionError({
-      operation,
-      cwd,
-      detail:
-        operation === "ReviewService.getDiffPreview"
-          ? "Review diff preview cwd must stay within the configured workspace root."
-          : "Review diff file contents cwd must stay within the configured workspace root.",
-    });
+    if (
+      requestedWorkspaceRoot !== null &&
+      !isWithinRequestedWorkspaceRoot(candidate, requestedWorkspaceRoot)
+    ) {
+      return yield* new VcsRepositoryDetectionError({
+        operation,
+        cwd,
+        detail: "The selected repository must stay inside the project folder.",
+      });
+    }
   });
 
   const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
   )(function* (input) {
-    yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd);
+    yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd, input.workspaceRoot);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) {
@@ -118,7 +139,11 @@ export const make = Effect.gen(function* () {
   const getDiffFileContents: ReviewService["Service"]["getDiffFileContents"] = Effect.fn(
     "ReviewService.getDiffFileContents",
   )(function* (input) {
-    yield* assertWorkspaceBoundCwd("ReviewService.getDiffFileContents", input.cwd);
+    yield* assertWorkspaceBoundCwd(
+      "ReviewService.getDiffFileContents",
+      input.cwd,
+      input.workspaceRoot,
+    );
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (handle?.kind !== "git") {

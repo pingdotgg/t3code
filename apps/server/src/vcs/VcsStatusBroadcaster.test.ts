@@ -588,6 +588,104 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects configured status paths that canonically escape before loading status",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const serverRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-status-server-",
+        });
+        const workspaceRoot = path.join(serverRoot, "workspace");
+        const siblingRepository = path.join(serverRoot, "sibling-repository");
+        const outsideRepository = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-status-outside-",
+        });
+        yield* fileSystem.makeDirectory(workspaceRoot);
+        yield* fileSystem.makeDirectory(siblingRepository);
+        const siblingLink = path.join(workspaceRoot, "frontend");
+        const outsideLink = path.join(workspaceRoot, "external");
+        yield* fileSystem.symlink(siblingRepository, siblingLink);
+        yield* fileSystem.symlink(outsideRepository, outsideLink);
+
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const getError = yield* broadcaster
+          .getStatus({ cwd: siblingLink, workspaceRoot })
+          .pipe(Effect.flip);
+        assert.strictEqual(getError._tag, "GitManagerError");
+        if (getError._tag !== "GitManagerError") return;
+        assert.strictEqual(getError.operation, "VcsStatusBroadcaster.getStatus");
+        assert.match(getError.detail, /selected repository must stay inside the project folder/);
+
+        const streamError = yield* broadcaster
+          .streamStatus({ cwd: outsideLink, workspaceRoot })
+          .pipe(Stream.runHead, Effect.flip);
+        assert.strictEqual(streamError._tag, "GitManagerError");
+        if (streamError._tag !== "GitManagerError") return;
+        assert.strictEqual(streamError.operation, "VcsStatusBroadcaster.streamStatus");
+
+        const refreshError = yield* broadcaster
+          .refreshStatus(siblingLink, { workspaceRoot })
+          .pipe(Effect.flip);
+        assert.strictEqual(refreshError._tag, "GitManagerError");
+        if (refreshError._tag !== "GitManagerError") return;
+        assert.strictEqual(refreshError.operation, "VcsStatusBroadcaster.refreshStatus");
+        assert.equal(state.localStatusCalls, 0);
+        assert.equal(state.remoteStatusCalls, 0);
+        assert.equal(state.localInvalidationCalls, 0);
+        assert.equal(state.remoteInvalidationCalls, 0);
+      }).pipe(Effect.provide(makeTestLayer(state)));
+    },
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "allows nested status paths and preserves unscoped status reads",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-status-workspace-",
+        });
+        const nestedRepository = path.join(workspaceRoot, "backend");
+        const outsideRepository = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-status-unscoped-",
+        });
+        const outsideLink = path.join(workspaceRoot, "frontend");
+        yield* fileSystem.makeDirectory(nestedRepository);
+        yield* fileSystem.symlink(outsideRepository, outsideLink);
+
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        assert.deepStrictEqual(
+          yield* broadcaster.getStatus({ cwd: nestedRepository, workspaceRoot }),
+          baseStatus,
+        );
+        assert.deepStrictEqual(yield* broadcaster.getStatus({ cwd: outsideLink }), baseStatus);
+        assert.equal(state.localStatusCalls, 2);
+        assert.equal(state.remoteStatusCalls, 2);
+      }).pipe(Effect.provide(makeTestLayer(state)));
+    },
+  );
+
   it.effect("streams a local snapshot first and remote updates later", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

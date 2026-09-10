@@ -6,6 +6,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -21,6 +22,7 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
+import { GitManagerError } from "@t3tools/contracts";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -141,6 +143,10 @@ interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
 }
 
+interface RefreshStatusOptions {
+  readonly workspaceRoot?: string;
+}
+
 export class VcsAutoPullPolicy extends Context.Reference<{
   readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
 }>("t3/vcs/VcsAutoPullPolicy", {
@@ -184,7 +190,10 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
-    readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly refreshStatus: (
+      cwd: string,
+      options?: RefreshStatusOptions,
+    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     /**
      * Refresh a loaded cwd after a turn if background policy allows it.
      * GitManager retries missing PRs for the current branch and keeps known
@@ -215,6 +224,7 @@ export const make = Effect.gen(function* () {
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
@@ -236,6 +246,40 @@ export const make = Effect.gen(function* () {
     return lock.withPermits(1)(effect);
   };
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+
+  const assertConfiguredWorkspaceBoundCwd = Effect.fn(
+    "VcsStatusBroadcaster.assertConfiguredWorkspaceBoundCwd",
+  )(function* (input: VcsStatusInput, operation: string) {
+    if (input.workspaceRoot === undefined) return;
+
+    const [candidate, workspaceRoot] = yield* Effect.all([
+      fs.realPath(path.resolve(input.cwd)),
+      fs.realPath(path.resolve(input.workspaceRoot)),
+    ]).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: `${operation}.canonicalizePath`,
+            cwd: input.cwd,
+            detail: "Failed to resolve a path while validating the configured workspace root.",
+            cause,
+          }),
+      ),
+    );
+    const relative = path.relative(workspaceRoot, candidate);
+    if (
+      relative === "" ||
+      (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+    ) {
+      return;
+    }
+
+    return yield* new GitManagerError({
+      operation,
+      cwd: input.cwd,
+      detail: "The selected repository must stay inside the project folder.",
+    });
+  });
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -367,6 +411,7 @@ export const make = Effect.gen(function* () {
   const getStatus: VcsStatusBroadcaster["Service"]["getStatus"] = Effect.fn(
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
+    yield* assertConfiguredWorkspaceBoundCwd(input, "VcsStatusBroadcaster.getStatus");
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
@@ -464,7 +509,14 @@ export const make = Effect.gen(function* () {
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd) {
+  )(function* (rawCwd, options) {
+    yield* assertConfiguredWorkspaceBoundCwd(
+      {
+        cwd: rawCwd,
+        ...(options?.workspaceRoot === undefined ? {} : { workspaceRoot: options.workspaceRoot }),
+      },
+      "VcsStatusBroadcaster.refreshStatus",
+    );
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
@@ -689,6 +741,7 @@ export const make = Effect.gen(function* () {
   const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input, options) =>
     Stream.unwrap(
       Effect.gen(function* () {
+        yield* assertConfiguredWorkspaceBoundCwd(input, "VcsStatusBroadcaster.streamStatus");
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);

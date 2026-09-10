@@ -71,8 +71,31 @@ describe("T3ProjectFile", () => {
     expect(
       decode({ repositories: [{ path: "." }, { path: "services/api" }] }).repositories,
     ).toEqual([{ path: "." }, { path: "services/api" }]);
+    expect(decode({ repositories: [{ path: "frontend" }] }).repositories).toEqual([
+      { path: "frontend" },
+    ]);
+    expect(decode({ repositories: [{ path: " frontend " }] }).repositories).toEqual([
+      { path: "frontend" },
+    ]);
     expect(() => decode({ repositories: [{ path: "../outside" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: " ../outside" }] })).toThrow();
     expect(() => decode({ repositories: [{ path: "services/../outside" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: " ~/client" }] })).toThrow();
     expect(() => decode({ repositories: [{ path: "/absolute" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: " /absolute" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "frontend/../.." }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: " C:/outside" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "   " }] })).toThrow();
+  });
+
+  it("rejects repository paths that could escape the workspace via ~ or drive letters", () => {
+    expect(() => decode({ repositories: [{ path: "~" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "~/client" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "~user/client" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "C:" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "C:/Users/foo" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "C:foo" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "services/C:api" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "foo\x01bar" }] })).toThrow();
   });
 });

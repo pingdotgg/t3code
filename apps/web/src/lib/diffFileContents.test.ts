@@ -9,6 +9,7 @@ import { createGitDiffFileContentsLoader } from "./diffFileContents";
 const SOURCE = {
   environmentId: EnvironmentId.make("environment-1"),
   cwd: "/workspace",
+  workspaceRoot: "/workspace",
   sourceKind: "branch-range" as const,
   baseRef: "main",
   headRef: "feature",
@@ -46,6 +47,7 @@ describe("createGitDiffFileContentsLoader", () => {
       environmentId: "environment-1",
       input: {
         cwd: "/workspace",
+        workspaceRoot: "/workspace",
         sourceKind: "branch-range",
         changeType: "rename-changed",
         baseRef: "main",

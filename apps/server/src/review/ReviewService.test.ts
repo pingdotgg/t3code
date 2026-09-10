@@ -3,7 +3,9 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -106,6 +108,72 @@ describe("ReviewService", () => {
       assert.deepStrictEqual(result.sources, []);
       assert.deepStrictEqual(detectCalls, [{ cwd: workspaceRoot }]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "enforces a requested project workspace root with canonical paths",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const serverRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-server-" });
+        const projectRoot = path.join(serverRoot, "workspace");
+        const nestedRepository = path.join(projectRoot, "backend");
+        const siblingRepository = path.join(serverRoot, "sibling-repository");
+        const outsideRepository = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-review-outside-",
+        });
+        yield* fs.makeDirectory(projectRoot);
+        yield* fs.makeDirectory(nestedRepository);
+        yield* fs.makeDirectory(siblingRepository);
+        const siblingLink = path.join(projectRoot, "frontend");
+        const outsideLink = path.join(projectRoot, "external");
+        yield* fs.symlink(siblingRepository, siblingLink);
+        yield* fs.symlink(outsideRepository, outsideLink);
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+        const detectCalls: Array<{ readonly cwd: string }> = [];
+
+        const result = yield* Effect.gen(function* () {
+          const review = yield* ReviewService.ReviewService;
+          const unscoped = yield* review.getDiffPreview({ cwd: siblingLink });
+          const siblingError = yield* review
+            .getDiffPreview({ cwd: siblingLink, workspaceRoot: projectRoot })
+            .pipe(Effect.flip);
+          const contentsError = yield* review
+            .getDiffFileContents({
+              cwd: siblingLink,
+              workspaceRoot: projectRoot,
+              sourceKind: "working-tree",
+              changeType: "change",
+              baseRef: "HEAD",
+              headRef: null,
+              oldPath: "file.ts",
+              newPath: "file.ts",
+            })
+            .pipe(Effect.flip);
+          const nested = yield* review.getDiffPreview({
+            cwd: nestedRepository,
+            workspaceRoot: projectRoot,
+          });
+          const outsideError = yield* review
+            .getDiffPreview({ cwd: outsideLink, workspaceRoot: projectRoot })
+            .pipe(Effect.flip);
+          return { unscoped, siblingError, contentsError, nested, outsideError };
+        }).pipe(Effect.provide(makeLayer({ workspaceRoot: serverRoot, baseDir, detectCalls })));
+
+        assert.deepStrictEqual(result.unscoped.sources, []);
+        assert.strictEqual(result.siblingError._tag, "VcsRepositoryDetectionError");
+        if (result.siblingError._tag !== "VcsRepositoryDetectionError") return;
+        assert.match(result.siblingError.detail, /selected repository must stay inside/);
+        assert.strictEqual(result.contentsError._tag, "VcsRepositoryDetectionError");
+        if (result.contentsError._tag !== "VcsRepositoryDetectionError") return;
+        assert.match(result.contentsError.detail, /selected repository must stay inside/);
+        assert.deepStrictEqual(result.nested.sources, []);
+        assert.strictEqual(result.outsideError._tag, "VcsRepositoryDetectionError");
+        if (result.outsideError._tag !== "VcsRepositoryDetectionError") return;
+        assert.match(result.outsideError.detail, /configured workspace root/);
+        assert.deepStrictEqual(detectCalls, [{ cwd: siblingLink }, { cwd: nestedRepository }]);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves unexpected path-resolution failures", () =>

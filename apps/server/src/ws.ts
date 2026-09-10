@@ -2402,7 +2402,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            vcsStatusBroadcaster.refreshStatus(
+              input.cwd,
+              input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot },
+            ),
             {
               "rpc.aggregate": "vcs",
             },

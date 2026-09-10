@@ -35,11 +35,38 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "$schema",
       "defaultThreadEnvMode",
       "iconPath",
+      "repositories",
       "scripts",
     ]);
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
     expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
+
+    const repository = schema.properties.repositories?.items;
+    expect(repository?.required).toEqual(["path"]);
+    expect(Object.keys(repository?.properties ?? {}).sort()).toEqual(["name", "path"]);
+    const repositoryPath = repository?.properties.path as {
+      allOf?: ReadonlyArray<Record<string, unknown>>;
+    };
+    const repositoryPattern = repositoryPath.allOf?.find(
+      (constraint): constraint is { pattern: string } => typeof constraint.pattern === "string",
+    )?.pattern;
+    expect(repositoryPattern).toBeDefined();
+    const matchesWorkspaceRelativePath = new RegExp(repositoryPattern ?? "(?!)");
+    expect(matchesWorkspaceRelativePath.test("services/api")).toBe(true);
+    expect(matchesWorkspaceRelativePath.test(" frontend ")).toBe(true);
+    for (const invalidPath of [
+      "../outside",
+      "C:/outside",
+      " ../outside ",
+      " ~/outside ",
+      " /outside ",
+      " .. ",
+      "services/.. ",
+      "   ",
+    ]) {
+      expect(matchesWorkspaceRelativePath.test(invalidPath), invalidPath).toBe(false);
+    }
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);

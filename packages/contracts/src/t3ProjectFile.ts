@@ -13,8 +13,14 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
 const T3_PROJECT_FILE_MAX_REPOSITORIES = 20;
-const WORKSPACE_RELATIVE_PATH_PATTERN =
-  /^(?:\.|(?:(?!\.{1,2}(?:\/|$))[^/\\]+)(?:\/(?:(?!\.{1,2}(?:\/|$))[^/\\]+))*)$/;
+// Each path segment must not be "." or "..", must not start with "~" (blocks
+// shell/home-directory expansion), and must not contain "/", "\", ":" (blocks
+// Windows drive letters like "C:" and NTFS alternate data streams like
+// "foo:bar"), or ASCII control characters.
+const WORKSPACE_RELATIVE_PATH_SEGMENT = "(?:(?!\\.{1,2}(?:/|\\s*$))(?!~)[^/\\\\:\\x00-\\x1f]+)";
+const WORKSPACE_RELATIVE_PATH_PATTERN = new RegExp(
+  `^\\s*(?!\\s)(?:\\.|${WORKSPACE_RELATIVE_PATH_SEGMENT}(?:/${WORKSPACE_RELATIVE_PATH_SEGMENT})*)\\s*$`,
+);
 
 // Annotations go on the encoded (string) side so they survive into the
 // published JSON Schema; decoding still trims and re-validates non-emptiness.
@@ -62,18 +68,23 @@ export const T3ProjectFileScript = Schema.Struct({
 });
 export type T3ProjectFileScript = typeof T3ProjectFileScript.Type;
 
+const workspaceRelativePath = Schema.String.annotate({
+  description:
+    'Workspace-relative Git repository path, such as "frontend" or "services/api". Use "." for the workspace root.',
+}).check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(T3_PROJECT_FILE_PATH_MAX_LENGTH),
+  Schema.isPattern(WORKSPACE_RELATIVE_PATH_PATTERN),
+);
+
 /**
  * A Git repository inside a project workspace. Paths are intentionally relative
  * so opening a shared workspace cannot grant the UI access outside it.
  */
 export const T3ProjectFileRepository = Schema.Struct({
-  path: trimmedNonEmpty(
-    {
-      description:
-        'Workspace-relative Git repository path, such as "frontend" or "services/api". Use "." for the workspace root.',
-    },
-    T3_PROJECT_FILE_PATH_MAX_LENGTH,
-  ).check(Schema.isPattern(WORKSPACE_RELATIVE_PATH_PATTERN)),
+  path: workspaceRelativePath.pipe(
+    Schema.decodeTo(workspaceRelativePath, SchemaTransformation.trim()),
+  ),
   name: Schema.optionalKey(
     trimmedNonEmpty(
       {

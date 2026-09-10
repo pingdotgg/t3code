@@ -27,10 +27,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { type DraftId } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
+import { openDiffFilePrimaryAction, resolveConfiguredRepositoryRoot } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import {
+  selectThreadDiffPanelSelection,
+  selectThreadDiffRepositoryPath,
+  useDiffPanelStore,
+} from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useTheme } from "../hooks/useTheme";
 import { useT3ProjectFileState } from "../hooks/useT3ProjectFileScripts";
@@ -51,6 +55,11 @@ import { useProject, useThread } from "../state/entities";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
+import {
+  resolveNestedDiffRepositoryPath,
+  resolveUnresolvableRepositoryMessage,
+  shouldRetryDiffPreviewAtEnvironmentCwd,
+} from "./DiffPanel.logic";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
@@ -86,7 +95,6 @@ import { reviewEnvironment } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
-import { resolvePathLinkTarget } from "../terminal-links";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -127,7 +135,6 @@ export default function DiffPanel({
     Schema.Boolean,
   );
   const [baseRefQuery, setBaseRefQuery] = useState("");
-  const [selectedRepositoryPath, setSelectedRepositoryPath] = useState<string | null>(null);
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
     fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
@@ -162,16 +169,47 @@ export default function DiffPanel({
     activeThread?.worktreePath === null || activeThread?.worktreePath === undefined
       ? (projectFile.file?.repositories ?? [])
       : [];
-  const effectiveRepositoryPath = selectedRepositoryPath ?? configuredRepositories[0]?.path ?? null;
+  // Repository state follows its actual path, including the configured default.
+  // Only the workspace root retains the legacy bare thread key.
+  const selectedRepositoryPath = useDiffPanelStore((state) =>
+    selectThreadDiffRepositoryPath(
+      state.selectedRepositoryByThreadKey,
+      routeThreadRef,
+      configuredRepositories,
+    ),
+  );
+  const effectiveRepositoryPath = selectedRepositoryPath ?? ".";
   const selectedRepository = configuredRepositories.find(
     (repository) => repository.path === effectiveRepositoryPath,
   );
+  const diffSelection = useDiffPanelStore((state) =>
+    selectThreadDiffPanelSelection(
+      state.byThreadKey,
+      routeThreadRef,
+      selectedRepositoryPath,
+      initialGitScope === "unstaged",
+    ),
+  );
+  const nestedRepositoryPath = resolveNestedDiffRepositoryPath({
+    isTurnSelected: diffSelection.kind === "turn",
+    repositoryPath: selectedRepository?.path,
+  });
+  const nestedRepositoryRoot =
+    nestedRepositoryPath !== null && activeCwd
+      ? resolveConfiguredRepositoryRoot(nestedRepositoryPath, activeCwd)
+      : null;
+  // A configured repository path we cannot resolve inside the workspace leaves us
+  // without a working directory on purpose: falling back to the workspace root
+  // would show and open a different repository's files than the selection claims.
   const activeGitCwd =
-    activeCwd && selectedRepository
-      ? selectedRepository.path === "."
-        ? activeCwd
-        : resolvePathLinkTarget(selectedRepository.path, activeCwd)
-      : activeCwd;
+    nestedRepositoryPath !== null ? (nestedRepositoryRoot ?? undefined) : activeCwd;
+  // Nested repositories report diff paths relative to their own root, while a
+  // workspace nested inside a larger repository reports them relative to that
+  // enclosing repository.
+  const diffRepositoryRoot =
+    nestedRepositoryPath !== null ? (nestedRepositoryRoot ?? undefined) : activeRepositoryRoot;
+  const hasUnresolvableRepository = nestedRepositoryPath !== null && nestedRepositoryRoot === null;
+  const configuredWorkspaceRoot = nestedRepositoryPath !== null ? activeCwd : undefined;
   const selectedRepositoryLabel =
     selectedRepository?.name ?? selectedRepository?.path ?? "Workspace";
   const serverConfig = useAtomValue(
@@ -186,16 +224,12 @@ export default function DiffPanel({
     activeThread !== null && activeThread !== undefined && activeGitCwd != null
       ? vcsEnvironment.status({
           environmentId: activeThread.environmentId,
-          input: { cwd: activeGitCwd },
+          input: {
+            cwd: activeGitCwd,
+            ...(configuredWorkspaceRoot ? { workspaceRoot: configuredWorkspaceRoot } : {}),
+          },
         })
       : null,
-  );
-  const diffSelection = useDiffPanelStore((state) =>
-    selectThreadDiffPanelSelection(
-      state.byThreadKey,
-      routeThreadRef,
-      initialGitScope === "unstaged",
-    ),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -287,17 +321,20 @@ export default function DiffPanel({
           environmentId: activeThread.environmentId,
           input: {
             cwd: activeGitCwd,
+            ...(configuredWorkspaceRoot ? { workspaceRoot: configuredWorkspaceRoot } : {}),
             ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
             ignoreWhitespace: diffIgnoreWhitespace,
           },
         })
       : null,
   );
-  const shouldRetryBranchDiffAtEnvironmentCwd =
-    selectedTurnId === null &&
-    primaryBranchDiffPreview.error?.includes("configured workspace root") === true &&
-    serverConfig?.cwd !== undefined &&
-    serverConfig.cwd !== activeGitCwd;
+  const shouldRetryBranchDiffAtEnvironmentCwd = shouldRetryDiffPreviewAtEnvironmentCwd({
+    isTurnSelected: selectedTurnId !== null,
+    nestedRepositoryPath,
+    previewError: primaryBranchDiffPreview.error,
+    environmentCwd: serverConfig?.cwd,
+    activeGitCwd,
+  });
   const fallbackBranchDiffPreview = useEnvironmentQuery(
     shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
       ? reviewEnvironment.diffPreview({
@@ -346,6 +383,7 @@ export default function DiffPanel({
     return createGitDiffFileContentsLoader(getDiffFileContents, {
       environmentId: activeThread.environmentId,
       cwd: preview.cwd,
+      ...(configuredWorkspaceRoot ? { workspaceRoot: configuredWorkspaceRoot } : {}),
       sourceKind: selectedGitSource.kind,
       baseRef: selectedGitSource.baseRef,
       headRef: selectedGitSource.headRef,
@@ -354,6 +392,7 @@ export default function DiffPanel({
   }, [
     activeThread,
     branchDiffPreview.data,
+    configuredWorkspaceRoot,
     getDiffFileContents,
     selectedGitSource,
     selectedTurnId,
@@ -421,6 +460,11 @@ export default function DiffPanel({
     ? activeCheckpointDiff.isPending
     : branchDiffPreview.isPending;
   const selectedPatchError = selectedTurn ? activeCheckpointDiff.error : branchDiffPreview.error;
+  const unresolvableRepositoryMessage = resolveUnresolvableRepositoryMessage({
+    isTurnSelected: selectedTurnId !== null,
+    hasUnresolvableRepository,
+    repositoryPath: nestedRepositoryPath,
+  });
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
@@ -499,14 +543,19 @@ export default function DiffPanel({
 
   const openDiffFile = useCallback(
     (filePath: string) => {
+      // Without a resolvable repository root the diff path cannot be re-based onto
+      // the workspace, and opening it as-is would land on an unrelated file.
+      if (hasUnresolvableRepository) return;
       openDiffFilePrimaryAction({
         threadRef: routeThreadRef,
         filePath,
         activeCwd,
-        repositoryRoot:
-          selectedRepository && activeCwd && selectedRepository.path !== "."
-            ? resolvePathLinkTarget(selectedRepository.path, activeCwd)
-            : activeRepositoryRoot,
+        repositoryRoot: diffRepositoryRoot
+          ? {
+              path: diffRepositoryRoot,
+              kind: nestedRepositoryPath !== null ? "configured" : "detected",
+            }
+          : undefined,
         openInEditor: (targetPath) => {
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
@@ -526,7 +575,14 @@ export default function DiffPanel({
         },
       });
     },
-    [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef, selectedRepository],
+    [
+      activeCwd,
+      diffRepositoryRoot,
+      hasUnresolvableRepository,
+      nestedRepositoryPath,
+      openInPreferredEditor,
+      routeThreadRef,
+    ],
   );
   const toggleDiffFileCollapsed = useCallback(
     (fileKey: string) => {
@@ -558,20 +614,23 @@ export default function DiffPanel({
 
   const selectTurn = (turnId: TurnId) => {
     if (!routeThreadRef) return;
-    setSelectedRepositoryPath(null);
+    // The store drops the repository override, so a turn opened from the chat
+    // timeline lands on the same key the panel reads.
     useDiffPanelStore.getState().selectTurn(routeThreadRef, turnId);
   };
   const selectGitScope = (scope: "branch" | "unstaged") => {
     if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
+    useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope, selectedRepositoryPath);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
-    useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+    useDiffPanelStore
+      .getState()
+      .selectBranchBaseRef(routeThreadRef, baseRef, selectedRepositoryPath);
   };
   const selectRepository = (path: string) => {
     if (!routeThreadRef) return;
-    setSelectedRepositoryPath(path);
+    useDiffPanelStore.getState().selectRepository(routeThreadRef, path);
   };
 
   const headerRow = (
@@ -966,9 +1025,11 @@ export default function DiffPanel({
                 incomplete.
               </p>
             )}
-            {selectedPatchError && !renderablePatch && (
+            {(selectedPatchError ?? unresolvableRepositoryMessage) && !renderablePatch && (
               <div className="px-3">
-                <p className="mb-2 text-[11px] text-error/80">{selectedPatchError}</p>
+                <p className="mb-2 text-[11px] text-error/80">
+                  {selectedPatchError ?? unresolvableRepositoryMessage}
+                </p>
               </div>
             )}
             {!renderablePatch ? (
