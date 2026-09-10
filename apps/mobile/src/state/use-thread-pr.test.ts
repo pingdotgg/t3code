@@ -88,6 +88,7 @@ describe("presentThreadLinkedPullRequests", () => {
     expect(presentThreadLinkedPullRequests([linkedPr(1), linkedPr(2)])).toMatchObject({
       kind: "pull-request",
       label: "+2",
+      others: 1,
       textClassName: "text-foreground-muted",
     });
   });
