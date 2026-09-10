@@ -226,11 +226,22 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     applyModelSelection: ({ runtime, startResult, modelSelection }) =>
-      applyGrokAcpModelSelection({
-        runtime,
-        currentModelId: currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult),
-        requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
-        mapError: (cause) => cause,
+      Effect.gen(function* () {
+        const legacy = startResult.initializeResult.protocolVersion === 1;
+        const options = legacy ? [] : yield* runtime.getConfigOptions;
+        const configuredModel = options.find((option) => option.category === "model")?.currentValue;
+        return yield* applyGrokAcpModelSelection({
+          runtime: legacy
+            ? runtime
+            : { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+          currentModelId: legacy
+            ? currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult)
+            : typeof configuredModel === "string"
+              ? configuredModel
+              : undefined,
+          requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
+          mapError: (cause) => cause,
+        });
       }),
     makeRuntime:
       options.makeRuntime ??

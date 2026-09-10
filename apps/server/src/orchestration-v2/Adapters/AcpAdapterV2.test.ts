@@ -2694,7 +2694,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  for (const model of ["grok-build", "grok-mock-alt"]) {
+  for (const model of ["grok-build", "composer-2"]) {
     it.effect(`Grok configures the native session for ${model}`, () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -2729,9 +2729,16 @@ describe("AcpAdapterV2", () => {
             cwd: process.cwd(),
           }),
         });
-        const methods = yield* pollProtocolMethods(protocolEvents);
+        const requests = (yield* Queue.takeAll(protocolEvents)).map(rawProtocolRequest);
         assert.equal(
-          methods.filter((method) => method === "session/set_model").length,
+          requests.filter(
+            (request) =>
+              request?.method === "session/set_config_option" &&
+              typeof request.params === "object" &&
+              request.params !== null &&
+              "configId" in request.params &&
+              request.params.configId === "model",
+          ).length,
           model === "grok-build" ? 0 : 1,
         );
       }).pipe(Effect.provide(testLayer), Effect.scoped),
@@ -2771,18 +2778,18 @@ describe("AcpAdapterV2", () => {
       const runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("grok-model-switch-back"),
-        modelSelection: { instanceId, model: "grok-mock-alt" },
+        modelSelection: { instanceId, model: "composer-2" },
         runtimePolicy,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
-        modelSelection: { instanceId, model: "grok-mock-alt" },
+        modelSelection: { instanceId, model: "composer-2" },
         runtimePolicy,
       });
-      // The mock session starts on grok-4.6. Switching away and explicitly
-      // back must re-send session/set_model; stale setup metadata used to make
+      // The mock session starts on default. Switching away and explicitly
+      // back must send the model configuration change; stale metadata can make
       // the return trip a silent no-op that left the session on the alt model.
-      for (const model of ["grok-4.6", "grok-mock-alt"]) {
+      for (const model of ["default", "composer-2"]) {
         yield* runtime.startTurn(
           makeTurnInput({
             threadId,
@@ -2798,8 +2805,18 @@ describe("AcpAdapterV2", () => {
           Stream.runHead,
         );
       }
-      const methods = yield* pollProtocolMethods(protocolEvents);
-      assert.equal(methods.filter((method) => method === "session/set_model").length, 3);
+      const requests = (yield* Queue.takeAll(protocolEvents)).map(rawProtocolRequest);
+      assert.equal(
+        requests.filter(
+          (request) =>
+            request?.method === "session/set_config_option" &&
+            typeof request.params === "object" &&
+            request.params !== null &&
+            "configId" in request.params &&
+            request.params.configId === "model",
+        ).length,
+        3,
+      );
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
