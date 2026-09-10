@@ -1,3 +1,8 @@
+import {
+  normalizeDevinSessionUpdate,
+  normalizeDevinToolCall,
+  extractDevinSubagentUpdate,
+} from "./DevinAcp.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -759,6 +764,212 @@ describe("AcpAdapterV2", () => {
         snapshot.messages.map((message) => message.text),
         ["before plan", "after plan"],
       );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  it.effect("keeps Devin parent paragraphs intact while projecting native child work", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("devin-replay");
+      const adapter = makeAcpAdapterV2({
+        instanceId,
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator,
+        serverConfig: yield* ServerConfig,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeToolCall: normalizeDevinToolCall,
+          extractSubagentUpdate: extractDevinSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  assert.isDefined(handler);
+                  // Production thread 54aeb6d7 split after "(command". Metadata shapes
+                  // below were captured from live Devin sessions showy-mile/fragrant-chamomile.
+                  const updates = [
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "in_progress",
+                      _meta: {
+                        "cognition.ai/subagent_started": {
+                          agentId: "child-a",
+                          title: "Map orchestration",
+                          task: "Run pwd, then reply ONE.",
+                          model: "SWE-1.7 Medium",
+                          depth: 1,
+                          isBackground: true,
+                        },
+                      },
+                    },
+                    {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Map orchestration (command" },
+                      _meta: { "cognition.ai/streamingMessageId": "parent-message" },
+                    },
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "parent-tool",
+                      status: "completed",
+                      title: "Parent tool finished",
+                    },
+                    {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "child-pwd",
+                      title: "Tool",
+                      kind: "execute",
+                      status: "in_progress",
+                      rawInput: { command: "pwd" },
+                      _meta: {
+                        "cognition.ai/inferenceToolName": "exec",
+                        "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                      },
+                    },
+                    {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: " → decider → event)." },
+                      _meta: { "cognition.ai/streamingMessageId": "parent-message" },
+                    },
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-pwd",
+                      status: "completed",
+                      rawOutput: "probe-workspace",
+                      _meta: { "cognition.ai/subagent_context": { parentAgentId: "child-a" } },
+                    },
+                    {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "ONE" },
+                      _meta: {
+                        "cognition.ai/streamingMessageId": "child-result",
+                        "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                      },
+                    },
+                    {
+                      sessionUpdate: "tool_call",
+                      toolCallId: "child-later",
+                      title: "Later tool",
+                      status: "completed",
+                      _meta: { "cognition.ai/subagent_context": { parentAgentId: "child-a" } },
+                    },
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "completed",
+                      _meta: {
+                        "cognition.ai/subagent_completed": {
+                          agentId: "child-a",
+                          success: true,
+                          summary: "ONE",
+                          depth: 1,
+                        },
+                      },
+                    },
+                  ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                  for (const update of updates)
+                    yield* handler!({ sessionId: "mock-session-1", update });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("devin-replay-parent");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("devin-replay-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const parentMessages = items.filter(
+        (item) => item.threadId === threadId && item.type === "assistant_message",
+      );
+      assert.equal(new Set(parentMessages.map((item) => item.id)).size, 1);
+      const lastParent = parentMessages.at(-1);
+      assert.equal(
+        lastParent?.type === "assistant_message" ? lastParent.text : undefined,
+        "Map orchestration (command → decider → event).",
+      );
+      const tasks = events.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent] : [],
+      );
+      const task = tasks.at(-1);
+      assert.equal(task?.status, "completed");
+      assert.equal(task?.result, "ONE");
+      assert.equal(task?.prompt, "Run pwd, then reply ONE.");
+      assert.isTrue(
+        items.some(
+          (item) =>
+            item.threadId === task?.childThreadId &&
+            item.type === "user_message" &&
+            item.text === task.prompt,
+        ),
+      );
+      assert.isTrue(
+        items.some(
+          (item) =>
+            item.threadId === task?.childThreadId &&
+            item.type === "dynamic_tool" &&
+            item.status === "completed" &&
+            item.output === "probe-workspace",
+        ),
+      );
+      const childAnswers = items.filter(
+        (item) => item.threadId === task?.childThreadId && item.type === "assistant_message",
+      );
+      assert.equal(new Set(childAnswers.map((item) => item.ordinal)).size, 1);
+      const parentTools = items.filter(
+        (item) => item.threadId === threadId && item.type === "dynamic_tool",
+      );
+      assert.equal(parentTools.length, 1);
+      assert.equal(parentTools[0]?.title, "Parent tool finished");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
@@ -1567,6 +1778,7 @@ describe("AcpAdapterV2", () => {
               "acp-mcp-bridge",
             ],
             env: [
+              { name: "ELECTRON_RUN_AS_NODE", value: "1" },
               { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:43123/mcp" },
               { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer target-thread-token" },
             ],
