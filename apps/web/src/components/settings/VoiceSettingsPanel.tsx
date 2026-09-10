@@ -206,17 +206,18 @@ export function VoiceSettingsPanel() {
     return () => window.clearInterval(timer);
   }, [operation, refreshModels]);
 
+  const reportModelError = (error: unknown) => {
+    toastManager.add({
+      type: "error",
+      title: "Could not update transcription model",
+      description: error instanceof Error ? error.message : String(error),
+    });
+  };
   const runModelOperation = (modelId: string, run: () => Promise<unknown>) => {
     setOperation(modelId);
     void run()
       .then(refreshModels)
-      .catch((error) =>
-        toastManager.add({
-          type: "error",
-          title: "Could not update transcription model",
-          description: error instanceof Error ? error.message : String(error),
-        }),
-      )
+      .catch(reportModelError)
       .finally(() => setOperation(null));
   };
   const selectedIsUnavailable = Boolean(
@@ -377,6 +378,7 @@ export function VoiceSettingsPanel() {
                         void runtime
                           .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
                           .then(refreshModels)
+                          .catch(reportModelError)
                       }
                       onDelete={() =>
                         void ensureLocalApi()
@@ -428,6 +430,7 @@ export function VoiceSettingsPanel() {
                         void runtime
                           .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
                           .then(refreshModels)
+                          .catch(reportModelError)
                       }
                       onDelete={() => undefined}
                     />
