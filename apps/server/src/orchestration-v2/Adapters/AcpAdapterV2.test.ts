@@ -12,6 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
+  GrokSettings,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -87,6 +88,10 @@ import {
   type AcpAdapterV2RuntimeInput,
   type AcpAdapterV2SubagentUpdate,
 } from "./AcpAdapterV2.ts";
+
+import { makeGrokAdapterV2 } from "./GrokAdapterV2.ts";
+
+const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-acp-v2-adapter-",
@@ -2687,6 +2692,132 @@ describe("AcpAdapterV2", () => {
       const finalizerMethods = yield* pollProtocolMethods(protocolEvents);
       assert.equal(finalizerMethods.filter((method) => method === "session/close").length, 1);
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  for (const model of ["grok-build", "composer-2"]) {
+    it.effect(`Grok configures the native session for ${model}`, () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocatorV2;
+        const path = yield* Path.Path;
+        const serverConfig = yield* ServerConfig;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const instanceId = ProviderInstanceId.make("grok-test");
+        const adapter = makeGrokAdapterV2({
+          instanceId,
+          settings: DEFAULT_GROK_SETTINGS,
+          environment: {},
+          hostPlatform: yield* HostProcessPlatform,
+          childProcessSpawner,
+          crypto: yield* Crypto.Crypto,
+          fileSystem,
+          idAllocator,
+          serverConfig,
+          makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+        });
+        yield* adapter.openSession({
+          threadId: ThreadId.make(`grok-model-${model}`),
+          providerSessionId: ProviderSessionId.make(`grok-model-${model}`),
+          modelSelection: { instanceId, model },
+          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+        });
+        const requests = (yield* Queue.takeAll(protocolEvents)).map(rawProtocolRequest);
+        assert.equal(
+          requests.filter(
+            (request) =>
+              request?.method === "session/set_config_option" &&
+              typeof request.params === "object" &&
+              request.params !== null &&
+              "configId" in request.params &&
+              request.params.configId === "model",
+          ).length,
+          model === "grok-build" ? 0 : 1,
+        );
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+    );
+  }
+
+  it.live("Grok reapplies an explicit return to the session's setup-time model", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("grok-test-switch-back");
+      const adapter = makeGrokAdapterV2({
+        instanceId,
+        settings: DEFAULT_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: yield* HostProcessPlatform,
+        childProcessSpawner,
+        crypto: yield* Crypto.Crypto,
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        makeRuntime: makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents }),
+      });
+      const threadId = ThreadId.make("grok-model-switch-back");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-model-switch-back"),
+        modelSelection: { instanceId, model: "composer-2" },
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: { instanceId, model: "composer-2" },
+        runtimePolicy,
+      });
+      // The mock session starts on default. Switching away and explicitly
+      // back must send the model configuration change; stale metadata can make
+      // the return trip a silent no-op that left the session on the alt model.
+      for (const model of ["default", "composer-2"]) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            modelSelection: { instanceId, model },
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        );
+      }
+      const requests = (yield* Queue.takeAll(protocolEvents)).map(rawProtocolRequest);
+      assert.equal(
+        requests.filter(
+          (request) =>
+            request?.method === "session/set_config_option" &&
+            typeof request.params === "object" &&
+            request.params !== null &&
+            "configId" in request.params &&
+            request.params.configId === "model",
+        ).length,
+        3,
+      );
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
   it.effect("skips requested options that the active ACP session does not expose", () =>
