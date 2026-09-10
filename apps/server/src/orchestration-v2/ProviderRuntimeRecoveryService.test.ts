@@ -64,7 +64,7 @@ it.effect("leaves durable effects for the worker after runtime reconciliation", 
   }),
 );
 
-it.effect("reads full projections only for threads that need runtime recovery", () => {
+it.effect("reads recovery projections only for threads that need runtime recovery", () => {
   const settledThreadIds = Array.from({ length: 1_000 }, (_, index) =>
     ThreadId.make(`thread_recovery_settled_${index}`),
   );
@@ -83,7 +83,7 @@ it.effect("reads full projections only for threads that need runtime recovery", 
               archivedThreads: [],
             } as never),
           getRecoveryThreadIds: () => Effect.succeed([recoveryThreadId]),
-          getThreadProjection: (threadId) => {
+          getRuntimeRecoveryProjection: (threadId) => {
             projectionReads(threadId);
             return Effect.succeed({
               thread: { id: threadId },
