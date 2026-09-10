@@ -76,7 +76,7 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
-type WorkContentIcon = AppSymbolName | "browser" | "t3-code" | "pull-request";
+type WorkContentIcon = AppSymbolName | "browser" | "device" | "t3-code" | "pull-request";
 
 function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
@@ -97,7 +97,9 @@ function WorkLogIcon(props: {
           ? "arrow.triangle.pull"
           : props.icon === "browser"
             ? { ios: "globe", android: "public" }
-            : props.icon
+            : props.icon === "device"
+              ? { ios: "iphone", android: "smartphone" }
+              : props.icon
       }
       size={14}
       weight="medium"
@@ -899,7 +901,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
-  readonly summaryToolIcon?: "browser" | "t3-code" | "pull-request";
+  readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1248,6 +1250,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return { ios: "square.and.pencil", android: "edit" };
     case "command":
       return { ios: "terminal", android: "terminal" };
+    case "device":
+      return { ios: "iphone", android: "smartphone" };
     case "browser":
     case "search":
       return { ios: "globe", android: "public" };
