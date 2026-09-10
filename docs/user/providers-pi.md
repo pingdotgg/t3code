@@ -18,8 +18,9 @@ execution mode or select a session because T3 owns those parts of the process li
 
 T3 Code discovers the models reported by Pi and exposes their supported thinking levels. The
 thinking picker marks Pi's current configured level as the default without overriding it. Threads
-use Pi's native session files for resume and rollback. Thread forks use T3 Code's portable
-conversation context to start a fresh Pi session instead of cloning Pi's active session. Extension
+use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
+preserve the native conversation through the selected turn in the destination workspace.
+Switching providers uses portable conversation context. Extension
 dialogs appear in the T3 Code composer, and the composer context meter follows Pi's own usage
 reporting while a response streams and after it settles.
 
