@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
+  dropBusy: false,
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
@@ -56,27 +57,32 @@ vi.mock("../../state/server", () => ({
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
+    set: (_atom: string, value: boolean) => {
+      state.dropBusy = value;
+    },
     get: (atom: string) =>
-      atom === "thread-shells"
-        ? state.shells
-        : atom === "queued-thread-keys"
-          ? new Set<string>()
-          : new Map(
-              [...state.scopes.keys()].map((environmentId) => [
-                environmentId,
-                {
-                  environment: {
-                    capabilities: {
-                      threadSettlement: true,
-                      threadSnooze: true,
-                      threadPinning: true,
-                      threadPinReorder: true,
-                      threadTitleRegeneration: true,
+      atom === "thread-drop-busy"
+        ? state.dropBusy
+        : atom === "thread-shells"
+          ? state.shells
+          : atom === "queued-thread-keys"
+            ? new Set<string>()
+            : new Map(
+                [...state.scopes.keys()].map((environmentId) => [
+                  environmentId,
+                  {
+                    environment: {
+                      capabilities: {
+                        threadSettlement: true,
+                        threadSnooze: true,
+                        threadPinning: true,
+                        threadPinReorder: true,
+                        threadTitleRegeneration: true,
+                      },
                     },
                   },
-                },
-              ]),
-            ),
+                ]),
+              ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -87,6 +93,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../../state/use-thread-outbox", () => ({ queuedThreadKeysAtom: "queued-thread-keys" }));
 // The real hold lives in a module-level atom that would leak between cases.
 vi.mock("../../state/thread-order", () => ({
+  threadDropBusyAtom: "thread-drop-busy",
   getPendingThreadOrder: () => state.pendingOrder,
   beginPendingThreadOrder: () => {
     state.pendingOrder = {};
@@ -150,6 +157,7 @@ function makeThread(input: Partial<EnvironmentThreadShell> = {}): EnvironmentThr
     branch: null,
     worktreePath: null,
     latestTurn: null,
+    pullRequests: [],
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
     archivedAt: null,
@@ -177,6 +185,7 @@ const mutationCases = [
 
 beforeEach(() => {
   state.pendingOrder = null;
+  state.dropBusy = false;
   state.scopes = new Map([
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
     [otherEnvironmentId, new Set<string>()],

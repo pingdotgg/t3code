@@ -2883,7 +2883,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             if (!api) return;
             const threadLinkAction = !canOperateHost
               ? undefined
-              :               linkedThreadPullRequestFor(href) !== null
+              : linkedThreadPullRequestFor(href) !== null
                 ? "unlink-from-thread"
                 : resolveThreadPullRequest(href) === null
                   ? undefined
