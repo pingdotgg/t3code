@@ -70,12 +70,14 @@ import React, {
 import type { Components, Options as ReactMarkdownOptions } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
+import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
 import {
   artifactTemplateFromHastProperties,
@@ -131,6 +133,7 @@ import {
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
+import { normalizeLatexDelimiters } from "../markdown-latex";
 import {
   extractMarkdownLinkHrefs,
   isWindowsDrivePathHref,
@@ -244,6 +247,53 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+
+type MarkdownTreeNode = {
+  type?: string;
+  value?: string;
+  children?: MarkdownTreeNode[];
+  properties?: Record<string, unknown>;
+};
+
+function restoreProtectedSkillTokens() {
+  return (tree: MarkdownTreeNode) => {
+    const visit = (node: MarkdownTreeNode): void => {
+      if (node.type === "text" && node.value) node.value = node.value.replaceAll("\uE000", "$");
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+function addMathMarkdownCopy() {
+  return (tree: MarkdownTreeNode) => {
+    const findSource = (node: MarkdownTreeNode): string | undefined => {
+      if (node.type === "element" && node.properties?.encoding === "application/x-tex") {
+        return node.children.find((child) => child.type === "text")?.value;
+      }
+      for (const child of node.children ?? []) {
+        const source = findSource(child);
+        if (source) return source;
+      }
+      return undefined;
+    };
+    const visit = (node: MarkdownTreeNode): void => {
+      if (node.type === "element") {
+        const classes = Array.isArray(node.properties?.className)
+          ? node.properties.className
+          : typeof node.properties?.className === "string"
+            ? node.properties.className.split(/\s+/)
+            : [];
+        if (classes.includes("katex")) {
+          const source = findSource(node);
+          if (source) node.properties!["data-markdown-copy"] = `\\(${source}\\)`;
+        }
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -457,6 +507,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -466,6 +517,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -474,10 +526,16 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
-const CHAT_MARKDOWN_REHYPE_PLUGINS = [
+const CHAT_MARKDOWN_REHYPE_PLUGINS = [rehypeKatex, addMathMarkdownCopy] satisfies NonNullable<
+  ReactMarkdownOptions["rehypePlugins"]
+>;
+
+const CHAT_MARKDOWN_RAW_HTML_REHYPE_PLUGINS = [
   rehypeRaw,
   rehypePreserveImageSourceMeta,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
+  rehypeKatex,
+  addMathMarkdownCopy,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 /** GitHub's own five alert kinds, in its colors: the glyph names the urgency, the title says it. */
@@ -3106,11 +3164,30 @@ function ChatMarkdown({
   } = useChatMarkdownState({ text, ...props });
   const remarkPlugins = useMemo(
     () => [
-      ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
+      ...(lineBreaks
+        ? [
+            remarkGfm,
+            remarkMath,
+            restoreProtectedSkillTokens,
+            ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS.slice(3),
+          ]
+        : [
+            remarkGfm,
+            remarkMath,
+            restoreProtectedSkillTokens,
+            ...CHAT_MARKDOWN_REMARK_PLUGINS.slice(3),
+          ]),
       ...extraRemarkPlugins,
     ],
-    [extraRemarkPlugins, lineBreaks],
+    [extraRemarkPlugins, lineBreaks, props.skills],
   );
+  const normalizedText = useMemo(() => {
+    const names = new Set((props.skills ?? []).map((skill) => skill.name));
+    return normalizeLatexDelimiters(text).replace(
+      /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g,
+      (match, prefix: string, name: string) => (names.has(name) ? `${prefix}\uE000${name}` : match),
+    );
+  }, [text, props.skills]);
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
   // Keep that behavior explicit because literal mode depends on escaping the
@@ -3127,12 +3204,14 @@ function ChatMarkdown({
       <ChatMarkdownRendererContext value={componentState}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
-          rehypePlugins={parseRawHtml ? CHAT_MARKDOWN_REHYPE_PLUGINS : undefined}
+          rehypePlugins={
+            parseRawHtml ? CHAT_MARKDOWN_RAW_HTML_REHYPE_PLUGINS : CHAT_MARKDOWN_REHYPE_PLUGINS
+          }
           skipHtml={false}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >
-          {text}
+          {normalizedText}
         </ReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (

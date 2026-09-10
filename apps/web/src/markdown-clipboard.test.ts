@@ -128,6 +128,20 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe("run `git status` first");
   });
 
+  it("copies rendered math from its markdown-copy value", () => {
+    const container = new FakeElement("DIV").append(
+      new FakeElement("P").append(
+        new FakeText("Solve "),
+        new FakeElement("SPAN", [], { "data-markdown-copy": String.raw`\(x^2\)` }),
+        new FakeText(" now"),
+      ),
+    );
+
+    expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
+      String.raw`Solve \(x^2\) now`,
+    );
+  });
+
   it("copies the complete quote, source, and comment instead of the comment-only chip label", () => {
     const citation = {
       version: 1 as const,
