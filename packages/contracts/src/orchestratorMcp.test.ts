@@ -43,6 +43,7 @@ describe("orchestrator MCP contracts", () => {
       childRunId: "run-child-1",
       childNodeId: "node-task-1",
       status: "completed",
+      workState: "result_available",
       hasPendingChildRuns: false,
       providerInstanceId: "claudeAgent",
       model: "claude-sonnet-4-6",
