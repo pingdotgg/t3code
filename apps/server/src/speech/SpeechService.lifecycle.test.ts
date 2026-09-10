@@ -18,22 +18,9 @@ const loadNative = vi.hoisted(() => vi.fn(async () => native));
 const downloadModel = vi.hoisted(() =>
   vi.fn(async (_directory: string, _model: unknown, _signal?: AbortSignal) => "test.gguf"),
 );
-vi.mock("./native.ts", () => ({ loadNativeSpeechModel: loadNative }));
-vi.mock("./model.ts", () => ({
-  DEFAULT_SPEECH_MODEL_ID: "test-model",
-  SPEECH_MODELS: [
-    {
-      id: "test-model",
-      name: "test",
-      description: "test",
-      size: 4,
-      languages: ["en"],
-      accuracy: 1,
-      speed: 1,
-      recommended: true,
-    },
-  ],
-  getSpeechModel: () => ({
+const readyModels = vi.hoisted(() => new Set(["test-model", "fallback-model"]));
+const modelDefinitions = vi.hoisted(() => [
+  {
     id: "test-model",
     name: "test",
     description: "test",
@@ -42,10 +29,29 @@ vi.mock("./model.ts", () => ({
     accuracy: 1,
     speed: 1,
     recommended: true,
-  }),
+  },
+  {
+    id: "fallback-model",
+    name: "fallback",
+    description: "fallback",
+    size: 8,
+    languages: ["en"],
+    accuracy: 2,
+    speed: 2,
+    recommended: false,
+  },
+]);
+vi.mock("./native.ts", () => ({ loadNativeSpeechModel: loadNative }));
+vi.mock("./model.ts", () => ({
+  DEFAULT_SPEECH_MODEL_ID: "test-model",
+  SPEECH_MODELS: modelDefinitions,
+  getSpeechModel: (modelId: string) => modelDefinitions.find((model) => model.id === modelId),
   downloadSpeechModel: downloadModel,
-  isSpeechModelReady: async () => true,
-  removeSpeechModel: async () => {},
+  isSpeechModelReady: async (_directory: string, model: { id: string }) =>
+    readyModels.has(model.id),
+  removeSpeechModel: async (_directory: string, model: { id: string }) => {
+    readyModels.delete(model.id);
+  },
 }));
 const layer = SpeechService.layer.pipe(
   Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-review-" })),
@@ -55,6 +61,9 @@ const layer = SpeechService.layer.pipe(
 const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
 beforeEach(() => {
   vi.clearAllMocks();
+  readyModels.clear();
+  readyModels.add("test-model");
+  readyModels.add("fallback-model");
   downloadModel.mockImplementation(async () => "test.gguf");
 });
 it.effect("releases the loaded native model when its service scope closes", () =>
@@ -132,6 +141,20 @@ it.effect("reports unsupported hosts without wrapping a synthetic cause", () =>
       architecture: "arm64",
     });
   }),
+);
+it.effect("selects another installed model after removing the active model", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    const status = yield* speech.removeModel("test-model");
+    expect(status).toMatchObject({
+      supported: true,
+      state: "ready",
+      modelId: "fallback-model",
+    });
+    expect(
+      (yield* speech.models).models.find((model) => model.id === "fallback-model")?.active,
+    ).toBe(true);
+  }).pipe(Effect.provide(layer)),
 );
 it.effect("retains ownership of native work after its request is interrupted", () =>
   Effect.gen(function* () {

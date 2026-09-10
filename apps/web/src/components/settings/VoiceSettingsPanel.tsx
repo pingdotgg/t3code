@@ -324,9 +324,16 @@ export function VoiceSettingsPanel() {
                       busy={operation !== null}
                       onDownload={() =>
                         runModelOperation(model.id, async () => {
-                          await runtime.runPromise(
+                          const result = await runtime.runPromise(
                             downloadEnvironmentSpeechModel(prepared, model.id),
                           );
+                          if (
+                            !result.models.some(
+                              (candidate) =>
+                                candidate.id === model.id && candidate.state === "installed",
+                            )
+                          )
+                            return;
                           await runtime.runPromise(
                             selectEnvironmentSpeechModel(prepared, model.id),
                           );

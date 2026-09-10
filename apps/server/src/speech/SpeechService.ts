@@ -355,6 +355,7 @@ export const make = Effect.gen(function* () {
       exclusive("model removal", async () => {
         const definition = getSpeechModel(modelId);
         if (!definition) throw new SpeechModelNotFoundError({ modelId });
+        const selected = await selectedModel();
         await loading?.catch(() => undefined);
         if (loadedModelId === modelId) {
           await model?.dispose();
@@ -363,6 +364,21 @@ export const make = Effect.gen(function* () {
           loading = undefined;
         }
         await removeSpeechModel(modelDirectory, definition);
+        if (selected.id === modelId) {
+          const candidates = await Promise.all(
+            SPEECH_MODELS.filter((candidate) => candidate.id !== modelId).map(
+              async (candidate) => ({
+                candidate,
+                ready: await isSpeechModelReady(modelDirectory, candidate),
+              }),
+            ),
+          );
+          const replacement = candidates.find(({ ready }) => ready)?.candidate;
+          if (replacement)
+            await Effect.runPromise(
+              serverSettings.updateSettings({ speechModelId: replacement.id }),
+            );
+        }
         return currentStatus();
       }),
   });
