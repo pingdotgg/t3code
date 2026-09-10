@@ -871,12 +871,11 @@ struct HomeThreadRowContext: Equatable {
         let projectByID = snapshot.projects.reduce(into: [String: FeatureProject]()) {
             $0[$1.id] = $1
         }
-        // Rows follow the sidebar's grouping rather than the creation picker's
-        // per-workspace split, so a repository keeps one label here.
-        let projectGroupNameByID = DailyUXProjectGrouping.groups(
-            projects: DailyUXCreationContext.projects(in: snapshot),
-            preferencesByEnvironment: snapshot.preferencesByEnvironment ?? [:]
-        ).reduce(into: [String: String]()) { result, group in
+        // Rows name the checkout the thread runs in, like the creation picker,
+        // so separate checkouts of one repository stay distinguishable.
+        let projectGroupNameByID = DailyUXCreationContext.projectGroups(in: snapshot).reduce(
+            into: [String: String]()
+        ) { result, group in
             for projectID in group.memberProjectIDs {
                 result[projectID] = group.name
             }

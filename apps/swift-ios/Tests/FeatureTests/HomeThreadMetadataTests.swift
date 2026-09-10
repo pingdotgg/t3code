@@ -432,36 +432,41 @@ struct HomeThreadMetadataTests {
     }
 
     @Test
-    func rowContextUsesRepositoryGroupNameInsteadOfStalePhysicalProjectTitle() throws {
-        let thread = FeatureThread(
-            id: "thread",
-            projectID: "project",
-            title: "Test T3 Code Functionality"
+    func rowContextNamesTheCheckoutAndPrefersItsFreshestConfiguredTitle() throws {
+        let identity = FeatureRepositoryIdentity(
+            canonicalKey: "github.com/example/app",
+            rootPath: "/code/app-1",
+            displayName: "example/app",
+            name: "app"
         )
+        let first = FeatureProject(
+            id: "first", environmentID: "mac", name: "App 1", path: "/code/app-1",
+            repositoryIdentity: identity, updatedAt: "2026-01-02T00:00:00Z"
+        )
+        let alias = FeatureProject(
+            id: "alias", environmentID: "mac", name: "Old title", path: "/code/app-1/",
+            repositoryIdentity: identity, updatedAt: "2026-01-01T00:00:00Z"
+        )
+        let second = FeatureProject(
+            id: "second", environmentID: "mac", name: "App 2", path: "/code/app-2",
+            repositoryIdentity: identity
+        )
+        let threads = [
+            FeatureThread(id: "first-thread", projectID: first.id, title: "One"),
+            FeatureThread(id: "alias-thread", projectID: alias.id, title: "Two"),
+            FeatureThread(id: "second-thread", projectID: second.id, title: "Three"),
+        ]
         let snapshot = FeatureSnapshot(
-            projects: [
-                FeatureProject(
-                    id: "project",
-                    environmentID: "bb-1",
-                    name: "wat",
-                    path: "/work/t3code",
-                    repositoryIdentity: FeatureRepositoryIdentity(
-                        canonicalKey: "github.com/pingdotgg/t3code",
-                        rootPath: "/work/t3code",
-                        displayName: "pingdotgg/t3code",
-                        name: "t3code"
-                    )
-                ),
-            ],
-            threads: [thread],
+            projects: [alias, second, first],
+            threads: threads,
             preferencesByEnvironment: [
-                "bb-1": FeatureEnvironmentPreferences(projectGroupingMode: .repository),
+                "mac": FeatureEnvironmentPreferences(projectGroupingMode: .repository),
             ]
         )
 
-        let context = try #require(HomeThreadRowContext.index(snapshot: snapshot)[thread.id])
+        let index = HomeThreadRowContext.index(snapshot: snapshot)
 
-        #expect(context.projectName == "pingdotgg/t3code")
+        #expect(threads.map { index[$0.id]?.projectName } == ["App 1", "App 1", "App 2"])
     }
 
     @Test
