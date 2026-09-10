@@ -4054,17 +4054,16 @@ export default function ChatView(props: ChatViewProps) {
 
       if (!changesKeybinding) return updateResult;
       if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-        return isDeletingScript
-          ? updateResult
-          : AsyncResult.failure(
-              Cause.fail(
-                new EnvironmentAuthorizationError({
-                  requiredScope: AuthSettingsWriteScope,
-                  message:
-                    "The script was saved, but this connection can no longer change keyboard shortcuts.",
-                }),
-              ),
-            );
+        return AsyncResult.failure(
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthSettingsWriteScope,
+              message: isDeletingScript
+                ? "The script was deleted, but its keyboard shortcut could not be removed because permission changed."
+                : "The script was saved, but this connection can no longer change keyboard shortcuts.",
+            }),
+          ),
+        );
       }
       if (keybindingRule) {
         return mapAtomCommandResult(
