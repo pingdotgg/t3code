@@ -402,6 +402,7 @@ describe("RemoteEnvironmentAuthorization", () => {
             );
           const exchangeGrant = (init: RequestInit) => {
             const fields = tokenFields(init);
+            expect(fields.get("scope")).toBeNull();
             const scope = fields.get("scope") ?? grantedScope;
             const scopes = scope.split(" ");
             if (scopes.some((requested) => !grantScopes.some((grant) => grant === requested))) {
