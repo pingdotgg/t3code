@@ -257,6 +257,21 @@ export const layer: Layer.Layer<
         ),
       steer: (input) =>
         Effect.gen(function* () {
+          const context = yield* projections.getProviderControlContext(input.threadId, input);
+          const ownership = context.message?.delegatedCompletion;
+          if (ownership !== undefined) {
+            const projection = yield* projections.getThreadProjection(input.threadId);
+            const cohort = projection.runs.find(
+              (run) => run.id === ownership.parentRunId,
+            )?.delegatedCompletion;
+            if (
+              cohort?.disposition !== "open" ||
+              cohort.delivery?.messageId !== input.messageId ||
+              cohort.delivery.generation !== ownership.generation ||
+              cohort.delivery.taskIds.length === 0
+            )
+              return;
+          }
           const loaded = yield* load({ ...input, operation: "steer" });
           if (Option.isNone(loaded.session)) return;
           const { message, run } = loaded.context;
