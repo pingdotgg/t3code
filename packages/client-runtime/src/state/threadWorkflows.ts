@@ -94,7 +94,10 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     );
   const automaticCompletionMessageIds = new Set(
     projection.messages
-      .filter((message) => message.delegatedCompletion !== undefined)
+      .filter(
+        (message) =>
+          message.delegatedCompletion !== undefined || message.notification !== undefined,
+      )
       .map((message) => message.id),
   );
   const queuedRuns = copySorted(
