@@ -30,6 +30,19 @@ describe("device tool helpers", () => {
     expect(text).toContain("XCTest runner");
   });
 
+  it("uses the absolute launcher in every quick-start command", () => {
+    const text = agentDeviceQuickStart(
+      device,
+      ["--session", "thread-1", "--config", "/tmp/host.json"],
+      "/tmp/t3 tools/agent-device",
+    );
+    expect(text).toContain(
+      "'/tmp/t3 tools/agent-device' snapshot -i --session thread-1 --config /tmp/host.json",
+    );
+    expect(text).not.toContain("  agent-device ");
+    expect(text).not.toContain("is on PATH");
+  });
+
   it("reads PNG dimensions from the IHDR chunk", () => {
     const png = new Uint8Array(24);
     new DataView(png.buffer).setUint32(0, 0x89504e47);

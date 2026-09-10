@@ -8,6 +8,10 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { ServerConfig } from "../../../config.ts";
+import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -29,7 +33,11 @@ export function agentDeviceTargetArgs(device: DeviceSummary): ReadonlyArray<stri
 export function agentDeviceQuickStart(
   device: DeviceSummary,
   targetArgs = agentDeviceTargetArgs(device),
+  command = "agent-device",
 ): string {
+  const executable = /^[a-zA-Z0-9_./:-]+$/.test(command)
+    ? command
+    : "'" + command.replaceAll("'", "'\"'\"'") + "'";
   const target = targetArgs
     .map((arg) =>
       /^[a-zA-Z0-9_./:-]+$/.test(arg) ? arg : "'" + arg.replaceAll("'", "'\"'\"'") + "'",
@@ -41,15 +49,15 @@ export function agentDeviceQuickStart(
       : "The Android snapshot helper installs itself on first use.";
   return [
     `The user is watching ${device.name} (${device.version}) in the Device panel.`,
-    `Drive it with the agent-device CLI, which is on PATH and already connected to this environment. Always pass ${target}.`,
+    `Drive it with ${executable}. Use this exact executable path; login shells may reset PATH. Always pass ${target}.`,
     "Typical loop:",
-    `  agent-device open <bundle-or-package-id> ${target}     # or: open <app> <deep-link-url>`,
-    `  agent-device snapshot -i ${target}                     # accessibility tree with @eN refs`,
-    `  agent-device click @e3 ${target}`,
-    `  agent-device fill @e5 "text" ${target}`,
-    `  agent-device screenshot /tmp/shot.png ${target}        # or call device_screenshot`,
-    `  agent-device install <app> <path-to-.app-or-.apk> ${target}`,
-    "Prefer snapshot refs over coordinates. Run `agent-device help` for workflow guides and `agent-device <command> --help` for flags.",
+    `  ${executable} open <bundle-or-package-id> ${target}     # or: open <app> <deep-link-url>`,
+    `  ${executable} snapshot -i ${target}                     # accessibility tree with @eN refs`,
+    `  ${executable} click @e3 ${target}`,
+    `  ${executable} fill @e5 "text" ${target}`,
+    `  ${executable} screenshot /tmp/shot.png ${target}        # or call device_screenshot`,
+    `  ${executable} install <app> <path-to-.app-or-.apk> ${target}`,
+    `Prefer snapshot refs over coordinates. Run ${executable} help for workflow guides and ${executable} <command> --help for flags.`,
     "Do not call simctl, adb, xcrun, or serve-sim directly while these tools are attached; use agent-device.",
     "For remote hosts, arrange builds, app installation, and any Metro reverse forwarding yourself. T3 provides discovery, streaming, and control only.",
     "Keep the returned --config and --session flags on every command. Other hosts can be used concurrently; opening one does not switch these commands.",
@@ -163,10 +171,28 @@ const handlers = {
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
       const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
+      const config = yield* ServerConfig;
+      const path = yield* Path.Path;
+      const platform = yield* HostProcessPlatform;
+      const shimDir = yield* ensureAgentDeviceShim({
+        entryPath: yield* devices.agentCli,
+        stateDir: config.stateDir,
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new DeviceToolUnavailableError({
+              reason: "Could not prepare the agent-device launcher.",
+            }),
+        ),
+      );
+      const command = path.join(
+        shimDir,
+        platform === "win32" ? "agent-device.cmd" : "agent-device",
+      );
       return {
         device,
-        agentDevice: { command: "agent-device", targetArgs },
-        quickStart: agentDeviceQuickStart(device, targetArgs),
+        agentDevice: { command, targetArgs },
+        quickStart: agentDeviceQuickStart(device, targetArgs, command),
       };
     }).pipe(Effect.mapError(toolError)),
   device_screenshot: (input) =>
