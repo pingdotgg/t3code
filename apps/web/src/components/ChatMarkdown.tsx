@@ -123,6 +123,8 @@ import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { isDiagramLanguage } from "./markdown/diagramUtils";
+import { MarkdownDiagramBlock } from "./markdown/MarkdownDiagramBlock";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -3063,6 +3065,35 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+
+    if (isDiagramLanguage(language)) {
+      return (
+        <MarkdownDiagramBlock
+          code={codeBlock.code}
+          language={language}
+          fenceTitle={fenceTitle}
+          theme={resolvedTheme}
+          isStreaming={isStreaming}
+        >
+          {({ wrapped: _wrapped }) => (
+            <RenderErrorBoundary
+              resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+              fallback={<pre {...props}>{children}</pre>}
+            >
+              <Suspense fallback={<pre {...props}>{children}</pre>}>
+                <SuspenseShikiCodeBlock
+                  className={codeBlock.className}
+                  code={codeBlock.code}
+                  themeName={diffThemeName}
+                  isStreaming={isStreaming}
+                />
+              </Suspense>
+            </RenderErrorBoundary>
+          )}
+        </MarkdownDiagramBlock>
+      );
+    }
+
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}

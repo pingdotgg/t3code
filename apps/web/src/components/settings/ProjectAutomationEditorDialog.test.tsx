@@ -8,25 +8,28 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock("~/components/ui/button", () => ({
-  Button: ({ children, ...props }: { readonly children?: ReactNode }) => (
-    <button {...props}>{children}</button>
-  ),
+vi.mock("~/components/ui/dialog", () => ({
+  Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogPanel: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogClose: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock("~/components/ui/dialog", () => {
-  const Container = ({ children }: { readonly children?: ReactNode }) => <div>{children}</div>;
-  return {
-    Dialog: Container,
-    DialogDescription: Container,
-    DialogFooter: Container,
-    DialogHeader: Container,
-    DialogPanel: Container,
-    DialogPopup: Container,
-    DialogTitle: Container,
-    DialogClose: Container,
-  };
-});
+vi.mock("~/components/ui/button", () => ({
+  Button: ({
+    children,
+    render,
+    ...props
+  }: {
+    children?: ReactNode;
+    render?: ReactNode;
+    [key: string]: unknown;
+  }) => (render ? <>{render}</> : <button {...props}>{children}</button>),
+}));
 
 vi.mock("~/components/ui/input", () => ({
   Input: (props: Record<string, unknown>) => <input {...props} />,
@@ -57,7 +60,7 @@ function createMockEntry(instanceId: string, driver: string) {
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-08-28T00:00:00.000Z",
-    models: [{ id: "model-1", name: "Model One" }],
+    models: [{ slug: "model-1", name: "Model One", isCustom: false, capabilities: null }],
     slashCommands: [],
     skills: [],
   };

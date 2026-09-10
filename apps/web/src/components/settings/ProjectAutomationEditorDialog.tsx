@@ -74,11 +74,13 @@ export interface ProjectAutomationEditorDialogProps {
   readonly automation: T3ProjectFileAutomation | null;
   readonly existingIds: ReadonlyArray<string>;
   readonly onSave: (automation: T3ProjectFileAutomation) => void;
-  readonly instanceEntries?: ReadonlyArray<ProviderInstanceEntry>;
-  readonly modelOptionsByInstance?: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
-  readonly defaultModelSelection?: ModelSelection | null;
-  readonly onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
-  readonly projectJobs?: ReadonlyArray<T3ProjectFileJob>;
+  readonly instanceEntries?: ReadonlyArray<ProviderInstanceEntry> | undefined;
+  readonly modelOptionsByInstance?:
+    | ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>
+    | undefined;
+  readonly defaultModelSelection?: ModelSelection | null | undefined;
+  readonly onOpenProviderSetup?: ((instanceId: ProviderInstanceId) => void) | undefined;
+  readonly projectJobs?: ReadonlyArray<T3ProjectFileJob> | undefined;
 }
 
 export function ProjectAutomationEditorDialog({
@@ -160,7 +162,7 @@ export function ProjectAutomationEditorDialog({
     if (firstEntry && firstEntry.models.length > 0) {
       return {
         instanceId: firstEntry.instanceId,
-        model: firstEntry.models[0].id,
+        model: firstEntry.models[0]?.slug ?? "",
       };
     }
     return null;
@@ -182,7 +184,7 @@ export function ProjectAutomationEditorDialog({
     if (effectiveSelection && effectiveSelection.instanceId === activeEntry.instanceId) {
       return effectiveSelection;
     }
-    const defaultModel = activeEntry.models[0]?.id ?? "";
+    const defaultModel = activeEntry.models[0]?.slug ?? "";
     return {
       instanceId: activeEntry.instanceId,
       model: defaultModel,
@@ -333,7 +335,7 @@ export function ProjectAutomationEditorDialog({
 
     let action: AutomationAction;
     if (actionType === "thread") {
-      const prompt = threadPrompt.trim();
+      const prompt = (threadPrompt ?? "").trim();
       if (!prompt) {
         setErrorMessage("Please enter a prompt template for the thread.");
         return;
@@ -714,7 +716,7 @@ export function ProjectAutomationEditorDialog({
                         </Button>
                       ) : null}
                     </div>
-                    {hasProviders && activeSelection && activeEntry ? (
+                    {hasProviders && activeSelection && activeEntry && instanceEntries ? (
                       <div className="flex flex-wrap items-center gap-1.5">
                         <ProviderModelPicker
                           activeInstanceId={activeSelection.instanceId}
@@ -724,20 +726,23 @@ export function ProjectAutomationEditorDialog({
                           modelOptionsByInstance={resolvedModelOptionsByInstance}
                           triggerVariant="outline"
                           triggerClassName="h-8 text-xs font-normal"
-                          onOpenProviderSetup={onOpenProviderSetup}
+                          {...(onOpenProviderSetup ? { onOpenProviderSetup } : {})}
                           onInstanceModelChange={(instanceId, model) => {
                             setSelectedModelSelection(createModelSelection(instanceId, model));
                           }}
                         />
                         <TraitsPicker
+                          planModeEnabled={false}
                           provider={activeEntry.driverKind as ProviderDriverKind}
                           instanceId={activeEntry.instanceId}
                           models={activeEntry.models}
                           model={activeSelection.model}
                           prompt=""
                           onPromptChange={() => {}}
-                          options={activeSelection.options}
-                          onChange={(options) =>
+                          modelOptions={
+                            "options" in activeSelection ? activeSelection.options : undefined
+                          }
+                          onModelOptionsChange={(options) =>
                             setSelectedModelSelection(
                               createModelSelection(
                                 activeSelection.instanceId,
