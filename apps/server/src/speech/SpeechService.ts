@@ -21,7 +21,7 @@ export const MAX_SPEECH_BYTES =
   SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * MAX_SPEECH_DURATION_SECONDS;
 const MIN_CAPTURE_RMS = 0.0005;
 
-export class SpeechInvalidAudioError extends Schema.TaggedErrorClass<SpeechInvalidAudioError>()(
+export class SpeechInvalidAudioError extends Schema.TaggedError<SpeechInvalidAudioError>()(
   "SpeechInvalidAudioError",
   { byteLength: Schema.Number, message: Schema.String },
 ) {}
@@ -51,7 +51,7 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array): Float32Array {
   return Math.sqrt(energy / pcm.length) < MIN_CAPTURE_RMS ? new Float32Array() : pcm;
 }
 
-export class SpeechOperationError extends Schema.TaggedErrorClass<SpeechOperationError>()(
+export class SpeechOperationError extends Schema.TaggedError<SpeechOperationError>()(
   "SpeechOperationError",
   {
     operation: Schema.String,
@@ -63,12 +63,12 @@ export class SpeechOperationError extends Schema.TaggedErrorClass<SpeechOperatio
   }
 }
 
-export class SpeechUnsupportedPlatformError extends Schema.TaggedErrorClass<SpeechUnsupportedPlatformError>()(
+export class SpeechUnsupportedPlatformError extends Schema.TaggedError<SpeechUnsupportedPlatformError>()(
   "SpeechUnsupportedPlatformError",
   { platform: Schema.String, architecture: Schema.String },
 ) {}
 
-export class SpeechBusyError extends Schema.TaggedErrorClass<SpeechBusyError>()("SpeechBusyError", {
+export class SpeechBusyError extends Schema.TaggedError<SpeechBusyError>()("SpeechBusyError", {
   operation: Schema.String,
 }) {}
 
