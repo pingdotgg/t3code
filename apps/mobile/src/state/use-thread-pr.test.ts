@@ -87,7 +87,8 @@ describe("presentThreadLinkedPullRequests", () => {
   it("counts unrelated links without labelling them a stack", () => {
     expect(presentThreadLinkedPullRequests([linkedPr(1), linkedPr(2)])).toMatchObject({
       kind: "pull-request",
-      label: "+1",
+      label: "+2",
+      textClassName: "text-foreground-muted",
     });
   });
 
