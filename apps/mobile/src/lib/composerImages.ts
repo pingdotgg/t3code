@@ -10,6 +10,7 @@ import {
   type EnvironmentId,
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
+import type { ImagePickerOptions, ImagePickerResult } from "expo-image-picker";
 import type { DocumentPickerResult } from "expo-document-picker";
 import { estimateBase64ByteSize } from "./base64";
 import {
@@ -293,6 +294,7 @@ export async function pickComposerImages(input: { readonly existingCount: number
 
 /** Videos use file uploads; omit maxVideoBytes for image-only destinations. */
 export async function pickComposerMedia(input: {
+  readonly assetId?: string;
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
 }): Promise<{
@@ -322,14 +324,27 @@ export async function pickComposerMedia(input: {
   const endHandoff = beginForegroundHandoff();
   let result: Awaited<ReturnType<typeof imagePicker.launchImageLibraryAsync>>;
   try {
-    result = await imagePicker.launchImageLibraryAsync({
+    const options: ImagePickerOptions = {
       mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
       allowsMultipleSelection: true,
       selectionLimit: remainingSlots,
       base64: true,
       quality: 1,
       shouldDownloadFromNetwork: true,
-    });
+    };
+    if (input.assetId) {
+      const { requireNativeModule } = await import("expo");
+      // The Expo patch exposes its existing PHPicker image processor to custom selection UIs.
+      const picker = requireNativeModule<{
+        loadImageAssetAsync: (
+          identifier: string,
+          options: ImagePickerOptions,
+        ) => Promise<ImagePickerResult>;
+      }>("ExponentImagePicker");
+      result = await picker.loadImageAssetAsync(input.assetId, options);
+    } else {
+      result = await imagePicker.launchImageLibraryAsync(options);
+    }
   } catch (error) {
     return {
       attachments: [],

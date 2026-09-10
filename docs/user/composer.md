@@ -21,6 +21,15 @@ photos are converted to JPEG there and when selected from the iOS photo library;
 the image limit applies after conversion. On mobile, you can also send files to
 T3 Code through another app's system share sheet.
 
+On iOS, enable **Photo quick picker** in Settings → Attachments, then hold the
+attachment button to show your four most recent photos. This shortcut is off by
+default. Drag
+onto a photo and release to attach it, or release outside the photos and then tap
+one. Tap outside the row to dismiss it. This shortcut needs photo-library access;
+with limited access, it shows the most recent photos you've allowed. If access
+is denied, use **Open iOS Settings** beside the setting to allow Photos access.
+Turning the shortcut off restores the regular attachment menu.
+
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
 ## Queue messages offline on mobile

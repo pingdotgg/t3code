@@ -333,7 +333,14 @@ const config: ExpoConfig = {
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission:
+          "Allow T3 Code to show your four most recent photos when you hold the attachment button.",
+        microphonePermission: false,
+      },
+    ],
     [
       "expo-splash-screen",
       {

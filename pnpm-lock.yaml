@@ -99,6 +99,7 @@ patchedDependencies:
   dbus-next@0.10.2: cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4
   effect@4.0.0-rc.112: 8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2
   expo-audio@57.0.4: fa9a3e0442ed395d4071bb406e08c3a471c9a84700bdfa0b9ad7ff144c96041a
+  expo-image-picker@57.0.14: 33b4500f7259cd1a2463c8cd452d80f2ee15059239fa24125fbc60fc7327f52d
   expo-sharing@57.0.17: 8d2e3b10eb3f52036a9a086800180ec6cebf3b75bccc5b1775117a7244d4ac45
   react-native-gesture-handler@2.32.0: 96573c000f7fe56b5abfa13e2e5f0d065907e674cb8e2300155226d7c9874398
   react-native-keyboard-controller@1.21.13: 6e4339347bc5bb3c9ea67d85ff5c814058b211c5750f247aba59d07869a2e787
@@ -368,8 +369,8 @@ importers:
         specifier: ~57.0.3
         version: 57.0.3(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       expo-image-picker:
-        specifier: ~57.0.14
-        version: 57.0.14(expo@57.0.18)
+        specifier: 57.0.14
+        version: 57.0.14(patch_hash=33b4500f7259cd1a2463c8cd452d80f2ee15059239fa24125fbc60fc7327f52d)(expo@57.0.18)
       expo-linking:
         specifier: ~57.0.8
         version: 57.0.8(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
@@ -17938,7 +17939,7 @@ snapshots:
     dependencies:
       expo: 57.0.18(fc5a731e35a0144aab60c7305f29cbed)
 
-  expo-image-picker@57.0.14(expo@57.0.18):
+  expo-image-picker@57.0.14(patch_hash=33b4500f7259cd1a2463c8cd452d80f2ee15059239fa24125fbc60fc7327f52d)(expo@57.0.18):
     dependencies:
       expo: 57.0.18(fc5a731e35a0144aab60c7305f29cbed)
       expo-image-loader: 57.0.1(expo@57.0.18)

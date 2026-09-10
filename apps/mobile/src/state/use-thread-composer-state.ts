@@ -447,31 +447,36 @@ export function useThreadComposerState() {
     [selectedThreadShell],
   );
 
-  const onPickDraftMedia = useCallback(async () => {
-    if (!selectedThreadShell) {
-      return;
-    }
+  const onPickDraftMedia = useCallback(
+    async (assetId?: string) => {
+      if (!selectedThreadShell) {
+        return;
+      }
 
-    const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
-    const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
-    const result = await pickComposerMedia({
-      existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
-      maxVideoBytes:
-        capabilities?.attachmentUploads === true
-          ? capabilities.fileAttachments?.maxUploadBytes
-          : undefined,
-    });
-    const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments);
-    const problems = [
-      ...(result.error ? [result.error] : []),
-      ...(rejectedCount > 0
-        ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
-        : []),
-    ];
-    if (problems.length > 0) {
-      Alert.alert("Could not attach photo or video", problems.join("\n\n"));
-    }
-  }, [composerDrafts, selectedEnvironmentRuntime?.serverConfig, selectedThreadShell]);
+      const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
+      const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
+      const result = await pickComposerMedia({
+        assetId,
+        existingCount: composerDrafts[threadKey]?.attachments.length ?? 0,
+        maxVideoBytes:
+          capabilities?.attachmentUploads === true
+            ? capabilities.fileAttachments?.maxUploadBytes
+            : undefined,
+      });
+      const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments);
+      const problems = [
+        ...(result.error ? [result.error] : []),
+        ...(rejectedCount > 0
+          ? [`You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments per message.`]
+          : []),
+      ];
+      if (problems.length > 0) {
+        Alert.alert("Could not attach photo or video", problems.join("\n\n"));
+      }
+      return rejectedCount < result.attachments.length ? result.attachments[0]?.id : undefined;
+    },
+    [composerDrafts, selectedEnvironmentRuntime?.serverConfig, selectedThreadShell],
+  );
 
   const onPickDraftFiles = useCallback(async () => {
     if (!selectedThreadShell) {

@@ -42,6 +42,19 @@ public final class T3NativeControlsModule: Module {
       }
     }
 
+    AsyncFunction("finishRecentPhotoSelection") { (selectionId: String, identifier: String) in
+      T3RecentPhotosOverlay.finish(selectionId: selectionId, target: self.presentationSources.view(for: identifier))
+    }.runOnQueue(.main)
+
+    View(T3RecentPhotosButton.self) {
+      ViewName("RecentPhotosButton")
+      Prop("recentPhotosEnabled") { (view: T3RecentPhotosButton, value: Bool) in view.recentPhotosEnabled = value }
+      Events("onPickMedia", "onPickFiles", "onPickPhoto")
+      Prop("disabled") { (view: T3RecentPhotosButton, value: Bool) in view.disabled = value }
+      Prop("supportsFiles") { (view: T3RecentPhotosButton, value: Bool) in view.supportsFiles = value }
+      Prop("iconColor") { (view: T3RecentPhotosButton, value: UIColor) in view.iconColor = value }
+    }
+
     View(T3PresentationSourceView.self) {
       ViewName("PresentationSource")
       Prop("identifier") { (view: T3PresentationSourceView, identifier: String) in

@@ -1,3 +1,4 @@
+import { RecentPhotosSettingsSection } from "./RecentPhotosSettingsSection";
 import { useAuth, useUser } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import Constants from "expo-constants";
@@ -144,6 +145,8 @@ function LocalSettingsRouteScreen() {
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        {Platform.OS === "ios" ? <RecentPhotosSettingsSection /> : null}
 
         <LegacySettingsSection />
 
@@ -564,6 +567,8 @@ function ConfiguredSettingsRouteScreen() {
         <SettingsSection title="Appearance">
           <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         </SettingsSection>
+
+        {Platform.OS === "ios" ? <RecentPhotosSettingsSection /> : null}
 
         <LegacySettingsSection />
 

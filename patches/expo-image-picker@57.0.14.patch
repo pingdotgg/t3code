@@ -1,0 +1,89 @@
+diff --git a/ios/ImagePickerModule.swift b/ios/ImagePickerModule.swift
+index 6d413603b378ee4b70cdd37bd48bb020ffc49755..e22a39ee0d45e97941d560097dfc06919f2da87e 100644
+--- a/ios/ImagePickerModule.swift
++++ b/ios/ImagePickerModule.swift
+@@ -49,6 +49,34 @@ public class ImagePickerModule: Module, OnMediaPickingResultHandler {
+       self.handlePermissionRequest(requesterClass: self.getMediaLibraryPermissionRequester(writeOnly), operationType: .ask, promise: promise)
+     })
+ 
++    // Custom selection UIs use the same processing as PHPicker results.
++    AsyncFunction("loadImageAssetAsync") { (identifier: String, options: ImagePickerOptions) async throws -> ImagePickerResponse in
++      guard let fileSystem = self.appContext?.fileSystem else {
++        throw FileSystemModuleNotFoundException()
++      }
++      guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject,
++            asset.mediaType == .image else {
++        throw FailedToReadImageException()
++      }
++      let inputOptions = PHContentEditingInputRequestOptions()
++      inputOptions.isNetworkAccessAllowed = options.shouldDownloadFromNetwork
++      let input = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<PHContentEditingInput, Error>) in
++        asset.requestContentEditingInput(with: inputOptions) { input, _ in
++          guard let input else {
++            continuation.resume(throwing: FailedToReadImageException())
++            return
++          }
++          continuation.resume(returning: input)
++        }
++      }
++      guard let url = input.fullSizeImageURL, let provider = NSItemProvider(contentsOf: url) else {
++        throw FailedToReadImageException()
++      }
++      let handler = MediaHandler(fileSystem: fileSystem, options: options)
++      let result = try await handler.handleImage(itemProvider: provider, assetIdentifier: identifier)
++      return ImagePickerResponse(assets: [result], canceled: false)
++    }
++
+     AsyncFunction("launchCameraAsync", { (options: ImagePickerOptions, promise: Promise) in
+       guard let permissions = self.appContext?.permissions else {
+         return promise.reject(PermissionsModuleNotFoundException())
+diff --git a/ios/MediaHandler.swift b/ios/MediaHandler.swift
+index d94e221e6a1d7dd650771b5fb287bf3b9888e0ed..0da9ee2ca5b27b06752ad94098d9eff6d13fb285 100644
+--- a/ios/MediaHandler.swift
++++ b/ios/MediaHandler.swift
+@@ -34,7 +34,7 @@ internal struct MediaHandler {
+         return try await handleLivePhoto(from: selectedItem)
+       }
+       if itemProvider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+-        return try await handleImage(from: selectedItem)
++        return try await handleImage(itemProvider: selectedItem.itemProvider, assetIdentifier: selectedItem.assetIdentifier)
+       }
+       if itemProvider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+         return try await handleVideo(from: selectedItem)
+@@ -43,7 +43,7 @@ internal struct MediaHandler {
+       // Fallback to capability-based detection when the provider reports no identifiers (iOS bug?).
+       // This can happen when files have been synced via AirDrop or iTunes and the file extension is not recognized.
+       if itemProvider.canLoadObject(ofClass: UIImage.self) {
+-        return try await handleImage(from: selectedItem)
++        return try await handleImage(itemProvider: selectedItem.itemProvider, assetIdentifier: selectedItem.assetIdentifier)
+       }
+ 
+       // Default fallback – assume video when image cannot be loaded.
+@@ -122,8 +122,7 @@ internal struct MediaHandler {
+     }
+   }
+ 
+-  private func handleImage(from selectedImage: PHPickerResult) async throws -> AssetInfo {
+-    let itemProvider = selectedImage.itemProvider
++  internal func handleImage(itemProvider: NSItemProvider, assetIdentifier: String?) async throws -> AssetInfo {
+ 
+     // Fast-path: copy original file when no processing is required and current representation is requested.
+     let fastPath =
+@@ -168,7 +167,7 @@ internal struct MediaHandler {
+         let exif = options.exif ? (rawData.flatMap { ImageUtils.readExifFrom(data: $0) }) : nil
+ 
+         return AssetInfo(
+-          assetId: selectedImage.assetIdentifier,
++          assetId: assetIdentifier,
+           uri: cachedUrl.absoluteString,
+           width: Double(size.width),
+           height: Double(size.height),
+@@ -213,7 +212,7 @@ internal struct MediaHandler {
+     let size = CGSize(width: image.size.width, height: image.size.height)
+ 
+     return AssetInfo(
+-      assetId: selectedImage.assetIdentifier,
++      assetId: assetIdentifier,
+       uri: targetUrl.absoluteString,
+       width: Double(size.width),
+       height: Double(size.height),

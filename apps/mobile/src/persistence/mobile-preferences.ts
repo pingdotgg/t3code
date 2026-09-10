@@ -16,6 +16,7 @@ const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 
 export interface Preferences {
+  readonly recentPhotosEnabled?: boolean;
   readonly liveActivitiesEnabled?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
@@ -86,6 +87,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    recentPhotosEnabled?: boolean;
     liveActivitiesEnabled?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
@@ -148,6 +150,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.codeFontSize === "number" || parsed.codeFontSize === null) {
     preferences.codeFontSize = parsed.codeFontSize;
   }
+  if (typeof parsed.recentPhotosEnabled === "boolean")
+    preferences.recentPhotosEnabled = parsed.recentPhotosEnabled;
   if (typeof parsed.codeWordBreak === "boolean") preferences.codeWordBreak = parsed.codeWordBreak;
   if (Array.isArray(parsed.connectOnboardingOptOutAccounts)) {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(

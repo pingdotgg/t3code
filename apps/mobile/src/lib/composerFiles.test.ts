@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
   pickMedia: vi.fn(),
+  loadAsset: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -78,6 +79,7 @@ vi.mock("expo-file-system", () => {
   };
 });
 
+vi.mock("expo", () => ({ requireNativeModule: () => ({ loadImageAssetAsync: mocks.loadAsset }) }));
 vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("./uuid", () => ({ uuidv4: () => "attachment-id" }));
@@ -97,6 +99,7 @@ describe("composer file attachments", () => {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.pickMedia.mockReset();
+    mocks.loadAsset.mockReset();
     mocks.copy.mockReset();
     mocks.delete.mockReset();
     mocks.open.mockReset();
@@ -117,6 +120,35 @@ describe("composer file attachments", () => {
       width: 1,
       height: 1,
     };
+
+    it.each([
+      { mimeType: "image/heic", fileName: "photo.HEIC" },
+      { mimeType: "image/jpeg", fileName: "photo.jpg" },
+      { mimeType: "image/png", fileName: "photo.png" },
+      { mimeType: "image/gif", fileName: "photo.gif" },
+      { mimeType: "image/webp", fileName: "photo.webp" },
+    ])("processes recent $mimeType photos exactly like library selections", async (metadata) => {
+      const selection = { canceled: false, assets: [{ ...photo, ...metadata }] };
+      mocks.pickMedia.mockResolvedValue(selection);
+      mocks.loadAsset.mockResolvedValue(selection);
+      mocks.readBase64.mockResolvedValue("b3JpZ2luYWw=");
+      const library = await pickComposerMedia({ existingCount: 0 });
+      const recent = await pickComposerMedia({ existingCount: 0, assetId: "recent-photo" });
+      expect(recent).toEqual(library);
+      expect(mocks.pickMedia).toHaveBeenCalledTimes(1);
+      expect(mocks.loadAsset).toHaveBeenCalledWith(
+        "recent-photo",
+        mocks.pickMedia.mock.calls[0]?.[0],
+      );
+    });
+
+    it("applies the same size limit to recent photos", async () => {
+      const base64 = jpeg + "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+      mocks.loadAsset.mockResolvedValue({ canceled: false, assets: [{ ...photo, base64 }] });
+      const result = await pickComposerMedia({ existingCount: 0, assetId: "recent-photo" });
+      expect(result.attachments).toEqual([]);
+      expect(result.error).toContain("10 MB attachment limit");
+    });
 
     it.each(["image/heic", "image/heif", undefined])(
       "attaches the native JPEG conversion with matching metadata when the source MIME is %s",

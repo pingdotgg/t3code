@@ -12,6 +12,7 @@ export function SettingsSwitchRow(props: {
   readonly icon: SymbolName;
   readonly label: string;
   readonly subtitle?: string;
+  readonly subtitleNumberOfLines?: number;
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
 }) {
@@ -33,7 +34,12 @@ export function SettingsSwitchRow(props: {
       <View className="min-w-0 flex-1">
         <Text className="text-lg text-foreground">{props.label}</Text>
         {props.subtitle ? (
-          <Text className="text-sm text-foreground-muted">{props.subtitle}</Text>
+          <Text
+            className="text-sm text-foreground-muted"
+            numberOfLines={props.subtitleNumberOfLines}
+          >
+            {props.subtitle}
+          </Text>
         ) : null}
       </View>
       <ThemedSwitch
