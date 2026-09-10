@@ -941,6 +941,28 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       assert.deepEqual(answer.result, {
         action: { action: "accept", content: { branch: "main" } },
       });
+      // Recorded Devin 2026-09-10 called the older underscore method.
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcRequest("_session/elicitation", Schema.Unknown), {
+          jsonrpc: "2.0",
+          id: "devin-question",
+          headers: [],
+          method: "_session/elicitation",
+          params: {
+            sessionId: session.sessionId,
+            mode: "form",
+            message: "Proceed?",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        }),
+      );
+      const devinAnswer = yield* Queue.take(output).pipe(
+        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(jsonRpcResponse(Schema.Unknown)))),
+      );
+      assert.deepEqual(devinAnswer.result, {
+        action: { action: "accept", content: { branch: "main" } },
+      });
       const completed = yield* Deferred.make<void>();
       yield* acp.handleElicitationComplete(() =>
         Deferred.succeed(completed, undefined).pipe(Effect.asVoid),
