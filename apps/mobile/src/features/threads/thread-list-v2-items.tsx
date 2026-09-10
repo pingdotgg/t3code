@@ -880,13 +880,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     ? materialYouStyleLayoutActive
                       ? "accent-thread-selected-foreground"
                       : "accent-user-bubble-foreground"
-                    : pr.kind === "stack" || pr.isDraft || pr.state === null
-                      ? "accent-foreground-muted"
-                      : pr.state === "open"
-                        ? "accent-adaptive-emerald-600-400"
-                        : pr.state === "merged"
-                          ? "accent-adaptive-violet-600-400"
-                          : "accent-foreground-muted"
+                    : "accent-foreground-muted"
                 }
               />
             ) : null}

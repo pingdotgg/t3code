@@ -65,11 +65,12 @@ export function presentThreadLinkedPullRequests(
   const snapshot = link.snapshot;
   const state = badge.kind === "stack" ? badge.state : (snapshot?.state ?? null);
   const isDraft = snapshot?.isDraft === true && state === "open";
+  const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
-      : badge.others > 0
-        ? `+${badge.others}`
+      : linkedCount !== null
+        ? `+${linkedCount}`
         : String(link.number);
   return {
     kind: badge.kind,
@@ -84,7 +85,10 @@ export function presentThreadLinkedPullRequests(
       badge.kind === "stack"
         ? `${badge.layers} pull requests in stack, ${state ?? "status pending"}`
         : `#${link.number} pull request ${state === null ? "status pending" : isDraft ? "draft" : state}${badge.others > 0 ? `, ${badge.others} more linked` : ""}`,
-    textClassName: state === null || isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[state],
+    textClassName:
+      linkedCount !== null || state === null || isDraft
+        ? "text-foreground-muted"
+        : PR_STATE_TEXT_CLASS[state],
   };
 }
 

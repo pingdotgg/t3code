@@ -44,11 +44,11 @@ export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
 function pullRequestTintColor(
-  pr: Pick<ThreadPrPresentation, "state" | "isDraft">,
+  pr: Pick<ThreadPrPresentation, "state" | "isDraft" | "others">,
   colorScheme: "light" | "dark",
 ) {
   const dark = colorScheme === "dark";
-  if (pr.state === "open" && pr.isDraft === true) {
+  if (pr.others > 0 || (pr.state === "open" && pr.isDraft === true)) {
     return dark ? "#a1a1aa" : "#71717a";
   }
   switch (pr.state) {
