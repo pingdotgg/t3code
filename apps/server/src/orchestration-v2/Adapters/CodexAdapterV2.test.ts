@@ -437,7 +437,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(params.collaborationMode?.mode, "default");
       assert.include(
         params.collaborationMode?.settings.developer_instructions ?? "",
-        "use `delegate_task`",
+        "Use `delegate_task`",
       );
       assert.include(
         params.collaborationMode?.settings.developer_instructions ?? "",
