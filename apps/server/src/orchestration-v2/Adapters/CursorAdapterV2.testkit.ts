@@ -498,7 +498,7 @@ export function makeCursorAgentSdkReplayRunner(
   };
 }
 
-export function makeCursorAgentSdkReplayLayer(
+function makeCursorAgentSdkReplayLayer(
   transcript: CursorAgentSdkReplayTranscript,
   options?: {
     readonly runner?: CursorAgentSdkRunnerShape;

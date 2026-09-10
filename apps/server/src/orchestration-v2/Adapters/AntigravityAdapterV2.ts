@@ -42,9 +42,9 @@ import {
   type AcpAdapterV2RuntimeInput,
 } from "./AcpAdapterV2.ts";
 
-export const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
+const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
 
-export const AntigravityProviderCapabilitiesV2 = {
+const AntigravityProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,

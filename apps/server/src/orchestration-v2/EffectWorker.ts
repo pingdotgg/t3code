@@ -649,8 +649,8 @@ export interface OrchestrationEffectDaemonOptions {
   readonly livenessPollIntervalMs?: number;
 }
 
-export const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
-export const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
+const DEFAULT_EFFECT_WORKER_CONCURRENCY = 4;
+const DEFAULT_EFFECT_WORKER_LIVENESS_POLL_INTERVAL_MS = 30_000;
 
 export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions = {}) =>
   Effect.scoped(
@@ -725,5 +725,6 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
 
 export const runDaemon = runDaemonWithOptions();
 
-export const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> =
-  Layer.effectDiscard(runDaemon.pipe(Effect.forkScoped));
+const daemonLayer: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
+  runDaemon.pipe(Effect.forkScoped),
+);

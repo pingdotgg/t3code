@@ -41,7 +41,7 @@ const threadMetadataDependencies = [
   ThreadMetadataMcpService,
 ];
 
-export const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
+const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
     "List the V2 provider instances, models, inherited runtime settings, and app-owned orchestration features available to this T3 thread.",
   success: OrchestratorMcpCapabilitiesResult,
@@ -67,7 +67,7 @@ export const DelegateTaskTool = Tool.make("delegate_task", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-export const TaskStatusTool = Tool.make("task_status", {
+const TaskStatusTool = Tool.make("task_status", {
   description:
     "Read a T3-owned delegated task created by this parent thread. The primary status, childRunId, summary, and resultContextTransferId stay tied to the original delegated run. hasPendingChildRuns reports whether later work is still queued or executing, while latestTerminal* exposes the original run or the newest later terminal run that began execution. Reading a terminal result acknowledges its automatic parent delivery.",
   parameters: OrchestratorMcpTaskStatusInput,
@@ -81,7 +81,7 @@ export const TaskStatusTool = Tool.make("task_status", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const TaskCancelTool = Tool.make("task_cancel", {
+const TaskCancelTool = Tool.make("task_cancel", {
   description:
     "Request interruption of an active T3-owned delegated task and dispose its automatic parent delivery. Completed task results remain available.",
   parameters: OrchestratorMcpTaskCancelInput,
@@ -106,7 +106,7 @@ export const ScheduleTaskTool = Tool.make("schedule_task", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-export const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
+const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
   description:
     "List the recurring scheduled tasks in the calling thread's project, including their id, schedule, prompt, enabled state, bound thread, next run time, and last run status. Use the returned scheduledTaskId with update_scheduled_task or delete_scheduled_task.",
   success: OrchestratorMcpListScheduledTasksResult,
@@ -119,7 +119,7 @@ export const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
+const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
   description:
     "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run.",
   parameters: OrchestratorMcpUpdateScheduledTaskInput,
@@ -131,7 +131,7 @@ export const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
   .annotate(Tool.Title, "Update a scheduled task")
   .annotate(Tool.Destructive, true);
 
-export const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
+const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   description:
     "Permanently delete a scheduled task by scheduledTaskId (from list_scheduled_tasks). The task stops running immediately. To keep it but stop runs, use update_scheduled_task with enabled=false instead.",
   parameters: OrchestratorMcpDeleteScheduledTaskInput,
@@ -156,7 +156,7 @@ export const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-export const ThreadStartTool = Tool.make("t3_thread_start", {
+const ThreadStartTool = Tool.make("t3_thread_start", {
   description:
     "Create an ordinary TOP-LEVEL T3 conversation and immediately start its first turn. This is not a child agent/subagent; use delegate_task for delegated work. The new thread inherits this thread's project, checkout, provider, model, and runtime settings unless overridden. Use t3_thread_wait and t3_thread_read to collect its result.",
   parameters: OrchestratorMcpThreadStartInput,
@@ -169,7 +169,7 @@ export const ThreadStartTool = Tool.make("t3_thread_start", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-export const ThreadListTool = Tool.make("t3_thread_list", {
+const ThreadListTool = Tool.make("t3_thread_list", {
   description:
     "List T3 threads in the calling thread's project, newest first. Filter by durable run status or title and paginate with the returned cursor. Threads from other projects are never exposed.",
   parameters: OrchestratorMcpThreadListInput,
@@ -183,7 +183,7 @@ export const ThreadListTool = Tool.make("t3_thread_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadReadTool = Tool.make("t3_thread_read", {
+const ThreadReadTool = Tool.make("t3_thread_read", {
   description:
     "Read durable state and a paginated timeline from a T3 thread in the calling project. The default messages view returns user messages, assistant messages, and proposed plans; activity returns all summarized timeline items. Reading an untruncated terminal assistant result from this parent thread's direct app-owned child acknowledges that child's automatic completion delivery. Continue with afterPosition=nextPosition.",
   parameters: OrchestratorMcpThreadReadInput,
@@ -210,7 +210,7 @@ export const ThreadUpdateTool = Tool.make("t3_thread_update", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
-export const ThreadSendTool = Tool.make("t3_thread_send", {
+const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
     "Send a message to a T3 thread in the calling project. mode='auto' starts an idle thread, steers a fully active turn, or queues behind a turn that is not yet steerable. Use queue for a separate follow-up turn, steer for an in-flight update, or restart to interrupt-and-restart the active turn. clientRequestId makes retries idempotent.",
   parameters: OrchestratorMcpThreadSendInput,
@@ -223,7 +223,7 @@ export const ThreadSendTool = Tool.make("t3_thread_send", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-export const ThreadWaitTool = Tool.make("t3_thread_wait", {
+const ThreadWaitTool = Tool.make("t3_thread_wait", {
   description:
     "Wait for a T3 thread run to reach a terminal durable state. Without runId, the latest run at call time is selected; an idle thread returns immediately. Timeout does not interrupt work, so call again or use t3_thread_read/list after timedOut=true. Waiting reports status only and does not acknowledge a delegated result.",
   parameters: OrchestratorMcpThreadWaitInput,
@@ -237,7 +237,7 @@ export const ThreadWaitTool = Tool.make("t3_thread_wait", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-export const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
+const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   description:
     "Request interruption of a running turn in a T3 thread in the calling project. Without runId, the newest interruptible run is selected. Terminal runs and threads without an active turn return without another side effect. clientRequestId makes retries idempotent.",
   parameters: OrchestratorMcpThreadInterruptInput,

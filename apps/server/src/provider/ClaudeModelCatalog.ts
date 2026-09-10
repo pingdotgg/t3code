@@ -249,7 +249,7 @@ export function resolveClaudeCatalogApiModelId(
   return slug;
 }
 
-export function resolveClaudeCatalogContextWindowTokens(
+function resolveClaudeCatalogContextWindowTokens(
   catalog: ClaudeModelCatalog,
   modelSelection: ModelSelection | undefined,
 ): number | undefined {

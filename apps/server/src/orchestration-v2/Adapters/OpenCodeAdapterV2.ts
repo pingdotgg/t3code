@@ -109,8 +109,7 @@ import {
 import { makeSubagentChildThread, subagentThreadTitle } from "../SubagentProjection.ts";
 
 export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
-export const OPENCODE_DRIVER_KIND = OPENCODE_PROVIDER;
-export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_DRIVER_KIND);
+export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettingsSchema)({});
 
@@ -327,7 +326,12 @@ interface ActiveOpenCodeTurn {
   admissionAbortController: AbortController | null;
 }
 
-type OpenCodeAdmissionSignal = "accepted" | "busy" | "idle" | "user-message";
+type OpenCodeAdmissionSignal =
+  | "accepted"
+  | "assistant-completed"
+  | "busy"
+  | "idle"
+  | "user-message";
 type OpenCodeAdmissionAction = "hold" | "reconcile-idle" | "release";
 
 export function advanceOpenCodePromptAdmission(
@@ -338,6 +342,12 @@ export function advanceOpenCodePromptAdmission(
   signal: OpenCodeAdmissionSignal,
 ): OpenCodeAdmissionAction {
   if (!admission.admissionPending) return "release";
+  if (signal === "assistant-completed") {
+    admission.admissionAccepted = true;
+    admission.admissionMessageObserved = true;
+    admission.admissionPending = false;
+    return "release";
+  }
   if (signal === "idle") {
     admission.idleDuringAdmission = true;
     return "hold";
@@ -435,7 +445,7 @@ export interface OpenCodeProtocolLogEvent {
   readonly payload: unknown;
 }
 
-export function formatOpenCodeProtocolLogPayload(event: OpenCodeProtocolLogEvent) {
+function formatOpenCodeProtocolLogPayload(event: OpenCodeProtocolLogEvent) {
   return {
     direction: event.direction,
     messageKind: event.messageKind,
@@ -2575,6 +2585,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           const state = threads.get(message.sessionID);
           const turn = state?.activeTurn;
           if (state === undefined || turn === null || turn === undefined) return;
+          // Some OpenCode versions ignore the client-provided message ID. A
+          // completed assistant message is definitive admission evidence, so
+          // let the following idle event settle the turn without weakening
+          // the stale-user-message guard.
+          advanceOpenCodePromptAdmission(turn, "assistant-completed");
           for (const partId of turn.partIdsByMessage.get(message.id) ?? []) {
             const part = turn.parts.get(partId);
             if (part?.type === "text" || part?.type === "reasoning") {
@@ -2974,7 +2989,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
-              if (threadInput.existingProviderThread !== undefined) {
+              // Only a row that already carries a native session can be
+              // resumed; a placeholder without one still needs session.create.
+              if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
                 });
@@ -2993,7 +3010,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               );
               const nativeSession = unwrapData("session.create", response);
               const createdAt = yield* DateTime.now;
-              const providerThread = makeProviderThread({
+              const created = makeProviderThread({
                 idAllocator,
                 providerInstanceId: options.instanceId,
                 providerSessionId: input.providerSessionId,
@@ -3001,6 +3018,21 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 nativeSession,
                 now: createdAt,
               });
+              const existing = threadInput.existingProviderThread;
+              // Bind the new native session to the caller's row when one was
+              // handed over: a second live row per app thread would make
+              // `activeProviderThreadId` flap between the two on every update.
+              const providerThread =
+                existing === undefined
+                  ? created
+                  : {
+                      ...existing,
+                      providerSessionId: input.providerSessionId,
+                      nativeThreadRef: created.nativeThreadRef,
+                      nativeConversationHeadRef: created.nativeConversationHeadRef,
+                      status: created.status,
+                      updatedAt: created.updatedAt,
+                    };
               registerThread(nativeSession, providerThread, null);
               return providerThread;
             }).pipe(
@@ -3608,7 +3640,7 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   OpenCodeSettings,
   OpenCodeAdapterV2DriverEnv
 > = {
-  driverKind: OPENCODE_DRIVER_KIND,
+  driverKind: OPENCODE_PROVIDER,
   configSchema: OpenCodeSettingsSchema,
   defaultConfig: (): OpenCodeSettings => DEFAULT_OPENCODE_SETTINGS,
   create: Effect.fn("OpenCodeAdapterV2Driver.create")(
@@ -3635,7 +3667,7 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
         Effect.mapError(
           (cause) =>
             new ProviderAdapterDriverCreateError({
-              driver: OPENCODE_DRIVER_KIND,
+              driver: OPENCODE_PROVIDER,
               instanceId: input.instanceId,
               detail: "Failed to create OpenCode v2 adapter.",
               cause,
@@ -3645,25 +3677,24 @@ export const OpenCodeAdapterV2Driver: ProviderAdapterDriver<
   ),
 };
 
-export const layer: Layer.Layer<ProviderAdapterV2, never, OpenCodeAdapterV2DriverEnv> =
-  Layer.effect(
-    ProviderAdapterV2,
-    Effect.gen(function* () {
-      const hostEnvironment = yield* HostProcessEnvironment;
-      const openCodeRuntime = yield* OpenCodeRuntime;
-      const idAllocator = yield* IdAllocatorV2;
-      const providerEventLoggers = yield* ProviderEventLoggers;
-      const serverConfig = yield* ServerConfig;
-      return makeOpenCodeAdapterV2({
-        instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_OPENCODE_SETTINGS,
-        environment: hostEnvironment,
-        runtime: openCodeRuntime,
-        idAllocator,
-        serverConfig,
-        ...(providerEventLoggers.native === undefined
-          ? {}
-          : { nativeEventLogger: providerEventLoggers.native }),
-      });
-    }),
-  );
+const layer: Layer.Layer<ProviderAdapterV2, never, OpenCodeAdapterV2DriverEnv> = Layer.effect(
+  ProviderAdapterV2,
+  Effect.gen(function* () {
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const openCodeRuntime = yield* OpenCodeRuntime;
+    const idAllocator = yield* IdAllocatorV2;
+    const providerEventLoggers = yield* ProviderEventLoggers;
+    const serverConfig = yield* ServerConfig;
+    return makeOpenCodeAdapterV2({
+      instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_OPENCODE_SETTINGS,
+      environment: hostEnvironment,
+      runtime: openCodeRuntime,
+      idAllocator,
+      serverConfig,
+      ...(providerEventLoggers.native === undefined
+        ? {}
+        : { nativeEventLogger: providerEventLoggers.native }),
+    });
+  }),
+);

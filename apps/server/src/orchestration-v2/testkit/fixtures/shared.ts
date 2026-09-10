@@ -78,9 +78,9 @@ export const THREAD_FORK_NATIVE_CONTINUE_SOURCE_PROMPT = `Remember the opaque ma
 export const THREAD_FORK_NATIVE_CONTINUE_FIRST_PROMPT = `Remember the second opaque marker ${THREAD_FORK_NATIVE_CONTINUE_FORK_MARKER} for later in this conversation. Respond with exactly: fork marker stored`;
 export const THREAD_FORK_NATIVE_CONTINUE_SECOND_PROMPT =
   "Return the two opaque markers previously provided in chronological order, separated by a single | character. Respond with only the markers and separator.";
-export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER = "sibling-source-8R3D";
-export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER = "sibling-first-5L2P";
-export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
+const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER = "sibling-source-8R3D";
+const THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER = "sibling-first-5L2P";
+const THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER = "sibling-second-9N6C";
 export const THREAD_FORK_NATIVE_SIBLINGS_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_FORK_NATIVE_SIBLINGS_SOURCE_MARKER} for later in this conversation. Respond with exactly: sibling source stored`;
 export const THREAD_FORK_NATIVE_SIBLINGS_FIRST_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_FIRST_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
 export const THREAD_FORK_NATIVE_SIBLINGS_SECOND_PROMPT = `Remember the fork-local marker ${THREAD_FORK_NATIVE_SIBLINGS_SECOND_MARKER}. Return the source marker followed by this marker, separated by |. Respond with only the markers and separator.`;
@@ -350,7 +350,7 @@ export const RESTRICTED_GRANULAR_POLICY = {
   },
 } as const satisfies RuntimePolicyV2Override;
 
-export function createThreadCommand(input: {
+function createThreadCommand(input: {
   readonly commandId: CommandId;
   readonly ids: FixtureIds;
   readonly scenario: string;
@@ -373,7 +373,7 @@ export function createThreadCommand(input: {
   };
 }
 
-export function dispatchMessageCommand(input: {
+function dispatchMessageCommand(input: {
   readonly commandId: CommandId;
   readonly ids: FixtureIds;
   readonly modelSelection: ModelSelection;
@@ -846,7 +846,7 @@ export function assertRunOrdinals(
   );
 }
 
-export function assertRunsHaveRootNodes(projection: OrchestrationV2ThreadProjection) {
+function assertRunsHaveRootNodes(projection: OrchestrationV2ThreadProjection) {
   for (const run of projection.runs) {
     assert.isNotNull(run.rootNodeId, `run ${run.id} must have a root node`);
     assert.isTrue(
@@ -856,7 +856,7 @@ export function assertRunsHaveRootNodes(projection: OrchestrationV2ThreadProject
   }
 }
 
-export function assertRootNodesCountForRuns(projection: OrchestrationV2ThreadProjection) {
+function assertRootNodesCountForRuns(projection: OrchestrationV2ThreadProjection) {
   const rootNodes = projection.nodes.filter((node) => node.kind === "root_turn");
   assert.isAtLeast(rootNodes.length, projection.runs.length);
   for (const node of rootNodes) {
@@ -864,7 +864,7 @@ export function assertRootNodesCountForRuns(projection: OrchestrationV2ThreadPro
   }
 }
 
-export function assertProviderTurnsReferenceNodes(projection: OrchestrationV2ThreadProjection) {
+function assertProviderTurnsReferenceNodes(projection: OrchestrationV2ThreadProjection) {
   for (const providerTurn of projection.providerTurns) {
     assert.isTrue(
       projection.nodes.some((node) => node.id === providerTurn.nodeId),
@@ -877,7 +877,7 @@ export function assertProviderTurnsReferenceNodes(projection: OrchestrationV2Thr
   }
 }
 
-export function assertTurnItemsAreOrdered(projection: OrchestrationV2ThreadProjection) {
+function assertTurnItemsAreOrdered(projection: OrchestrationV2ThreadProjection) {
   const ordinals = projection.turnItems.map((item) => item.ordinal);
   assert.deepEqual(
     ordinals,
@@ -885,7 +885,7 @@ export function assertTurnItemsAreOrdered(projection: OrchestrationV2ThreadProje
   );
 }
 
-export function assertTurnItemsReferenceProjection(projection: OrchestrationV2ThreadProjection) {
+function assertTurnItemsReferenceProjection(projection: OrchestrationV2ThreadProjection) {
   for (const item of projection.turnItems) {
     if (item.runId !== null) {
       assert.isTrue(
@@ -928,7 +928,7 @@ export function assertVisibleTurnItemsMirrorLocalTurnItems(
   }
 }
 
-export function assertMessagesReferenceProjection(projection: OrchestrationV2ThreadProjection) {
+function assertMessagesReferenceProjection(projection: OrchestrationV2ThreadProjection) {
   for (const message of projection.messages) {
     if (message.runId !== null) {
       assert.isTrue(
@@ -945,9 +945,7 @@ export function assertMessagesReferenceProjection(projection: OrchestrationV2Thr
   }
 }
 
-export function assertRuntimeRequestsReferenceProjection(
-  projection: OrchestrationV2ThreadProjection,
-) {
+function assertRuntimeRequestsReferenceProjection(projection: OrchestrationV2ThreadProjection) {
   for (const request of projection.runtimeRequests) {
     const requestNode = projection.nodes.find((node) => node.id === request.nodeId);
     assert.isTrue(
@@ -1071,10 +1069,7 @@ export function assertRuntimeRequestCounts(
   }
 }
 
-export function countReplayLabelsWithPrefix(
-  transcript: ProviderReplayTranscript,
-  prefix: string,
-): number {
+function countReplayLabelsWithPrefix(transcript: ProviderReplayTranscript, prefix: string): number {
   return transcript.entries.filter(
     (entry) => entry.type !== "runtime_exit" && (entry.label?.startsWith(prefix) ?? false),
   ).length;
@@ -1129,7 +1124,7 @@ export function assertUserMessagesInclude(
   }
 }
 
-export function assertUserMessagesExclude(
+function assertUserMessagesExclude(
   projection: OrchestrationV2ThreadProjection,
   rejectedTexts: ReadonlyArray<string>,
 ) {

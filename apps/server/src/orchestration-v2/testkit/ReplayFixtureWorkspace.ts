@@ -38,7 +38,7 @@ function runGit(
   });
 }
 
-export const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(function* (
+const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(function* (
   fixtureName: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -55,7 +55,7 @@ export const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace"
   return cwd;
 });
 
-export const removeCheckpointWorkspaceEffect = Effect.fn("removeCheckpointWorkspace")(function* (
+const removeCheckpointWorkspaceEffect = Effect.fn("removeCheckpointWorkspace")(function* (
   cwd: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
