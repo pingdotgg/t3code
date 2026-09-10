@@ -37,9 +37,8 @@ export interface RetentionConfiguration extends Resource<
  * AWS allows only **one** retention configuration per account per region and
  * always names it `default` — treat this resource as an account-region
  * singleton.
- * @resource
- * @section Configuring Retention
- * @example Retain configuration items for one year
+ * ### Configuring Retention
+ * **Example:** Retain configuration items for one year
  * ```typescript
  * import * as Config from "alchemy/AWS/Config";
  *
@@ -48,12 +47,14 @@ export interface RetentionConfiguration extends Resource<
  * });
  * ```
  *
- * @example Minimum retention
+ * **Example:** Minimum retention
  * ```typescript
  * const retention = yield* Config.RetentionConfiguration("Retention", {
  *   retentionPeriod: "30 days",
  * });
  * ```
+ *
+ * @resource
  */
 export const RetentionConfiguration = Resource<RetentionConfiguration>(
   "AWS.Config.RetentionConfiguration",

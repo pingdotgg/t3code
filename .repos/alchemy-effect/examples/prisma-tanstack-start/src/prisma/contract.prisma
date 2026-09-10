@@ -1,0 +1,24 @@
+// Prisma Next contract source. The Vite plugin and `bun run emit` generate
+// `contract.json` and `contract.d.ts` next to this file.
+
+model User {
+  id        String   @id @default(uuid())
+  email     String
+  name      String
+  createdAt DateTime @default(now())
+  posts     Post[]
+
+  @@map("user")
+}
+
+model Post {
+  id        String   @id @default(uuid())
+  title     String
+  excerpt   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("post")
+}

@@ -1,4 +1,4 @@
-import { layerRuntime } from "@distilled.cloud/cloudflare-runtime";
+import { layerRuntime } from "@alchemy.run/cloudflare-runtime/core";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,6 +6,7 @@ import * as MutableHashMap from "effect/MutableHashMap";
 import * as Path from "effect/Path";
 import { AlchemyContext } from "../AlchemyContext.ts";
 import * as RpcProvider from "../Local/RpcProvider.ts";
+import { LOCAL_ID_PREFIX } from "../ProviderMode.ts";
 import { CloudflareEnvironment } from "./CloudflareEnvironment.ts";
 import type { Queue } from "./Queues/Queue.ts";
 import type { Consumer } from "./Queues/Consumer.ts";
@@ -60,12 +61,21 @@ const LocalRuntimeStateLive = Layer.succeed(
   }),
 );
 
-export const localRuntimeServices = () =>
+/**
+ * Directory under `.alchemy` holding local-provider persistent state
+ * (workerd storage). Shared so every consumer — the local runtime layer and
+ * Vite child processes — points at the same storage.
+ */
+export const localStorageDirectory = Effect.gen(function* () {
+  const { dotAlchemy } = yield* AlchemyContext;
+  const path = yield* Path.Path;
+  return path.join(dotAlchemy, "local");
+});
+
+const makeLocalRuntimeServices = () =>
   RpcProvider.providerServicesEffect(
     Effect.gen(function* () {
       const getEnv = yield* CloudflareEnvironment;
-      const { dotAlchemy } = yield* AlchemyContext;
-      const path = yield* Path.Path;
       return Layer.merge(
         LocalRuntimeStateLive,
         layerRuntime({
@@ -73,15 +83,36 @@ export const localRuntimeServices = () =>
             accountId: getEnv.pipe(Effect.map((env) => env.accountId)),
           },
           storage: {
-            directory: path.join(dotAlchemy, "local"),
+            directory: yield* localStorageDirectory,
           },
         }),
       );
     }),
   );
 
+let _localRuntimeServices:
+  | ReturnType<typeof makeLocalRuntimeServices>
+  | undefined;
+
+/**
+ * The shared local-runtime dependency layer (workerd `Runtime`,
+ * `WorkerProxy`, {@link LocalRuntimeState}) used by every Cloudflare local
+ * provider.
+ *
+ * Returns a **module-memoized layer reference**: local providers register
+ * via `ProviderLayer.dual`, which builds each provider's local variant
+ * lazily against the stack build's shared `Layer.MemoMap` — memoization is
+ * keyed by layer identity, so Worker/Queue/Consumer/Container composing
+ * this exact reference into their local thunks share one runtime instance
+ * per stack build (a fresh build gets a fresh instance via its own memo
+ * map; the layer blueprint itself is immutable).
+ */
+export const localRuntimeServices = () =>
+  (_localRuntimeServices ??= makeLocalRuntimeServices());
+
 export const isLocalId = (id: string | undefined): id is string =>
-  typeof id === "string" && id.startsWith("dev:");
+  typeof id === "string" && id.startsWith(LOCAL_ID_PREFIX);
 export const isLiveId = (id: string | undefined): id is string =>
-  typeof id === "string" && !id.startsWith("dev:");
-export const generateLocalId = (): string => `dev:${crypto.randomUUID()}`;
+  typeof id === "string" && !id.startsWith(LOCAL_ID_PREFIX);
+export const generateLocalId = (): string =>
+  `${LOCAL_ID_PREFIX}${crypto.randomUUID()}`;

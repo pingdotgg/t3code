@@ -1,0 +1,109 @@
+---
+title: Buckets
+description: S3-compatible object storage in a Project. Bind Railway.PutObject / Railway.GetObject.
+---
+
+A [`Railway.Bucket`](/providers/railway/bucket) is S3-compatible
+object storage in a [Project](/railway/compute/projects). Each
+environment gets its own isolated instance and credentials. Bind
+[`PutObject`](/providers/railway/putobject) /
+[`GetObject`](/providers/railway/getobject) in a
+[Service](/railway/compute/services). Alchemy injects the endpoint
+and credentials. You never read `AWS_*` yourself.
+
+## Create a Bucket
+
+Pass a Project. Alchemy generates a unique name and deploys to the
+project's primary environment in `sjc`.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const data = yield* Railway.Bucket("Data", { project: site });
+```
+
+:::caution[Changing `project` replaces the Bucket]
+The Bucket is created in the new Project. The old Bucket is deleted.
+:::
+
+## A stable name
+
+Pass `name` when you need a stable display name. The S3 API name is
+this plus a short hash (`s3BucketName`). Changing `name` updates in
+place.
+
+```typescript
+const data = yield* Railway.Bucket("Data", {
+  project: site,
+  name: "uploads",
+});
+```
+
+## Put and get objects
+
+Bind `PutObject` / `GetObject` in Service init. Provide the matching
+`*Http` layers.
+
+```typescript
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  { project: Site, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    const putObject = yield* Railway.PutObject(Data);
+    const getObject = yield* Railway.GetObject(Data);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* putObject({
+          Key: "hello.txt",
+          Body: "hello",
+          ContentType: "text/plain",
+        });
+        const obj = yield* getObject({ Key: "hello.txt" });
+        return HttpServerResponse.json({ ok: obj.ETag !== undefined });
+      }),
+    };
+  }).pipe(Effect.provide([Railway.PutObjectHttp, Railway.GetObjectHttp])),
+) {}
+```
+
+`HeadObject`, `DeleteObject`, and `ListObjectsV2` follow the same
+shape.
+
+## Region
+
+Omit `region` to use `sjc`. Changing it replaces the Bucket. See
+[Regions](/railway/compute/regions).
+
+```typescript
+const data = yield* Railway.Bucket("Data", {
+  project: site,
+  region: "iad",
+});
+```
+
+## Environment
+
+Defaults to the Project's primary environment. Pass a
+[Environment](/railway/compute/environments) to target another one.
+
+```typescript
+const staging = yield* Railway.Environment("Staging", { project: site });
+const data = yield* Railway.Bucket("StagingData", {
+  project: site,
+  environment: staging,
+});
+```
+
+:::caution[Changing `environment` replaces the Bucket]
+The Bucket instance is created in the new environment. The old
+instance is deleted.
+:::
+
+## Where next
+
+[Services](/railway/compute/services) is the container that binds
+`PutObject` / `GetObject`.
+The [`Bucket` reference](/providers/railway/bucket) lists every
+prop.

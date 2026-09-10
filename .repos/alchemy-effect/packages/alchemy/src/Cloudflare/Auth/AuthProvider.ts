@@ -233,10 +233,23 @@ export const CloudflareAuth = AuthProviderLayer<
           ),
         );
         yield* Clank.info(
-          "Cloudflare: waiting for authorization (up to 5 minutes)...",
+          "Cloudflare: waiting for authorization (up to 5 minutes).",
         );
 
-        const credentials = yield* OAuthClient.callback(authorization);
+        const credentials = yield* Effect.raceFirst(
+          OAuthClient.callback(authorization),
+          Clank.text({
+            message: "Paste the authorization code or callback URL",
+            placeholder:
+              "The browser will complete this automatically when local",
+            validate: (value) =>
+              value.trim().length > 0 ? undefined : "Paste a code or URL",
+          }).pipe(
+            Effect.flatMap((input) =>
+              OAuthClient.exchangeCallbackInput(input, authorization),
+            ),
+          ),
+        );
         yield* store.write(profileName, "cf-oauth", credentials);
         yield* Clank.success("Cloudflare: OAuth credentials saved.");
         return credentials;
@@ -783,7 +796,8 @@ export const DEFAULT_SCOPES = [
 ];
 
 export const OAUTH_CLIENT_ID = "6d8c2255-0773-45f6-b376-2914632e6f91";
-export const OAUTH_REDIRECT_URI = "http://localhost:9976/auth/callback";
+export const OAUTH_REDIRECT_URI = "https://alchemy.run/auth/callback";
+export const OAUTH_LOCAL_CALLBACK_URI = "http://localhost:9976/auth/callback";
 export const OAUTH_ENDPOINTS = {
   authorize: "https://dash.cloudflare.com/oauth2/authorize",
   token: "https://dash.cloudflare.com/oauth2/token",

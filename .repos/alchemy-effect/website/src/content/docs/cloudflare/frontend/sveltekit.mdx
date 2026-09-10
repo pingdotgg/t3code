@@ -1,0 +1,230 @@
+---
+title: SvelteKit
+description: Deploy a SvelteKit app to Cloudflare Workers with Cloudflare.Website.SvelteKit — a wrangler-free in-memory adapter, real bindings on platform.env, and full-HMR local dev.
+sidebar:
+  order: 11
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Cloudflare.Website.SvelteKit` deploys a
+[SvelteKit](https://svelte.dev/docs/kit) app as a Cloudflare Worker.
+It builds the app with SvelteKit's own Vite pipeline and a
+wrangler-free in-memory Cloudflare adapter, then re-bundles the
+server output for workerd. Client assets and prerendered pages deploy
+as Worker static assets; dynamic routes are served by the generated
+Worker. Your `vite.config.ts` loads natively; there is no
+`svelte.config.js` to write (kit v3 dropped it), no
+`@sveltejs/adapter-cloudflare` to install, and no Wrangler file.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/sveltekit` export from your project at deploy time. It is only used at
+build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure SvelteKit
+
+Your project's `vite.config.ts` loads natively — your Vite plugins
+and the kit options in your `sveltekit(...)` call all apply as usual.
+Alchemy injects its own wrangler-free Cloudflare adapter (replacing
+any adapter you declare, with a warning), so a fresh SvelteKit
+project deploys as-is. Deploy-specific kit overrides can also be
+passed via the `kit` prop, which merges over your `sveltekit(...)`
+options — see [Kit options and 404 handling](#kit-options-and-404-handling)
+below. A project without a `vite.config.*` works too: the resource
+falls back to a fully programmatic build.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack) and derive the typed shape of its bindings from it:
+
+```typescript
+// alchemy.run.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Website = Cloudflare.Website.SvelteKit("Website");
+
+export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
+```
+
+`WebsiteEnv` is the typed shape of the Worker's bindings, derived
+from the class — you'll import it into your SvelteKit code in
+[Read bindings in server code](#read-bindings-in-server-code).
+
+## Add it to the Stack
+
+Yield the class from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MySvelteKitSite",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+SvelteKit's server code is built for Node, so the `nodejs_compat`
+compatibility flag is added automatically — you don't need to pass
+it.
+
+See
+[examples/cloudflare-website-sveltekit](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-website-sveltekit)
+for the checked-in example.
+
+## Add bindings
+
+The resource returns a plain `Worker`, so `env` accepts the full
+binding vocabulary — KV namespaces, R2 buckets, Durable Objects,
+secrets:
+
+```diff lang="typescript"
+// alchemy.run.ts
++import * as Config from "effect/Config";
+
++export const Cache = Cloudflare.KV.Namespace("Cache");
+
+export const Website = Cloudflare.Website.SvelteKit("Website", {
++  env: {
++    CACHE: Cache,
++    API_KEY: Config.redacted("API_KEY"),
++  },
+});
+```
+
+`Cache` is a description, not a deploy — Alchemy provisions the real
+namespace because the Website binds it. `Config.redacted` reads
+`API_KEY` from your environment at deploy time and binds it as a
+Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
+
+## Read bindings in server code
+
+Server routes read bindings through SvelteKit's `platform.env`. Type
+it once by augmenting `App.Platform` with the inferred env type:
+
+```typescript
+// src/app.d.ts
+import type { WebsiteEnv } from "../alchemy.run.ts";
+
+declare global {
+  namespace App {
+    interface Platform {
+      env: WebsiteEnv;
+    }
+  }
+}
+
+export {};
+```
+
+Every server route now gets fully typed bindings:
+
+```typescript
+// src/routes/+page.server.ts
+export const load = async ({ platform }) => {
+  const cached = await platform?.env?.CACHE.get("greeting");
+  return { greeting: cached ?? "hello" };
+};
+```
+
+`platform.env.CACHE` is typed as a KV namespace and
+`platform.env.API_KEY` as a string — renaming a binding in
+`alchemy.run.ts` is a type error in your routes.
+
+## Kit options and 404 handling
+
+Since kit v3 there is no `svelte.config.js` — kit options live in the
+`sveltekit(...)` call in your `vite.config.ts`, which loads natively:
+
+```typescript
+// vite.config.ts
+import { sveltekit } from "@sveltejs/kit/vite";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    sveltekit({
+      alias: { $lib: "src/lib" },
+    }),
+  ],
+});
+```
+
+The `kit` prop is the deploy-time override bag: JSON-serializable kit
+config merged over your own `sveltekit(...)` options (the prop wins).
+Use it for per-stage values or alchemy `Output`s your config file
+can't compute:
+
+```typescript
+// alchemy.run.ts
+export const Website = Cloudflare.Website.SvelteKit("Website", {
+  kit: {
+    paths: { base: "/docs" },
+  },
+});
+```
+
+No functions or plugins in the bag — `preprocess`, `vitePlugin`, and
+the other construction-time options belong in your `sveltekit(...)`
+call. Don't set an `adapter` in either place: Alchemy always injects
+its own wrangler-free Cloudflare adapter (a declared adapter is
+replaced with a warning).
+
+404 behavior is driven by `assets.notFoundHandling` — the one knob
+configures both the build-time fallback-page generation and the
+assets layer that serves it. The generated 404 page renders the app
+shell, so kit's own error page shows:
+
+```typescript
+// alchemy.run.ts
+export const Website = Cloudflare.Website.SvelteKit("Website", {
+  assets: {
+    notFoundHandling: "404-page",
+  },
+});
+```
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs SvelteKit's own Vite dev server — Node SSR with
+full HMR. `platform.env` carries the Worker's real Cloudflare
+bindings, served wrangler-free through the cloudflare-runtime
+platform proxy: calls like `platform.env.CACHE.get(...)` round-trip
+to a local workerd instance, so dev state is live and shared. Literal
+`env` values (strings and secrets) overlay the proxied bindings. Your
+server code is identical in dev and production.

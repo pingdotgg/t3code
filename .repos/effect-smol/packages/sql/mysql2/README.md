@@ -1,7 +1,14 @@
-# `@effect/sql-mysql2`
+# @effect/sql-mysql2
 
-An Effect SQL implementation using the `mysql2` library.
+An Effect SQL client for MySQL, built on the [`mysql2`](https://sidorares.github.io/node-mysql2/docs) library.
+
+## Installation
+
+```sh
+npm install effect@rc @effect/sql-mysql2@rc
+```
 
 ## Documentation
 
-- **API Reference**: [View the full documentation](https://effect-ts.github.io/effect/docs/sql-mysql2).
+- [Effect website](https://effect.website)
+- [API reference](https://effect.website/docs/v4/api/sql-mysql2)

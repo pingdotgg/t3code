@@ -166,6 +166,13 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  /**
+   * Whether the attached `t3-code` MCP server exposes the preview tools. The
+   * server is attached for every session now (the pull request toolkit is
+   * always on), so its presence in `appServerArgs` no longer implies browser
+   * access; the credential's own capability decides the developer prompt.
+   */
+  readonly browserToolsAvailable?: boolean;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -224,7 +231,7 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimeInvalidUserInputAnswersError
   | CodexSessionRuntimeThreadIdMissingError;
 
-export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
+export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedError<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
   {
     requestId: Schema.String,
@@ -235,7 +242,7 @@ export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.Tagg
   }
 }
 
-export class CodexSessionRuntimePendingUserInputNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingUserInputNotFoundError>()(
+export class CodexSessionRuntimePendingUserInputNotFoundError extends Schema.TaggedError<CodexSessionRuntimePendingUserInputNotFoundError>()(
   "CodexSessionRuntimePendingUserInputNotFoundError",
   {
     requestId: Schema.String,
@@ -246,7 +253,7 @@ export class CodexSessionRuntimePendingUserInputNotFoundError extends Schema.Tag
   }
 }
 
-export class CodexSessionRuntimeInvalidUserInputAnswersError extends Schema.TaggedErrorClass<CodexSessionRuntimeInvalidUserInputAnswersError>()(
+export class CodexSessionRuntimeInvalidUserInputAnswersError extends Schema.TaggedError<CodexSessionRuntimeInvalidUserInputAnswersError>()(
   "CodexSessionRuntimeInvalidUserInputAnswersError",
   {
     questionId: Schema.String,
@@ -257,7 +264,7 @@ export class CodexSessionRuntimeInvalidUserInputAnswersError extends Schema.Tagg
   }
 }
 
-export class CodexSessionRuntimeThreadIdMissingError extends Schema.TaggedErrorClass<CodexSessionRuntimeThreadIdMissingError>()(
+export class CodexSessionRuntimeThreadIdMissingError extends Schema.TaggedError<CodexSessionRuntimeThreadIdMissingError>()(
   "CodexSessionRuntimeThreadIdMissingError",
   {
     threadId: Schema.String,
@@ -2349,10 +2356,12 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-            // Derived from the session's own MCP configuration rather than the
+            // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
-            browserToolsAvailable: hasConfiguredMcpServer(options.appServerArgs),
+            browserToolsAvailable:
+              hasConfiguredMcpServer(options.appServerArgs) &&
+              (options.browserToolsAvailable ?? true),
           });
           const rawResponse = yield* client.raw.request("turn/start", params);
           const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(

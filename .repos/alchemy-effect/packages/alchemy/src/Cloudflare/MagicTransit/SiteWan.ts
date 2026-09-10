@@ -95,11 +95,8 @@ export type MagicSiteWan = Resource<
  *
  * `siteId` is create-only — changing it triggers a replacement. Everything
  * else is updated in place.
- * @resource
- * @product Magic Transit
- * @category Network
- * @section Creating a WAN
- * @example DHCP uplink
+ * ### Creating a WAN
+ * **Example:** DHCP uplink
  * ```typescript
  * const wan = yield* Cloudflare.MagicTransit.MagicSiteWan("hq-wan", {
  *   siteId: site.siteId,
@@ -107,7 +104,7 @@ export type MagicSiteWan = Resource<
  * });
  * ```
  *
- * @example Static uplink with priority
+ * **Example:** Static uplink with priority
  * ```typescript
  * const wan = yield* Cloudflare.MagicTransit.MagicSiteWan("hq-wan", {
  *   siteId: site.siteId,
@@ -121,6 +118,10 @@ export type MagicSiteWan = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-wan/configuration/connector/
+ *
+ * @resource
+ * @product Magic Transit
+ * @category Network
  */
 export const MagicSiteWan = Resource<MagicSiteWan>(TypeId);
 

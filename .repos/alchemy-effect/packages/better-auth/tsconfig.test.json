@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["package.json", "test"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true,
+    "outDir": "./lib",
+    "rootDir": ".",
+    // This project never emits; fixtures import ../src/*.ts relatively so
+    // the worker bundler can resolve them without tsconfig paths, and the
+    // rewrite check is meaningless under noEmit.
+    "rewriteRelativeImportExtensions": false,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "references": [
+    {
+      "path": "./tsconfig.json"
+    },
+    {
+      "path": "../alchemy-test/tsconfig.json"
+    }
+  ]
+}

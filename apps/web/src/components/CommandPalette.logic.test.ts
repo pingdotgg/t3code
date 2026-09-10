@@ -1,15 +1,59 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import {
   buildBrowseGroups,
+  buildProjectActionItems,
   buildThreadActionItems,
+  buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+
+describe("linked pull request thread navigation", () => {
+  it("keeps archived relations searchable and routes them through the PR environment", async () => {
+    const environmentId = EnvironmentId.make("remote");
+    const id = ThreadId.make("archived-thread");
+    const runThread = vi.fn(async () => {});
+    const query = "https://github.com/acme/web/pull/42";
+    const linkedThreads = {
+      environmentId,
+      threads: [
+        {
+          id,
+          projectId: ProjectId.make("project"),
+          title: "Completed work",
+          archivedAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const state = reduceCommandPaletteUiState(
+      { open: false, mode: "command", openIntent: null },
+      {
+        _tag: "OpenSearch",
+        query,
+        linkedThreads,
+      },
+    );
+    expect(state.openIntent).toEqual({ kind: "search", query, linkedThreads });
+    const items = buildLinkedThreadActionItems({ ...linkedThreads, query, icon: null, runThread });
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query,
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [],
+      threadSearchItems: items,
+    });
+    expect(groups.flatMap((group) => group.items)).toEqual(items);
+    expect(items[0]?.description).toBe("Archived thread");
+    await items[0]?.run();
+    expect(runThread).toHaveBeenCalledWith({ environmentId, id });
+  });
+});
 
 describe("reduceCommandPaletteUiState", () => {
   const closedState = { open: false, mode: "command", openIntent: null } as const;
@@ -44,6 +88,32 @@ describe("reduceCommandPaletteUiState", () => {
         openIntent: null,
       },
     );
+  });
+
+  it("opens PR search from another overlay and replaces an earlier search", () => {
+    const first = reduceCommandPaletteUiState(
+      { open: true, mode: "files", openIntent: null },
+      {
+        _tag: "OpenSearch",
+        query: "https://github.com/acme/web/pull/7",
+      },
+    );
+    expect(first).toEqual({
+      open: true,
+      mode: "command",
+      openIntent: { kind: "search", query: "https://github.com/acme/web/pull/7" },
+    });
+    const second = reduceCommandPaletteUiState(first, {
+      _tag: "OpenSearch",
+      query: "https://github.com/acme/web/pull/8",
+    });
+    expect(second.openIntent).toEqual({
+      kind: "search",
+      query: "https://github.com/acme/web/pull/8",
+    });
+    expect(
+      reduceCommandPaletteUiState(second, { _tag: "SetOpen", open: false }).openIntent,
+    ).toBeNull();
   });
 
   it("routes open intents to command mode", () => {
@@ -112,6 +182,20 @@ describe("enumerateCommandPaletteItems", () => {
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
 
+function makeProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: PROJECT_ID,
+    environmentId: LOCAL_ENVIRONMENT_ID,
+    title: "Project",
+    workspaceRoot: "/workspace/project",
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
     id: ThreadId.make("thread-1"),
@@ -134,10 +218,33 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branch: null,
     worktreePath: null,
     checkpoints: [],
+    pullRequests: [],
     activities: [],
     ...overrides,
   };
 }
+
+describe("buildProjectActionItems", () => {
+  it("shows the grouped display name but keeps the real title for icons", () => {
+    const project = makeProject({ title: "fleet", workspaceRoot: "/Users/theo/Code/p/fleet" });
+    const iconTitles: string[] = [];
+    const [item] = buildProjectActionItems({
+      projects: [{ ...project, displayName: "t3dotgg/fleet" }],
+      valuePrefix: "project",
+      icon: (candidate) => {
+        iconTitles.push(candidate.title);
+        return null;
+      },
+      runProject: async () => undefined,
+    });
+
+    expect(item?.title).toBe("t3dotgg/fleet");
+    expect(item?.searchTerms).toEqual(
+      expect.arrayContaining(["t3dotgg/fleet", "fleet", "/Users/theo/Code/p/fleet"]),
+    );
+    expect(iconTitles).toEqual(["fleet"]);
+  });
+});
 
 describe("buildThreadActionItems", () => {
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
@@ -469,4 +576,46 @@ describe("filterPinnedBrowseEntries", () => {
       exactEntry: windowsEntries[0],
     });
   });
+});
+
+it.each([
+  "#10839",
+  "10839",
+  "pingdotgg/t3code#10839",
+  "https://github.com/pingdotgg/t3code/pull/10839",
+])("finds linked threads from PR query %s", (query) => {
+  const items = buildThreadActionItems({
+    threads: [
+      makeThread({
+        title: "Implementation",
+        pullRequests: [
+          {
+            host: "github.com",
+            repository: "pingdotgg/t3code",
+            number: 10839,
+            url: "https://github.com/pingdotgg/t3code/pull/10839",
+            source: "manual",
+            linkedAt: "2026-09-08T00:00:00Z",
+            snapshot: null,
+            stack: null,
+          },
+        ],
+      }),
+      makeThread({ id: ThreadId.make("unrelated"), title: "Other work" }),
+    ],
+    projectTitleById: new Map(),
+    sortOrder: "updated_at",
+    icon: null,
+    runThread: async () => undefined,
+  });
+  const groups = filterCommandPaletteGroups({
+    activeGroups: [],
+    query,
+    isInSubmenu: false,
+    projectSearchItems: [],
+    threadSearchItems: items,
+  });
+  expect(groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+    "Implementation",
+  ]);
 });

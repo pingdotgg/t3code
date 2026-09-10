@@ -166,11 +166,8 @@ export type LegacyPipeline = Resource<
  * A legacy pipeline accepts JSON events over HTTP (and/or a Worker
  * `pipelines` binding) and batches them into an R2 bucket using
  * S3-compatible credentials.
- * @resource
- * @product Pipelines
- * @category Storage & Databases
- * @section Creating a Legacy Pipeline
- * @example HTTP ingest into R2
+ * ### Creating a Legacy Pipeline
+ * **Example:** HTTP ingest into R2
  * The S3-compatible credentials are derived from a Cloudflare API token:
  * the access key id is the token id and the secret is the SHA-256 hex
  * digest of the token value.
@@ -181,15 +178,15 @@ export type LegacyPipeline = Resource<
  *   destination: {
  *     bucket: bucket.bucketName,
  *     credentials: {
- *       accessKeyId: alchemy.secret.env.R2_ACCESS_KEY_ID,
- *       secretAccessKey: alchemy.secret.env.R2_SECRET_ACCESS_KEY,
+ *       accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
+ *       secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
  *     },
  *   },
  * });
  * // POST events to pipeline.endpoint
  * ```
  *
- * @example Tuned batching and CORS
+ * **Example:** Tuned batching and CORS
  * ```typescript
  * const pipeline = yield* Cloudflare.Pipelines.LegacyPipeline("ingest", {
  *   source: [
@@ -206,6 +203,10 @@ export type LegacyPipeline = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/pipelines/
+ *
+ * @resource
+ * @product Pipelines
+ * @category Storage & Databases
  */
 export const LegacyPipeline = Resource<LegacyPipeline>(TypeId);
 
@@ -413,8 +414,7 @@ const listLegacyPipelineSummaries = (accountId: string) => {
       const next = [...acc, ...results];
       const total = response.resultInfo?.totalCount;
       const done =
-        results.length < perPage ||
-        (total !== undefined && next.length >= total);
+        results.length < perPage || (total != null && next.length >= total);
       return done ? next : yield* collect(page + 1, next);
     });
   return collect(1, []);

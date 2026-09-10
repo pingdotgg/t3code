@@ -1,0 +1,87 @@
+---
+title: Mongo
+description: Official MongoDB in a Project. Bind Railway.ConnectMongo and ping with the MongoDB driver.
+---
+
+A [`Railway.Mongo`](/providers/railway/mongo) is MongoDB as a Service:
+the official `mongo` image, a Volume at `/data/db`, `MONGO_*` /
+`MONGO_URL` variables, IPv6 bind for the private network, and an
+optional TCP proxy for the public URL. The IaC helper is
+`Railway.mongo`.
+
+Private hostname is `{name}.railway.internal`. From a
+[Service](/railway/compute/services), yield
+[`ConnectMongo`](/providers/railway/connectmongo). From a laptop, use
+`publicConnectionUri`.
+
+## Create Mongo
+
+Pass a Project. Alchemy generates a unique name, password, volume,
+and a public TCP proxy.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const db = yield* Railway.mongo("Db", { project: site });
+```
+
+:::caution[Changing `project` replaces Mongo]
+A new service + volume are created in the new Project. The old
+service and volume are deleted. Data is not copied.
+:::
+
+## Connect from a Service
+
+Yield `ConnectMongo` in Service init. Provide `ConnectMongoHttp`.
+Pass `conn.connectionString` to the MongoDB driver (or
+`Railway.pingMongo`).
+
+```typescript
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as Redacted from "effect/Redacted";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    build: { install: ["mongodb"] },
+  },
+  Effect.gen(function* () {
+    const conn = yield* Railway.ConnectMongo(Db);
+    return {
+      fetch: Effect.gen(function* () {
+        const url = yield* conn.connectionString;
+        const ping = yield* Railway.pingMongo(Redacted.value(url));
+        return HttpServerResponse.json(ping);
+      }),
+    };
+  }).pipe(Effect.provide(Railway.ConnectMongoHttp)),
+) {}
+```
+
+To store Railway's `${{Db.MONGO_URL}}` template instead of a
+resolved URI, pass [`Railway.ref`](/providers/railway/ref)
+(`Railway.ref(Db, "MONGO_URL")`) as a
+[Variable](/railway/data/variables) `value`.
+
+## Public TCP
+
+`public` (default `true`) creates a TCP proxy on 27017.
+`publicConnectionUri` is `{domain}:{proxyPort}` for laptop access.
+
+```typescript
+const db = yield* Railway.mongo("Db", {
+  project: site,
+  public: false,
+});
+```
+
+## Where next
+
+[Postgres](/railway/data/postgres) and [MySQL](/railway/data/mysql)
+are the same shape for SQL.
+[TcpProxy](/railway/networking#tcp-proxies) is the public TCP
+resource.
+The [`Mongo` reference](/providers/railway/mongo) lists every prop.
+The [`ConnectMongo` reference](/providers/railway/connectmongo) is
+the runtime binding.

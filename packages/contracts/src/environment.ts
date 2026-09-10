@@ -80,6 +80,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
+  /** Uploaded files may accompany question answers. */
+  questionAttachments: Schema.optionalKey(Schema.Boolean),
   /** Missing on servers that only accept image attachments. */
   fileAttachments: Schema.optionalKey(
     Schema.Struct({
@@ -121,8 +123,14 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server understands regenerateTitle on thread.meta.update. Absent on
       older servers, so clients hide the action instead of sending it. */
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
-  /** Server persists a pull request reference on thread.meta.update. */
+  /** Server supports legacy linkedPullRequest updates through thread.meta.update.
+      Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
+  /** Server understands thread.pull-request.link / .unlink, exposes `pullRequests` on
+      threads, and routes PullRequestRef.host across projects on the same host. Same
+      version-skew contract as threadSettlement. */
+  threadPullRequests: Schema.optionalKey(Schema.Boolean),
+  pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */

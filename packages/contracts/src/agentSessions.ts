@@ -57,8 +57,12 @@ export const AgentSessionProjectCandidate = Schema.Struct({
   threadCount: NonNegativeInt,
   lastActiveAt: Schema.NullOr(IsoDateTime),
   alreadyImported: Schema.Boolean,
-  /** `null` when the directory is not the root of a git repository. */
-  git: Schema.NullOr(AgentSessionProjectGit),
+  /**
+   * `null` when the directory is not the root of a git repository. Missing on
+   * servers that predate the git scan, where the client cannot tell repositories
+   * from plain folders and should treat every candidate as a standalone project.
+   */
+  git: Schema.optionalKey(Schema.NullOr(AgentSessionProjectGit)),
 });
 export type AgentSessionProjectCandidate = typeof AgentSessionProjectCandidate.Type;
 
@@ -75,7 +79,7 @@ export const AgentSessionImportInput = Schema.Struct({
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
-export class AgentSessionImportProjectNotFoundError extends Schema.TaggedErrorClass<AgentSessionImportProjectNotFoundError>()(
+export class AgentSessionImportProjectNotFoundError extends Schema.TaggedError<AgentSessionImportProjectNotFoundError>()(
   "AgentSessionImportProjectNotFoundError",
   { projectId: ProjectId },
 ) {
@@ -84,7 +88,7 @@ export class AgentSessionImportProjectNotFoundError extends Schema.TaggedErrorCl
   }
 }
 
-export class AgentSessionImportProjectChangedError extends Schema.TaggedErrorClass<AgentSessionImportProjectChangedError>()(
+export class AgentSessionImportProjectChangedError extends Schema.TaggedError<AgentSessionImportProjectChangedError>()(
   "AgentSessionImportProjectChangedError",
   { projectId: ProjectId },
 ) {
@@ -99,7 +103,7 @@ export const AgentSessionImportResult = Schema.Struct({
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 
-export class AgentSessionScanError extends Schema.TaggedErrorClass<AgentSessionScanError>()(
+export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanError>()(
   "AgentSessionScanError",
   {
     operation: Schema.Literals(["read-settings", "read-projects"]),
