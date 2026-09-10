@@ -3902,6 +3902,7 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const queuedEditSaveInFlightRef = useRef(false);
+  const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const queuedEditImageResources = useMemo(
     () =>
       (editingQueuedRun?.existingAttachments ?? [])
@@ -7299,6 +7300,17 @@ export default function ChatView(props: ChatViewProps) {
       const editText = promptForSend.trim();
       const newEditImages = [...composerImages];
       const newEditFiles = [...composerFiles];
+      const newEditAttachments = [...newEditImages, ...newEditFiles];
+      if (
+        editingQueuedRun.existingAttachments.length + newEditAttachments.length >
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ) {
+        setThreadError(
+          editingQueuedRun.threadId,
+          `A message can have at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        );
+        return;
+      }
       if (
         editText.length === 0 &&
         editingQueuedRun.existingAttachments.length === 0 &&
@@ -7308,6 +7320,7 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       queuedEditSaveInFlightRef.current = true;
+      setIsSavingQueuedEdit(true);
       try {
         const uploads = await prepareQueuedEditAttachments({
           existingAttachments: editingQueuedRun.existingAttachments,
@@ -7359,6 +7372,7 @@ export default function ChatView(props: ChatViewProps) {
           return;
         }
         setThreadError(editingQueuedRun.threadId, null);
+        releaseDraftAttachments(newEditAttachments);
         promptRef.current = "";
         clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
         composerRef.current?.resetCursorState();
@@ -7371,6 +7385,7 @@ export default function ChatView(props: ChatViewProps) {
         );
       } finally {
         queuedEditSaveInFlightRef.current = false;
+        setIsSavingQueuedEdit(false);
       }
       return;
     }
@@ -9185,7 +9200,10 @@ export default function ChatView(props: ChatViewProps) {
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
-                      <ComposerSurface.Host>
+                      <ComposerSurface.Host
+                        inert={isSavingQueuedEdit}
+                        aria-busy={isSavingQueuedEdit}
+                      >
                         <div className="relative z-10">
                           <ChatComposer
                             composerRef={composerRef}
@@ -9209,7 +9227,7 @@ export default function ChatView(props: ChatViewProps) {
                             projectSelectionRequired={isLocalDraftThread && activeProject === null}
                             phase={phase}
                             isConnecting={isConnecting}
-                            isSendBusy={isSendBusy}
+                            isSendBusy={isSendBusy || isSavingQueuedEdit}
                             isPreparingWorktree={isPreparingWorktree}
                             queuedRunsControl={
                               isServerThread && activeThread ? (
