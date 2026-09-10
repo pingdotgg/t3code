@@ -10,9 +10,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
@@ -26,10 +26,7 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
-  isCommandMissingCause,
-  parseGenericCliVersion,
   providerModelsFromSettings,
-  spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
@@ -41,12 +38,7 @@ import {
   claudeUsageResponseToLimits,
   recordClaudeUsageResponse,
 } from "./claudeUsageLimits.ts";
-import {
-  BUNDLED_CLAUDE_MODEL_CATALOG,
-  type ClaudeModelCatalog,
-  formatClaudeVersionUpgradeMessage,
-  resolveClaudeModelsForVersion,
-} from "../ClaudeModelCatalog.ts";
+import { BUNDLED_CLAUDE_MODEL_CATALOG, type ClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -170,7 +162,6 @@ function apiProviderAuthMetadata(
 // account info. The previous 8s budget expired mid-init, so the probe returned
 // `undefined` and left the provider unverified and unselectable in the picker.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
-const VERSION_PROBE_TIMEOUT_MS = 60_000;
 
 /**
  * Keep workspace-scoped command discovery intact while isolating the periodic
@@ -401,22 +392,6 @@ const probeClaudeCapabilities = (
   );
 };
 
-const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
-  claudeSettings: ClaudeSettings,
-  args: ReadonlyArray<string>,
-  environment?: NodeJS.ProcessEnv,
-) {
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
-  const spawnCommand = yield* resolveSpawnCommand(claudeSettings.binaryPath, args, {
-    env: claudeEnvironment,
-  });
-  const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-    env: claudeEnvironment,
-    shell: spawnCommand.shell,
-  });
-  return yield* spawnAndCollect(claudeSettings.binaryPath, command);
-});
-
 export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(function* (
   claudeSettings: ClaudeSettings,
   resolveCapabilities?: (
@@ -427,11 +402,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
-> {
+): Effect.fn.Return<ServerProviderDraft, never, FileSystem.FileSystem | Path.Path> {
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
@@ -456,80 +427,23 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const versionProbe = yield* runClaudeCommand(
-    claudeSettings,
-    ["--version"],
-    resolvedEnvironment,
-  ).pipe(Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS), Effect.result);
-
-  if (Result.isFailure(versionProbe)) {
-    const error = versionProbe.failure;
-    yield* Effect.logWarning("Claude Agent CLI health check failed.", {
-      errorTag: error._tag,
-    });
+  const resolveExecutable = yield* SpawnExecutableResolution;
+  const platform = yield* HostProcessPlatform;
+  if (resolveExecutable(claudeSettings.binaryPath, platform, resolvedEnvironment) === undefined) {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
       models: allModels,
       probe: {
-        installed: !isCommandMissingCause(error),
+        installed: false,
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: isCommandMissingCause(error)
-          ? "Claude Agent CLI (`claude`) was not found on PATH."
-          : "Failed to execute Claude Agent CLI health check.",
+        message: "Claude Agent CLI (`claude`) was not found on PATH.",
       },
     });
   }
-
-  if (Option.isNone(versionProbe.success)) {
-    return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
-      enabled: claudeSettings.enabled,
-      checkedAt,
-      models: allModels,
-      probe: {
-        installed: true,
-        version: null,
-        status: "error",
-        auth: { status: "unknown" },
-        message:
-          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
-      },
-    });
-  }
-
-  const version = versionProbe.success.value;
-  const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-  if (version.code !== 0) {
-    yield* Effect.logWarning("Claude Agent CLI version probe exited with a non-zero status.", {
-      exitCode: version.code,
-      stdoutLength: version.stdout.length,
-      stderrLength: version.stderr.length,
-    });
-    return buildServerProvider({
-      presentation: CLAUDE_PRESENTATION,
-      enabled: claudeSettings.enabled,
-      checkedAt,
-      models: allModels,
-      probe: {
-        installed: true,
-        version: parsedVersion,
-        status: "error",
-        auth: { status: "unknown" },
-        message: "Claude Agent CLI is installed but failed to run.",
-      },
-    });
-  }
-
-  const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
@@ -543,12 +457,12 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: allModels,
       slashCommands: dedupedSlashCommands,
       skills,
       probe: {
         installed: true,
-        version: parsedVersion,
+        version: null,
         status: "warning",
         auth: { status: "unknown" },
         message: "Could not verify Claude authentication status from initialization result.",
@@ -573,19 +487,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
     checkedAt,
-    models,
+    models: allModels,
     slashCommands: dedupedSlashCommands,
     skills,
     probe: {
       installed: true,
-      version: parsedVersion,
+      version: null,
       status: "ready",
       auth: {
         status: "authenticated",
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
-      ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
       usageLimits,
     },
   });

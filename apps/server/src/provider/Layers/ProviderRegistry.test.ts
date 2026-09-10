@@ -63,7 +63,9 @@ const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
 
-const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
+const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({
+  binaryPath: process.execPath,
+});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
@@ -192,33 +194,6 @@ function mockSpawnerLayer(
   );
 }
 
-function recordingMockSpawnerLayer(
-  handler: (args: ReadonlyArray<string>) => {
-    stdout: string;
-    stderr: string;
-    code: number;
-  },
-) {
-  const commands: Array<{
-    readonly args: ReadonlyArray<string>;
-    readonly env: NodeJS.ProcessEnv | undefined;
-  }> = [];
-  const layer = Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const cmd = command as unknown as {
-        args: ReadonlyArray<string>;
-        options?: {
-          readonly env?: NodeJS.ProcessEnv;
-        };
-      };
-      commands.push({ args: cmd.args, env: cmd.options?.env });
-      return Effect.succeed(mockHandle(handler(cmd.args)));
-    }),
-  );
-  return { layer, commands };
-}
-
 function mockCommandSpawnerLayer(
   handler: (
     command: string,
@@ -292,7 +267,6 @@ function makeCodexProbeSnapshot(
   input: Partial<CodexAppServerProviderSnapshot> = {},
 ): CodexAppServerProviderSnapshot {
   return {
-    version: "1.0.0",
     account: {
       account: {
         type: "chatgpt",
@@ -384,7 +358,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           );
           assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.version, "1.0.0");
+          assert.strictEqual(status.version, null);
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "chatgpt");
           assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
@@ -2792,37 +2766,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
-      it.effect("runs Claude status probes with the configured CLAUDE_CONFIG_DIR", () => {
-        const claudeConfigDir = "/tmp/t3code-claude-home";
-        const recorded = recordingMockSpawnerLayer((args) => {
-          const joined = args.join(" ");
-          if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-          if (joined === "auth status")
-            return {
-              stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-              stderr: "",
-              code: 0,
-            };
-          throw new Error(`Unexpected args: ${joined}`);
-        });
-
-        return Effect.gen(function* () {
-          const status = yield* checkClaudeProviderStatus(
-            {
-              ...defaultClaudeSettings,
-              homePath: claudeConfigDir,
-            },
-            claudeCapabilities(),
-          );
-          assert.strictEqual(status.status, "ready");
-          // The home is resolved through the host Path before it reaches the env.
-          assert.deepStrictEqual(
-            recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
-            [(yield* Path.Path).resolve(claudeConfigDir)],
-          );
-        }).pipe(Effect.provide(recorded.layer));
-      });
-
       it.effect("includes probed claude slash commands in the provider snapshot", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
@@ -2937,42 +2880,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       it.effect("returns unavailable when claude is missing", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
-            defaultClaudeSettings,
+            { ...defaultClaudeSettings, binaryPath: "/definitely/not/installed/claude" },
             claudeCapabilities(),
           );
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.auth.status, "unknown");
           assert.strictEqual(status.message, "Claude Agent CLI (`claude`) was not found on PATH.");
-        }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
+        }),
       );
 
-      it.effect("returns error when version check fails with non-zero exit code", () => {
-        const secretStderr = "Something went wrong: secret-token-value";
-        return Effect.gen(function* () {
+      it.effect("does not spawn the Claude CLI to check its version", () =>
+        Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             defaultClaudeSettings,
             claudeCapabilities(),
           );
-          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.status, "ready");
           assert.strictEqual(status.installed, true);
-          assert.strictEqual(status.message, "Claude Agent CLI is installed but failed to run.");
-          assert.ok(!(status.message ?? "").includes(secretStderr));
-        }).pipe(
-          Effect.provide(
-            mockSpawnerLayer((args) => {
-              const joined = args.join(" ");
-              if (joined === "--version")
-                return {
-                  stdout: "",
-                  stderr: secretStderr,
-                  code: 1,
-                };
-              throw new Error(`Unexpected args: ${joined}`);
-            }),
-          ),
-        );
-      });
+          assert.strictEqual(status.version, null);
+        }).pipe(Effect.provide(failingSpawnerLayer("Claude CLI should not be spawned"))),
+      );
 
       it.effect("returns warning when the Claude initialization result is unavailable", () =>
         Effect.gen(function* () {

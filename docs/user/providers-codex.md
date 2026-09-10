@@ -72,6 +72,10 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+Provider refreshes use Codex app-server for authentication and model discovery but do not retain
+the version reported during initialization. T3 Code therefore does not show an installed Codex
+version or offer Codex update advisories; use Codex's own update flow instead.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

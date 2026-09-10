@@ -20,6 +20,11 @@ gets its model list from its app server.
 Do not extend it when adding Claude models. Codex uses `currentModels.codex` as a
 legacy-classification overlay for discovered models.
 
+Claude provider refreshes deliberately do not run the CLI's version command. Until
+the existing SDK initialization exposes the installed version, provider snapshots
+include the complete catalog and do not apply Claude Code version-compatibility
+metadata.
+
 Model data is schema-validated configuration. Tests should cover resolver, cache,
 and adapter semantics with synthetic model names, so adding a model never requires
 tests that repeat the configuration.

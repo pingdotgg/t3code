@@ -37,6 +37,10 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
+Provider refreshes verify that the configured executable exists without running `claude --version`.
+T3 Code therefore does not show an installed Claude Code version or offer Claude Code update
+advisories; use Claude Code's own update flow instead.
+
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 T3 Code uses the Claude configuration on the connected server.
