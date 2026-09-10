@@ -74,7 +74,8 @@ uses the project's instructions and recent commit subjects.
 
 Open **Pull requests** to review changes and comments, request reviewers, check out a branch,
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
-GitLab calls these merge requests.
+On GitHub, GitLab, and Bitbucket, resolve or unresolve review conversations from the **Summary** or
+**Code** tab. GitLab calls these merge requests.
 
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
