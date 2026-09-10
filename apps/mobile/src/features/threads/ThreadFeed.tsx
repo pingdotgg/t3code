@@ -2947,13 +2947,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               entry.type === "message" ? `message:${entry.message.role}` : entry.type
             }
             getFixedItemSize={getFixedItemSize}
-            // LegendList swaps its position and size component types when this
-            // becomes undefined, remounting the feed and replaying row entrances.
-            // Keep those containers mounted while ordinary updates stay immediate.
+            // Android can retain stale native row positions when layout transitions
+            // race the measurements arriving during sync, even with duration 0.
+            // Keep its rows on LegendList's non-animated positioning path. On iOS,
+            // keep a transition installed between disclosures so containers don't remount.
             itemLayoutAnimation={
-              disclosureToggleSettling
-                ? THREAD_FEED_LAYOUT_TRANSITION
-                : THREAD_FEED_IMMEDIATE_TRANSITION
+              Platform.OS === "android"
+                ? undefined
+                : disclosureToggleSettling
+                  ? THREAD_FEED_LAYOUT_TRANSITION
+                  : THREAD_FEED_IMMEDIATE_TRANSITION
             }
             onItemSizeChanged={handleItemSizeChanged}
             // Measure rows well before they scroll into view so estimate→actual

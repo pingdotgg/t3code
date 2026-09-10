@@ -605,6 +605,18 @@ describe("rightPanelStore", () => {
     expect(state.surfaces[1]).not.toHaveProperty("url");
   });
 
+  it("keeps matching repository and number on different hosts as separate tabs", () => {
+    const first = { projectId: "project-a", repository: "acme/api", number: 7, host: "github.com" };
+    const second = { ...first, host: "github.example.com" };
+    useRightPanelStore.getState().openPullRequest(refA, first);
+    useRightPanelStore.getState().openPullRequest(refA, second);
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([pullRequestSurface(first), pullRequestSurface(second)]);
+    expect(pullRequestSurfaceId({ ...first, host: "GITHUB.COM" })).toBe(
+      pullRequestSurfaceId(first),
+    );
+  });
+
   it("keeps one pull request read from two servers as two tabs", () => {
     const local = {
       environmentId: "local",

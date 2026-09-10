@@ -56,6 +56,7 @@ function pullRequestTintColor(
       return dark ? "#34d399" : "#059669";
     case "merged":
       return dark ? "#a78bfa" : "#7c3aed";
+    case null:
     case "closed":
       return dark ? "#a1a1aa" : "#71717a";
   }
@@ -618,15 +619,30 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           </>
         ) : null}
         {pr !== null ? (
-          <View className="flex-row items-center gap-0.5">
-            <PullRequestIcon
-              size={compact ? 13 : 11}
-              color={
-                visuallySelected
-                  ? String(effectiveSelectedForeground)
-                  : pullRequestTintColor(pr, colorScheme)
-              }
-            />
+          <View
+            className="flex-row items-center gap-0.5"
+            accessibilityLabel={pr.accessibilityLabel}
+          >
+            {pr.kind === "stack" ? (
+              <SymbolView
+                name="square.3.layers.3d"
+                size={compact ? 13 : 11}
+                tintColor={
+                  visuallySelected
+                    ? String(effectiveSelectedForeground)
+                    : pullRequestTintColor(pr, colorScheme)
+                }
+              />
+            ) : (
+              <PullRequestIcon
+                size={compact ? 13 : 11}
+                color={
+                  visuallySelected
+                    ? String(effectiveSelectedForeground)
+                    : pullRequestTintColor(pr, colorScheme)
+                }
+              />
+            )}
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${
                 visuallySelected

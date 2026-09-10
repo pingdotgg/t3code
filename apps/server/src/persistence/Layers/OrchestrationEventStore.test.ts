@@ -1,3 +1,5 @@
+import * as NodeV8 from "node:v8";
+
 import {
   CommandId,
   EventId,
@@ -303,6 +305,55 @@ layer("OrchestrationEventStore", (it) => {
         replayed.map((event) => event.sequence),
         persisted.map((event) => event.sequence),
       );
+      const limited = store.readFromSequence(persisted[0]!.sequence, 501.9);
+      for (let run = 0; run < 2; run++) {
+        assert.deepEqual(
+          (yield* Stream.runCollect(limited)).map((event) => event.sequence),
+          persisted.slice(1).map((event) => event.sequence),
+        );
+      }
+      assert.deepEqual(yield* Stream.runCollect(store.readFromSequence(0, -1)), []);
     }),
   );
 });
+
+for (const reader of ["all", "aggregate"] as const) {
+  it.effect(`releases consumed pages during ${reader} replay`, () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore;
+      const threadId = ThreadId.make(`retention-${reader}`);
+      yield* Effect.forEach(
+        Array.from({ length: 1_501 }, (_, index) => index),
+        (index) => store.append(messageEvent(threadId, `retention-${reader}-${index}`)),
+        { discard: true },
+      );
+      // oxlint-disable-next-line typescript/no-extraneous-class -- Identifies page markers for V8's heap query.
+      class ReplayPage {}
+      let count = 0;
+      const replay =
+        reader === "all"
+          ? store.readAll()
+          : store.readAggregateRange({
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              fromSequenceExclusive: 0,
+              toSequenceInclusive: 1_501,
+              limit: 1_501,
+            });
+      yield* Stream.runForEach(replay, (event) =>
+        Effect.sync(() => {
+          assert.equal(event.sequence, count + 1);
+          if (count % 500 === 0) {
+            // Count live page markers after full GC, without timing or heap-size thresholds.
+            Object.assign(event, { replayPage: new ReplayPage() });
+            assert.isAtMost(NodeV8.queryObjects(ReplayPage, { format: "count" }), 1);
+          }
+          count++;
+        }),
+      );
+      assert.equal(count, 1_501);
+    }).pipe(
+      Effect.provide(OrchestrationEventStoreLive.pipe(Layer.provide(SqlitePersistenceMemory))),
+    ),
+  );
+}

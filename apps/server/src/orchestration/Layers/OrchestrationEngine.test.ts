@@ -60,7 +60,10 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-function makeOrchestrationLayer(databasePath?: string) {
+function makeOrchestrationLayer(
+  databasePath?: string,
+  repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+) {
   const persistence = databasePath
     ? makeSqlitePersistenceLive(databasePath)
     : SqlitePersistenceMemory;
@@ -78,15 +81,27 @@ function makeOrchestrationLayer(databasePath?: string) {
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolver.layer),
+    Layer.provide(
+      repositoryIdentityResolver
+        ? Layer.succeed(
+            RepositoryIdentityResolver.RepositoryIdentityResolver,
+            repositoryIdentityResolver,
+          )
+        : RepositoryIdentityResolver.layer,
+    ),
     Layer.provide(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
 }
 
-async function createOrchestrationSystem(databasePath?: string) {
-  const runtime = ManagedRuntime.make(makeOrchestrationLayer(databasePath));
+async function createOrchestrationSystem(
+  databasePath?: string,
+  repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+) {
+  const runtime = ManagedRuntime.make(
+    makeOrchestrationLayer(databasePath, repositoryIdentityResolver),
+  );
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
@@ -373,6 +388,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "full-access" as const,
           branch: null,
           worktreePath: null,
+          pullRequests: [],
           latestTurn: null,
           createdAt: "2026-03-03T00:00:02.000Z",
           updatedAt: "2026-03-03T00:00:03.000Z",
@@ -1009,7 +1025,20 @@ describe("OrchestrationEngine", () => {
   it.each(["unlink", "relink", "branch", "worktree", "project", "delete"] as const)(
     "rejects PR discovery completed after a newer %s command",
     async (change) => {
-      const system = await createOrchestrationSystem();
+      const system = await createOrchestrationSystem(undefined, {
+        resolve: (workspaceRoot) =>
+          Effect.succeed({
+            canonicalKey: "example.test/owner/repository",
+            provider: "github",
+            displayName: "owner/repository",
+            rootPath: workspaceRoot,
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: "https://example.test/owner/repository.git",
+            },
+          }),
+      });
       try {
         const projectId = ProjectId.make("pr-race-project");
         const threadId = ThreadId.make("pr-race-thread");
@@ -1058,6 +1087,7 @@ describe("OrchestrationEngine", () => {
             linkedPullRequest: previous,
           }),
         );
+        expect((await system.readModel()).threads[0]?.linkedPullRequest).toEqual(previous);
         const metadataChanges = {
           unlink: { linkedPullRequest: null },
           relink: {

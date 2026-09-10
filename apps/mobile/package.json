@@ -145,6 +145,7 @@
     },
     "autolinking": {
       "buildFromSource": [
+        "expo-notifications",
         "react-native-screens",
         "@react-native-menu/menu",
         "expo-audio"
