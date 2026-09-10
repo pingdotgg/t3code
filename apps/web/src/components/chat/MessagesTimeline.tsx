@@ -97,6 +97,7 @@ import {
   MousePointerClickIcon,
   PaintbrushIcon,
   SearchIcon,
+  SmartphoneIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -1582,7 +1583,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           markdownCwd={ctx.markdownCwd}
         />
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -1734,7 +1735,7 @@ function AssistantMessageMeta({
         "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
         alwaysVisible
           ? "opacity-100"
-          : "opacity-0 focus-within:opacity-100 group-hover/assistant:opacity-100",
+          : "opacity-0 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/assistant:opacity-100",
         className,
       )}
     >
@@ -2239,6 +2240,8 @@ function toolGroupSummaryIconName(
       return "terminal";
     case "browser":
       return "browser";
+    case "device":
+      return "device";
     case "search":
       return "globe";
     case "code-search":
@@ -2800,6 +2803,7 @@ type WorkEntryIconName =
   | "check"
   | "circle-alert"
   | "computer"
+  | "device"
   | "eye"
   | "globe"
   | "hammer"
@@ -3022,6 +3026,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <BrowserAppIcon className={className} />;
     case "computer":
       return <ComputerUseAppIcon className={className} />;
+    case "device":
+      return <SmartphoneIcon className={className} aria-hidden />;
     case "t3-code":
       return <T3Wordmark className={className} aria-hidden />;
     case "check":
@@ -3171,6 +3177,18 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
 }
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
+/**
+ * Click handler for expanded row labels, which turn text selection back on.
+ * Only a click that ends a real selection is withheld from the row toggle, so
+ * an ordinary click on the label still bubbles and collapses the row it opened.
+ */
+const stopRowToggleWhileSelectingText = (e: MouseEvent<HTMLElement>) => {
+  const selection = e.currentTarget.ownerDocument.getSelection();
+  if (selection && !selection.isCollapsed) {
+    e.stopPropagation();
+  }
+};
 
 /**
  * A1 spawn CTA: one anchored row per workflow run (or per-turn direct-spawn
@@ -3407,7 +3425,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
                   expanded ? "whitespace-pre-wrap break-words select-text" : "truncate",
                   headingClass,
                 )}
-                onClick={expanded ? stopRowToggle : undefined}
+                onClick={expanded ? stopRowToggleWhileSelectingText : undefined}
                 onPointerDown={expanded ? stopRowToggle : undefined}
               >
                 {previewText}
