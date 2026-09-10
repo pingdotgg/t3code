@@ -112,6 +112,7 @@ function makeExecutorLayer(input: {
         open: () => Effect.die("unused open"),
         get: () => Effect.succeed(Option.none()),
         close: () => Effect.void,
+        closeInstance: () => Effect.void,
         release: () => record("release"),
         detach: () => record("detach"),
       }),

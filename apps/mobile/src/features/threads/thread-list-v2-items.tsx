@@ -1,3 +1,4 @@
+import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
@@ -30,7 +31,6 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
-import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -363,6 +363,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly providerDrivers: ReadonlyArray<string>;
   /** Account-aware presentation for the current provider owner. */
   readonly providerInstance: ThreadRowProviderInstance | null;
+  readonly providerIconUrl?: string | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -444,7 +445,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const pr = useThreadPr(thread);
 
-  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
@@ -892,6 +892,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               </View>
             ))}
             <ProviderInstanceIcon
+              iconUrl={props.providerIconUrl}
               provider={props.providerInstance.driverKind}
               size={14}
               displayName={props.providerInstance.displayName}

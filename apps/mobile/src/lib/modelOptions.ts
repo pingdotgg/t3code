@@ -18,6 +18,7 @@ export type ModelOption = {
   readonly providerLabel: string;
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  readonly providerIconUrl?: string | undefined;
   readonly isDefault: boolean;
   readonly isLegacy: boolean;
   readonly isUnavailable?: boolean;
@@ -180,6 +181,7 @@ export function buildModelOptions(
         ...(provider.supportedRuntimeModes === undefined
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
+        ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         capabilities: model.capabilities,

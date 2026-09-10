@@ -284,6 +284,9 @@ export const CodexProviderCapabilitiesV2 = {
     nativeItemIds: "strong",
     nativeRequestIds: "strong",
   },
+  runtimePolicy: {
+    enforcement: "native",
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
 
 function toProtocolError(detail: string, payload?: unknown): ProviderAdapterProtocolError {
