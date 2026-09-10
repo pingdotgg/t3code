@@ -15,6 +15,7 @@ import type {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Bot,
+  Smartphone,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -45,6 +46,7 @@ import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
+import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import {
@@ -96,6 +98,7 @@ interface RightPanelTabsProps {
   previewRuntimeTabId?: ((tabId: string) => string) | undefined;
   terminalLabelsById: ReadonlyMap<string, string>;
   onActivate: (surface: RightPanelSurface) => void;
+  onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
@@ -114,6 +117,7 @@ interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
+  onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -121,6 +125,7 @@ interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
+  deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
@@ -151,6 +156,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "Linked pull requests are only available for server threads.",
   agents: "Agents are only available from a thread.",
+  device: "Devices are only available from a thread.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -174,9 +180,11 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "Available for server threads.",
   agents: "Available from a thread.",
+  device: "Available from a thread.",
 } as const;
 
 type TabContextMenuAction =
+  | "rename"
   | "copy-path"
   | "toggle-mute"
   | "close"
@@ -312,6 +320,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
+  onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -319,6 +328,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
+  deviceAvailable: boolean;
   liveAgentCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -394,6 +404,16 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
+    },
+    {
+      label: "Device",
+      description: "Watch an iOS Simulator or Android Emulator.",
+      icon: Smartphone,
+      shortcut: "M",
+      available: props.deviceAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
+      onClick: props.onAddDevice,
+      badgeCount: 0,
     },
   ] as const;
 
@@ -630,6 +650,8 @@ function surfaceTitle(
       return "Pull requests";
     case "agents":
       return "Agents";
+    case "device":
+      return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -713,6 +735,14 @@ function SurfaceIcon({
       return <GitPullRequestArrow className="size-3 shrink-0" />;
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "device":
+      return surface.target?.platform === "ios" ? (
+        <AppleIcon className="size-3 shrink-0" />
+      ) : surface.target?.platform === "android" ? (
+        <AndroidIcon className="size-3 shrink-0" />
+      ) : (
+        <Smartphone className="size-3 shrink-0" />
+      );
   }
 }
 
@@ -811,6 +841,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
@@ -906,6 +937,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.agents,
       onClick: props.onAddAgents,
     },
+    {
+      label: "Device",
+      icon: Smartphone,
+      shortcut: "M",
+      available: props.deviceAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.device,
+      onClick: props.onAddDevice,
+    },
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -929,6 +968,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (surfaceIndex < 0) return;
 
       const items: ContextMenuItem<TabContextMenuAction>[] = [];
+      if (surface.kind === "device" && props.onRenameDevice)
+        items.push({ id: "rename", label: "Rename" });
       if (surface.kind === "file" && surface.attachment === undefined) {
         items.push({ id: "copy-path", label: "Copy path" });
       }
@@ -972,6 +1013,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
       const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
       switch (action) {
+        case "rename":
+          setRenamingDevice(surface.id);
+          break;
         case "copy-path":
           if (surface.kind === "file" && surface.attachment === undefined) {
             props.onCopyFilePath(surface.relativePath);
@@ -1173,20 +1217,48 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
                     </Tooltip>
                   )}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          className="cursor-pointer flex min-w-0 items-center"
-                          onClick={() => props.onActivate(surface)}
-                        >
-                          <span className="truncate">{title}</span>
-                        </button>
-                      }
+                  {renamingDevice === surface.id ? (
+                    <input
+                      aria-label="Device tab name"
+                      className="w-24 min-w-0 rounded-sm bg-background px-1 outline-none ring-1 ring-ring"
+                      defaultValue={title}
+                      ref={(element) => {
+                        element?.focus();
+                        element?.select();
+                      }}
+                      onBlur={(event) => {
+                        props.onRenameDevice?.(surface.id, event.currentTarget.value);
+                        setRenamingDevice(null);
+                      }}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter") event.currentTarget.blur();
+                        if (event.key === "Escape") {
+                          event.currentTarget.value = title;
+                          event.currentTarget.blur();
+                        }
+                      }}
                     />
-                    <TooltipPopup>{title}</TooltipPopup>
-                  </Tooltip>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            onDoubleClick={() => {
+                              if (surface.kind === "device" && props.onRenameDevice)
+                                setRenamingDevice(surface.id);
+                            }}
+                            className="cursor-pointer flex min-w-0 items-center"
+                            onClick={() => props.onActivate(surface)}
+                          >
+                            <span className="truncate">{title}</span>
+                          </button>
+                        }
+                      />
+                      <TooltipPopup>{title}</TooltipPopup>
+                    </Tooltip>
+                  )}
                 </div>
               );
             })}
@@ -1344,6 +1416,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
+            onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1351,6 +1424,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}
+            deviceAvailable={props.deviceAvailable}
             liveAgentCount={props.liveAgentCount}
           />
         ) : (
