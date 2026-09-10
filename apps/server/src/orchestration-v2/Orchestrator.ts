@@ -77,6 +77,7 @@ import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   makeSubagentChildThread,
   subagentResultForRun,
+  delegatedTaskProgress,
   subagentThreadTitle,
 } from "./SubagentProjection.ts";
 import { ThreadForkServiceV2 } from "./ThreadForkService.ts";
@@ -7101,10 +7102,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      const childRun = childProjection.runs[0];
-      if (childRun === undefined) {
-        return;
-      }
+      const progress = delegatedTaskProgress(childProjection);
+      if (progress.state !== "result_available") return;
+      const childRun = progress.resultRun;
+      if (childRun === undefined) return;
       const terminalStatus = delegatedTaskTerminalStatus(childRun.status);
       if (terminalStatus === null) {
         return;

@@ -177,7 +177,14 @@ export function subagentResultForRun(
           candidate.text.trim().length > 0,
       )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
+  const failure =
+    run.status === "failed"
+      ? projection.turnItems
+          .filter((item) => item.runId === run.id && item.type === "error")
+          .toSorted((left, right) => right.ordinal - left.ordinal)[0]
+      : undefined;
   const text =
+    (failure?.type === "error" ? failure.failure.message : undefined) ??
     message?.text ??
     turnItem?.text ??
     (run.status === "completed"
@@ -185,7 +192,48 @@ export function subagentResultForRun(
       : `Child task ended with status ${run.status}.`);
   return {
     text,
-    messageId: message?.id ?? turnItem?.messageId ?? null,
-    turnItemId: turnItem?.id ?? null,
+    messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
+    turnItemId: failure?.id ?? turnItem?.id ?? null,
+  };
+}
+
+/** A finished turn can still own live children or queued completion follow-ups. */
+export function delegatedTaskProgress(projection: {
+  readonly runs: OrchestrationV2ThreadProjection["runs"];
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
+  >;
+  readonly subagents: ReadonlyArray<
+    Pick<OrchestrationV2ThreadProjection["subagents"][number], "status">
+  >;
+  readonly providerThreads: ReadonlyArray<
+    Pick<OrchestrationV2ThreadProjection["providerThreads"][number], "pendingBackgroundTasks">
+  >;
+}) {
+  const terminal = (status: string) =>
+    ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
+  const monitorRuns = new Set(
+    projection.messages
+      .filter((message) => message.notification?.source.kind === "monitor")
+      .map((message) => message.runId),
+  );
+  const workRuns = projection.runs.filter(
+    (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
+  );
+  const active = workRuns.some((run) => !terminal(run.status));
+  const children =
+    projection.subagents.some((task) => !terminal(task.status)) ||
+    projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+  const resultRun = workRuns
+    .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
+    .toSorted((a, b) => b.ordinal - a.ordinal)[0];
+  return {
+    state:
+      active || resultRun === undefined
+        ? ("working" as const)
+        : children
+          ? ("waiting_for_children" as const)
+          : ("result_available" as const),
+    resultRun,
   };
 }
