@@ -1,10 +1,15 @@
 import { describe, expect, test } from "vite-plus/test";
 
 import {
+  canDropPaneTab,
   calculatePaneSplitRatio,
   resolveKeyboardResizeDelta,
   resolvePaneDropZone,
 } from "./SplitPaneGrid.logic";
+import { createPaneTree, splitPane, type PaneId, type PaneTabId } from "~/splitPaneTree";
+
+const paneId = (value: string) => `pane:${value}` as PaneId;
+const tabId = (value: string) => `pane-tab:${value}` as PaneTabId;
 
 describe("split pane pointer and keyboard geometry", () => {
   test("resolves edge and center drop zones", () => {
@@ -30,5 +35,59 @@ describe("split pane pointer and keyboard geometry", () => {
     expect(resolveKeyboardResizeDelta("ArrowUp", "vertical")).toBe(-0.05);
     expect(resolveKeyboardResizeDelta("ArrowDown", "vertical")).toBe(0.05);
     expect(resolveKeyboardResizeDelta("ArrowUp", "horizontal")).toBeNull();
+  });
+
+  test("allows a sole surface tab to copy into a split without emptying its pane", () => {
+    const tree = createPaneTree({ paneId: paneId("source"), tabIds: [tabId("surface")] });
+    const draggedTab = { sourcePaneId: paneId("source"), sourceTabId: tabId("surface") };
+
+    expect(
+      canDropPaneTab({
+        tree,
+        draggedTab,
+        targetPaneId: paneId("source"),
+        zone: "right",
+        canCopyFromSolePane: false,
+      }),
+    ).toBe(false);
+    expect(
+      canDropPaneTab({
+        tree,
+        draggedTab,
+        targetPaneId: paneId("source"),
+        zone: "right",
+        canCopyFromSolePane: true,
+      }),
+    ).toBe(true);
+  });
+
+  test("allows tabs to move into another pane but not swap with their own pane", () => {
+    const initial = createPaneTree({ paneId: paneId("source"), tabIds: [tabId("surface")] });
+    const tree = splitPane(initial, {
+      sourcePaneId: paneId("source"),
+      targetPaneId: paneId("target"),
+      splitId: "pane-split:root",
+      direction: "right",
+    });
+    const draggedTab = { sourcePaneId: paneId("source"), sourceTabId: tabId("surface") };
+
+    expect(
+      canDropPaneTab({
+        tree,
+        draggedTab,
+        targetPaneId: paneId("target"),
+        zone: "center",
+        canCopyFromSolePane: false,
+      }),
+    ).toBe(true);
+    expect(
+      canDropPaneTab({
+        tree,
+        draggedTab,
+        targetPaneId: paneId("source"),
+        zone: "center",
+        canCopyFromSolePane: true,
+      }),
+    ).toBe(false);
   });
 });

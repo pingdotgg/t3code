@@ -7,6 +7,7 @@ import {
   findSurfaceTabs,
   parsePersistedThreadWorkspaceTabs,
   transitionThreadWorkspaceTabs,
+  threadWorkspaceTabDropTransition,
 } from "./threadWorkspaceTabs";
 
 function activeTabId(state: ReturnType<typeof createThreadWorkspaceTabFields>): PaneTabId | null {
@@ -275,6 +276,37 @@ describe("thread workspace tabs", () => {
     expect(
       swapped.paneTree.root.first._tag === "Group" ? swapped.paneTree.root.first.id : null,
     ).toBe(rightGroupId);
+  });
+
+  test("copies a sole surface when it is dropped on its own pane edge", () => {
+    const initial = createThreadWorkspaceTabFields(["files"]);
+    const initialPane = initial.paneTree.root;
+    expect(initialPane._tag).toBe("Group");
+    if (initialPane._tag !== "Group") return;
+    const threadTabId = initialPane.tabIds.find(
+      (tabId) => initial.tabsById[tabId]?._tag === "Thread",
+    );
+    expect(threadTabId).toBeDefined();
+    if (!threadTabId) return;
+    const surfaceOnlyPane = transitionThreadWorkspaceTabs(initial, {
+      _tag: "SplitTab",
+      paneId: initialPane.id,
+      tabId: threadTabId,
+      direction: "left",
+      mode: "move",
+    });
+    const surfaceTab = findSurfaceTabs(surfaceOnlyPane, "files")[0]!;
+    const sourcePaneId = findThreadWorkspaceTabGroup(surfaceOnlyPane, surfaceTab.id)!;
+    const transition = threadWorkspaceTabDropTransition(surfaceOnlyPane, {
+      draggedTab: { sourcePaneId, sourceTabId: surfaceTab.id },
+      targetPaneId: sourcePaneId,
+      zone: "right",
+    });
+    const next = transitionThreadWorkspaceTabs(surfaceOnlyPane, transition);
+
+    expect(transition).toMatchObject({ _tag: "SplitTab", mode: "copy", direction: "right" });
+    expect(findSurfaceTabs(next, "files")).toHaveLength(2);
+    expect(next.paneTree.root._tag).toBe("Split");
   });
 
   test("pins the thread first when moving it into an existing group", () => {

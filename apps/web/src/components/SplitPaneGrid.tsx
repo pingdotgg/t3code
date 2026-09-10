@@ -13,7 +13,6 @@ import {
 import {
   calculatePaneTreeLayout,
   clampPaneSplitRatio,
-  findPane,
   getVisiblePaneTreeRoot,
   resizePaneSplit,
   type PaneDropZone,
@@ -29,9 +28,15 @@ import { cn } from "~/lib/utils";
 
 import {
   calculatePaneSplitRatio,
+  canDropPaneTab,
   resolvePaneDropZone,
   resolveKeyboardResizeDelta,
 } from "./SplitPaneGrid.logic";
+
+export interface PaneFocusPulse {
+  readonly paneId: PaneId;
+  readonly sequence: number;
+}
 
 interface SplitPaneGridProps {
   tree: PaneTree;
@@ -39,6 +44,8 @@ interface SplitPaneGridProps {
   onFocusPane: (paneId: PaneId) => void;
   onResizeSplit: (splitId: PaneSplitId, ratio: number) => void;
   draggedTab?: PaneTabDragData | null;
+  canCopyDraggedTabFromSolePane?: boolean;
+  focusPulse?: PaneFocusPulse | null;
   onDropTab?: (input: {
     readonly draggedTab: PaneTabDragData;
     readonly targetPaneId: PaneId;
@@ -90,6 +97,8 @@ export function SplitPaneGrid(props: SplitPaneGridProps) {
           onFocusPane={props.onFocusPane}
           tree={props.tree}
           draggedTab={props.draggedTab ?? null}
+          canCopyDraggedTabFromSolePane={props.canCopyDraggedTabFromSolePane ?? false}
+          focusPulse={props.focusPulse ?? null}
           onDropTab={props.onDropTab}
           dropPreview={dropPreview}
           setDropPreview={(preview) =>
@@ -125,6 +134,8 @@ interface SplitPaneProps {
   onFocusPane: (paneId: PaneId) => void;
   tree: PaneTree;
   draggedTab: PaneTabDragData | null;
+  canCopyDraggedTabFromSolePane: boolean;
+  focusPulse: PaneFocusPulse | null;
   onDropTab: SplitPaneGridProps["onDropTab"];
   dropPreview: PaneDropPreview | null;
   setDropPreview: (preview: PaneDropPreview | null) => void;
@@ -144,14 +155,26 @@ function SplitPane(props: SplitPaneProps) {
       style={paneBoundsStyle(props.bounds)}
       data-editor-group={group.id}
       data-editor-group-focused={group.id === props.focusedPaneId ? "true" : "false"}
-      onPointerDown={() => props.onFocusPane(group.id)}
+      onPointerDown={(event) => {
+        if (event.target instanceof Element && event.target.closest("[data-editor-tab]")) return;
+        props.onFocusPane(group.id);
+      }}
     >
       {props.renderPane(group)}
-      {props.draggedTab && props.onDropTab ? (
+      {props.focusPulse?.paneId === group.id ? (
+        <span
+          key={props.focusPulse.sequence}
+          aria-hidden
+          className="t3-pane-focus-ring pointer-events-none absolute inset-0 z-[60] ring-2 ring-inset ring-primary/80"
+          data-editor-focus-pulse=""
+        />
+      ) : null}
+      {props.onDropTab ? (
         <PaneDropTarget
           tree={props.tree}
           group={group}
           draggedTab={props.draggedTab}
+          canCopyFromSolePane={props.canCopyDraggedTabFromSolePane}
           preview={props.dropPreview?.paneId === group.id ? props.dropPreview : null}
           onPreviewChange={props.setDropPreview}
           onDrop={props.onDropTab}
@@ -170,23 +193,11 @@ function paneBoundsStyle(bounds: PaneBounds): CSSProperties {
   };
 }
 
-function canDropPaneTab(
-  tree: PaneTree,
-  draggedTab: PaneTabDragData,
-  targetPaneId: PaneId,
-  zone: PaneDropZone,
-): boolean {
-  const sourceGroup = findPane(tree.root, draggedTab.sourcePaneId);
-  const targetGroup = findPane(tree.root, targetPaneId);
-  if (!sourceGroup?.tabIds.includes(draggedTab.sourceTabId) || !targetGroup) return false;
-  if (zone === "center") return sourceGroup.id !== targetGroup.id;
-  return sourceGroup.id !== targetGroup.id || sourceGroup.tabIds.length > 1;
-}
-
 function PaneDropTarget(props: {
   readonly tree: PaneTree;
   readonly group: PaneNode;
-  readonly draggedTab: PaneTabDragData;
+  readonly draggedTab: PaneTabDragData | null;
+  readonly canCopyFromSolePane: boolean;
   readonly preview: PaneDropPreview | null;
   readonly onPreviewChange: (preview: PaneDropPreview | null) => void;
   readonly onDrop: NonNullable<SplitPaneGridProps["onDropTab"]>;
@@ -205,8 +216,18 @@ function PaneDropTarget(props: {
     });
   };
   const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!props.draggedTab) return;
     const zone = resolveDropZone(event);
-    if (!zone || !canDropPaneTab(props.tree, props.draggedTab, props.group.id, zone)) {
+    if (
+      !zone ||
+      !canDropPaneTab({
+        tree: props.tree,
+        draggedTab: props.draggedTab,
+        targetPaneId: props.group.id,
+        zone,
+        canCopyFromSolePane: props.canCopyFromSolePane,
+      })
+    ) {
       event.dataTransfer.dropEffect = "none";
       props.onPreviewChange(null);
       return;
@@ -224,8 +245,19 @@ function PaneDropTarget(props: {
     props.onPreviewChange(null);
   };
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!props.draggedTab) return;
     const zone = resolveDropZone(event);
-    if (!zone || !canDropPaneTab(props.tree, props.draggedTab, props.group.id, zone)) return;
+    if (
+      !zone ||
+      !canDropPaneTab({
+        tree: props.tree,
+        draggedTab: props.draggedTab,
+        targetPaneId: props.group.id,
+        zone,
+        canCopyFromSolePane: props.canCopyFromSolePane,
+      })
+    )
+      return;
     event.preventDefault();
     event.stopPropagation();
     props.onPreviewChange(null);
@@ -234,7 +266,10 @@ function PaneDropTarget(props: {
 
   return (
     <div
-      className="absolute inset-0 z-50"
+      className={cn(
+        "absolute inset-0 z-50",
+        props.draggedTab ? "pointer-events-auto" : "pointer-events-none",
+      )}
       data-editor-group-drop-target={props.group.id}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}

@@ -1,6 +1,30 @@
-import { clampPaneSplitRatio, type PaneDropZone, type PaneSplitOrientation } from "~/splitPaneTree";
+import {
+  clampPaneSplitRatio,
+  findPane,
+  type PaneDropZone,
+  type PaneId,
+  type PaneSplitOrientation,
+  type PaneTabDragData,
+  type PaneTree,
+} from "~/splitPaneTree";
 
 const PANE_EDGE_DROP_RATIO = 0.25;
+
+export function canDropPaneTab(input: {
+  readonly tree: PaneTree;
+  readonly draggedTab: PaneTabDragData;
+  readonly targetPaneId: PaneId;
+  readonly zone: PaneDropZone;
+  readonly canCopyFromSolePane: boolean;
+}): boolean {
+  const sourcePane = findPane(input.tree.root, input.draggedTab.sourcePaneId);
+  const targetPane = findPane(input.tree.root, input.targetPaneId);
+  if (!sourcePane?.tabIds.includes(input.draggedTab.sourceTabId) || !targetPane) return false;
+  if (input.zone === "center") return sourcePane.id !== targetPane.id;
+  return (
+    sourcePane.id !== targetPane.id || sourcePane.tabIds.length > 1 || input.canCopyFromSolePane
+  );
+}
 
 /** Resolves the pane action preview from a pointer position inside a group. */
 export function resolvePaneDropZone(input: {

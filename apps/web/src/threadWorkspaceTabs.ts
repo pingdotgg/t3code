@@ -20,8 +20,10 @@ import {
   swapPanes,
   toggleMaximizedPane,
   type PaneId,
+  type PaneDropZone,
   type PaneSplitId,
   type PaneSplitDirection,
+  type PaneTabDragData,
   type PaneTabId,
   type PaneTree,
   type PaneTreeNode,
@@ -118,6 +120,46 @@ export type ThreadWorkspaceLayoutTransition = Exclude<
       | "ReplaceSurfaceTabs";
   }
 >;
+
+/** Resolves a validated pane drop into the layout transition the workspace applies. */
+export function threadWorkspaceTabDropTransition(
+  current: ThreadWorkspaceTabFields,
+  input: {
+    readonly draggedTab: PaneTabDragData;
+    readonly targetPaneId: PaneId;
+    readonly zone: PaneDropZone;
+  },
+): ThreadWorkspaceLayoutTransition {
+  if (input.zone === "center") {
+    return {
+      _tag: "SwapPanes",
+      sourcePaneId: input.draggedTab.sourcePaneId,
+      targetPaneId: input.targetPaneId,
+    };
+  }
+  const sourcePane = findPane(current.paneTree.root, input.draggedTab.sourcePaneId);
+  const sourceTab = current.tabsById[input.draggedTab.sourceTabId];
+  if (
+    input.draggedTab.sourcePaneId === input.targetPaneId &&
+    sourcePane?.tabIds.length === 1 &&
+    sourceTab?._tag === "Surface"
+  ) {
+    return {
+      _tag: "SplitTab",
+      paneId: input.draggedTab.sourcePaneId,
+      tabId: input.draggedTab.sourceTabId,
+      direction: input.zone,
+      mode: "copy",
+    };
+  }
+  return {
+    _tag: "MoveTabToSplit",
+    sourcePaneId: input.draggedTab.sourcePaneId,
+    targetPaneId: input.targetPaneId,
+    tabId: input.draggedTab.sourceTabId,
+    direction: input.zone,
+  };
+}
 
 const ROOT_GROUP_ID: PaneId = "pane:root";
 const THREAD_TAB_ID: PaneTabId = "pane-tab:thread";

@@ -986,6 +986,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!props.onTabDragStart) return;
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", label);
+    event.dataTransfer.setData("application/x-t3-pane-tab", label);
     props.onTabDragStart(target);
   };
   const handleTabDragEnd = () => {
@@ -1273,7 +1274,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 }
                 onDrop={(event) => handleTabDrop(event, { _tag: "Thread" })}
                 className={cn(
-                  "cursor-pointer relative flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs",
+                  "cursor-pointer relative flex h-6 max-w-40 shrink-0 select-none items-center gap-1.5 rounded-md px-2 text-xs",
                   ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
                   props.threadTab.active
                     ? "bg-accent text-foreground"
@@ -1312,7 +1313,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               return (
                 <div
                   key={surface.id}
-                  draggable={props.onTabDragStart !== undefined}
                   data-active-tab={active}
                   data-editor-tab={surface.id}
                   onMouseDown={handleTabMouseDown}
@@ -1320,12 +1320,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   onContextMenu={(event) =>
                     void handleTabContextMenu(event, { _tag: "Surface", surface })
                   }
-                  onDragEnd={handleTabDragEnd}
                   onDragLeave={handleTabDragLeave}
                   onDragOver={(event) => handleTabDragOver(event, { _tag: "Surface", surface })}
-                  onDragStart={(event) =>
-                    handleTabDragStart(event, { _tag: "Surface", surface }, title)
-                  }
                   onDrop={(event) => handleTabDrop(event, { _tag: "Surface", surface })}
                   className={cn(
                     "cursor-pointer group/tab relative flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
@@ -1416,12 +1412,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         render={
                           <button
                             type="button"
+                            draggable={props.onTabDragStart !== undefined}
                             onDoubleClick={() => {
                               if (surface.kind === "device" && props.onRenameDevice)
                                 setRenamingDevice(surface.id);
                             }}
-                            className="cursor-pointer flex min-w-0 items-center"
+                            className="cursor-pointer flex min-w-0 select-none items-center"
                             onClick={() => props.onActivate(surface)}
+                            onDragEnd={handleTabDragEnd}
+                            onDragStart={(event) =>
+                              handleTabDragStart(event, { _tag: "Surface", surface }, title)
+                            }
                           >
                             <span className="truncate">{title}</span>
                           </button>

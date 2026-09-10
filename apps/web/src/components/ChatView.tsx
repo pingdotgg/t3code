@@ -198,6 +198,7 @@ import {
 import { workspacePaneShortcutAction } from "../workspacePaneShortcuts";
 import {
   findSurfaceTabs,
+  threadWorkspaceTabDropTransition,
   transitionThreadWorkspaceTabs,
   type ThreadWorkspaceLayoutTransition,
 } from "../threadWorkspaceTabs";
@@ -228,7 +229,7 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import type { WorkspaceTabContextTarget } from "./RightPanelTabs.logic";
-import { SplitPaneGrid } from "./SplitPaneGrid";
+import { SplitPaneGrid, type PaneFocusPulse } from "./SplitPaneGrid";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -1657,6 +1658,14 @@ export default function ChatView(props: ChatViewProps) {
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [draggedWorkspaceTab, setDraggedWorkspaceTab] = useState<PaneTabDragData | null>(null);
+  const workspacePaneFocusSequenceRef = useRef(0);
+  const [workspacePaneFocusPulse, setWorkspacePaneFocusPulse] = useState<PaneFocusPulse | null>(
+    null,
+  );
+  const pulseWorkspacePaneFocus = useCallback((paneId: PaneId) => {
+    workspacePaneFocusSequenceRef.current += 1;
+    setWorkspacePaneFocusPulse({ paneId, sequence: workspacePaneFocusSequenceRef.current });
+  }, []);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const userInputResponsesInFlight = useRef(new Set<string>());
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -4621,6 +4630,7 @@ export default function ChatView(props: ChatViewProps) {
         _tag: "FocusPane",
         paneId: targetPaneId,
       });
+      pulseWorkspacePaneFocus(targetPaneId);
       const targetPane = findPane(next.paneTree.root, targetPaneId);
       const activeTab = targetPane?.activeTabId ? next.tabsById[targetPane.activeTabId] : null;
       if (activeTab?._tag === "Thread") {
@@ -4638,6 +4648,7 @@ export default function ChatView(props: ChatViewProps) {
       activateRightPanelSurface,
       activeThreadRef,
       rightPanelState.surfaces,
+      pulseWorkspacePaneFocus,
       scheduleComposerFocus,
       workspaceMode,
     ],
@@ -8880,6 +8891,7 @@ export default function ChatView(props: ChatViewProps) {
       const next = transitionThreadWorkspaceLayout(activeThreadRef, transition);
       if (removedSurfaces.length > 0) finishRightPanelSurfaceClose(removedSurfaces);
       syncFocusedWorkspaceSurface(next);
+      pulseWorkspacePaneFocus(next.paneTree.focusedPaneId);
     };
     closeAfterAgentBrowserConfirmation(removedSurfaces, apply);
   };
@@ -8890,6 +8902,7 @@ export default function ChatView(props: ChatViewProps) {
   ) => {
     if (!activeThreadRef) return;
     transitionThreadWorkspaceLayout(activeThreadRef, { _tag: "ActivateTab", paneId, tabId });
+    pulseWorkspacePaneFocus(paneId);
     if (target._tag === "Surface") activateRightPanelSurface(target.surface);
   };
   const focusWorkspacePane = (paneId: PaneId) => {
@@ -8898,6 +8911,7 @@ export default function ChatView(props: ChatViewProps) {
       _tag: "FocusPane",
       paneId,
     });
+    pulseWorkspacePaneFocus(paneId);
     syncFocusedWorkspaceSurface(next);
   };
 
@@ -9151,6 +9165,13 @@ export default function ChatView(props: ChatViewProps) {
           <SplitPaneGrid
             tree={threadWorkspaceLayout.paneTree}
             draggedTab={draggedWorkspaceTab}
+            canCopyDraggedTabFromSolePane={
+              draggedWorkspaceTab
+                ? threadWorkspaceLayout.tabsById[draggedWorkspaceTab.sourceTabId]?._tag ===
+                  "Surface"
+                : false
+            }
+            focusPulse={workspacePaneFocusPulse}
             renderPane={renderWorkspacePane}
             onFocusPane={focusWorkspacePane}
             onResizeSplit={(splitId, ratio) =>
@@ -9165,21 +9186,7 @@ export default function ChatView(props: ChatViewProps) {
               readonly targetPaneId: PaneId;
               readonly zone: PaneDropZone;
             }) => {
-              mutateWorkspaceLayout(
-                input.zone === "center"
-                  ? {
-                      _tag: "SwapPanes",
-                      sourcePaneId: input.draggedTab.sourcePaneId,
-                      targetPaneId: input.targetPaneId,
-                    }
-                  : {
-                      _tag: "MoveTabToSplit",
-                      sourcePaneId: input.draggedTab.sourcePaneId,
-                      targetPaneId: input.targetPaneId,
-                      tabId: input.draggedTab.sourceTabId,
-                      direction: input.zone,
-                    },
-              );
+              mutateWorkspaceLayout(threadWorkspaceTabDropTransition(threadWorkspaceLayout, input));
               setDraggedWorkspaceTab(null);
             }}
           />
