@@ -48,12 +48,36 @@ describe("OrchestratorMcpService", () => {
         thread: { id: childThreadId },
         runs: [{ id: childRunId, ordinal: 1, status: "completed" }],
         contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
       } as unknown as OrchestrationV2ThreadProjection;
+      let hasNestedWork = true;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
           getThreadProjection: (threadId) =>
-            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+            Effect.succeed(
+              threadId === parentThreadId
+                ? hasNestedWork
+                  ? {
+                      ...parentProjection,
+                      subagents: parentProjection.subagents.map((task) => ({
+                        ...task,
+                        result: null,
+                        status: "running" as const,
+                      })),
+                    }
+                  : parentProjection
+                : hasNestedWork
+                  ? {
+                      ...childProjection,
+                      subagents: [
+                        { ...parentProjection.subagents[0]!, status: "running" as const },
+                      ],
+                    }
+                  : childProjection,
+            ),
           dispatch: (command) =>
             Ref.update(acknowledgementCommandIds, (commandIds) => [
               ...commandIds,
@@ -81,6 +105,12 @@ describe("OrchestratorMcpService", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const pending = yield* service.taskStatus(scope, taskId);
+        assert.equal(pending.status, "running");
+        assert.equal(pending.workState, "waiting_for_children");
+        assert.isNull(pending.summary);
+        assert.equal(yield* Ref.get(acknowledgementAttempts), 0);
+        hasNestedWork = false;
         const error = yield* service.taskStatus(scope, taskId).pipe(Effect.flip);
         assert.equal(error.code, "orchestration_error");
 
@@ -121,6 +151,9 @@ describe("OrchestratorMcpService", () => {
         thread: { id: childThreadId },
         runs: [],
         contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -183,6 +216,9 @@ describe("OrchestratorMcpService", () => {
         thread: { id: childThreadId },
         runs: [{ id: childRunId, status: "running" }],
         contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
@@ -248,6 +284,9 @@ describe("OrchestratorMcpService", () => {
         thread: { id: childThreadId },
         runs: [{ id: childRunId, status: "running" }],
         contextTransfers: [],
+        messages: [],
+        subagents: [],
+        providerThreads: [],
       } as unknown as OrchestrationV2ThreadProjection;
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
