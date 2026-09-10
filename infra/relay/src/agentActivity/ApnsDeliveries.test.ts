@@ -149,6 +149,7 @@ const target: LiveActivities.TargetRow = {
   last_live_activity_delivery_at: null,
 };
 
+/** Shares test persistence and queue services between delivery and publisher tests. */
 function makeLayer(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
@@ -327,76 +328,86 @@ describe("ApnsDeliveries", () => {
     });
   }
 
-  for (const liveActivitiesEnabled of [false, true]) {
-    for (const phase of ["completed", "failed"] as const) {
-      it.effect(
-        `queues the published ${phase} thread while other work runs, Live Activities ${liveActivitiesEnabled ? "unarmed" : "disabled"}`,
-        () => {
-          const queuedJobs: SignedApnsDeliveryJob[] = [];
-          const finished = { ...state, phase };
-          const device = {
-            ...target,
-            push_token: "push-token",
-            activity_push_token: liveActivitiesEnabled ? null : target.activity_push_token,
-            preferences_json: liveActivitiesEnabled ? enabledPreferences : disabledPreferences,
-          };
-          const otherWork = Array.from({ length: phase === "completed" ? 1 : 5 }, (_, index) => ({
-            ...state,
-            threadId: `other-${index}` as RelayAgentActivityState["threadId"],
-          }));
-          return Effect.gen(function* () {
-            const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
-            yield* publisher.publish({
-              environmentId: finished.environmentId,
-              environmentPublicKey: "key",
-              threadId: finished.threadId,
-              state: finished,
-            });
-            expect(
-              queuedJobs
-                .filter((job) => job.payload.kind === "push_notification")
-                .map((job) => job.payload.notification),
-            ).toMatchObject([{ threadId: finished.threadId, phase }]);
-          }).pipe(
-            Effect.provide(
-              AgentActivityPublisher.layer.pipe(
-                Layer.provide(
-                  makeLayer({
-                    attempts: [],
-                    queuedJobs,
-                    activityStates: [...otherWork, finished],
-                    currentTargets: [device],
-                  }),
-                ),
-                Layer.provide(
-                  Layer.succeed(FcmDeliveries, {
-                    enqueue: () => Effect.succeed(null),
-                    process: () => Effect.void,
-                  }),
-                ),
-                Layer.provide(
-                  Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
-                    upsert: () => Effect.void,
-                    listUsersForEnvironment: () => Effect.succeed([device.user_id]),
-                    listDeliveryUsersForEnvironment: () =>
-                      Effect.succeed([
-                        {
-                          userId: device.user_id,
-                          notificationsEnabled: true,
-                          liveActivitiesEnabled: true,
-                        },
-                      ]),
-                    listPublicKeysForEnvironment: () => Effect.succeed([]),
-                    listForUser: () => Effect.succeed([]),
-                    getForUser: () => Effect.succeed(null),
-                    revokeForUser: () => Effect.succeed(false),
-                  }),
+  for (const environment of [
+    { name: "both channels", liveActivitiesEnabled: true, notificationsEnabled: true },
+    { name: "notifications only", liveActivitiesEnabled: false, notificationsEnabled: true },
+    { name: "Live Activities only", liveActivitiesEnabled: true, notificationsEnabled: false },
+  ]) {
+    for (const deviceLiveActivitiesEnabled of [false, true]) {
+      for (const phase of ["completed", "failed"] as const) {
+        it.effect(
+          `${environment.notificationsEnabled ? "queues" : "skips"} the published ${phase} alert with other work, environment ${environment.name}, device Live Activities ${deviceLiveActivitiesEnabled ? "unarmed" : "disabled"}`,
+          () => {
+            const queuedJobs: SignedApnsDeliveryJob[] = [];
+            const finished = { ...state, phase };
+            const device = {
+              ...target,
+              push_token: "push-token",
+              activity_push_token: deviceLiveActivitiesEnabled ? null : target.activity_push_token,
+              preferences_json: deviceLiveActivitiesEnabled
+                ? enabledPreferences
+                : disabledPreferences,
+            };
+            const otherWork = Array.from({ length: phase === "completed" ? 1 : 5 }, (_, index) => ({
+              ...state,
+              threadId: `other-${index}` as RelayAgentActivityState["threadId"],
+            }));
+            return Effect.gen(function* () {
+              const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+              yield* publisher.publish({
+                environmentId: finished.environmentId,
+                environmentPublicKey: "key",
+                threadId: finished.threadId,
+                state: finished,
+              });
+              expect(
+                queuedJobs
+                  .filter((job) => job.payload.kind === "push_notification")
+                  .map((job) => job.payload.notification),
+              ).toMatchObject(
+                environment.notificationsEnabled ? [{ threadId: finished.threadId, phase }] : [],
+              );
+            }).pipe(
+              Effect.provide(
+                AgentActivityPublisher.layer.pipe(
+                  Layer.provide(
+                    makeLayer({
+                      attempts: [],
+                      queuedJobs,
+                      activityStates: [...otherWork, finished],
+                      currentTargets: [device],
+                    }),
+                  ),
+                  Layer.provide(
+                    Layer.succeed(FcmDeliveries, {
+                      enqueue: () => Effect.succeed(null),
+                      process: () => Effect.void,
+                    }),
+                  ),
+                  Layer.provide(
+                    Layer.succeed(EnvironmentLinks.EnvironmentLinks, {
+                      upsert: () => Effect.void,
+                      listUsersForEnvironment: () => Effect.succeed([device.user_id]),
+                      listDeliveryUsersForEnvironment: () =>
+                        Effect.succeed([
+                          {
+                            userId: device.user_id,
+                            notificationsEnabled: environment.notificationsEnabled,
+                            liveActivitiesEnabled: environment.liveActivitiesEnabled,
+                          },
+                        ]),
+                      listPublicKeysForEnvironment: () => Effect.succeed([]),
+                      listForUser: () => Effect.succeed([]),
+                      getForUser: () => Effect.succeed(null),
+                      revokeForUser: () => Effect.succeed(false),
+                    }),
+                  ),
                 ),
               ),
-            ),
-          );
-        },
-      );
+            );
+          },
+        );
+      }
     }
   }
 

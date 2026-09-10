@@ -200,9 +200,11 @@ function shouldUpdateLiveActivity(input: {
   );
 }
 
-// Completions replayed long after the fact (server restarts republish every
-// recently-finished thread) must not ring the device again.
-
+/**
+ * Selects the published thread independently of the card's order and row limit.
+ * An omitted notificationState uses the aggregate; null suppresses the push.
+ * Existing age limits and device notification settings still apply.
+ */
 function notificationForDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;
@@ -222,8 +224,6 @@ function notificationForDelivery(input: {
   ) {
     return null;
   }
-  // The card's first row can be another thread, and its row limit can hide
-  // the published thread entirely. Alert on the event, not the card's order.
   const activity =
     input.notificationState === undefined
       ? input.aggregate?.activities[0]
@@ -322,6 +322,7 @@ function chooseLiveActivityDelivery(input: {
     : "suppressed";
 }
 
+/** Falls back to a push only when no Live Activity owns the update, preserving silent replays. */
 function chooseDelivery(input: {
   readonly target: LiveActivities.TargetRow;
   readonly aggregate: RelayAgentActivityAggregateState | null;

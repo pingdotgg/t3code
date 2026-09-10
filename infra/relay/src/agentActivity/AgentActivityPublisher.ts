@@ -54,6 +54,7 @@ export const make = Effect.gen(function* () {
   const apnsDeliveries = yield* ApnsDeliveries.ApnsDeliveries;
   const fcmDeliveries = yield* FcmDeliveries.FcmDeliveries;
 
+  /** Keeps environment channel settings separate from each device's delivery settings. */
   const publishForDeliveryUser = Effect.fnUntraced(function* (input: {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
@@ -91,7 +92,10 @@ export const make = Effect.gen(function* () {
             apnsDeliveries.sendForTarget({
               target,
               aggregate: liveActivityAggregate,
-              notificationState: input.deliveryUser.liveActivitiesEnabled ? input.state : null,
+              notificationState:
+                input.deliveryUser.liveActivitiesEnabled && input.deliveryUser.notificationsEnabled
+                  ? input.state
+                  : null,
               nowMs: input.nowMs,
             }),
             notificationOnlyAggregate === null
