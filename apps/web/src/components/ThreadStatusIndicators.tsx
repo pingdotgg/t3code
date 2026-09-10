@@ -174,10 +174,11 @@ export function ThreadPullRequestBadgeControl({
   const content = (
     <>
       <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
-      {isStack ? badge.layers : number}
-      {badge?.kind === "pull-request" && badge.others > 0 ? (
-        <span className="opacity-70">+{badge.others}</span>
-      ) : null}
+      {isStack
+        ? badge.layers
+        : badge?.kind === "pull-request" && badge.others > 0
+          ? `+${badge.others}`
+          : number}
     </>
   );
   return (

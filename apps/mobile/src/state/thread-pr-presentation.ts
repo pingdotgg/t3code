@@ -17,11 +17,12 @@ export interface ThreadPrPresentation {
   readonly number: number;
   readonly state: ThreadPr["state"] | null;
   readonly kind: "pull-request" | "stack";
+  readonly others: number;
   readonly isDraft: boolean;
   /** Provider-side last activity, bounding when a terminal state landed. */
   readonly updatedAt: string | null;
   readonly url: string;
-  /** Compact pull request number label, e.g. "3774". */
+  /** Compact pull request number or linked count, e.g. "3774" or "+2". */
   readonly label: string;
   /** Full, provider-aware label for assistive technologies. */
   readonly accessibilityLabel: string;
@@ -42,6 +43,7 @@ export function presentThreadPr(
   const isDraft = pr.state === "open" && pr.isDraft === true;
   return {
     kind: "pull-request",
+    others: 0,
     number: pr.number,
     state: pr.state,
     isDraft,
@@ -66,9 +68,12 @@ export function presentThreadLinkedPullRequests(
   const label =
     badge.kind === "stack"
       ? String(badge.layers)
-      : `${link.number}${badge.others > 0 ? ` +${badge.others}` : ""}`;
+      : badge.others > 0
+        ? `+${badge.others}`
+        : String(link.number);
   return {
     kind: badge.kind,
+    others: badge.kind === "pull-request" ? badge.others : 0,
     number: link.number,
     state,
     isDraft,
