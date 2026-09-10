@@ -1,3 +1,4 @@
+import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
@@ -21,7 +22,6 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
-import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -360,6 +360,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly providerDrivers: ReadonlyArray<string>;
   /** Account-aware presentation for the current provider owner. */
   readonly providerInstance: ThreadRowProviderInstance | null;
+  readonly providerIconUrl?: string | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -450,16 +451,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     theme[materialYouStyleLayoutActive ? "--color-thread-selected" : "--color-user-bubble"];
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
-  // The provider badge's border blends into the row's own surface, which
-  // differs by pane and (for the sidebar pane) selection: the sidebar row
-  // background becomes the selected fill or the drawer surface, while the
-  // flat "screen" pane rows always sit on the screen background.
   const providerIconSurfaceColor = sidebarPane
     ? selected
       ? selectedBackgroundColor
       : drawerColor
     : screenColor;
-
   const status = resolveThreadListV2Status(thread);
   // "Done" marks a completion the user has not opened yet — same emerald
   // label as the web sidebar, sourced from the server-side visited watermark
@@ -922,6 +918,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               </View>
             ))}
             <ProviderInstanceIcon
+              iconUrl={props.providerIconUrl}
               provider={props.providerInstance.driverKind}
               size={14}
               displayName={props.providerInstance.displayName}

@@ -3153,8 +3153,14 @@ export default function ChatView(props: ChatViewProps) {
     phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint || isCompacting;
   const activeContextWindow = useMemo(
     () =>
-      deriveLatestContextWindowSnapshot(serverVisibleTurnItems ?? [], activeThreadLiveTokenUsage),
-    [activeThreadLiveTokenUsage, serverVisibleTurnItems],
+      deriveLatestContextWindowSnapshot(
+        serverVisibleTurnItems ?? [],
+        activeThreadLiveTokenUsage,
+        serverProjection?.providerThreads.find(
+          (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+        ),
+      ),
+    [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
   );
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {

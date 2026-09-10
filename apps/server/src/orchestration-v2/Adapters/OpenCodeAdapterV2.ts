@@ -235,6 +235,9 @@ export const OpenCodeProviderCapabilitiesV2 = {
     nativeItemIds: "strong",
     nativeRequestIds: "strong",
   },
+  runtimePolicy: {
+    enforcement: "native",
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
 
 type TerminalTurnStatus = Extract<

@@ -138,6 +138,7 @@ export interface IdAllocatorV2DeriveShape {
   readonly threadFromProviderThread: (input: {
     readonly driver: ProviderDriverKind;
     readonly nativeThreadId: string;
+    readonly providerInstanceId?: ProviderInstanceId;
   }) => ThreadId;
   readonly run: (input: { readonly threadId: ThreadId; readonly ordinal: number }) => RunId;
   readonly runAttempt: (input: {
@@ -157,6 +158,7 @@ export interface IdAllocatorV2DeriveShape {
   readonly providerThread: (input: {
     readonly driver: ProviderDriverKind;
     readonly nativeThreadId: string;
+    readonly providerInstanceId?: ProviderInstanceId;
   }) => ProviderThreadId;
   readonly providerTurn: (input: {
     readonly driver: ProviderDriverKind;
@@ -191,6 +193,44 @@ const encodePart = (part: string | number): string => encodeURIComponent(String(
 
 const joinId = (prefix: string, ...parts: ReadonlyArray<string | number>): string =>
   [prefix, ...parts.map(encodePart)].join(":");
+
+export function deriveThreadFromProviderThread(input: {
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId?: ProviderInstanceId;
+  readonly nativeThreadId: string;
+}): ThreadId {
+  return ThreadId.make(
+    joinId(
+      "thread",
+      "provider",
+      input.driver,
+      ...(input.providerInstanceId === undefined
+        ? []
+        : ["provider-instance", input.providerInstanceId]),
+      "native-thread",
+      input.nativeThreadId,
+    ),
+  );
+}
+
+export function deriveProviderThread(input: {
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId?: ProviderInstanceId;
+  readonly nativeThreadId: string;
+}): ProviderThreadId {
+  return ProviderThreadId.make(
+    joinId(
+      "provider-thread",
+      "provider",
+      input.driver,
+      ...(input.providerInstanceId === undefined
+        ? []
+        : ["provider-instance", input.providerInstanceId]),
+      "native-thread",
+      input.nativeThreadId,
+    ),
+  );
+}
 
 const randomId =
   <Id, Input>(input: {
@@ -360,10 +400,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
         TurnItemId.make(joinId("turn-item", "delegated-task", input.commandId)),
       createdThreadTurnItem: (input) =>
         TurnItemId.make(joinId("turn-item", "created-thread", input.commandId)),
-      threadFromProviderThread: (input) =>
-        ThreadId.make(
-          joinId("thread", "provider", input.driver, "native-thread", input.nativeThreadId),
-        ),
+      threadFromProviderThread: deriveThreadFromProviderThread,
       run: (input) => RunId.make(joinId("run", "thread", input.threadId, "ordinal", input.ordinal)),
       runAttempt: (input) =>
         RunAttemptId.make(
@@ -375,16 +412,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
       userTurnItem: (input) => TurnItemId.make(joinId("turn-item", "message", input.messageId)),
       runSignalTurnItem: (input) =>
         TurnItemId.make(joinId("turn-item", "run", input.runId, "signal", input.signal)),
-      providerThread: (input) =>
-        ProviderThreadId.make(
-          joinId(
-            "provider-thread",
-            "provider",
-            input.driver,
-            "native-thread",
-            input.nativeThreadId,
-          ),
-        ),
+      providerThread: deriveProviderThread,
       providerTurn: (input) =>
         ProviderTurnId.make(
           joinId("provider-turn", "provider", input.driver, "native-turn", input.nativeTurnId),
