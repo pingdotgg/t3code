@@ -207,6 +207,27 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  // Workaround for an upstream Pi context-budgeting bug: pi-ai reuses the
+  // previous response's usage even when a fork's instructions/tools differ,
+  // then reserves almost all remaining context for output. OpenRouter can
+  // reject even a short conversation. Remove this cap when Pi accounts for
+  // the current request prefix reliably (api/simple-options + utils/estimate).
+  pi.on("before_provider_request", (event, ctx) => {
+    if (ctx.model?.provider !== "openrouter") return;
+    const payload = event.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return;
+    const replacement = { ...payload } as Record<string, unknown>;
+    let changed = false;
+    for (const key of ["max_tokens", "max_completion_tokens"]) {
+      const limit = replacement[key];
+      if (typeof limit === "number" && Number.isFinite(limit) && limit > 32_768) {
+        replacement[key] = 32_768;
+        changed = true;
+      }
+    }
+    if (changed) return replacement;
+  });
+
   // Pi deliberately leaves permission policy to extensions. T3's injected
   // bridge uses Pi's public blocking tool hook so the shared runtime modes
   // keep their normal meaning without replacing or shadowing Pi's runtime.
