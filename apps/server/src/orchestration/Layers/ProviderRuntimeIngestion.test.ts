@@ -55,7 +55,10 @@ import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
-import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
+import {
+  ProviderRuntimeIngestionLive,
+  splitBufferedAssistantText,
+} from "./ProviderRuntimeIngestion.ts";
 import { DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
@@ -3129,6 +3132,86 @@ describe("ProviderRuntimeIngestion", () => {
     expect(finalMessage?.streaming).toBe(false);
   });
 
+  it("delivers finished paragraphs while the rest of the message stays buffered", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-paragraph-flush");
+    const itemId = asItemId("item-paragraph-flush");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-paragraph-started"),
+      provider: codex,
+      createdAt: now,
+      threadId,
+      turnId,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
+    );
+
+    const emitDelta = (eventId: string, delta: string) =>
+      harness.emit({
+        type: "content.delta",
+        eventId: asEventId(eventId),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { streamKind: "assistant_text", delta },
+      });
+
+    emitDelta("evt-paragraph-1", "First paragraph.\n\nSecond para");
+    const afterFirst = await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) => message.id === `assistant:${itemId}`,
+      ),
+    );
+    expect(
+      afterFirst.messages.find((m: ProviderRuntimeTestMessage) => m.id === `assistant:${itemId}`),
+    ).toMatchObject({
+      text: "First paragraph.\n\n",
+      streaming: true,
+    });
+
+    // An open code block holds the whole block until its closing fence lands.
+    emitDelta("evt-paragraph-2", "graph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n");
+    await harness.drain();
+    expect(
+      (await harness.readModel()).threads
+        .find((t) => t.id === threadId)
+        ?.messages.find((m: ProviderRuntimeTestMessage) => m.id === `assistant:${itemId}`)?.text,
+    ).toBe("First paragraph.\n\nSecond paragraph.\n\n");
+
+    emitDelta("evt-paragraph-3", "```\n\nTail without newline");
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-paragraph-completed"),
+      provider: codex,
+      createdAt: now,
+      threadId,
+      turnId,
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    const finalThread = await waitForThread(harness.readModel, (thread) =>
+      thread.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === `assistant:${itemId}` && !message.streaming,
+      ),
+    );
+    expect(
+      finalThread.messages.find((m: ProviderRuntimeTestMessage) => m.id === `assistant:${itemId}`)
+        ?.text,
+    ).toBe(
+      "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail without newline",
+    );
+  });
+
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -4365,5 +4448,36 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
+  });
+});
+
+describe("splitBufferedAssistantText", () => {
+  it("keeps a partial trailing line buffered", () => {
+    expect(splitBufferedAssistantText("one\n\ntwo")).toEqual({ ready: "one\n\n", rest: "two" });
+    expect(splitBufferedAssistantText("one\ntwo")).toEqual({ ready: "", rest: "one\ntwo" });
+  });
+
+  it("does not split inside an open fence", () => {
+    const open = "intro\n\n```\ncode\n\nmore\n";
+    expect(splitBufferedAssistantText(open)).toEqual({
+      ready: "intro\n\n",
+      rest: "```\ncode\n\nmore\n",
+    });
+    expect(splitBufferedAssistantText(`${open}\`\`\`\n\nafter`)).toEqual({
+      ready: `${open}\`\`\`\n\n`,
+      rest: "after",
+    });
+  });
+
+  it("only closes a fence with the same marker of equal or greater length", () => {
+    const text = "````\n```\nstill code\n\n````\n\nout\n";
+    expect(splitBufferedAssistantText(text)).toEqual({
+      ready: "````\n```\nstill code\n\n````\n\n",
+      rest: "out\n",
+    });
+    expect(splitBufferedAssistantText("~~~\n```\n\nx\n")).toEqual({
+      ready: "",
+      rest: "~~~\n```\n\nx\n",
+    });
   });
 });
