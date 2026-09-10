@@ -19,7 +19,7 @@ import {
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -27,6 +27,7 @@ import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Textarea } from "../ui/textarea";
@@ -371,6 +372,16 @@ function CommentComposer({
     onCommented();
   };
 
+  const handleCommentKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || event.shiftKey || event.altKey) {
+      return;
+    }
+    if (!isCommentSubmitShortcut(event, body, submitting !== null || actionPending)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) void submit("comment");
+  };
+
   return (
     <div className="mt-3 space-y-2">
       <Textarea
@@ -382,19 +393,7 @@ function CommentComposer({
         placeholder="Leave a comment"
         aria-label="Comment on this pull request"
         onChange={(event) => setBody(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (
-            event.key === "Enter" &&
-            (event.metaKey || event.ctrlKey) &&
-            !event.shiftKey &&
-            !event.altKey
-          ) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (!event.repeat) void submit("comment");
-          }
-        }}
+        onKeyDown={handleCommentKeyDown}
       />
       <div className="flex justify-end gap-2">
         {followUpAction === null ? null : (
