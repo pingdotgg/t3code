@@ -2055,173 +2055,210 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("promotes only one queued run after each terminal run", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* OrchestratorV2;
-      const eventSink = yield* EventSinkV2;
-      const threadId = ThreadId.make("runtime-layer-serialized-queue-thread");
+  for (const automatic of [false, true]) {
+    it.effect(
+      `promotes only one queued run after each terminal run (notification: ${automatic})`,
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const eventSink = yield* EventSinkV2;
+          const threadId = ThreadId.make(`runtime-layer-serialized-queue-thread-${automatic}`);
 
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-serialized-queue-create"),
-        threadId,
-        projectId: ProjectId.make("runtime-layer-serialized-queue-project"),
-        title: "Serialized queue",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-serialized-queue-active"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-serialized-queue-active"),
-        text: "Active",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-serialized-queue-first"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-serialized-queue-first"),
-        text: "First queued",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "queue_after_active" },
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-serialized-queue-second"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-serialized-queue-second"),
-        text: "Second queued",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "queue_after_active" },
-      });
-
-      const before = yield* orchestrator.getThreadProjection(threadId);
-      const activeRun = before.runs.find((run) => run.status === "starting");
-      const queuedRuns = before.runs
-        .filter((run) => run.status === "queued")
-        .toSorted((left, right) => left.ordinal - right.ordinal);
-      const firstQueuedRun = queuedRuns[0];
-      const secondQueuedRun = queuedRuns[1];
-      assert.isDefined(activeRun);
-      assert.isDefined(firstQueuedRun);
-      assert.isDefined(secondQueuedRun);
-      assert.isFalse(
-        before.turnItems.some(
-          (item) =>
-            item.type === "user_message" &&
-            (item.messageId === firstQueuedRun.userMessageId ||
-              item.messageId === secondQueuedRun.userMessageId),
-        ),
-        "queued messages must not exist as turn items before dispatch",
-      );
-
-      const promotedRunIds = yield* Queue.unbounded<RunId>();
-      const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
-      yield* eventSink.stream({ threadId, afterSequence }).pipe(
-        Stream.runForEach((stored) =>
-          stored.event.type === "run.updated" && stored.event.payload.status === "starting"
-            ? Queue.offer(promotedRunIds, stored.event.payload.id)
-            : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
-      yield* Effect.yieldNow;
-
-      const activeCompletedAt = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("runtime-layer-serialized-queue-active-completed"),
-            type: "run.updated",
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-serialized-queue-create-${automatic}`),
             threadId,
-            runId: activeRun.id,
-            ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
-            providerInstanceId: activeRun.providerInstanceId,
-            occurredAt: activeCompletedAt,
-            payload: {
-              ...activeRun,
-              status: "completed",
-              completedAt: activeCompletedAt,
-            },
-          },
-        ],
-      });
-
-      assert.equal(yield* Queue.take(promotedRunIds), firstQueuedRun.id);
-      const afterFirstPromotion = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
-        "starting",
-      );
-      assert.equal(
-        afterFirstPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
-        "queued",
-      );
-      const promotedMessageItem = afterFirstPromotion.turnItems.find(
-        (item) => item.type === "user_message" && item.messageId === firstQueuedRun.userMessageId,
-      );
-      assert.isDefined(promotedMessageItem);
-      if (promotedMessageItem.type !== "user_message") {
-        assert.fail("promoted queue item must be a user message");
-      }
-      assert.equal(promotedMessageItem.inputIntent, "queued_turn");
-      assert.isTrue(
-        promotedMessageItem.startedAt !== null &&
-          DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
-            DateTime.toEpochMillis(activeCompletedAt),
-      );
-
-      const promotedFirst = afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id);
-      assert.isDefined(promotedFirst);
-      const firstCompletedAt = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("runtime-layer-serialized-queue-first-completed"),
-            type: "run.updated",
+            projectId: ProjectId.make(`runtime-layer-serialized-queue-project-${automatic}`),
+            title: "Serialized queue",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: process.cwd(),
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-serialized-queue-active-${automatic}`),
             threadId,
-            runId: promotedFirst.id,
-            ...(promotedFirst.rootNodeId === null ? {} : { nodeId: promotedFirst.rootNodeId }),
-            providerInstanceId: promotedFirst.providerInstanceId,
-            occurredAt: firstCompletedAt,
-            payload: {
-              ...promotedFirst,
-              status: "completed",
-              completedAt: firstCompletedAt,
-            },
-          },
-        ],
-      });
+            messageId: MessageId.make(`runtime-layer-serialized-queue-active-${automatic}`),
+            text: "Active",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: automatic ? "agent" : "user",
+            creationSource: automatic ? "provider" : "web",
+            ...(automatic
+              ? {
+                  notification: {
+                    source: { kind: "monitor" as const },
+                    outcome: "updated" as const,
+                    summary: "Monitor updated",
+                    detail: "Build is green",
+                  },
+                }
+              : {}),
+            commandId: CommandId.make(`runtime-layer-serialized-queue-first-${automatic}`),
+            threadId,
+            messageId: MessageId.make(`runtime-layer-serialized-queue-first-${automatic}`),
+            text: "First queued",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`runtime-layer-serialized-queue-second-${automatic}`),
+            threadId,
+            messageId: MessageId.make(`runtime-layer-serialized-queue-second-${automatic}`),
+            text: "Second queued",
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
 
-      assert.equal(yield* Queue.take(promotedRunIds), secondQueuedRun.id);
-      const afterSecondPromotion = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        afterSecondPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
-        "completed",
-      );
-      assert.equal(
-        afterSecondPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
-        "starting",
-      );
-    }),
-  );
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const activeRun = before.runs.find((run) => run.status === "starting");
+          const queuedRuns = before.runs
+            .filter((run) => run.status === "queued")
+            .toSorted((left, right) => left.ordinal - right.ordinal);
+          const firstQueuedRun = queuedRuns[0];
+          const secondQueuedRun = queuedRuns[1];
+          assert.isDefined(activeRun);
+          assert.isDefined(firstQueuedRun);
+          assert.isDefined(secondQueuedRun);
+          assert.isFalse(
+            before.turnItems.some(
+              (item) =>
+                item.type === "user_message" &&
+                (item.messageId === firstQueuedRun.userMessageId ||
+                  item.messageId === secondQueuedRun.userMessageId),
+            ),
+            "queued messages must not exist as turn items before dispatch",
+          );
+
+          const promotedRunIds = yield* Queue.unbounded<RunId>();
+          const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+          yield* eventSink.stream({ threadId, afterSequence }).pipe(
+            Stream.runForEach((stored) =>
+              stored.event.type === "run.updated" && stored.event.payload.status === "starting"
+                ? Queue.offer(promotedRunIds, stored.event.payload.id)
+                : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+          yield* Effect.yieldNow;
+
+          const activeCompletedAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`runtime-layer-serialized-queue-active-completed-${automatic}`),
+                type: "run.updated",
+                threadId,
+                runId: activeRun.id,
+                ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+                providerInstanceId: activeRun.providerInstanceId,
+                occurredAt: activeCompletedAt,
+                payload: {
+                  ...activeRun,
+                  status: "completed",
+                  completedAt: activeCompletedAt,
+                },
+              },
+            ],
+          });
+
+          assert.equal(yield* Queue.take(promotedRunIds), firstQueuedRun.id);
+          const afterFirstPromotion = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            afterFirstPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
+            "starting",
+          );
+          assert.equal(
+            afterFirstPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
+            "queued",
+          );
+          const promotedMessageItem = afterFirstPromotion.turnItems.find(
+            (item) =>
+              item.runId === firstQueuedRun.id &&
+              (item.type === "user_message" || item.type === "notification"),
+          );
+          assert.isDefined(promotedMessageItem);
+          if (automatic) {
+            assert.equal(promotedMessageItem.type, "notification");
+            assert.equal(
+              afterFirstPromotion.messages.find(
+                (message) => message.id === firstQueuedRun.userMessageId,
+              )?.text,
+              "First queued",
+            );
+            assert.equal(
+              afterFirstPromotion.messages.find(
+                (message) => message.id === firstQueuedRun.userMessageId,
+              )?.notification?.summary,
+              "Monitor updated",
+            );
+            assert.isFalse(
+              afterFirstPromotion.turnItems.some(
+                (item) =>
+                  item.type === "user_message" && item.messageId === firstQueuedRun.userMessageId,
+              ),
+            );
+          } else {
+            assert.equal(promotedMessageItem.type, "user_message");
+          }
+          assert.isTrue(
+            promotedMessageItem.startedAt !== null &&
+              DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
+                DateTime.toEpochMillis(activeCompletedAt),
+          );
+
+          const promotedFirst = afterFirstPromotion.runs.find(
+            (run) => run.id === firstQueuedRun.id,
+          );
+          assert.isDefined(promotedFirst);
+          const firstCompletedAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`runtime-layer-serialized-queue-first-completed-${automatic}`),
+                type: "run.updated",
+                threadId,
+                runId: promotedFirst.id,
+                ...(promotedFirst.rootNodeId === null ? {} : { nodeId: promotedFirst.rootNodeId }),
+                providerInstanceId: promotedFirst.providerInstanceId,
+                occurredAt: firstCompletedAt,
+                payload: {
+                  ...promotedFirst,
+                  status: "completed",
+                  completedAt: firstCompletedAt,
+                },
+              },
+            ],
+          });
+
+          assert.equal(yield* Queue.take(promotedRunIds), secondQueuedRun.id);
+          const afterSecondPromotion = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            afterSecondPromotion.runs.find((run) => run.id === firstQueuedRun.id)?.status,
+            "completed",
+          );
+          assert.equal(
+            afterSecondPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
+            "starting",
+          );
+        }),
+    );
+  }
 
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
