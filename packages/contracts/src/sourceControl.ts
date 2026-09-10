@@ -168,7 +168,9 @@ export class SourceControlProviderError extends Schema.TaggedError<SourceControl
   },
 ) {
   override get message(): string {
-    return `Source control provider ${this.provider} failed in ${this.operation}: ${this.detail}`;
+    return this.provider === "unknown"
+      ? `Source control ${this.operation} failed: ${this.detail}`
+      : `Source control provider ${this.provider} failed in ${this.operation}: ${this.detail}`;
   }
 }
 
