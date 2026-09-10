@@ -307,6 +307,45 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "replaces Codex-created thread history databases with shared links",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const entryNames = [
+            "thread_history_1.sqlite",
+            "thread_history_1.sqlite-shm",
+            "thread_history_1.sqlite-wal",
+          ];
+
+          for (const entryName of entryNames) {
+            yield* writeTextFile(path.join(sharedHome, entryName), "shared");
+            yield* writeTextFile(path.join(shadowHome, entryName), "shadow");
+          }
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          for (const entryName of entryNames) {
+            const shadowPath = path.join(shadowHome, entryName);
+            const target = yield* fileSystem.readLink(shadowPath);
+            const contents = yield* fileSystem.readFileString(shadowPath);
+            expect(target).toBe(path.join(sharedHome, entryName));
+            expect(contents).toBe("shared");
+          }
+        }),
+    );
+
     it.effect("rejects shadow homes that point at the shared home", () =>
       Effect.gen(function* () {
         const sharedHome = yield* makeTempDir("t3code-codex-shared-");

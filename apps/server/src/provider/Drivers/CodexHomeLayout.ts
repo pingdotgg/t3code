@@ -40,6 +40,13 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   ".sqlite-maintenance.lock",
 ]);
 
+function isReplaceableSharedRuntimeEntry(entryName: string): boolean {
+  return (
+    REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(entryName) ||
+    /^thread_history_\d+\.sqlite(?:-(?:shm|wal))?$/.test(entryName)
+  );
+}
+
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
   const expanded =
     value && value.trim().length > 0 ? expandHomePath(value, home) : path.join(home, ".codex");
@@ -249,7 +256,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   );
 
   if (state._tag === "NotSymlink") {
-    if (!REPLACEABLE_SHARED_RUNTIME_ENTRIES.has(input.entryName)) {
+    if (!isReplaceableSharedRuntimeEntry(input.entryName)) {
       return yield* new CodexShadowHomeEntryConflictError({
         sharedHomePath: input.sharedHomePath,
         effectiveHomePath: input.effectiveHomePath,
