@@ -6,7 +6,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   ChevronLeft,
-  Circle,
   Home,
   Power,
   RotateCcw,
@@ -15,21 +14,13 @@ import {
   Square,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
 import { WizardPopup } from "~/components/ui/wizard";
-import {
-  Select,
-  SelectGroup,
-  SelectGroupLabel,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import { Spinner } from "~/components/ui/spinner";
 import { Toggle } from "~/components/ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -38,11 +29,10 @@ import { deviceEnvironment, useDeviceHubAccess, useDeviceState } from "~/state/d
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceStreamView, type DeviceStreamHandle } from "./DeviceStreamView";
+import { DeviceLoadingView } from "./DeviceLoadingView";
 import { DeviceSetup } from "./DeviceSetup";
 import { DeviceToolsPanel } from "./DeviceToolsPanel";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
-
-const NEW_DEVICE_VALUE = "__new__";
 
 const platformLabel = (platform: DevicePlatform) =>
   platform === "ios" ? "iOS Simulators" : "Android Emulators";
@@ -50,16 +40,11 @@ const platformLabel = (platform: DevicePlatform) =>
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
 
-/**
- * The Device right-panel surface: one open device (from the thread's device
- * sessions) with a picker to switch or boot another. Booting and streaming are
- * server-owned; this panel only asks and renders.
- */
+/** Each surface owns one host/device; only the visible surface streams. */
 export function DevicePanel(props: {
   readonly mode: PreviewPanelMode;
   readonly threadRef: ScopedThreadRef;
-  /** `null` renders the picker with nothing open. */
-  readonly deviceId: string | null;
+  readonly surface: Extract<RightPanelSurface, { kind: "device" }>;
   readonly visible: boolean;
   readonly onDismissSetup: () => void;
 }) {
@@ -69,7 +54,8 @@ export function DevicePanel(props: {
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [pendingDeviceKey, setPendingDeviceKey] = useState<string | null>(null);
+  const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);
+  const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
   const [handle, setHandle] = useState<DeviceStreamHandle | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [axOverlay, setAxOverlay] = useState(false);
@@ -87,10 +73,13 @@ export function DevicePanel(props: {
     () => state.sessions.filter((session) => session.threadId === threadId),
     [state.sessions, threadId],
   );
-  const activeSession =
-    (props.deviceId
-      ? sessions.find((session) => session.deviceId === props.deviceId)
-      : undefined) ?? sessions.at(-1);
+  const activeSession = props.surface.target
+    ? sessions.find(
+        (session) =>
+          session.deviceId === props.surface.target?.deviceId &&
+          session.hostId === props.surface.target.hostId,
+      )
+    : undefined;
   const activeDevice = activeSession
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
@@ -99,51 +88,67 @@ export function DevicePanel(props: {
 
   const grouped = useMemo(() => groupDevices(state), [state]);
 
-  const selectDevice = useCallback(
-    async (value: string) => {
-      if (value === NEW_DEVICE_VALUE) return;
-      const device = state.devices.find((candidate) => deviceKey(candidate) === value);
-      if (!device) return;
-      setOperationError(null);
-      setPendingDeviceKey(value);
-      try {
-        const result = await open({
-          environmentId,
-          input: {
-            threadId,
-            hostId: device.hostId,
-            deviceId: device.id,
-            platform: device.platform,
-          },
-        });
-        if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
-      } finally {
-        setPendingDeviceKey(null);
-      }
-    },
-    [environmentId, open, state.devices, threadId],
-  );
-
-  const closeActive = useCallback(
-    (powerOff: boolean) => {
-      if (!activeSession) return;
-      setOperationError(null);
-      void close({
+  const selectDevice = async (value: string) => {
+    const device = state.devices.find((candidate) => deviceKey(candidate) === value);
+    if (!device) return;
+    setOperationError(null);
+    setPendingDevice(device);
+    try {
+      const result = await open({
         environmentId,
-        input: { threadId, deviceId: activeSession.deviceId, shutdown: powerOff },
-      }).then((result) => {
-        if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
+        input: {
+          threadId,
+          hostId: device.hostId,
+          deviceId: device.id,
+          platform: device.platform,
+        },
       });
-    },
-    [activeSession, close, environmentId, threadId],
-  );
+      if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
+      else
+        useRightPanelStore.getState().openDevice(props.threadRef, {
+          hostId: result.value.hostId,
+          deviceId: result.value.deviceId,
+          platform: device.platform,
+          name: device.name,
+        });
+    } finally {
+      setPendingDevice(null);
+    }
+  };
+
+  const closeActive = (powerOff: boolean) => {
+    if (!powerOff) {
+      useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      return;
+    }
+    if (!activeSession) return;
+    setOperationError(null);
+    void close({
+      environmentId,
+      input: {
+        threadId,
+        hostId: activeSession.hostId,
+        deviceId: activeSession.deviceId,
+        shutdown: powerOff,
+      },
+    }).then((result) => {
+      if (result._tag === "Failure") setOperationError(formatEnvironmentQueryError(result.cause));
+      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+    });
+  };
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
-  const hostReady = state.hostStatus === "ready";
-  const hostBusy = state.hostStatus === "installing" || state.hostStatus === "starting";
+  const hostReady = Object.values(state.hostStatuses).some((host) => host.status === "ready");
+  const hostBusy =
+    !hostReady &&
+    Object.values(state.hostStatuses).some(
+      (host) => host.status === "installing" || host.status === "starting",
+    );
   const unavailablePlatforms = state.hosts.flatMap((host) =>
-    host.platforms.filter((platform) => !platform.available),
+    host.platforms
+      .filter((platform) => !platform.available)
+      .map((platform) => ({ ...platform, hostId: host.id, hostLabel: host.label })),
   );
 
   if (loaded && (!state.onboardingCompleted || hostDisabled)) {
@@ -164,63 +169,11 @@ export function DevicePanel(props: {
   return (
     <PreviewPanelShell mode={props.mode}>
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b px-2">
-        <Select
-          value={activeDevice ? deviceKey(activeDevice) : NEW_DEVICE_VALUE}
-          onValueChange={(value) => {
-            if (value !== null) void selectDevice(value);
-          }}
-          disabled={!loaded || hostBusy || hostDisabled || pendingDeviceKey !== null}
-        >
-          <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label="Device">
-            <SelectValue>
-              {activeDevice ? (
-                <span className="flex items-center gap-1.5 truncate">
-                  <Smartphone className="size-3.5 shrink-0" />
-                  <span className="truncate">{activeDevice.name}</span>
-                  <span className="shrink-0 text-muted-foreground">{activeDevice.version}</span>
-                </span>
-              ) : (
-                <span className="text-muted-foreground">
-                  {hostBusy
-                    ? state.hostStatus === "installing"
-                      ? "Installing device tools…"
-                      : "Starting device hub…"
-                    : "Choose a device"}
-                </span>
-              )}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectPopup align="start" alignItemWithTrigger={false} className="min-w-72">
-            {grouped.map((group) => (
-              <SelectGroup key={group.platform}>
-                <SelectGroupLabel>{platformLabel(group.platform)}</SelectGroupLabel>
-                {group.devices.map((device) => (
-                  <SelectItem key={deviceKey(device)} value={deviceKey(device)}>
-                    <span className="flex w-full items-center gap-2">
-                      <Circle
-                        className={cn(
-                          "size-2 shrink-0",
-                          device.booted ? "fill-success text-success" : "text-muted-foreground/50",
-                        )}
-                      />
-                      <span className="truncate">
-                        {device.booted ? device.name : `Start ${device.name}`}
-                      </span>
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                        {device.version}
-                      </span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            ))}
-            {grouped.length === 0 ? (
-              <SelectItem value={NEW_DEVICE_VALUE} disabled>
-                {loaded ? "No devices found" : "Loading…"}
-              </SelectItem>
-            ) : null}
-          </SelectPopup>
-        </Select>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          {props.surface.target
+            ? `${state.hosts.find((host) => host.id === props.surface.target?.hostId)?.label ?? "Device host"} · ${activeDevice?.version ?? props.surface.target.platform}`
+            : (pendingDevice?.name ?? "Choose a device")}
+        </span>
         {activeDevice ? (
           <>
             <DeviceButton
@@ -311,7 +264,10 @@ export function DevicePanel(props: {
                 key={deviceKey(activeDevice)}
                 environmentId={environmentId}
                 platform={activeDevice.platform}
+                deviceName={activeDevice.name}
+                deviceDescription={`${state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"} · ${activeDevice.version}`}
                 deviceId={activeDevice.id}
+                hostId={activeDevice.hostId}
                 visible={props.visible}
                 axOverlay={axOverlay}
                 onHandle={setHandle}
@@ -330,6 +286,25 @@ export function DevicePanel(props: {
               />
             ) : null}
           </>
+        ) : pendingDevice || hostBusy || !loaded ? (
+          <DeviceLoadingView
+            name={pendingDevice?.name ?? "Devices"}
+            description={
+              pendingDevice
+                ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                : ""
+            }
+            stage="opening"
+            message={
+              pendingDevice
+                ? pendingDevice.booted
+                  ? "Opening device…"
+                  : "Starting device…"
+                : state.hostStatus === "installing"
+                  ? "Installing device support…"
+                  : "Finding devices…"
+            }
+          />
         ) : (
           <div className="flex size-full flex-col overflow-y-auto px-5 py-8 text-sm text-muted-foreground">
             <div
@@ -338,27 +313,13 @@ export function DevicePanel(props: {
                 grouped.length === 0 && "my-auto items-center text-center",
               )}
             >
-              {grouped.length === 0 || hostBusy || pendingDeviceKey ? (
+              {grouped.length === 0 ? (
                 <>
-                  {hostBusy || pendingDeviceKey ? (
-                    <Spinner />
-                  ) : (
-                    <Smartphone className="size-6 opacity-60" />
-                  )}
+                  <Smartphone className="size-6 opacity-60" />
                   <p className="max-w-sm">
                     {state.hostStatus === "failed"
                       ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                      : pendingDeviceKey
-                        ? "Booting device… this can take a minute."
-                        : hostBusy
-                          ? state.hostStatus === "installing"
-                            ? "Installing device tools…"
-                            : "Starting the device hub…"
-                          : !loaded
-                            ? "Connecting…"
-                            : grouped.length === 0
-                              ? "No simulators or emulators were found on this environment."
-                              : "Choose a device to open."}
+                      : "No simulators or emulators were found on this environment."}
                   </p>
                 </>
               ) : null}
@@ -380,7 +341,7 @@ export function DevicePanel(props: {
                               </span>
                             }
                             title={device.name}
-                            description={`${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                            description={`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
                             disabled={pendingDeviceKey !== null}
                             aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
                             onClick={() => void selectDevice(deviceKey(device))}
@@ -417,15 +378,6 @@ export function DevicePanel(props: {
                 >
                   Refresh devices
                 </Button>
-              ) : null}
-              {unavailablePlatforms.length > 0 && hostReady ? (
-                <ul className="max-w-sm space-y-1 text-xs opacity-70">
-                  {unavailablePlatforms.map((platform) => (
-                    <li key={platform.platform}>
-                      {platform.platform === "ios" ? "iOS" : "Android"}: {platform.reason}
-                    </li>
-                  ))}
-                </ul>
               ) : null}
             </div>
           </div>

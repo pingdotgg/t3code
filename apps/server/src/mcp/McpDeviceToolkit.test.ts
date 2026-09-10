@@ -56,6 +56,7 @@ const state = {
     },
   ],
   hostStatus: "ready" as const,
+  hostStatuses: { local: { status: "ready" as const } },
   devices: [device],
   sessions: [],
   onboardingCompleted: true,

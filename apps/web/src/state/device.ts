@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
 import {
@@ -18,7 +19,8 @@ export const deviceEnvironment = createDeviceEnvironmentAtoms(connectionAtomRunt
 
 const EMPTY_DEVICE_STATE: DeviceServiceState = {
   hosts: [],
-  hostStatus: "idle",
+  hostStatus: "disabled",
+  hostStatuses: {},
   devices: [],
   sessions: [],
   onboardingCompleted: false,
@@ -54,11 +56,20 @@ const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     .pipe(Atom.setIdleTTL(60_000), Atom.withLabel(`device-hub-access:${environmentId}`)),
 );
 
-export function useDeviceHubAccess(environmentId: EnvironmentId | null): DeviceHubAccess | null {
+export function useDeviceHubAccess(
+  environmentId: EnvironmentId | null,
+  hostId = "local",
+): DeviceHubAccess | null {
   const result = useAtomValue(
     environmentId === null ? EMPTY_ACCESS_ATOM : deviceHubAccessAtom(environmentId),
   );
-  return AsyncResult.isSuccess(result) ? result.value : null;
+  return useMemo(
+    () =>
+      AsyncResult.isSuccess(result)
+        ? { ...result.value, query: { ...result.value.query, hostId } }
+        : null,
+    [result, hostId],
+  );
 }
 
 const EMPTY_ACCESS_ATOM = Atom.make(AsyncResult.initial<DeviceHubAccess, never>()).pipe(
