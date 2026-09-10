@@ -690,6 +690,26 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("writes a keg-only node@ Cellar path to Homebrew opt when argv0 is bare node", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness(
+        "darwin",
+        false,
+        macInstallerPath,
+        "/opt/homebrew/Cellar/node@22/22.14.0/bin/node",
+        "node",
+      );
+      const plan = yield* service.install();
+      const plist = yield* fs.readFileString(plan.unitPath);
+
+      expect(plan.nodePath).toBe("/opt/homebrew/opt/node@22/bin/node");
+      expect(plist).toContain("<string>/opt/homebrew/opt/node@22/bin/node</string>");
+      expect(plist).not.toContain("/opt/homebrew/bin/node");
+      expect(plist).not.toContain("Cellar");
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
   it.effect("ignores a bootout for an agent that is not loaded", () =>
     Effect.gen(function* () {
       const { service, control } = yield* makeHarness("darwin");

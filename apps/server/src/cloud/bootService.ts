@@ -495,7 +495,7 @@ export class BootService extends Context.Service<
 
 export interface BootServiceHost {
   readonly execPath: string;
-  /** Original invocation path (`process.argv0`) when Node was started through a symlink. */
+  /** Original invocation path (`process.argv0`); kept only when it resolves to execPath. */
   readonly argv0?: string;
   readonly launcherSourcePath?: string;
 }
