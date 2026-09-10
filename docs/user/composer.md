@@ -136,3 +136,10 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens the system chooser.
+
+## Math in messages
+
+Inline math uses `$...$` or `\(...\)`. Display equations use `$$...$$` or `\[...\]`.
+Web, desktop, iOS, and Android render supported TeX, including fractions, matrices, and aligned equations. Wide equations scroll horizontally.
+
+Use **Copy TeX** on a display equation to reuse its original source. Selecting math or copying the whole response also preserves the TeX. Code stays literal, and invalid or unfinished expressions remain readable as source.

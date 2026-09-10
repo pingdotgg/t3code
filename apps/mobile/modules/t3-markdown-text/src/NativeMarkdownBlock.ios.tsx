@@ -29,7 +29,7 @@ const MONO_FONT_FAMILY = Platform.select({
 });
 
 function nodeKey(node: MarkdownNode, index: number): string {
-  return `${node.type}:${node.beg ?? index}:${node.end ?? index}`;
+  return `${node.type}:${node.beg ?? index}`;
 }
 
 /** Code inside markdown scales with the base text size (12pt at the default 15pt body). */

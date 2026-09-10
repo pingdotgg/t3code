@@ -34,11 +34,14 @@
     "expo": "*",
     "expo-asset": "*",
     "expo-clipboard": "*",
+    "expo-file-system": "*",
     "expo-haptics": "*",
     "expo-symbols": "*",
+    "mathjax-full": "*",
     "react": "*",
     "react-native": "*",
-    "react-native-nitro-markdown": "*"
+    "react-native-nitro-markdown": "*",
+    "react-native-webview": "*"
   },
   "codegenConfig": {
     "name": "T3MarkdownTextSpec",

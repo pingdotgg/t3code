@@ -234,6 +234,10 @@
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"
+    },
+    "./markdown-math": {
+      "types": "./src/markdownMath.ts",
+      "default": "./src/markdownMath.ts"
     }
   },
   "scripts": {
@@ -252,6 +256,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/mdast": "^4.0.4",
     "micromark-util-types": "^2.0.2",
     "vite-plus": "catalog:"
   }

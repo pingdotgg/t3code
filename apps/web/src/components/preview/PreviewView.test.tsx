@@ -354,7 +354,10 @@ describe("PreviewView navigation", () => {
   });
 
   it("does not rerender while loading time passes", async () => {
-    vi.useFakeTimers();
+    // React act uses setImmediate to settle work; only application clocks are fake.
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
     mocks.loading = true;
     const document = installTestDom();
     const { createRoot } = await import("react-dom/client");

@@ -99,7 +99,10 @@ describe("diff tree file activation", () => {
 
   beforeEach(() => {
     targets.length = 0;
-    vi.useFakeTimers();
+    // React act uses setImmediate to settle work; only application clocks are fake.
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("HTMLElement", TreeRow);
   });

@@ -106,6 +106,7 @@
     "expo-video": "~57.0.3",
     "expo-web-browser": "~57.0.2",
     "expo-widgets": "~57.0.15",
+    "mathjax-full": "^3.2.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
@@ -128,9 +129,11 @@
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@pierre/trees": "1.0.0-beta.4",
+    "@types/jsdom": "^30.0.0",
     "@types/react": "~19.2.0",
     "@types/react-dom": "~19.2.3",
     "babel-preset-expo": "~57.0.9",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4.0.0",
     "typescript": "catalog:"
   },

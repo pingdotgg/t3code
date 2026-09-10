@@ -122,7 +122,10 @@ async function advance(milliseconds: number) {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // React act uses setImmediate to settle work; only application clocks are fake.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   page = Object.assign(new EventTarget(), { visibilityState: "visible" as const });
   browserWindow = new EventTarget();

@@ -1,4 +1,6 @@
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
+import { remarkMath } from "@t3tools/client-runtime/markdown-math";
+import { MarkdownMath } from "./MarkdownMath";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -437,6 +439,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   attributes: {
     ...defaultSchema.attributes,
     "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+    span: [...(defaultSchema.attributes?.span ?? []), "dataMathSource"],
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
@@ -457,6 +460,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
   remarkGfm,
+  remarkMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -466,6 +470,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkGfm,
+  remarkMath,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -2616,6 +2621,19 @@ const ChatMarkdownRendererContext = React.createContext<
 
 // Keep component types stable when streaming changes the message state.
 const CHAT_MARKDOWN_COMPONENTS = {
+  span: ({ node, children, ...props }) => {
+    const { text } = use(ChatMarkdownRendererContext);
+    const source = node?.properties.dataMathSource;
+    const offset = node?.position?.start.offset;
+    // Raw HTML can carry the same attribute. Only a parser-created span starts
+    // at a math delimiter in the original Markdown, rather than at an HTML tag.
+    const isMath =
+      typeof source === "string" &&
+      offset !== undefined &&
+      (source.startsWith("$") || source.startsWith("\\(") || source.startsWith("\\[")) &&
+      text.startsWith(source.slice(0, 2), offset);
+    return isMath ? <MarkdownMath source={source} /> : <span {...props}>{children}</span>;
+  },
   div: function MarkdownDiv({ node, children, ...props }) {
     const { onUseArtifactTemplate } = use(ChatMarkdownRendererContext);
     const artifactTemplate = artifactTemplateFromHastProperties(node?.properties);

@@ -9,6 +9,7 @@ import {
 
 export interface NativeMarkdownTextRun {
   readonly text: string;
+  readonly mathSource?: string;
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly strikethrough?: boolean;
@@ -136,6 +137,8 @@ function inlineHtmlText(value: string): string {
 
 function sameRunStyle(left: NativeMarkdownTextRun, right: NativeMarkdownTextRun): boolean {
   return (
+    left.mathSource === undefined &&
+    right.mathSource === undefined &&
     left.bold === right.bold &&
     left.italic === right.italic &&
     left.strikethrough === right.strikethrough &&
@@ -159,6 +162,7 @@ function appendRun(
   runs: NativeMarkdownTextRun[],
   text: string,
   context: RunContext,
+  mathSource?: string,
 ): NativeMarkdownTextRun[] {
   if (text.length === 0) {
     return runs;
@@ -166,6 +170,7 @@ function appendRun(
 
   const run: NativeMarkdownTextRun = {
     text,
+    ...(mathSource ? { mathSource } : {}),
     ...(context.bold ? { bold: true } : {}),
     ...(context.italic ? { italic: true } : {}),
     ...(context.strikethrough ? { strikethrough: true } : {}),
@@ -221,7 +226,7 @@ function decorateSkillRuns(
   const decorated: NativeMarkdownTextRun[] = [];
 
   for (const run of runs) {
-    if (run.code || run.href || run.fileIcon || run.role === "code-block") {
+    if (run.mathSource || run.code || run.href || run.fileIcon || run.role === "code-block") {
       decorated.push(run);
       continue;
     }
@@ -283,8 +288,10 @@ function appendNode(
   context: RunContext,
 ): NativeMarkdownTextRun[] {
   switch (node.type) {
-    case "text":
     case "math_inline":
+    case "math_block":
+      return appendRun(runs, nodeTextContent(node), context, nodeTextContent(node));
+    case "text":
       return appendRun(runs, textNodeContent(nodeTextContent(node)), context);
     case "html_inline":
       return appendRun(runs, inlineHtmlText(nodeTextContent(node)), context);
@@ -671,7 +678,7 @@ function appendDocumentBlock(
       });
       return appendBlockTerminator(runs, { ...EMPTY_CONTEXT, role: "body", depth });
     case "math_block":
-      appendRun(runs, nodeTextContent(node), { ...EMPTY_CONTEXT, role: "body", depth });
+      appendNode(runs, node, { ...EMPTY_CONTEXT, role: "body", depth });
       return appendBlockTerminator(runs, { ...EMPTY_CONTEXT, role: "body", depth });
     default:
       appendInlineChildren(runs, node, { ...EMPTY_CONTEXT, role: "body", depth });
@@ -679,7 +686,18 @@ function appendDocumentBlock(
   }
 }
 
+function containsMath(node: MarkdownNode): boolean {
+  return (
+    node.type === "math_inline" ||
+    node.type === "math_block" ||
+    (node.children ?? []).some(containsMath)
+  );
+}
+
 function containsRichBlock(node: MarkdownNode): boolean {
+  // NativeList already owns nested indentation and hanging markers. Keep that
+  // layout when a list item needs a math text view.
+  if (node.type === "list" && containsMath(node)) return true;
   if (
     node.type === "code_block" ||
     node.type === "blockquote" ||
@@ -705,10 +723,9 @@ export function nativeMarkdownDocumentChunks(
       return;
     }
     const first = selectableNodes[0];
-    const last = selectableNodes.at(-1);
     chunks.push({
       kind: "selectable",
-      key: `selectable:${first?.beg ?? "start"}:${last?.end ?? "end"}`,
+      key: `selectable:${first?.beg ?? chunks.length}`,
       node: {
         type: "document",
         children: selectableNodes,
@@ -726,7 +743,7 @@ export function nativeMarkdownDocumentChunks(
     flushSelectable();
     chunks.push({
       kind: "rich",
-      key: `rich:${child.type}:${child.beg ?? index}:${child.end ?? index}`,
+      key: `rich:${child.type}:${child.beg ?? index}`,
       node: child,
     });
   }

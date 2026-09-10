@@ -2092,3 +2092,13 @@ code {
     visibility: visible;
   }
 }
+
+/* KaTeX owns this generated markup; wide equations scroll inside their viewport. */
+.markdown-math .katex-display {
+  margin: 0;
+}
+.markdown-math .katex-display > .katex {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}

@@ -1,6 +1,8 @@
+import { markdownMathRanges } from "@t3tools/client-runtime/markdown-math";
+
 /**
  * Detects markdown that the renderer draws as a block requiring a definite
- * user-bubble width: fenced and indented code blocks, GFM tables, ordered
+ * user-bubble width: math-containing text, fenced and indented code blocks, GFM tables, ordered
  * lists, and blockquotes when requested by the caller.
  *
  * Fenced code blocks and tables report an intrinsic width equal to their
@@ -117,6 +119,7 @@ export function hasWideMarkdownBlock(
   if (options.includeOrderedLists !== false && hasOrderedListItem(text)) {
     return true;
   }
+  if (markdownMathRanges(text).some((range) => range.math !== null)) return true;
   if (!text.includes("|")) {
     return false;
   }
