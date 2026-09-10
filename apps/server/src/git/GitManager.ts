@@ -1914,6 +1914,17 @@ export const make = Effect.gen(function* () {
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
+    const serverSettings = yield* serverSettingsService.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "runPrStep",
+            cwd,
+            detail: "Failed to get server settings.",
+            cause,
+          }),
+      ),
+    );
     const terms = getChangeRequestTerminologyForKind(provider.kind);
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
@@ -1999,6 +2010,9 @@ export const make = Effect.gen(function* () {
       .createChangeRequest({
         cwd,
         baseRefName: baseBranch,
+        ...(provider.kind === "github"
+          ? { draft: serverSettings.createGitHubPullRequestsAsDraft }
+          : {}),
         headSelector: headContext.preferredHeadSelector,
         title: generated.title,
         bodyFile,

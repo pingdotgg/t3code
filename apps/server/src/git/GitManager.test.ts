@@ -533,6 +533,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           args: [
             "pr",
             "create",
+            ...(input.draft ? ["--draft"] : []),
             "--base",
             input.baseBranch,
             "--head",
@@ -3319,52 +3320,57 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("create_pr pushes a clean branch before creating the PR when needed", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/create-pr-only"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "create-pr-only.txt"), "create pr\n");
-      yield* runGit(repoDir, ["add", "create-pr-only.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Create PR only branch"]);
+  for (const draft of [false, true]) {
+    it.effect(`create_pr pushes a clean branch and respects draft=${draft}`, () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/create-pr-only"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "create-pr-only.txt"), "create pr\n");
+        yield* runGit(repoDir, ["add", "create-pr-only.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Create PR only branch"]);
 
-      const { manager, ghCalls } = yield* makeManager({
-        ghScenario: {
-          prListSequence: [
-            "[]",
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify([
-              {
-                number: 303,
-                title: "Create PR only branch",
-                url: "https://github.com/pingdotgg/codething-mvp/pull/303",
-                baseRefName: "main",
-                headRefName: "feature/create-pr-only",
-              },
-            ]),
-          ],
-        },
-      });
+        const { manager, ghCalls } = yield* makeManager({
+          serverSettings: { createGitHubPullRequestsAsDraft: draft },
+          ghScenario: {
+            prListSequence: [
+              "[]",
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify([
+                {
+                  number: 303,
+                  title: "Create PR only branch",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/303",
+                  baseRefName: "main",
+                  headRefName: "feature/create-pr-only",
+                },
+              ]),
+            ],
+          },
+        });
 
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "create_pr",
-      });
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
 
-      expect(result.commit.status).toBe("skipped_not_requested");
-      expect(result.push.status).toBe("pushed");
-      expect(result.push.setUpstream).toBe(true);
-      expect(result.pr.status).toBe("created");
-      expect(result.pr.number).toBe(303);
-      expect(
-        ghCalls.some((call) =>
-          call.includes("pr create --base main --head feature/create-pr-only"),
-        ),
-      ).toBe(true);
-    }),
-  );
+        expect(result.commit.status).toBe("skipped_not_requested");
+        expect(result.push.status).toBe("pushed");
+        expect(result.push.setUpstream).toBe(true);
+        expect(result.pr.status).toBe("created");
+        expect(result.pr.number).toBe(303);
+        expect(
+          ghCalls.some((call) =>
+            call.includes(
+              `pr create ${draft ? "--draft " : ""}--base main --head feature/create-pr-only`,
+            ),
+          ),
+        ).toBe(true);
+      }),
+    );
+  }
 
   it.effect("create_pr falls back to main when source control provider detection fails", () =>
     Effect.gen(function* () {

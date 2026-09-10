@@ -56,6 +56,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SourceControlPullRequestSettingsSection } from "./SourceControlPullRequestSettings";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
   PolicyTooltip,
@@ -589,6 +590,7 @@ export function SourceControlSettingsPanel() {
 
       {/* Its rows are serverScoped: without a primary they render inert with
           an explanation, which beats disappearing. */}
+      <SourceControlPullRequestSettingsSection />
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

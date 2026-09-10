@@ -182,34 +182,38 @@ it.effect("treats empty non-open change request listing output as no results", (
   }),
 );
 
-it.effect("creates GitHub PRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
-      null;
-    const provider = yield* makeProvider({
-      createPullRequest: (input) => {
-        createInput = input;
-        return Effect.void;
-      },
-    });
+for (const draft of [undefined, false, true]) {
+  it.effect(`creates GitHub PRs with draft=${draft}`, () =>
+    Effect.gen(function* () {
+      let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
+        null;
+      const provider = yield* makeProvider({
+        createPullRequest: (input) => {
+          createInput = input;
+          return Effect.void;
+        },
+      });
 
-    yield* provider.createChangeRequest({
-      cwd: "/repo",
-      baseRefName: "main",
-      headSelector: "owner:feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "owner:feature/provider",
+        title: "Provider PR",
+        bodyFile: "/tmp/body.md",
+        ...(draft === undefined ? {} : { draft }),
+      });
 
-    assert.deepStrictEqual(createInput, {
-      cwd: "/repo",
-      baseBranch: "main",
-      headSelector: "owner:feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
-  }),
-);
+      assert.deepStrictEqual(createInput, {
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "owner:feature/provider",
+        title: "Provider PR",
+        bodyFile: "/tmp/body.md",
+        draft: draft ?? false,
+      });
+    }),
+  );
+}
 
 it("accepts active authenticated GitHub accounts when another account fails", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
