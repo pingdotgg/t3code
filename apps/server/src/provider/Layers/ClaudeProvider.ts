@@ -56,6 +56,19 @@ const CLAUDE_PRESENTATION = {
   displayName: "Claude",
   showInteractionModeToggle: true,
 } as const;
+
+/**
+ * Builtins the CLI advertises on a live session's `system/init`
+ * `slash_commands` but no longer returns from `initializationResult().commands`
+ * (SDK 0.3.260 returns skills only), so a capability probe alone loses them.
+ * Keep this list to stable builtins that do not depend on plugins or config.
+ */
+const CLAUDE_BUILTIN_SLASH_COMMANDS: ReadonlyArray<ServerProviderSlashCommand> = [
+  { name: "context" },
+  { name: "reload-plugins" },
+  { name: "reload-skills" },
+];
+
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -533,7 +546,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
+  const slashCommands = [
+    COMPACT_SLASH_COMMAND,
+    ...CLAUDE_BUILTIN_SLASH_COMMANDS,
+    ...(capabilities?.slashCommands ?? []),
+  ];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {

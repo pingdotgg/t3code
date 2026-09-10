@@ -54,7 +54,6 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import { COMPACT_SLASH_COMMAND } from "../providerSnapshot.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../Services/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../Services/ProviderRegistry.ts";
@@ -2671,6 +2670,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      it.effect("keeps Claude builtins in the completion list when the SDK omits them", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              slashCommands: [{ name: "review", description: "Review changes" }],
+            }),
+          );
+          const names = new Set(status.slashCommands.map((command) => command.name));
+          assert.ok(names.has("compact"));
+          assert.ok(names.has("context"));
+          assert.ok(names.has("reload-plugins"));
+          assert.ok(names.has("reload-skills"));
+          assert.ok(names.has("review"));
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
         Effect.gen(function* () {
           // Bedrock authenticates via external AWS credentials, so the SDK init
@@ -2839,13 +2869,16 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             }),
           );
 
-          assert.deepStrictEqual(status.slashCommands.slice(1), [
-            {
-              name: "review",
-              description: "Review a pull request",
-              input: { hint: "pr-or-branch" },
-            },
-          ]);
+          assert.deepStrictEqual(
+            status.slashCommands.filter((command) => command.name === "review"),
+            [
+              {
+                name: "review",
+                description: "Review a pull request",
+                input: { hint: "pr-or-branch" },
+              },
+            ],
+          );
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
@@ -2882,14 +2915,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             }),
           );
 
-          assert.deepStrictEqual(status.slashCommands, [
-            COMPACT_SLASH_COMMAND,
-            {
-              name: "ui",
-              description: "Explore and refine UI",
-              input: { hint: "component-or-screen" },
-            },
-          ]);
+          assert.deepStrictEqual(
+            status.slashCommands.map((command) => command.name),
+            ["compact", "context", "reload-plugins", "reload-skills", "ui"],
+          );
+          assert.deepStrictEqual(status.slashCommands.at(-1), {
+            name: "ui",
+            description: "Explore and refine UI",
+            input: { hint: "component-or-screen" },
+          });
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {
