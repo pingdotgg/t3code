@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 
 import {
   buildKeybindingRows,
@@ -17,6 +20,62 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("keeps sibling row identities when a saved binding moves to the end", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { command: "chat.new", key: "mod+n" },
+      { command: "terminal.toggle", key: "mod+j" },
+      { command: "terminal.toggle", key: "mod+k", when: "terminalFocus" },
+    ]);
+    const before = buildKeybindingRows(bindings, "");
+    const after = buildKeybindingRows(
+      [
+        ...bindings.slice(1),
+        ...compileResolvedKeybindingsConfig([{ command: "chat.new", key: "mod+shift+n" }]),
+      ],
+      "",
+    );
+
+    expect(after.filter((row) => row.command === "terminal.toggle").map((row) => row.id)).toEqual(
+      before.filter((row) => row.command === "terminal.toggle").map((row) => row.id),
+    );
+    expect(after.find((row) => row.command === "chat.new")?.id).not.toBe(
+      before.find((row) => row.command === "chat.new")?.id,
+    );
+  });
+
+  it("shares one stable editor for duplicates across removal, replacement, and insertion", () => {
+    const [binding, replacement] = compileResolvedKeybindingsConfig([
+      { command: "terminal.toggle", key: "mod+j" },
+      { command: "terminal.toggle", key: "mod+k" },
+    ]);
+    if (!binding || !replacement) throw new Error("Expected valid bindings");
+    const before = buildKeybindingRows([binding, binding], "");
+    expect(before).toHaveLength(1);
+    expect(before[0]?.conflicts).toEqual([]);
+    for (const bindings of [[binding], [replacement, binding], [binding, binding, binding]]) {
+      const after = buildKeybindingRows(bindings, "");
+      expect(after.filter((row) => row.key === "mod+j").map((row) => row.id)).toEqual(
+        before.map((row) => row.id),
+      );
+    }
+  });
+
+  it("groups normalized duplicates while keeping different commands and conditions separate", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { command: "terminal.toggle", key: "mod+esc", when: "terminalFocus" },
+      { command: "terminal.toggle", key: "mod+escape", when: "(terminalFocus)" },
+      { command: "terminal.toggle", key: "mod+esc", when: "!terminalFocus" },
+      { command: "chat.new", key: "mod+esc", when: "terminalFocus" },
+    ]);
+    const rows = buildKeybindingRows(bindings, "");
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(3);
+    expect(rows.find((row) => row.command === "chat.new")?.conflicts).toEqual(["Terminal: Toggle"]);
+    expect(buildKeybindingRows(bindings, "chat.new").map((row) => row.id)).toEqual(
+      rows.filter((row) => row.command === "chat.new").map((row) => row.id),
+    );
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
