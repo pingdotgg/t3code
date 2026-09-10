@@ -1878,9 +1878,9 @@ export default function GitActionsControl({
                                     <span className="text-muted-foreground">Excluded</span>
                                   ) : (
                                     <>
-                                      <span className="text-success">+{file.insertions}</span>
+                                      <span className="text-diff-addition">+{file.insertions}</span>
                                       <span className="text-muted-foreground"> / </span>
-                                      <span className="text-destructive">-{file.deletions}</span>
+                                      <span className="text-diff-deletion">-{file.deletions}</span>
                                     </>
                                   )}
                                 </span>
@@ -1891,11 +1891,11 @@ export default function GitActionsControl({
                       </div>
                     </ScrollArea>
                     <div className="flex justify-end font-mono">
-                      <span className="text-success">
+                      <span className="text-diff-addition">
                         +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
                       </span>
                       <span className="text-muted-foreground"> / </span>
-                      <span className="text-destructive">
+                      <span className="text-diff-deletion">
                         -{selectedFiles.reduce((sum, f) => sum + f.deletions, 0)}
                       </span>
                     </div>
