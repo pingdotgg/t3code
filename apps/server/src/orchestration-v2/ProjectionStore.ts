@@ -602,14 +602,14 @@ export interface ProjectionReplayState {
   readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
 }
 
-export function makeProjectionReplayState(): ProjectionReplayState {
+function makeProjectionReplayState(): ProjectionReplayState {
   return {
     projections: new Map(),
     providerSessionThreadIds: new Map(),
   };
 }
 
-export function applyToProjectionReplayState(
+function applyToProjectionReplayState(
   state: ProjectionReplayState,
   event: OrchestrationV2DomainEvent,
 ): boolean {
@@ -1193,7 +1193,7 @@ export function threadShellFromProjection(
  * first. Subagent provider threads carry an owner node and are excluded so a
  * delegated Codex child does not make a Claude thread look handed off.
  */
-export function providerInstanceHistoryForShell(input: {
+function providerInstanceHistoryForShell(input: {
   readonly threadId: ThreadId;
   readonly providerThreads: ReadonlyArray<
     OrchestrationV2ThreadProjection["providerThreads"][number]

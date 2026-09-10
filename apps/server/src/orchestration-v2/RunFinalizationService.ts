@@ -48,7 +48,7 @@ export class RunFinalizationService extends Context.Service<
   }
 >()("t3/orchestration-v2/RunFinalizationService") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;

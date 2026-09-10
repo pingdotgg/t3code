@@ -35,7 +35,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [McpInvocationContext, ThreadManagementService, ProjectService, Crypto.Crypto],
 };
-export const ProjectListTool = Tool.make("t3_project_list", {
+const ProjectListTool = Tool.make("t3_project_list", {
   ...shared,
   description:
     "List registered projects in this environment. Pages use the current project snapshot and may shift between calls.",
@@ -50,7 +50,7 @@ export const ProjectListTool = Tool.make("t3_project_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-export const ProjectReadTool = Tool.make("t3_project_read", {
+const ProjectReadTool = Tool.make("t3_project_read", {
   ...shared,
   description:
     "Read a registered project in this environment, including its workspace and saved scripts.",
@@ -58,25 +58,25 @@ export const ProjectReadTool = Tool.make("t3_project_read", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-export const ProjectCreateTool = Tool.make("t3_project_create", {
+const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
     "Register a project directory through the existing project service. Set createWorkspaceRootIfMissing to create a directory. Each call creates a new request; an existing registered workspace is rejected. Clone separately with t3_project_clone when needed.",
   parameters: ProjectCreatePayload,
 }).annotate(Tool.Destructive, true);
-export const ProjectUpdateTool = Tool.make("t3_project_update", {
+const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
     "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
-export const ProjectDeleteTool = Tool.make("t3_project_delete", {
+const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
   description:
     "Delete a project using the existing project deletion lifecycle. Nonempty projects require force=true. This does not delete the repository directory or promise a deleted-thread count.",
   parameters: Schema.Struct({ projectId: ProjectId, force: Schema.optionalKey(Schema.Boolean) }),
 }).annotate(Tool.Destructive, true);
-export const ProjectCloneTool = Tool.make("t3_project_clone", {
+const ProjectCloneTool = Tool.make("t3_project_clone", {
   ...shared,
   description:
     "Clone a repository using the app's source-control service. This only clones; register the returned cwd with t3_project_create. An existing destination is not adopted or removed on failure.",
@@ -86,7 +86,7 @@ export const ProjectCloneTool = Tool.make("t3_project_clone", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
-export const ThreadLaunchTool = Tool.make("t3_thread_launch", {
+const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   ...shared,
   description:
     "Launch a thread in a registered project using the same launch service as the app. Omit projectId/modelSelection/modes to inherit from the caller. Supports root, existing_worktree, or a new worktree. Each call is a new launch, with no retry key. Preparation can continue after acceptance; failures may leave a created thread. Attachments must be pending uploads. Requires a full-access/default caller.",

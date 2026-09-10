@@ -16,7 +16,7 @@ Tool names may include an MCP prefix (for example \`mcp__t3-code__delegate_task\
  * context in the first prompt. Keep the wrapper explicit so it cannot be
  * mistaken for text authored by the user.
  */
-export function prependT3OrchestrationInstructions(prompt: string): string {
+function prependT3OrchestrationInstructions(prompt: string): string {
   return `<t3_code_orchestration_instructions>${T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim()}</t3_code_orchestration_instructions>\n\n<user_request>\n${prompt}\n</user_request>`;
 }
 

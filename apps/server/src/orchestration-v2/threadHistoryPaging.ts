@@ -148,7 +148,7 @@ export function decodeThreadHistoryCursor(cursor: string): ThreadHistoryCursorPa
  * under count and byte budgets. Always includes at least one row when available
  * so a single oversized item cannot deadlock pagination.
  */
-export function selectOlderTimelinePage(input: {
+function selectOlderTimelinePage(input: {
   readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly exclusiveEndIndex: number;
   readonly snapshotSequence: number;
@@ -266,7 +266,7 @@ function isLocalProjectedRow(
  * later history page that introduces the matching result still has the request
  * available for live attempt/run reducers.
  */
-export function retainedInterruptRequestTurnItems(
+function retainedInterruptRequestTurnItems(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
 ): OrchestrationV2TurnItem[] {

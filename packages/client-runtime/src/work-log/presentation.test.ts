@@ -655,7 +655,13 @@ describe("pull request tool presentation", () => {
     "t3code/link_pull_request",
     "link_pull_request",
   ])("recognizes the native linking tool: %s", (label) => {
-    const entry = { label, tone: "tool" as const, toolLifecycleStatus: "completed" };
+    const entry: WorkLogPresentationEntry = {
+      id: "link",
+      createdAt: "2026-09-10T00:00:00.000Z",
+      label,
+      tone: "tool",
+      toolLifecycleStatus: "completed",
+    };
     expect(resolveWorkEntryToolPresentation(entry)).toMatchObject({
       displayName: "Linked a pull request",
       icon: "pull-request",
@@ -669,7 +675,7 @@ describe("pull request tool presentation", () => {
     ["failed", "Failed to link PR #42"],
     ["declined", "Declined to link PR #42"],
     ["stopped", "Stopped linking PR #42"],
-  ])("describes the target and %s status", (toolLifecycleStatus, displayName) => {
+  ] as const)("describes the target and %s status", (toolLifecycleStatus, displayName) => {
     expect(
       resolveWorkEntryToolPresentation({
         label: "MCP tool call",
@@ -699,9 +705,11 @@ describe("pull request tool presentation", () => {
 
   it("summarizes native PR work separately from ordinary tools and integration metadata", () => {
     const link: WorkLogPresentationEntry = {
+      id: "link",
+      createdAt: "2026-09-10T00:00:00.000Z",
       label: "T3-code · link_pull_request",
       tone: "tool",
-      itemType: "mcp_tool_call",
+      itemType: "dynamic_tool",
       toolLifecycleStatus: "completed",
       toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
     };
@@ -725,9 +733,11 @@ describe("pull request tool presentation", () => {
 
 describe("device group summaries", () => {
   const deviceEntry = (tool: string): WorkLogPresentationEntry => ({
+    id: tool,
+    createdAt: "2026-09-10T00:00:00.000Z",
     label: "MCP tool call",
     toolData: { server: "t3-code", tool },
-    itemType: "mcp_tool_call",
+    itemType: "dynamic_tool",
     toolLifecycleStatus: "completed",
     tone: "tool",
   });
@@ -744,7 +754,14 @@ describe("device group summaries", () => {
   it("summarizes device calls alongside shell commands", () => {
     expect(
       summarizeToolGroup([
-        { label: "Ran command", itemType: "command_execution", command: "pwd", tone: "tool" },
+        {
+          id: "command",
+          createdAt: "2026-09-10T00:00:00.000Z",
+          label: "Ran command",
+          itemType: "command_execution",
+          command: "pwd",
+          tone: "tool",
+        },
         deviceEntry("device_list"),
         deviceEntry("device_open"),
       ]).summary,

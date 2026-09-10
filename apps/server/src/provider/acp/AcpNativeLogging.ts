@@ -62,7 +62,7 @@ function formatRequestLogPayload(event: AcpSessionRuntime.AcpSessionRequestLogEv
   };
 }
 
-export function formatAcpProtocolLogPayload(event: EffectAcpProtocol.AcpProtocolLogEvent) {
+function formatAcpProtocolLogPayload(event: EffectAcpProtocol.AcpProtocolLogEvent) {
   return {
     direction: event.direction,
     stage: event.stage,

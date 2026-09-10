@@ -250,7 +250,7 @@ export const selectProvidersByKind = (
 ): ReadonlyArray<ServerProvider> =>
   providers.filter((provider) => providerKinds.has(provider.driver));
 
-export const haveProvidersChanged = (
+const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
 ): boolean => !Equal.equals(previousProviders, nextProviders);

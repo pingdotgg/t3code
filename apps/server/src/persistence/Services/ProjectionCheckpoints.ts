@@ -91,7 +91,7 @@ export interface ProjectionCheckpointRepositoryShape {
 /**
  * ProjectionCheckpointRepository - Service tag for checkpoint projection persistence.
  */
-export class ProjectionCheckpointRepository extends Context.Service<
+class ProjectionCheckpointRepository extends Context.Service<
   ProjectionCheckpointRepository,
   ProjectionCheckpointRepositoryShape
 >()("t3/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}
