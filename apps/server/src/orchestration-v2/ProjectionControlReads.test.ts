@@ -197,6 +197,26 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
 for (const storage of ["sqlite", "memory"] as const) {
   const storeLayer =
     storage === "sqlite" ? layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)) : layerMemory;
+  it.effect(`${storage}: finds the active root turn without an attempt reverse link`, () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const events = fixtureEvents(now).map((event) =>
+        event.type === "run-attempt.created"
+          ? { ...event, payload: { ...event.payload, providerTurnId: null } }
+          : event,
+      );
+      yield* Effect.forEach(events, (event) => store.apply(event), { discard: true });
+      const running = yield* store.getRunningTurnContext(threadId);
+      assert.equal(running.providerTurn?.id, providerTurnId);
+      const turnEvent = events.find((event) => event.type === "provider-turn.updated")!;
+      yield* store.apply({
+        ...turnEvent,
+        payload: { ...turnEvent.payload, status: "completed", completedAt: now },
+      });
+      assert.isUndefined((yield* store.getRunningTurnContext(threadId)).providerTurn);
+    }).pipe(Effect.provide(storeLayer)),
+  );
   it.effect(`${storage}: controls and replies read only their exact durable targets`, () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStoreV2;
