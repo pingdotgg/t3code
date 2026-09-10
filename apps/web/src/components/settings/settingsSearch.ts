@@ -403,6 +403,33 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow open drive preview tools sessions"],
   },
   {
+    id: "device-hosts",
+    title: "Device hosts",
+    to: "/settings/integrations",
+    searchTerms: ["ssh remote simulator emulator ios android mac mini identity key connection"],
+  },
+  {
+    id: "agent-device-access",
+    title: "Agent device access",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["allow simulator emulator ios android drive tools sessions"],
+  },
+  {
+    id: "device-hub",
+    title: "Device hub",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["simulator emulator ios android install start"],
+  },
+  {
+    id: "device-platform-support",
+    title: "Simulator support",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["xcode android studio sdk avd runtime"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",
