@@ -32,6 +32,7 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadStreamItem,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
@@ -65,6 +66,9 @@ const decodeProviderReplayTranscript = Schema.decodeUnknownSync(ProviderReplayTr
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
 const decodeOrchestrationV2ThreadProjection = Schema.decodeUnknownSync(
   OrchestrationV2ThreadProjection,
+);
+const decodeOrchestrationV2ThreadStreamItem = Schema.decodeUnknownSync(
+  OrchestrationV2ThreadStreamItem,
 );
 const decodeOrchestrationV2ProviderThreadJson = Schema.decodeUnknownSync(
   OrchestrationV2ProviderThreadJson,
@@ -777,6 +781,23 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(projection.turnItems.map((item) => item.type)).toEqual(["command_execution"]);
+
+    const boundedSnapshot = decodeOrchestrationV2ThreadStreamItem({
+      kind: "snapshot",
+      snapshotSequence: 12,
+      projection,
+      historyCursor: "older-page",
+      hasMoreHistory: true,
+      latestLocalTurnOrdinal: 1,
+      payloadBudgetExceeded: false,
+    });
+    expect(boundedSnapshot).toMatchObject({
+      kind: "snapshot",
+      historyCursor: "older-page",
+      hasMoreHistory: true,
+      latestLocalTurnOrdinal: 1,
+      payloadBudgetExceeded: false,
+    });
   });
 
   it("decodes orchestration lifecycle turn items for compaction, handoff, and fork UI", () => {
