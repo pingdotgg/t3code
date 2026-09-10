@@ -37,6 +37,7 @@ const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
     runVersionPending: false,
+    runVersionDelayMs: null as number | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
@@ -56,6 +57,7 @@ const runtimeMock = {
   reset() {
     this.state.runVersionError = null;
     this.state.runVersionPending = false;
+    this.state.runVersionDelayMs = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
@@ -128,7 +130,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
               cause: runtimeMock.state.runVersionError,
             }),
           )
-        : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+        : runtimeMock.state.runVersionDelayMs
+          ? Effect.sleep(runtimeMock.state.runVersionDelayMs).pipe(
+              Effect.as({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+            )
+          : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
@@ -230,15 +236,30 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
 
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("4 seconds");
+      yield* TestClock.adjust("10 seconds");
       const snapshot = yield* Fiber.join(probeFiber);
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
       NodeAssert.equal(
         snapshot.message,
-        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
+        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 10 seconds.",
       );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits past the legacy four-second budget for a slow local CLI version probe", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.runVersionDelayMs = 5_000;
+      const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      const snapshot = yield* Fiber.join(probeFiber);
+
+      NodeAssert.equal(snapshot.status, "warning");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "1.14.19");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
