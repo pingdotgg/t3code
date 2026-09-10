@@ -28,6 +28,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "agents",
+  "side-chat",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -76,13 +77,15 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 adds thread-keyed side-chat surfaces.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -118,7 +121,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -134,6 +137,7 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
+  openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -150,12 +154,13 @@ interface RightPanelStoreState {
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
   reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
+  reconcileSideChatSurfaces: (ref: ScopedThreadRef, threadIds: ReadonlySet<ThreadId>) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -167,7 +172,7 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -214,6 +219,10 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
   terminalIds: [terminalId],
   activeTerminalId: terminalId,
 });
+
+export function sideChatSurface(threadId: ThreadId): RightPanelSurface {
+  return { id: `side-chat:${threadId}`, kind: "side-chat", threadId };
+}
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
 
@@ -308,7 +317,10 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
-export function migratePersistedRightPanelState(persistedState: unknown): {
+export function migratePersistedRightPanelState(
+  persistedState: unknown,
+  _persistedVersion?: number,
+): {
   byThreadKey: Record<string, ThreadRightPanelState>;
 } {
   if (!persistedState || typeof persistedState !== "object") {
@@ -329,6 +341,21 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     // Dropped surface kind: plans now render inline in the
                     // transcript (v9).
                     if ((surface as { kind?: string }).kind === "plan") return [];
+                    if ((surface as { kind?: string }).kind === "side-chat") {
+                      const candidate = surface as {
+                        id?: unknown;
+                        kind: "side-chat";
+                        threadId?: unknown;
+                      };
+                      if (
+                        typeof candidate.threadId !== "string" ||
+                        candidate.id !== `side-chat:${candidate.threadId}`
+                      ) {
+                        return [];
+                      }
+                      const threadId = ThreadId.make(candidate.threadId);
+                      return [sideChatSurface(threadId)];
+                    }
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -486,6 +513,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 }
               : next;
           }),
+        ),
+      openSideChat: (ref, threadId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, sideChatSurface(threadId)),
+          ),
         ),
       openFile: (ref, relativePath, line) =>
         set((state) =>
@@ -705,6 +738,26 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface) =>
                 surface.kind !== "files" &&
                 (surface.kind !== "file" || surface.attachment !== undefined),
+            );
+            if (surfaces.length === current.surfaces.length) return current;
+            const activeStillExists = surfaces.some(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            return {
+              ...current,
+              isOpen: surfaces.length > 0 ? current.isOpen : false,
+              surfaces,
+              activeSurfaceId: activeStillExists
+                ? current.activeSurfaceId
+                : (surfaces.at(-1)?.id ?? null),
+            };
+          }),
+        ),
+      reconcileSideChatSurfaces: (ref, threadIds) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const surfaces = current.surfaces.filter(
+              (surface) => surface.kind !== "side-chat" || threadIds.has(surface.threadId),
             );
             if (surfaces.length === current.surfaces.length) return current;
             const activeStillExists = surfaces.some(

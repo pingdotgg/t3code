@@ -68,7 +68,10 @@ import {
   ProviderValidationError,
   ProviderWorkspaceMissingError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterSessionStartInput,
+  ProviderAdapterShape,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -1367,10 +1370,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             );
           }
         }
+        const requestedResumeCursor = input.resumeCursor ?? undefined;
         const effectiveResumeCursor =
-          input.resumeCursor ??
+          requestedResumeCursor ??
           (persistedBinding?.providerInstanceId === resolvedInstanceId
-            ? persistedBinding.resumeCursor
+            ? (persistedBinding.resumeCursor ?? undefined)
             : undefined);
         const effectiveCwd =
           input.cwd ??
@@ -1380,7 +1384,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         yield* Effect.annotateCurrentSpan({
           "provider.kind": resolvedProvider,
           "provider.resume_cursor.source":
-            input.resumeCursor !== undefined
+            requestedResumeCursor !== undefined
               ? "request"
               : effectiveResumeCursor !== undefined &&
                   persistedBinding?.providerInstanceId === resolvedInstanceId
@@ -1412,13 +1416,52 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
+        let effectiveForkFrom: ProviderAdapterSessionStartInput["forkFrom"];
+        // An existing fork-thread cursor wins over forkFrom because the native fork already ran.
+        if (input.forkFrom !== undefined && effectiveResumeCursor === undefined) {
+          if ((adapter.capabilities.sessionFork ?? "unsupported") === "unsupported") {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Provider '${resolvedProvider}' does not support session forks.`,
+            );
+          }
+          const sourceBinding = Option.getOrUndefined(
+            yield* directory.getBinding(input.forkFrom.threadId),
+          );
+          if (
+            sourceBinding?.providerInstanceId !== undefined &&
+            sourceBinding.providerInstanceId !== resolvedInstanceId
+          ) {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Source thread '${input.forkFrom.threadId}' is bound to provider instance '${sourceBinding.providerInstanceId}', not '${resolvedInstanceId}'.`,
+            );
+          }
+          const liveSourceSession = (yield* adapter.listSessions()).find(
+            (session) => session.threadId === input.forkFrom?.threadId,
+          );
+          const sourceResumeCursor =
+            liveSourceSession?.resumeCursor ?? sourceBinding?.resumeCursor ?? undefined;
+          if (sourceResumeCursor === undefined || sourceResumeCursor === null) {
+            return yield* toValidationError(
+              "ProviderService.startSession",
+              `Cannot fork source thread '${input.forkFrom.threadId}' because no provider resume state is available.`,
+            );
+          }
+          effectiveForkFrom = {
+            resumeCursor: sourceResumeCursor,
+            ...(input.forkFrom.turnId !== undefined ? { turnId: input.forkFrom.turnId } : {}),
+          };
+        }
         yield* prepareMcpSession(threadId, resolvedInstanceId);
+        const { forkFrom: _forkFrom, ...adapterInput } = input;
         const session = yield* adapter
           .startSession({
-            ...input,
+            ...adapterInput,
             providerInstanceId: resolvedInstanceId,
             ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
             ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
+            ...(effectiveForkFrom !== undefined ? { forkFrom: effectiveForkFrom } : {}),
           })
           .pipe(Effect.onError(() => clearMcpSession(threadId)));
 
@@ -2072,6 +2115,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getCapabilities: ProviderServiceMethod<"getCapabilities"> = (instanceId) =>
     registry.getByInstance(instanceId).pipe(Effect.map((adapter) => adapter.capabilities));
 
+  const getSessionBinding: ProviderServiceMethod<"getSessionBinding"> = (threadId) =>
+    directory.getBinding(threadId).pipe(Effect.map(Option.getOrNull));
+
+  const clearSessionResumeCursor: ProviderServiceMethod<"clearSessionResumeCursor"> = Effect.fn(
+    "clearSessionResumeCursor",
+  )(function* (threadId) {
+    const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+    if (binding === undefined || binding.resumeCursor == null) {
+      return;
+    }
+    yield* directory.upsert({
+      ...binding,
+      resumeCursor: null,
+    });
+  });
+
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
@@ -2261,6 +2320,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToUserInput,
     stopSession,
     listSessions,
+    getSessionBinding,
+    clearSessionResumeCursor,
     getCapabilities,
     getInstanceInfo,
     assertConversationRollbackSupported,

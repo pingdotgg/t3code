@@ -74,18 +74,19 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         driverKind: DRIVER_KIND,
         instanceId,
       });
+      const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
+      const adapter = yield* makeGrokAdapter(effectiveConfig, {
+        environment: processEnv,
+        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        instanceId,
+      });
       const stampIdentity = withInstanceIdentity({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
-      });
-      const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
-      const adapter = yield* makeGrokAdapter(effectiveConfig, {
-        environment: processEnv,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        instanceId,
+        adapterCapabilities: adapter.capabilities,
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 

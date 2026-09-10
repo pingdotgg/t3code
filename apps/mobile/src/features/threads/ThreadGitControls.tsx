@@ -104,6 +104,15 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
+  readonly threadMenu?: {
+    readonly onDelete?: () => void;
+    readonly onPromote?: () => void;
+    readonly sideChats: ReadonlyArray<{
+      readonly id: ThreadId;
+      readonly title: string;
+      readonly onOpen: () => void;
+    }>;
+  };
 };
 
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
@@ -409,6 +418,7 @@ export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): He
 export function ThreadGitControls(props: ThreadGitControlsProps) {
   const model = useThreadGitControlModel(props);
   const showActionControls = props.showActionControls ?? true;
+  const threadMenu = props.threadMenu;
 
   if (!showActionControls) {
     return null;
@@ -416,6 +426,30 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
 
   return (
     <NativeHeaderToolbar placement="right">
+      {showActionControls &&
+      (threadMenu?.onDelete || threadMenu?.onPromote || (threadMenu?.sideChats.length ?? 0) > 0) ? (
+        <NativeHeaderToolbar.Menu icon="ellipsis" separateBackground>
+          {threadMenu?.onPromote ? (
+            <NativeHeaderToolbar.MenuAction icon="arrow.up.right" onPress={threadMenu.onPromote}>
+              <NativeHeaderToolbar.Label>Promote to thread</NativeHeaderToolbar.Label>
+            </NativeHeaderToolbar.MenuAction>
+          ) : null}
+          {threadMenu && threadMenu.sideChats.length > 0 ? (
+            <NativeHeaderToolbar.Menu title="Side chats" icon="text.bubble" inline>
+              {threadMenu.sideChats.map((sideChat) => (
+                <NativeHeaderToolbar.MenuAction key={sideChat.id} onPress={sideChat.onOpen}>
+                  <NativeHeaderToolbar.Label>{sideChat.title}</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+              ))}
+            </NativeHeaderToolbar.Menu>
+          ) : null}
+          {threadMenu?.onDelete ? (
+            <NativeHeaderToolbar.MenuAction destructive icon="trash" onPress={threadMenu.onDelete}>
+              <NativeHeaderToolbar.Label>Delete</NativeHeaderToolbar.Label>
+            </NativeHeaderToolbar.MenuAction>
+          ) : null}
+        </NativeHeaderToolbar.Menu>
+      ) : null}
       {showActionControls && props.auxiliaryPaneControl ? (
         <NativeHeaderToolbar.Button
           accessibilityLabel={props.auxiliaryPaneControl.accessibilityLabel}

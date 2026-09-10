@@ -7,6 +7,7 @@ import type {
   ChatImageAttachment,
   EnvironmentId,
   MessageId,
+  ServerProviderSessionFork,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -103,6 +104,7 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "../../components/CopyTextButton";
+import { ControlPillMenu } from "../../components/ControlPill";
 import {
   parseReviewCommentMessageSegments,
   type ReviewInlineComment,
@@ -179,6 +181,7 @@ import {
 } from "../files/filePath";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
+import { canForkMobileAssistantMessage } from "./sideChats.logic";
 import {
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
@@ -260,6 +263,14 @@ export interface ThreadFeedProps {
     readonly loading: boolean;
     readonly onLoadEarlier: () => void;
   } | null;
+  readonly forkCapability?: ServerProviderSessionFork;
+  readonly completedTurnIds: ReadonlySet<TurnId>;
+  readonly onForkAssistantMessage?: (input: {
+    readonly messageId: MessageId;
+    readonly turnId: TurnId;
+    readonly sideChat: boolean;
+  }) => void;
+  readonly forkOrigin?: { readonly title: string; readonly onPress: () => void };
 }
 
 function MessageAttachmentImage(props: {
@@ -1336,6 +1347,12 @@ function renderFeedEntry(
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
     readonly unsettledTurnId: TurnId | null;
+    readonly latestTurn: ThreadFeedLatestTurn | null;
+    readonly forkCapability: ServerProviderSessionFork | undefined;
+    readonly completedTurnIds: ReadonlySet<TurnId>;
+    readonly onForkAssistantMessage:
+      | ((input: { messageId: MessageId; turnId: TurnId; sideChat: boolean }) => void)
+      | undefined;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey: string) => void;
@@ -1472,6 +1489,14 @@ function renderFeedEntry(
       props.terminalAssistantMessageIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
+    const canFork = canForkMobileAssistantMessage({
+      capability: props.forkCapability,
+      completed: showAssistantMeta,
+      completedTurnIds: props.completedTurnIds,
+      messageTurnId: message.turnId,
+      latestTurn: props.latestTurn,
+    });
+    const forkTurnId = canFork ? message.turnId : null;
 
     if (isUser) {
       return (
@@ -1638,6 +1663,36 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
+            {forkTurnId && props.onForkAssistantMessage ? (
+              <ControlPillMenu
+                title="Fork response"
+                actions={[
+                  { id: "side-chat", title: "Open side chat" },
+                  { id: "fork-thread", title: "Fork to new thread" },
+                ]}
+                onPressAction={({ nativeEvent }) => {
+                  props.onForkAssistantMessage?.({
+                    messageId: message.id,
+                    turnId: forkTurnId,
+                    sideChat: nativeEvent.event === "side-chat",
+                  });
+                }}
+              >
+                <View
+                  accessible
+                  accessibilityRole="button"
+                  accessibilityLabel="Fork from this response"
+                  className="size-7 items-center justify-center"
+                >
+                  <SymbolView
+                    name="arrow.branch"
+                    size={13}
+                    tintColor={iconSubtleColor}
+                    type="monochrome"
+                  />
+                </View>
+              </ControlPillMenu>
+            ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
               {timestampLabel}
             </Text>
@@ -2282,6 +2337,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       themeAppearance,
       userBubbleColor,
       viewportWidth,
+      forkCapability: props.forkCapability,
+      completedTurnIds: props.completedTurnIds,
+      latestTurnIdentity: props.latestTurn
+        ? `${props.latestTurn.turnId}:${props.latestTurn.state}:${props.latestTurn.completedAt ?? ""}`
+        : null,
     }),
     [
       props.dispatchingMessageId,
@@ -2295,6 +2355,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       themeAppearance,
       userBubbleColor,
       viewportWidth,
+      props.forkCapability,
+      props.completedTurnIds,
+      props.latestTurn?.completedAt,
+      props.latestTurn?.state,
+      props.latestTurn?.turnId,
     ],
   );
   const reportHeaderMaterialVisibility = useCallback(
@@ -2709,6 +2774,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             workGroupScrollPositions,
             terminalAssistantMessageIds,
             unsettledTurnId,
+            latestTurn: props.latestTurn,
+            forkCapability: props.forkCapability,
+            completedTurnIds: props.completedTurnIds,
+            onForkAssistantMessage: props.onForkAssistantMessage,
             onCopyWorkRow,
             onToggleWorkGroup,
             onToggleWorkRow,
@@ -2743,6 +2812,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workGroupScrollPositions,
       terminalAssistantMessageIds,
       unsettledTurnId,
+      props.forkCapability,
+      props.completedTurnIds,
+      props.latestTurn,
+      props.onForkAssistantMessage,
       iconSubtleColor,
       screenColor,
       userBubbleColor,
@@ -2915,6 +2988,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {props.forkOrigin ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    onPress={props.forkOrigin.onPress}
+                    className="mb-3 self-start flex-row items-center gap-1.5 rounded-lg bg-subtle px-2.5 py-2 active:opacity-70"
+                  >
+                    <SymbolView
+                      name="arrow.branch"
+                      size={14}
+                      tintColorClassName="accent-icon-subtle"
+                      type="monochrome"
+                    />
+                    <Text
+                      numberOfLines={1}
+                      className="max-w-[280px] font-t3-medium text-xs text-foreground-muted"
+                    >
+                      Forked from {props.forkOrigin.title}
+                    </Text>
+                  </Pressable>
+                ) : null}
                 {props.loadEarlier != null ? (
                   <Pressable
                     onPress={props.loadEarlier.onLoadEarlier}

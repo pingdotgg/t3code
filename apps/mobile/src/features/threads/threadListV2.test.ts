@@ -390,9 +390,120 @@ describe("getThreadListV2OrderedSection", () => {
       ),
     ).toEqual(["pinned-first", "pinned-later"]);
   });
+
+  it("keeps attached side chats out of the move plan", () => {
+    const first = makeThread({ id: ThreadId.make("first"), title: "First", activeOrderKey: "bb" });
+    const sideChat = makeThread({
+      id: ThreadId.make("side"),
+      title: "Side chat",
+      activeOrderKey: "dd",
+      sideChat: true,
+      fork: {
+        sourceThreadId: ThreadId.make("first"),
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+    });
+    const last = makeThread({ id: ThreadId.make("last"), title: "Last", activeOrderKey: "ff" });
+    const threads = [first, sideChat, last];
+
+    const ordered = getThreadListV2OrderedSection({ threads, section: "active", now: NOW });
+    expect(ordered.map((thread) => thread.id)).toEqual(["first", "last"]);
+
+    // The side chat is not a row, so moving down swaps past `last` instead of
+    // stalling on the hidden neighbor, and its reserved key survives.
+    const assignments = createThreadMovePlanner({
+      allThreads: threads,
+      ordered,
+      section: "active",
+      reorderableEnvironmentIds: new Set([environmentId]),
+    })(`${environmentId}:first`, "down");
+    expect(assignments).toHaveLength(1);
+    expect(assignments![0]!.id).toBe(`${environmentId}:first`);
+    expect(assignments![0]!.orderKey > "ff").toBe(true);
+  });
+
+  it("never writes an order key to an attached side chat", () => {
+    const first = makeThread({ id: ThreadId.make("first"), title: "First" });
+    const sideChat = makeThread({
+      id: ThreadId.make("side"),
+      title: "Side chat",
+      createdAt: "2026-05-31T00:00:00.000Z",
+      sideChat: true,
+      fork: {
+        sourceThreadId: ThreadId.make("first"),
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+    });
+    const last = makeThread({
+      id: ThreadId.make("last"),
+      title: "Last",
+      createdAt: "2026-05-30T00:00:00.000Z",
+    });
+    const threads = [first, sideChat, last];
+
+    // Keyless neighbors force the section rewrite, which writes every ordered
+    // row. The hidden side chat must not be one of them.
+    const assignments = createThreadMovePlanner({
+      allThreads: threads,
+      ordered: getThreadListV2OrderedSection({ threads, section: "active", now: NOW }),
+      section: "active",
+      reorderableEnvironmentIds: new Set([environmentId]),
+    })(`${environmentId}:first`, "down");
+    expect(assignments?.map((assignment) => assignment.id)).toEqual([
+      `${environmentId}:last`,
+      `${environmentId}:first`,
+    ]);
+  });
 });
 
 describe("buildThreadListV2Items", () => {
+  it("hides attached side chats and keeps orphaned side chats in the v2 list", () => {
+    const main = makeThread({ id: ThreadId.make("main"), title: "Main" });
+    const sideChat = makeThread({
+      id: ThreadId.make("side"),
+      title: "Side chat",
+      sideChat: true,
+      fork: {
+        sourceThreadId: main.id,
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+    });
+    const orphanedSideChat = makeThread({
+      id: ThreadId.make("orphan"),
+      title: "Orphaned side chat",
+      sideChat: true,
+      fork: {
+        sourceThreadId: ThreadId.make("missing-parent"),
+        sourceTurnId: null,
+        sourceMessageId: null,
+        forkedAt: "2026-06-01T00:01:00.000Z",
+      },
+      createdAt: "2026-06-02T00:00:00.000Z",
+    });
+    const layout = buildThreadListV2Items({
+      threads: [main, sideChat, orphanedSideChat],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual([orphanedSideChat.id, main.id]);
+
+    const searchLayout = buildThreadListV2Items({
+      threads: [main, sideChat, orphanedSideChat],
+      environmentId: null,
+      searchQuery: "orphaned",
+      now: NOW,
+    });
+    expect(searchLayout.items.map((item) => item.thread.id)).toEqual([orphanedSideChat.id]);
+  });
+
   it("places a persisted settled thread in the settled shelf", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),

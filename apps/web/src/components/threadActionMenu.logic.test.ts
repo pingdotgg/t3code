@@ -106,4 +106,42 @@ describe("buildThreadActionMenuItems", () => {
     );
     expect(archiveItem?.disabled).toBe(true);
   });
+
+  it("keeps fork entries visible but disabled when the active thread cannot fork", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      forking: {
+        enabled: false,
+        disabledReason: "Complete a turn before forking this thread.",
+        sideChats: [],
+      },
+    });
+    expect(items.find((item) => item.id === "open-side-chat")).toMatchObject({
+      disabled: true,
+      disabledReason: "Complete a turn before forking this thread.",
+    });
+    expect(items.find((item) => item.id === "fork-thread")).toMatchObject({
+      disabled: true,
+      disabledReason: "Complete a turn before forking this thread.",
+    });
+  });
+
+  it("lists existing side chats under the parent thread menu", () => {
+    const sideChats = buildThreadActionMenuItems({
+      ...baseState,
+      forking: {
+        enabled: true,
+        disabledReason: null,
+        sideChats: [
+          { id: "side-1", title: "Check another approach" },
+          { id: "side-2", title: "Review the tests" },
+        ],
+      },
+    }).find((item) => item.id === "side-chats");
+
+    expect(sideChats?.children?.map((item) => [item.id, item.label])).toEqual([
+      ["open-existing-side-chat:side-1", "Check another approach"],
+      ["open-existing-side-chat:side-2", "Review the tests"],
+    ]);
+  });
 });

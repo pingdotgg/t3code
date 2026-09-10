@@ -12,7 +12,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useConnectionController } from "../connection/useConnectionController";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { MobileThemeId } from "../../lib/mobileTheme";
-import { useProjects, useThreadShells } from "../../state/entities";
+import { useAllThreadShells, useProjects } from "../../state/entities";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { holdEditingQueuedMessage } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
@@ -65,7 +65,7 @@ export function ShowcaseCaptureCoordinator(props: { readonly pathname: string })
   } = useAppearancePreferences();
   const workspace = useWorkspaceState();
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threads = useAllThreadShells();
   const attemptedPairingRef = useRef(new Set<string>());
   const seededPendingTaskIdsRef = useRef(new Set<string>());
   const [pairingUrls, setPairingUrls] = useState<ReadonlyArray<string>>([]);

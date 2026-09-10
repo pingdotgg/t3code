@@ -247,6 +247,25 @@ describe("showContextMenuFallback", () => {
     await expect(selectionPromise).resolves.toBe("rename");
   });
 
+  it("shows the reason a disabled item is unavailable", async () => {
+    const selectionPromise = showContextMenuFallback([
+      {
+        id: "open-side-chat",
+        label: "Open side chat",
+        disabled: true,
+        disabledReason: "Complete a turn before forking this thread.",
+      },
+    ]);
+
+    const button = findButton("Open side chat");
+    expect(button?.disabled).toBe(true);
+    expect(button?.textContent).toContain("Complete a turn before forking this thread.");
+    expect(button?.attributes.get("title")).toBe("Complete a turn before forking this thread.");
+
+    dismissContextMenu();
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
   it("ignores a click from the gesture that opened the menu", async () => {
     let enablePointerSelection: ((time: number) => void) | undefined;
     vi.stubGlobal("requestAnimationFrame", (callback: (time: number) => void) => {

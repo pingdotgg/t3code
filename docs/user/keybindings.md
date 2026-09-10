@@ -60,6 +60,12 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`chat.sideChat` opens a side chat from the active conversation's latest completed turn and
+defaults to `mod+shift+b`. `chat.forkThread` creates a normal fork from the same point and has no
+default shortcut. Both are unavailable when the active provider cannot fork sessions or the
+conversation has no completed turn. When a side-chat pane is active, both commands fork that side
+chat. See [Side chats and forks](./side-chats-and-forks.md).
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

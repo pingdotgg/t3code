@@ -198,6 +198,8 @@ describe("ProviderSessionReaper", () => {
       respondToUserInput: () => unsupported(),
       stopSession,
       listSessions: () => Effect.succeed([]),
+      getSessionBinding: () => Effect.succeed(null),
+      clearSessionResumeCursor: () => unsupported(),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
@@ -256,6 +258,8 @@ describe("ProviderSessionReaper", () => {
                 ? Option.some(input.readModel.threads.find((thread) => thread.id === threadId)!)
                 : Option.none(),
             ),
+          getThreadTurnState: () => Effect.die("unused"),
+          getForkSourceHead: () => Effect.die("unused"),
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
           searchThreads: () => Effect.succeed({ matches: [] }),

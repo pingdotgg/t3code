@@ -26,12 +26,14 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
+import type { ProjectionTurnState } from "../../persistence/Services/ProjectionTurns.ts";
 
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
@@ -62,6 +64,15 @@ export interface ProjectionFullThreadDiffContext {
   readonly worktreePath: string | null;
   readonly latestCheckpointTurnCount: number;
   readonly toCheckpointRef: CheckpointRef | null;
+}
+
+export interface ProjectionThreadTurnState {
+  readonly state: ProjectionTurnState;
+  readonly assistantMessageId: MessageId | null;
+}
+
+export interface ProjectionForkSourceHead {
+  readonly latestTurn: { readonly turnId: TurnId; readonly state: ProjectionTurnState } | null;
 }
 
 export interface ProjectionThreadDetailQuery {
@@ -212,6 +223,24 @@ export interface ProjectionSnapshotQueryShape {
     Option.Option<Pick<OrchestrationThreadShell, "id" | "title" | "session">>,
     ProjectionRepositoryError
   >;
+
+  /**
+   * Read the lifecycle state and assistant message for one concrete thread turn.
+   */
+  readonly getThreadTurnState: (
+    threadId: ThreadId,
+    turnId: TurnId,
+  ) => Effect.Effect<Option.Option<ProjectionThreadTurnState>, ProjectionRepositoryError>;
+
+  /**
+   * Read a fork source's current head regardless of archive state. `None`
+   * means the source row is gone (deleted or never existed). An archived
+   * source still reports its head, so the caller can compare it against the
+   * recorded fork boundary of a fork that outlived its parent.
+   */
+  readonly getForkSourceHead: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<ProjectionForkSourceHead>, ProjectionRepositoryError>;
 
   /**
    * Read one requested message and whether another non-compaction user message exists.

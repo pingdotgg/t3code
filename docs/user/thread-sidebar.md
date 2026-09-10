@@ -20,6 +20,12 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Side chats
+
+Side chats do not appear in the thread list while their parent thread exists; reopen them from the
+parent thread's **Side chats** menu. Deleting the parent returns its side chats to the thread list.
+See [Side chats and forks](./side-chats-and-forks.md).
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

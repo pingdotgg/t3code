@@ -7,6 +7,8 @@ import {
   ProviderDriverKind,
   type ProjectId,
   type OrchestrationSession,
+  type ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
@@ -39,6 +41,7 @@ import {
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
+import type { ProviderAdapterCapabilities } from "../../provider/Services/ProviderAdapter.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -78,6 +81,28 @@ type ProviderIntentEvent = Extract<
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+// Selection for a fork whose source conversation lives on `instanceId`. The
+// model the source is running wins; then a stored selection that already
+// targets that instance; then the instance's default model, because a
+// selection made for another driver cannot be reused there.
+function resolveForkSourceSelection(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly runtimeModel: string | undefined;
+  readonly candidates: ReadonlyArray<ModelSelection>;
+  readonly provider: ServerProvider | undefined;
+}): ModelSelection | undefined {
+  const stored = input.candidates.find((candidate) => candidate.instanceId === input.instanceId);
+  if (input.runtimeModel !== undefined) {
+    return { ...stored, instanceId: input.instanceId, model: input.runtimeModel };
+  }
+  if (stored !== undefined) return stored;
+  const defaultModel =
+    input.provider?.models.find((model) => model.isDefault === true) ?? input.provider?.models[0];
+  return defaultModel === undefined
+    ? undefined
+    : { instanceId: input.instanceId, model: defaultModel.slug };
 }
 
 const isCompactCommandMessage = (message: ThreadTitleMessage): boolean =>
@@ -589,10 +614,44 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
+    const forkBinding =
+      thread.fork == null ? null : yield* providerService.getSessionBinding(threadId);
+    const forkResumeCursor = forkBinding?.resumeCursor ?? undefined;
+    const forkHasOwnResumeCursor = forkResumeCursor !== undefined;
+    const forkSource =
+      thread.fork != null && !forkHasOwnResumeCursor
+        ? yield* resolveThreadShell(thread.fork.sourceThreadId)
+        : undefined;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
         .listSessions()
         .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
+    // An unstarted fork must start where the source conversation lives now.
+    // The source's live session is the only proof it moved; without one, the
+    // source's persisted binding says which instance still holds it, and a
+    // source with neither stays on the selection the fork inherited. The
+    // source's stored selection alone is not enough, because it can change
+    // before any turn moves the conversation.
+    const forkSourceSession =
+      forkSource?.session != null &&
+      forkSource.session.status !== "stopped" &&
+      forkSource.session.status !== "error"
+        ? forkSource.session
+        : null;
+    const forkSourceRuntimeSession =
+      forkSource !== undefined && forkSourceSession !== null
+        ? yield* resolveActiveSession(forkSource.id)
+        : undefined;
+    const forkSourceBinding =
+      forkSource !== undefined && forkSourceSession?.providerInstanceId === undefined
+        ? yield* providerService.getSessionBinding(forkSource.id)
+        : null;
+    const forkSourceInstanceId =
+      forkSource === undefined
+        ? undefined
+        : (forkSourceSession?.providerInstanceId ??
+          forkSourceBinding?.providerInstanceId ??
+          thread.modelSelection.instanceId);
 
     const activeSession = yield* resolveActiveSession(threadId);
     const activeThreadSession =
@@ -616,9 +675,68 @@ const make = Effect.gen(function* () {
       activeSession !== undefined &&
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
-        : thread.modelSelection.instanceId;
-    const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+        : (forkBinding?.providerInstanceId ?? thread.modelSelection.instanceId);
+    const baseDesiredModelSelection = requestedModelSelection ?? thread.modelSelection;
+    // When the source moved, the fork follows it onto the source's current
+    // instance and model. The inherited selection describes where the source
+    // used to run.
+    let movedForkSourceSelection: ModelSelection | undefined;
+    if (
+      forkSource !== undefined &&
+      forkSourceInstanceId !== undefined &&
+      forkSourceInstanceId !== thread.modelSelection.instanceId
+    ) {
+      movedForkSourceSelection = resolveForkSourceSelection({
+        instanceId: forkSourceInstanceId,
+        runtimeModel:
+          forkSourceRuntimeSession !== undefined &&
+          forkSourceRuntimeSession.providerInstanceId === forkSourceInstanceId
+            ? forkSourceRuntimeSession.model
+            : undefined,
+        candidates: [forkSource.modelSelection],
+        provider: (yield* providerRegistry.getProviders).find(
+          (provider) => provider.instanceId === forkSourceInstanceId,
+        ),
+      });
+      if (movedForkSourceSelection === undefined) {
+        return yield* new ProviderAdapterRequestError({
+          provider: providerErrorLabelFromInstanceHint({
+            instanceId: String(forkSourceInstanceId),
+          }),
+          method: "thread.turn.start",
+          detail: `Fork '${threadId}' cannot start because source thread '${forkSource.id}' lives on provider instance '${forkSourceInstanceId}', which is not configured in this build.`,
+        });
+      }
+    }
+    const desiredModelSelection = movedForkSourceSelection ?? baseDesiredModelSelection;
     const desiredInstanceId = desiredModelSelection.instanceId;
+    const inheritedForkInstanceId =
+      forkSourceInstanceId ??
+      forkBinding?.providerInstanceId ??
+      thread.session?.providerInstanceId ??
+      thread.modelSelection.instanceId;
+    // Before its inherited session starts, a fork's model is locked to the
+    // inherited selection, or to the source's current selection once the
+    // source moved.
+    const forkModelLockViolated =
+      requestedModelSelection !== undefined &&
+      !Equal.equals(requestedModelSelection, thread.modelSelection) &&
+      (movedForkSourceSelection === undefined ||
+        !Equal.equals(requestedModelSelection, movedForkSourceSelection));
+    if (
+      thread.fork != null &&
+      !forkHasOwnResumeCursor &&
+      (desiredInstanceId !== inheritedForkInstanceId || forkModelLockViolated)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: providerErrorLabelFromInstanceHint({
+          instanceId: String(desiredInstanceId),
+          modelSelectionInstanceId: String(inheritedForkInstanceId),
+        }),
+        method: "thread.turn.start",
+        detail: `Fork '${threadId}' cannot switch provider instance or model before its inherited provider session has started.`,
+      });
+    }
     const currentInfo = yield* providerService.getInstanceInfo(currentInstanceId).pipe(
       Effect.mapError(
         () =>
@@ -721,6 +839,10 @@ const make = Effect.gen(function* () {
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
+      readonly forkFrom?: {
+        readonly threadId: ThreadId;
+        readonly turnId?: TurnId;
+      };
     }) =>
       providerService
         .startSession(threadId, {
@@ -731,6 +853,7 @@ const make = Effect.gen(function* () {
           ...(thread.title ? { title: thread.title } : {}),
           modelSelection: desiredModelSelection,
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+          ...(input?.forkFrom !== undefined ? { forkFrom: input.forkFrom } : {}),
           runtimeMode: desiredRuntimeMode,
         })
         .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
@@ -764,13 +887,48 @@ const make = Effect.gen(function* () {
         });
       });
 
+    let providerCapabilities: ProviderAdapterCapabilities | undefined;
+    let latestTurnFork: typeof thread.fork = null;
+    if (thread.fork != null && !forkHasOwnResumeCursor) {
+      providerCapabilities = yield* providerService.getCapabilities(desiredInstanceId);
+      if (providerCapabilities.sessionFork === "latest-turn") {
+        latestTurnFork = thread.fork;
+      }
+    }
+
+    // A source that is gone cannot have advanced, and an archived source
+    // still reports its head, so forks that outlive their parent keep
+    // working as ordinary threads.
+    const sourceStillAtRecordedForkBoundary = Effect.fnUntraced(function* () {
+      if (latestTurnFork === null) return true;
+      const source = yield* projectionSnapshotQuery.getForkSourceHead(
+        latestTurnFork.sourceThreadId,
+      );
+      if (Option.isNone(source)) return true;
+      const sourceLatestTurn = source.value.latestTurn;
+      return latestTurnFork.sourceTurnId === null
+        ? sourceLatestTurn === null
+        : sourceLatestTurn?.turnId === latestTurnFork.sourceTurnId &&
+            sourceLatestTurn.state === "completed";
+    });
+    const latestTurnForkBoundaryError = () =>
+      new ProviderAdapterRequestError({
+        provider: preferredProvider,
+        method: "thread.turn.start",
+        detail: `Source thread '${latestTurnFork?.sourceThreadId}' advanced after fork '${threadId}' was created. Latest-turn providers can only fork from the source's current completed head.`,
+      });
+
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
+      if (!(yield* sourceStillAtRecordedForkBoundary())) {
+        return yield* latestTurnForkBoundaryError();
+      }
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
-      const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
-        .sessionModelSwitch;
+      const sessionModelSwitch = (
+        providerCapabilities ?? (yield* providerService.getCapabilities(desiredInstanceId))
+      ).sessionModelSwitch;
       const modelChanged =
         requestedModelSelection !== undefined &&
         requestedModelSelection.model !== activeSession?.model;
@@ -792,7 +950,7 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelSelectionChange
       ) {
         yield* refreshWorkspaceSnapshot;
-        return existingSessionThreadId;
+        return desiredModelSelection;
       }
 
       const resumeCursor = shouldRestartForModelChange
@@ -829,12 +987,47 @@ const make = Effect.gen(function* () {
         cwd: restartedSession.cwd,
       });
       yield* bindSessionToThread(restartedSession);
-      return restartedSession.threadId;
+      return desiredModelSelection;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    if (!(yield* sourceStillAtRecordedForkBoundary())) {
+      return yield* latestTurnForkBoundaryError();
+    }
+
+    const startedSession = yield* startProviderSession(
+      thread.fork == null
+        ? undefined
+        : forkResumeCursor !== undefined
+          ? { resumeCursor: forkResumeCursor }
+          : {
+              forkFrom: {
+                threadId: thread.fork.sourceThreadId,
+                ...(thread.fork.sourceTurnId !== null ? { turnId: thread.fork.sourceTurnId } : {}),
+              },
+            },
+    );
+    if (!(yield* sourceStillAtRecordedForkBoundary())) {
+      const boundaryError = latestTurnForkBoundaryError();
+      yield* providerService.stopSession({ threadId: startedSession.threadId }).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning(
+            "provider command reactor failed to stop stale latest-turn fork session",
+            {
+              threadId,
+              sourceThreadId: latestTurnFork?.sourceThreadId,
+              cause: Cause.pretty(cause),
+            },
+          );
+        }),
+      );
+      yield* providerService.clearSessionResumeCursor(threadId);
+      return yield* boundaryError;
+    }
     yield* bindSessionToThread(startedSession);
-    return startedSession.threadId;
+    return desiredModelSelection;
   });
 
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
@@ -851,12 +1044,12 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+    const effectiveModelSelection = yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
     });
     if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, input.modelSelection);
+      threadModelSelections.set(input.threadId, effectiveModelSelection);
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
@@ -877,7 +1070,9 @@ const make = Effect.gen(function* () {
           : (yield* providerService.getCapabilities(activeSession.providerInstanceId))
               .sessionModelSwitch;
     const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+      input.modelSelection !== undefined
+        ? effectiveModelSelection
+        : (threadModelSelections.get(input.threadId) ?? thread.modelSelection);
     const modelForTurn =
       sessionModelSwitch === "unsupported" && input.modelSelection === undefined
         ? activeSession?.model !== undefined
@@ -886,7 +1081,9 @@ const make = Effect.gen(function* () {
               model: activeSession.model,
             }
           : requestedModelSelection
-        : input.modelSelection;
+        : input.modelSelection !== undefined
+          ? effectiveModelSelection
+          : undefined;
 
     return {
       threadId: input.threadId,

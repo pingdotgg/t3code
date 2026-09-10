@@ -539,6 +539,28 @@ export const OrchestrationSession = Schema.Struct({
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
 
+/**
+ * Provider instance that currently holds a thread's conversation. A live
+ * session says where the thread runs now; a stopped or errored session no
+ * longer does, so the stored selection wins. Server and clients share this
+ * rule when they decide which instance's fork capability applies to a thread.
+ */
+export function threadProviderInstanceId(thread: {
+  readonly modelSelection: { readonly instanceId: ProviderInstanceId };
+  readonly session: {
+    readonly status: OrchestrationSessionStatus;
+    readonly providerInstanceId?: ProviderInstanceId | undefined;
+  } | null;
+}): ProviderInstanceId {
+  const session = thread.session;
+  return session !== null &&
+    session.status !== "stopped" &&
+    session.status !== "error" &&
+    session.providerInstanceId !== undefined
+    ? session.providerInstanceId
+    : thread.modelSelection.instanceId;
+}
+
 export const OrchestrationCheckpointFile = Schema.Struct({
   path: TrimmedNonEmptyString,
   kind: TrimmedNonEmptyString,
@@ -693,6 +715,14 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+export const ThreadForkOrigin = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceTurnId: Schema.NullOr(TurnId),
+  sourceMessageId: Schema.NullOr(MessageId),
+  forkedAt: IsoDateTime,
+});
+export type ThreadForkOrigin = typeof ThreadForkOrigin.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -709,6 +739,8 @@ export const OrchestrationThread = Schema.Struct({
   pullRequests: Schema.Array(ThreadPullRequestLink).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  fork: Schema.optional(Schema.NullOr(ThreadForkOrigin)),
+  sideChat: Schema.optional(Schema.Boolean),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -794,6 +826,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   pullRequests: Schema.Array(ThreadPullRequestLink).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  fork: Schema.optional(Schema.NullOr(ThreadForkOrigin)),
+  sideChat: Schema.optional(Schema.Boolean),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -1027,6 +1061,26 @@ const ThreadCreateCommand = Schema.Struct({
   historyImport: Schema.optional(Schema.Literal(true)),
 });
 
+const ThreadForkCommandFields = {
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  sourceTurnId: Schema.optional(TurnId),
+  sourceMessageId: Schema.optional(MessageId),
+  sideChat: Schema.Boolean,
+  title: Schema.optional(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+};
+
+const ClientThreadForkCommand = Schema.Struct(ThreadForkCommandFields);
+
+export const ThreadForkCommand = Schema.Struct({
+  ...ThreadForkCommandFields,
+  modelSelection: Schema.optional(ModelSelection),
+});
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
+
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
   commandId: CommandId,
@@ -1135,6 +1189,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  sideChat: Schema.optional(Schema.Boolean),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -1305,6 +1360,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -1337,6 +1393,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ClientThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -1584,6 +1641,8 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  fork: Schema.optional(ThreadForkOrigin),
+  sideChat: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -1672,6 +1731,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   // No longer produced; kept so persisted events from before
   // thread.pull-request-linked still decode and replay into the link table.
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  sideChat: Schema.optional(Schema.Boolean),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   updatedAt: IsoDateTime,
 });

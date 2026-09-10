@@ -13,6 +13,8 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Workspace root | The project's base filesystem directory on the environment.                                       |
 | Worktree       | A separate Git checkout a thread can use instead of the project's main checkout.                  |
 | Thread         | The durable conversation and work history for a project. It survives provider process exits.      |
+| Fork           | A thread whose provider context branches from another thread at a completed turn.                 |
+| Side chat      | A fork hidden from thread lists and shown beside its parent while that parent exists.             |
 | Turn           | One user-to-agent work cycle. Provider work can finish before checkpoint and diff work settles.   |
 | Activity       | A non-message timeline item, such as a tool action, approval, or failure.                         |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |

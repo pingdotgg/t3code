@@ -223,6 +223,7 @@ export type BuildThreadActionItemsThread = Pick<
   | "modelSelection"
   | "projectId"
   | "session"
+  | "sideChat"
   | "title"
   | "worktreePath"
 > & {
@@ -248,7 +249,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   limit?: number;
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
-    input.threads.filter((thread) => thread.archivedAt === null),
+    input.threads.filter((thread) => thread.archivedAt === null && thread.sideChat !== true),
     input.sortOrder,
   );
   const visibleThreads =

@@ -28,7 +28,7 @@ import {
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
-import { useProjects, useServerConfigs, useThreadShells } from "./entities";
+import { useProjects, useServerConfigs, useAllThreadShells } from "./entities";
 import {
   clearPendingThreadCreationOutcome,
   pendingThreadCreationOutcomesAtom,
@@ -551,7 +551,7 @@ export function useThreadOutboxDrain(): void {
   const editingQueuedMessageIds = useAtomValue(editingQueuedMessageIdsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const shellStatuses = useThreadOutboxShellStatuses();
-  const threads = useThreadShells();
+  const threads = useAllThreadShells();
   const creationOutcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const projects = useProjects();
   const serverConfigs = useServerConfigs();

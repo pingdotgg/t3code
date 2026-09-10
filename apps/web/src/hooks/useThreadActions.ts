@@ -29,6 +29,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentThreadRefs,
+  readEnvironmentVisibleThreadRefs,
   readProject,
   readThreadShell,
   readThreadShells,
@@ -325,7 +326,13 @@ export function useThreadActions() {
         return result;
       }
       const { thread, threadRef } = resolved;
-      const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
+      // Navigation fallback picks from what the list shows; worktree ownership
+      // must count every thread, since a side chat shares its parent's worktree.
+      const threads = readEnvironmentVisibleThreadRefs(threadRef.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        return shell === null ? [] : [shell];
+      });
+      const allThreads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
       });
@@ -342,12 +349,14 @@ export function useThreadActions() {
               }),
             )
           : undefined;
-      const survivingThreads =
+      const survivingThreadsForWorktreeCheck =
         deletedIds && deletedIds.size > 0
-          ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
-          : threads;
+          ? allThreads.filter(
+              (entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id),
+            )
+          : allThreads;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
+        survivingThreadsForWorktreeCheck,
         threadRef.threadId,
       );
       const displayWorktreePath = orphanedWorktreePath
