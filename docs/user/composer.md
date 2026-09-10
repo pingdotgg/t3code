@@ -111,6 +111,10 @@ provider supports it. Web and desktop also offer compaction from the context met
 
 ## Images and videos in messages
 
+Image links on a line of their own render inline. Web and desktop also embed
+standalone video links; mobile keeps those as links. Links within sentences, lists,
+quotes, or code keep their existing presentation.
+
 Select an image or video attachment or link to preview it. Playback support depends
 on your browser or device; save an unsupported video to open it in another app.
 
