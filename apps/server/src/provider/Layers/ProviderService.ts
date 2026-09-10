@@ -54,8 +54,8 @@ import * as Stream from "effect/Stream";
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
-import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
+import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
 import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import {
   increment,
@@ -254,8 +254,6 @@ export interface ProviderServiceLiveOptions {
    * test see whether a credential was requested at all.
    */
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
-  /** Overrides the device host lookup used to build the agent-device environment. */
-  readonly deviceReadiness?: DeviceService.DeviceService["Service"]["agentReadinessIfSupported"];
 }
 
 interface TurnAnalyticsMetadata {
@@ -484,14 +482,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
-  const deviceReadiness =
-    options?.deviceReadiness ??
-    (() =>
-      Effect.serviceOption(DeviceService.DeviceService).pipe(
-        Effect.flatMap((service) =>
-          Option.isSome(service) ? service.value.agentReadinessIfSupported() : Effect.succeed(null),
-        ),
-      ));
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
@@ -914,26 +904,19 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return capabilities;
   });
 
-  /**
-   * Starting a session with device access also brings the device host up, so
-   * the `agent-device` CLI is on the provider's PATH from its first turn. The
-   * environment is fixed at spawn time, so a host started later by
-   * `device_open` could not reach an already-running agent. Tools install once
-   * and the host is idempotent, so this is cheap after the first session;
-   * a host that fails to start withholds only the CLI, not the MCP tools.
-   */
+  /** Install only the local CLI here. device_open supplies a separate config for each host. */
   const hostPlatform = yield* HostProcessPlatform;
   const agentDeviceEnvironment = Effect.gen(function* () {
-    const readiness = yield* deviceReadiness().pipe(
+    const devices = yield* Effect.serviceOption(DeviceService.DeviceService);
+    if (Option.isNone(devices)) return undefined;
+    const entryPath = yield* devices.value.agentCli.pipe(
       Effect.catch((cause) =>
-        Effect.logWarning("Device host unavailable; starting session without agent-device", {
-          cause,
-        }).pipe(Effect.as(null)),
+        Effect.logWarning("Agent device CLI unavailable", { cause }).pipe(Effect.as(null)),
       ),
     );
-    if (!readiness) return undefined;
+    if (!entryPath) return undefined;
     const shimDir = yield* ensureAgentDeviceShim({
-      entryPath: readiness.agentDevice.entryPath,
+      entryPath,
       stateDir: serverConfig.stateDir,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -944,8 +927,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     return {
       PATH: shimDir,
       PATH_SEPARATOR: hostPlatform === "win32" ? ";" : ":",
-      AGENT_DEVICE_DAEMON_BASE_URL: readiness.agentDevice.baseUrl,
-      AGENT_DEVICE_DAEMON_AUTH_TOKEN: readiness.agentDevice.token,
       AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
     } satisfies Record<string, string>;
   });

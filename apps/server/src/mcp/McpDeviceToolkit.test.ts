@@ -1,10 +1,16 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DeviceHostUnavailableError,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 
+import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -85,11 +91,14 @@ const DeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   sessionsForThread: () => Effect.succeed([]),
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
+  agentCli: Effect.succeed("/cli"),
+  agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
 });
 
 const TestLayer = McpHttpServer.DeviceToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(DeviceServiceMock),
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" })),
   Layer.provide(NodeServices.layer),
 );
 
@@ -126,3 +135,41 @@ it.effect("registers the device tools and returns the screenshot as image conten
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
+
+it.effect("rejects unavailable agent access before booting or opening a device", () => {
+  const unavailable = Layer.mock(DeviceService.DeviceService)({
+    list: Effect.succeed(state),
+    agentTarget: () =>
+      Effect.fail(
+        new DeviceHostUnavailableError({ hostId: "local", reason: "Agent access is disabled." }),
+      ),
+    open: () => Effect.die("Must not boot or register a device when agent access fails"),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "device_open", arguments: { platform: "ios" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "text",
+          text: expect.stringContaining("Agent access is disabled."),
+        }),
+      ]),
+    );
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.DeviceToolkitRegistrationLive.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(unavailable),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});

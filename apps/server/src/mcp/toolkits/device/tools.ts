@@ -8,6 +8,9 @@ import {
   DeviceToolTargetInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { ServerConfig } from "../../../config.ts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -48,7 +51,7 @@ const DeviceOpenTool = Tool.make("device_open", {
   parameters: DeviceToolOpenInput,
   success: DeviceToolOpenResult,
   failure: DeviceToolError,
-  dependencies,
+  dependencies: [...dependencies, FileSystem.FileSystem, Path.Path, ServerConfig],
 })
   .annotate(Tool.Title, "Open device")
   .annotate(Tool.Readonly, false)

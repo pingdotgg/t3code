@@ -33,6 +33,15 @@ import {
   LOCAL_DEVICE_HOST_ID,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { ensureAgentDevice } from "./DeviceToolchain.ts";
+import * as ServerConfig from "../config.ts";
+import {
+  agentDeviceConfigPath,
+  agentDeviceSession,
+  writeAgentDeviceConfig,
+} from "./AgentDeviceTarget.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -49,6 +58,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import * as ServerSettings from "../serverSettings.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
@@ -94,6 +104,12 @@ export interface DeviceAgentReadiness extends DeviceReadiness {
 export class DeviceService extends Context.Service<
   DeviceService,
   {
+    readonly agentCli: Effect.Effect<string, DeviceError>;
+    readonly agentTarget: (input: {
+      threadId: ThreadId;
+      hostId: DeviceHostId;
+      deviceId: DeviceId;
+    }) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -138,6 +154,16 @@ const vendorPrefix = (platform: DevicePlatform) =>
 
 export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* (
   hosts: ReadonlyMap<DeviceHostId, DeviceHost.DeviceHost["Service"]>,
+  configureAgent: (
+    hostId: DeviceHostId,
+    ready: DeviceHost.DeviceHostAgentReady,
+  ) => Effect.Effect<string, DeviceError> = (hostId) =>
+    Effect.fail(
+      new DeviceHostUnavailableError({
+        hostId,
+        reason: "Agent configuration is unavailable in this device service.",
+      }),
+    ),
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
@@ -733,6 +759,29 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     );
 
   return DeviceService.of({
+    agentCli: Effect.fail(
+      new DeviceHostUnavailableError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        reason: "Agent CLI installation is unavailable in this device service.",
+      }),
+    ),
+    agentTarget: (input) =>
+      Effect.gen(function* () {
+        const ready = yield* agentReadinessIfSupported(input.hostId);
+        if (!ready)
+          return yield* new DeviceHostUnavailableError({
+            hostId: input.hostId,
+            reason:
+              "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
+          });
+        const configPath = yield* configureAgent(input.hostId, ready);
+        return [
+          "--config",
+          configPath,
+          "--session",
+          agentDeviceSession(input.threadId, input.hostId, input.deviceId),
+        ];
+      }),
     state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
     subscribe: PubSub.subscribe(statePubSub),
     configure,
@@ -751,9 +800,46 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const host = yield* DeviceHost.DeviceHost;
-  return yield* makeWithHosts(new Map([[host.id, host]]));
+  const localHost = yield* DeviceHost.DeviceHost;
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const service = yield* makeWithHosts(new Map([[localHost.id, localHost]]), (hostId, ready) => {
+    const file = agentDeviceConfigPath(config.stateDir, hostId, path);
+    return writeAgentDeviceConfig(file, ready.agentDevice).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(
+        (cause) =>
+          new DeviceOperationError({
+            operation: "configure agent",
+            reason: "settings_failed",
+            cause,
+          }),
+      ),
+      Effect.as(file),
+    );
+  });
+  return {
+    ...service,
+    agentCli: ensureAgentDevice(config.baseDir).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.map((tool) => tool.entryPath),
+      Effect.mapError(
+        (error) =>
+          new DeviceOperationError({
+            operation: "install agent CLI",
+            reason: "command_failed",
+            cause: error,
+          }),
+      ),
+    ),
+  };
 });
 
 export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
