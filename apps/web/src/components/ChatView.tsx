@@ -1594,6 +1594,11 @@ export default function ChatView(props: ChatViewProps) {
   );
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [messagesBelow, setMessagesBelow] = useState(0);
+  const scrollToEndLabel =
+    messagesBelow > 0
+      ? `${messagesBelow} ${messagesBelow === 1 ? "message" : "messages"}`
+      : "Scroll to end";
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   useEffect(() => {
     const item = expandedImage?.images[expandedImage.index];
@@ -5323,7 +5328,7 @@ export default function ChatView(props: ChatViewProps) {
         '[data-chat-composer-main-surface="true"]',
       );
       const button = composerOverlayElement?.parentElement?.querySelector<HTMLElement>(
-        'button[aria-label="Scroll to end"]',
+        "button[data-scroll-to-end]",
       );
       const clearance =
         composerOverlayElement && mainSurface && button
@@ -8293,6 +8298,8 @@ export default function ChatView(props: ChatViewProps) {
                 contentInsetEndAdjustment={composerTimelineInset}
                 liveFollowEnabled={timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChange}
+                onMessagesBelowChange={setMessagesBelow}
+                visibleBottomInset={composerOverlayHeight}
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
@@ -8308,7 +8315,12 @@ export default function ChatView(props: ChatViewProps) {
                   style={{ bottom: scrollToEndClearance + 4 }}
                 >
                   <Button
-                    aria-label="Scroll to end"
+                    data-scroll-to-end="true"
+                    aria-label={
+                      messagesBelow > 0
+                        ? `${scrollToEndLabel} below. Scroll to end`
+                        : scrollToEndLabel
+                    }
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => {
                       composerRef.current?.restoreAfterTimelineReachedEnd();
@@ -8319,7 +8331,7 @@ export default function ChatView(props: ChatViewProps) {
                     variant="glass"
                   >
                     <ChevronDownIcon className="size-3.5" />
-                    Scroll to end
+                    {scrollToEndLabel}
                   </Button>
                 </div>
               )}

@@ -6,6 +6,13 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+## Return to the latest message
+
+On web and desktop, scrolling up shows a button above the composer with the number
+of messages remaining below your view. A partially visible message counts until
+its end is visible. Tool activity and messages hidden inside collapsed turns do
+not count. Select the button to return to the end of the conversation.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can

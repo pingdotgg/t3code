@@ -135,6 +135,7 @@ import {
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
 import {
   computeStableMessagesTimelineRows,
+  countTimelineMessagesBelow,
   deriveMessagesTimelineRowsWithState,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
@@ -345,6 +346,8 @@ interface MessagesTimelineProps {
    */
   liveFollowEnabled: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  onMessagesBelowChange?: (count: number) => void;
+  visibleBottomInset?: number;
   /**
    * Whether the real rows extend past the viewport above the composer.
    * Reported after scrolls, row size changes, and viewport resizes.
@@ -397,6 +400,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   liveFollowEnabled,
   onIsAtEndChange,
+  onMessagesBelowChange,
+  visibleBottomInset = contentInsetEndAdjustment,
   onContentOverflowChange,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
@@ -574,6 +579,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     supportsConversationRollback,
   ]);
   const rows = useStableRows(rawRows);
+  const messageRowIndices = useMemo(
+    () => rows.flatMap((row, index) => (row.kind === "message" ? [index] : [])),
+    [rows],
+  );
+  const timelineHeaderSizeRef = useRef(0);
+  const reportMessagesBelow = useCallback(() => {
+    onMessagesBelowChange?.(
+      countTimelineMessagesBelow(
+        messageRowIndices,
+        listRef.current?.getState?.(),
+        visibleBottomInset,
+        timelineHeaderSizeRef.current,
+      ),
+    );
+  }, [visibleBottomInset, listRef, messageRowIndices, onMessagesBelowChange]);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
@@ -638,12 +658,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
   }, []);
   const reportContentOverflow = useCallback(() => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
+    if (contentOverflowFrameRef.current !== null) return;
     contentOverflowFrameRef.current = requestAnimationFrame(() => {
       contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
+      onContentOverflowChange?.(measureContentOverflow());
+      reportMessagesBelow();
     });
-  }, [measureContentOverflow, onContentOverflowChange]);
+  }, [measureContentOverflow, onContentOverflowChange, reportMessagesBelow]);
+  const handleMetricsChange = useCallback(
+    (metrics: { headerSize: number }) => {
+      timelineHeaderSizeRef.current = metrics.headerSize;
+      reportContentOverflow();
+    },
+    [reportContentOverflow],
+  );
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
@@ -653,7 +681,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
-  }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
+    reportMessagesBelow();
+  }, [
+    cancelContentOverflowFrame,
+    measureContentOverflow,
+    onContentOverflowChange,
+    reportMessagesBelow,
+    rows.length,
+  ]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -864,6 +899,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
             onItemSizeChanged={reportContentOverflow}
+            onMetricsChange={handleMetricsChange}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
