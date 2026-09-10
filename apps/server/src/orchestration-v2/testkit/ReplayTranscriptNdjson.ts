@@ -50,7 +50,7 @@ export type ProviderReplayNdjsonParseError = typeof ProviderReplayNdjsonParseErr
 
 export type ProviderReplayTranscriptMetadata = Omit<ProviderReplayTranscript, "entries">;
 
-export const REPLAY_TRANSCRIPT_WORKSPACE_PLACEHOLDER = "<workspace>";
+const REPLAY_TRANSCRIPT_WORKSPACE_PLACEHOLDER = "<workspace>";
 
 function materializeWorkspacePlaceholder(value: unknown, workspace: string): unknown {
   if (value === REPLAY_TRANSCRIPT_WORKSPACE_PLACEHOLDER) {

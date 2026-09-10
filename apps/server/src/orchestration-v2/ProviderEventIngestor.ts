@@ -87,7 +87,7 @@ export const analyticsLive = Layer.effect(
   }),
 );
 
-export function providerTurnAnalyticsProperties(input: {
+function providerTurnAnalyticsProperties(input: {
   readonly driver: ProviderAdapterV2Event["driver"];
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly context?: ProviderTurnAnalyticsContext;

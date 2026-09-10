@@ -7908,7 +7908,7 @@ export const layer: Layer.Layer<
   Layer.provide(threadCommandExecutorLayer),
 );
 
-export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
+const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
   OrchestratorV2,
   OrchestratorV2.of({
     resumeQueuedRuns: Effect.fail(

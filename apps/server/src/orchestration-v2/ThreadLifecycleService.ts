@@ -74,7 +74,7 @@ export class ThreadLifecycleService extends Context.Service<
   }
 >()("t3/orchestration-v2/ThreadLifecycleService") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
 
   const dispatch = <Operation extends ThreadLifecycleError["operation"]>(

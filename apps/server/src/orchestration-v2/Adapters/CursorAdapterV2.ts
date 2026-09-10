@@ -98,8 +98,6 @@ import {
   type CursorAgentSdkRunnerShape,
   type CursorAgentSdkSession,
 } from "./CursorAgentSdk.ts";
-
-export { CURSOR_PROVIDER } from "./CursorAgentSdk.ts";
 export { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CURSOR_PROVIDER;
@@ -2563,7 +2561,7 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
   ),
 };
 
-export const layer: Layer.Layer<
+const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
   CursorAgentSdkRunner | FileSystem.FileSystem | Path.Path | IdAllocatorV2 | ServerConfig

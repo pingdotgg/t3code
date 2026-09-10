@@ -26,7 +26,6 @@ import { ServerConfig } from "../../config.ts";
 import {
   CLAUDE_PROVIDER,
   CLAUDE_DEFAULT_INSTANCE_ID,
-  CLAUDE_DRIVER_KIND,
   ClaudeAdapterV2Driver,
   ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
@@ -820,7 +819,7 @@ const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQuery
   },
 );
 
-export function makeClaudeAgentSdkReplayQueryRunnerLayer(
+function makeClaudeAgentSdkReplayQueryRunnerLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ): Layer.Layer<ClaudeAgentSdkQueryRunner> {
@@ -830,7 +829,7 @@ export function makeClaudeAgentSdkReplayQueryRunnerLayer(
   );
 }
 
-export function makeClaudeAgentSdkReplayLayer(
+function makeClaudeAgentSdkReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ): Layer.Layer<ClaudeAgentSdkQueryRunner> {
@@ -865,7 +864,7 @@ export function makeClaudeAgentSdkReplayLayer(
   );
 }
 
-export function makeClaudeProviderAdapterRegistryReplayLayer(
+function makeClaudeProviderAdapterRegistryReplayLayer(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
 ) {
@@ -877,7 +876,7 @@ export function makeClaudeProviderAdapterRegistryReplayLayer(
     drivers: [ClaudeAdapterV2Driver],
     configMap: {
       [CLAUDE_DEFAULT_INSTANCE_ID]: {
-        driver: CLAUDE_DRIVER_KIND,
+        driver: CLAUDE_PROVIDER,
       },
     },
   }).pipe(

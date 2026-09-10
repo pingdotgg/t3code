@@ -8,7 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export const ALL_MCP_CAPABILITIES = [
+const ALL_MCP_CAPABILITIES = [
   "preview",
   "orchestration",
   "worktree",

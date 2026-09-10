@@ -15,7 +15,7 @@ export function cursorSdkProviderOptionId(parameterId: string): string {
   return CURSOR_SDK_PARAMETER_TO_PROVIDER_OPTION[parameterId] ?? parameterId;
 }
 
-export function cursorSdkParameterId(providerOptionId: string): string {
+function cursorSdkParameterId(providerOptionId: string): string {
   return PROVIDER_OPTION_TO_CURSOR_SDK_PARAMETER[providerOptionId] ?? providerOptionId;
 }
 
