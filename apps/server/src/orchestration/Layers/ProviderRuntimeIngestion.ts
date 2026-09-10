@@ -180,6 +180,43 @@ function hasRenderableAssistantText(text: string | undefined): boolean {
   return (text?.trim().length ?? 0) > 0;
 }
 
+const MARKDOWN_FENCE_PATTERN = /^(`{3,}|~{3,})/;
+
+/**
+ * Splits buffered assistant text at the last blank line that is not inside
+ * an open fenced code block. `ready` is safe to deliver now because the
+ * markdown before it will not change shape as more text arrives. `rest` stays
+ * buffered until the next boundary or completion. Only fully terminated lines
+ * count, so a trailing partial line never leaks.
+ */
+export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
+  let openFence: string | null = null;
+  let boundary = -1;
+  let lineStart = 0;
+  for (;;) {
+    const newline = text.indexOf("\n", lineStart);
+    if (newline === -1) {
+      break;
+    }
+    const line = text.slice(lineStart, newline).trimStart();
+    const fence = MARKDOWN_FENCE_PATTERN.exec(line)?.[1];
+    if (fence) {
+      if (openFence === null) {
+        openFence = fence;
+      } else if (fence[0] === openFence[0] && fence.length >= openFence.length) {
+        openFence = null;
+      }
+    } else if (openFence === null && line.length === 0 && lineStart > 0) {
+      boundary = newline + 1;
+    }
+    lineStart = newline + 1;
+  }
+  if (boundary === -1) {
+    return { ready: "", rest: text };
+  }
+  return { ready: text.slice(0, boundary), rest: text.slice(boundary) };
+}
+
 function proposedPlanIdForTurn(threadId: ThreadId, turnId: TurnId): string {
   return `plan:${threadId}:turn:${turnId}`;
 }
@@ -1111,6 +1148,19 @@ const make = Effect.gen(function* () {
             onNone: () => delta,
             onSome: (text) => `${text}${delta}`,
           });
+
+          // Deliver finished paragraphs and closed code blocks early so the
+          // user sees progress without token-by-token repaints.
+          const { ready, rest } = splitBufferedAssistantText(nextText);
+          if (hasRenderableAssistantText(ready) && rest.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
+            if (rest.length > 0) {
+              yield* Cache.set(bufferedAssistantTextByMessageId, messageId, rest);
+            } else {
+              yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+            }
+            return ready;
+          }
+
           if (nextText.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
             yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
             return "";
