@@ -76,6 +76,9 @@ Open **Pull requests** to review changes and comments, request reviewers, check 
 or merge. You can edit review titles and descriptions and your own comments where the host allows it.
 GitLab calls these merge requests.
 
+In web and desktop, press `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows/Linux to post a new
+pull request comment. Press `Enter` to insert a newline.
+
 GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
 supports approving waiting fork workflows and opening a revert pull request for a merged change.
 
