@@ -1,4 +1,10 @@
-import { memo, useCallback, useEffect, useRef } from "react";
+import {
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+  terminalOutputText,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import {
   Pressable,
   ScrollView,
@@ -13,9 +19,16 @@ import { AppText as Text } from "../../components/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
+  getNativeTerminalBufferStreamRevision,
   getNativeTerminalHardwareKeyRevision,
   resolveNativeTerminalSurfaceView,
+  type NativeTerminalSurfaceProps,
 } from "./nativeTerminalModule";
+import {
+  IDLE_TERMINAL_BUFFER_WRITE,
+  mergeTerminalBufferWrite,
+  type TerminalBufferWrite,
+} from "./terminalBufferWrite";
 import {
   buildGhosttyThemeConfig,
   getMobileTerminalTheme,
@@ -34,7 +47,7 @@ interface TerminalResizeEvent {
 
 interface TerminalSurfaceProps extends ViewProps {
   readonly terminalKey: string;
-  readonly buffer: string;
+  readonly output: TerminalOutputState;
   readonly fontSize?: number;
   readonly isRunning: boolean;
   readonly autoFocus?: boolean;
@@ -42,6 +55,48 @@ interface TerminalSurfaceProps extends ViewProps {
   readonly theme?: TerminalTheme;
   readonly onInput: (data: string) => void;
   readonly onResize: (size: { readonly cols: number; readonly rows: number }) => void;
+}
+
+/**
+ * Track the output the native surface has not consumed yet.
+ *
+ * The native side owns the rendered grid, so it only ever needs the bytes it
+ * has not seen. Materializing the whole retained buffer on every output event
+ * instead made the native view rebuild its terminal once the retention window
+ * started rolling, which froze the UI thread.
+ *
+ * 原生侧自己持有渲染结果，只需要拿到还没消费的字节。之前每次输出都把整个保留
+ * 缓冲区物化一遍，一旦保留窗口开始滚动，原生就会不断重建终端，把 UI 线程卡死。
+ */
+function useTerminalBufferWrite(output: TerminalOutputState): TerminalBufferWrite {
+  const [write, setWrite] = useState<TerminalBufferWrite>(IDLE_TERMINAL_BUFFER_WRITE);
+  const cursorRef = useRef(INITIAL_TERMINAL_OUTPUT_CURSOR);
+  const committedSeqRef = useRef(IDLE_TERMINAL_BUFFER_WRITE.seq);
+
+  useEffect(() => {
+    const update = readTerminalOutputUpdate(output, cursorRef.current);
+    cursorRef.current = update.cursor;
+    if (update.type === "none") {
+      return;
+    }
+    setWrite((pending) =>
+      mergeTerminalBufferWrite({
+        pending,
+        committedSeq: committedSeqRef.current,
+        update,
+      }),
+    );
+  }, [output]);
+
+  // A rendered write has reached the native view, so the next update starts a
+  // new sequence instead of merging into it.
+  //
+  // 已渲染的写入意味着原生已收到，下一次更新另起序号而不是继续合并。
+  useEffect(() => {
+    committedSeqRef.current = write.seq;
+  }, [write]);
+
+  return write;
 }
 
 function estimateGridSize(input: {
@@ -62,6 +117,11 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   const inputRef = useRef<TextInput>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
+  // Only the text fallback renders history itself, so it is the one place that
+  // still pays for materializing the retained buffer.
+  //
+  // 只有文本兜底视图需要自己渲染历史，所以物化保留缓冲区的开销只留在这里。
+  const buffer = useMemo(() => terminalOutputText(props.output), [props.output]);
   const statusLabel = props.isRunning
     ? "Native terminal unavailable. Using text fallback."
     : "Open terminal to start a shell.";
@@ -117,7 +177,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
               lineHeight: Math.round(fontSize * 1.35),
             }}
           >
-            {props.buffer || "$ "}
+            {buffer || "$ "}
           </Text>
         </ScrollView>
       </View>
@@ -171,24 +231,30 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface(props: Ter
   );
 });
 
-export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
-  const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
-  const { themeAppearance, themeId } = useAppearancePreferences();
-  const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
-  const { onInput, onResize } = props;
-  const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
-  const hasNativeSurface = Boolean(NativeTerminalSurfaceView);
+const NativeTerminalSurfaceHost = memo(function NativeTerminalSurfaceHost(
+  props: TerminalSurfaceProps & {
+    readonly fontSize: number;
+    readonly theme: TerminalTheme;
+    readonly NativeView: ComponentType<NativeTerminalSurfaceProps>;
+  },
+) {
+  const { NativeView, onInput, onResize } = props;
+  const { themeAppearance } = useAppearancePreferences();
+  const write = useTerminalBufferWrite(props.output);
 
   useEffect(() => {
     terminalDebugLog("native:surface", {
       terminalKey: props.terminalKey,
-      native: hasNativeSurface,
+      native: true,
       // null = installed binary predates native hardware-key handling (rebuild needed).
       hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
-      bufferLen: props.buffer.length,
+      // null = installed binary predates incremental writes (rebuild needed).
+      bufferStreamRevision: getNativeTerminalBufferStreamRevision(),
+      retainedBytes: props.output.retainedBytes,
       isRunning: props.isRunning,
     });
-  }, [hasNativeSurface, props.buffer.length, props.isRunning, props.terminalKey]);
+  }, [props.isRunning, props.output.retainedBytes, props.terminalKey]);
+
   const handleNativeInput = useCallback(
     (event: NativeSyntheticEvent<TerminalInputEvent>) => {
       if (!props.isRunning) {
@@ -211,25 +277,47 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
     [onResize],
   );
 
+  return (
+    <View style={props.style}>
+      <NativeView
+        appearanceScheme={themeAppearance}
+        autoFocus={props.autoFocus ?? true}
+        backgroundColor={props.theme.background}
+        bufferWrite={write}
+        focusRequest={props.isRunning ? (props.keyboardFocusRequest ?? 0) : 0}
+        foregroundColor={props.theme.foreground}
+        mutedForegroundColor={props.theme.mutedForeground}
+        terminalKey={props.terminalKey}
+        fontSize={props.fontSize}
+        style={{ flex: 1 }}
+        themeConfig={buildGhosttyThemeConfig(props.theme)}
+        onInput={handleNativeInput}
+        onResize={handleNativeResize}
+      />
+    </View>
+  );
+});
+
+export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
+  const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
+  const { themeAppearance, themeId } = useAppearancePreferences();
+  const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
+  const NativeTerminalSurfaceView = resolveNativeTerminalSurfaceView();
+
   if (NativeTerminalSurfaceView) {
     return (
-      <View style={props.style}>
-        <NativeTerminalSurfaceView
-          appearanceScheme={themeAppearance}
-          autoFocus={props.autoFocus ?? true}
-          backgroundColor={theme.background}
-          focusRequest={props.isRunning ? (props.keyboardFocusRequest ?? 0) : 0}
-          foregroundColor={theme.foreground}
-          mutedForegroundColor={theme.mutedForeground}
-          terminalKey={props.terminalKey}
-          initialBuffer={props.buffer}
-          fontSize={fontSize}
-          style={{ flex: 1 }}
-          themeConfig={buildGhosttyThemeConfig(theme)}
-          onInput={handleNativeInput}
-          onResize={handleNativeResize}
-        />
-      </View>
+      // Remount on terminal identity so a switched session starts from a fresh
+      // write sequence instead of streaming into the previous terminal's grid.
+      //
+      // 终端身份变化时整体重挂载，切换会话后从新的写入序号开始，
+      // 避免把新内容流进上一个终端的网格。
+      <NativeTerminalSurfaceHost
+        {...props}
+        key={props.terminalKey}
+        NativeView={NativeTerminalSurfaceView}
+        fontSize={fontSize}
+        theme={theme}
+      />
     );
   }
 

@@ -24,7 +24,19 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
   private var terminalHandle = 0L
-  private var fedBuffer = ""
+
+  /**
+   * Everything fed to the current terminal, replayed whenever the terminal is
+   * recreated (key change, resize-driven creation). Bounded to the same
+   * retention window the JS side keeps.
+   *
+   * 当前终端已喂入的全部内容，终端重建时（key 变化、尺寸触发的创建）用它重放。
+   * 上限与 JS 侧的保留窗口一致。
+   */
+  private var replayBuffer = ""
+  private var replayBufferBytes = 0
+  private var appliedWriteSeq = 0
+  private var hasReplayedIntoTerminal = false
   private var cols = 0
   private var rows = 0
   private var clearingInput = false
@@ -40,14 +52,21 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       if (field == value) return
       field = value
       contentDescription = "t3-terminal-$value"
+      // A different terminal shares none of this one's history or write
+      // sequence. JS remounts on identity, so this only backstops reuse.
+      //
+      // 换了终端就不共享历史和写入序号。JS 侧会按身份重挂载，
+      // 这里只是复用场景的兜底。
+      replayBuffer = ""
+      replayBufferBytes = 0
+      appliedWriteSeq = 0
       recreateTerminal()
     }
 
-  var initialBuffer: String = ""
+  var bufferWrite: TerminalBufferWriteRecord = TerminalBufferWriteRecord()
     set(value) {
-      if (field == value) return
       field = value
-      feedPendingBuffer()
+      applyBufferWrite(value)
     }
 
   var fontSize: Float = 10f
@@ -302,7 +321,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     }
     emitResponse(response)
     onResize(mapOf("cols" to cols, "rows" to rows))
-    feedPendingBuffer()
+    replayIntoTerminal()
     renderSnapshot()
   }
 
@@ -319,14 +338,14 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       cursorColorValue,
       paletteColors,
     )
-    fedBuffer = ""
+    hasReplayedIntoTerminal = false
   }
 
   private fun recreateTerminal() {
     if (terminalHandle == 0L) return
     destroyTerminal()
     createTerminal()
-    feedPendingBuffer()
+    replayIntoTerminal()
     renderSnapshot()
   }
 
@@ -334,28 +353,92 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     if (terminalHandle == 0L) return
     GhosttyBridge.nativeDestroy(terminalHandle)
     terminalHandle = 0L
-    fedBuffer = ""
+    hasReplayedIntoTerminal = false
     terminalCanvas.resetSelectionState()
   }
 
-  private fun feedPendingBuffer() {
-    if (terminalHandle == 0L || initialBuffer == fedBuffer) return
-    if (!initialBuffer.startsWith(fedBuffer)) {
-      recreateTerminal()
-      if (terminalHandle == 0L) return
-    }
-    val suffix = initialBuffer.substring(fedBuffer.length)
-    if (suffix.isNotEmpty()) {
-      emitResponse(GhosttyBridge.nativeFeed(terminalHandle, suffix.toByteArray(Charsets.UTF_8)))
-      // New output invalidates an active selection (matches the web drawer);
-      // otherwise the copy toolbar drifts out of sync with the grid.
-      if (terminalCanvas.hasActiveSelection()) {
-        GhosttyBridge.nativeClearSelection(terminalHandle)
-        terminalCanvas.resetSelectionState()
+  /**
+   * Apply one incremental write from JS. Sequence numbers are monotonic, so a
+   * prop update the view has already consumed is ignored rather than replayed.
+   *
+   * 应用 JS 侧的一次增量写入。序号单调递增，已消费过的 prop 更新直接忽略，
+   * 不会重放。
+   */
+  private fun applyBufferWrite(write: TerminalBufferWriteRecord) {
+    if (write.seq <= appliedWriteSeq) return
+    appliedWriteSeq = write.seq
+
+    if (write.reset) {
+      replayBuffer = ""
+      replayBufferBytes = 0
+      // Clearing the live terminal is cheaper than recreating it, and it keeps
+      // the keyboard and scroll position intact.
+      //
+      // 清屏比重建终端便宜得多，而且能保住键盘和滚动位置。
+      if (terminalHandle != 0L) {
+        feedIntoTerminal(CLEAR_SCREEN_SEQUENCE)
       }
     }
-    fedBuffer = initialBuffer
+
+    appendToReplayBuffer(write.data)
+
+    // No terminal yet (still unmeasured): the replay buffer carries the write
+    // into the terminal once a resize creates it.
+    //
+    // 终端还没建（尚未测量完成）：写入先留在 replay buffer 里，
+    // 等 resize 创建终端时一并喂入。
+    if (terminalHandle == 0L) return
+
+    feedIntoTerminal(write.data)
     renderSnapshot()
+  }
+
+  /**
+   * Rebuild the visible grid from retained output. Device queries inside the
+   * replayed bytes must not reach the live shell — they would land at the
+   * prompt as junk — so the terminal's replies are dropped for the replay.
+   *
+   * 用保留的输出重建可见网格。重放数据里的设备查询不能发回正在运行的 shell，
+   * 否则会在提示符处变成乱码，所以重放期间丢弃终端的回复。
+   */
+  private fun replayIntoTerminal() {
+    if (terminalHandle == 0L || hasReplayedIntoTerminal) return
+    hasReplayedIntoTerminal = true
+    feedIntoTerminal(replayBuffer, emitReplies = false)
+    renderSnapshot()
+  }
+
+  private fun feedIntoTerminal(data: String, emitReplies: Boolean = true) {
+    if (terminalHandle == 0L || data.isEmpty()) return
+    val response = GhosttyBridge.nativeFeed(terminalHandle, data.toByteArray(Charsets.UTF_8))
+    if (emitReplies) emitResponse(response)
+    // New output invalidates an active selection (matches the web drawer);
+    // otherwise the copy toolbar drifts out of sync with the grid.
+    if (terminalCanvas.hasActiveSelection()) {
+      GhosttyBridge.nativeClearSelection(terminalHandle)
+      terminalCanvas.resetSelectionState()
+    }
+  }
+
+  private fun appendToReplayBuffer(data: String) {
+    if (data.isEmpty()) return
+    replayBuffer += data
+    replayBufferBytes += data.toByteArray(Charsets.UTF_8).size
+
+    if (replayBufferBytes <= MAX_REPLAY_BUFFER_BYTES + REPLAY_BUFFER_TRIM_SLACK_BYTES) return
+
+    // Drop from the front on a UTF-8 boundary. Only replay depth is lost; the
+    // scrollback the user sees lives in the terminal itself.
+    //
+    // 从头部按 UTF-8 边界裁剪。只损失重放深度，用户看到的滚动历史
+    // 由终端自己持有。
+    val bytes = replayBuffer.toByteArray(Charsets.UTF_8)
+    var start = bytes.size - MAX_REPLAY_BUFFER_BYTES
+    while (start < bytes.size && (bytes[start].toInt() and 0xC0) == 0x80) {
+      start += 1
+    }
+    replayBuffer = String(bytes, start, bytes.size - start, Charsets.UTF_8)
+    replayBufferBytes = bytes.size - start
   }
 
   private fun renderSnapshot() {
@@ -434,4 +517,31 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     } catch (_: IllegalArgumentException) {
       fallback
     }
+
+  private companion object {
+    /**
+     * Matches `DEFAULT_MAX_TERMINAL_BUFFER_BYTES` on the client runtime, so a
+     * replay never holds more history than JS would have sent.
+     *
+     * 与 client runtime 的 `DEFAULT_MAX_TERMINAL_BUFFER_BYTES` 一致，
+     * 重放持有的历史不会超过 JS 会发送的量。
+     */
+    const val MAX_REPLAY_BUFFER_BYTES = 512 * 1024
+
+    /**
+     * Trim only once the buffer runs this far past the cap, so a rolling window
+     * costs one copy per slack window instead of one per write.
+     *
+     * 只有超出上限这么多才裁剪，滚动窗口的代价变成每个余量窗口一次拷贝，
+     * 而不是每次写入一次。
+     */
+    const val REPLAY_BUFFER_TRIM_SLACK_BYTES = 64 * 1024
+
+    /**
+     * Erase scrollback, home the cursor, erase the screen.
+     *
+     * 清除滚动历史、光标归位、清屏。
+     */
+    const val CLEAR_SCREEN_SEQUENCE = "\u001B[3J\u001B[H\u001B[2J"
+  }
 }
