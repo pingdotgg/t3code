@@ -2,11 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
-import {
-  highlightNativeReviewDiffVisibleRows,
-  streamNativeReviewDiffTokens,
-  type NativeReviewDiffTokenChunk,
-} from "./nativeReviewDiffHighlighter";
+import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighlighter";
 
 const tokenization = vi.hoisted(() => ({
   calls: [] as string[],
@@ -257,13 +253,13 @@ describe.each(["native", "javascript"] as const)("%s highlighting budgets", (eng
     expect(result.tokensByRowId["line-1"]?.some((token) => token.color !== null)).toBe(true);
   });
 
-  it("keeps long lines and unknown following syntax plain until the next hunk", async () => {
+  it("keeps only the long line plain and resumes highlighting after it", async () => {
     const longLine = `${"x".repeat(1_001)} /*`;
     const rows = [
       line(1, "export const before = 1;"),
       line(2, longLine),
       { kind: "comment", id: "note", commentText: "Check this", fileId: TYPESCRIPT_FILE.id },
-      line(3, "inside the comment */"),
+      line(3, "export const inside = 'x';"),
       makeHunk("next-hunk"),
       line(100, "export const after = 2;"),
     ] satisfies ReadonlyArray<NativeReviewDiffRow>;
@@ -274,12 +270,34 @@ describe.each(["native", "javascript"] as const)("%s highlighting budgets", (eng
     expect(result.tokensByRowId["line-2"]).toEqual([
       { content: longLine, color: null, fontStyle: null },
     ]);
-    expect(result.tokensByRowId["line-3"]).toEqual([
-      { content: "inside the comment */", color: null, fontStyle: null },
-    ]);
-    expect(result.tokensByRowId["line-1"]?.some((token) => token.color !== null)).toBe(true);
-    expect(result.tokensByRowId["line-100"]?.some((token) => token.color !== null)).toBe(true);
+    for (const id of ["line-1", "line-3", "line-100"]) {
+      expect(result.tokensByRowId[id]?.some((token) => token.color !== null)).toBe(true);
+    }
     expect(tokenization.calls.some((code) => code.includes(longLine))).toBe(false);
+  });
+
+  it("highlights the rows after a long line the same regardless of the first window", async () => {
+    const rows = [
+      line(1, "export const before = 1;"),
+      line(2, `const data = "${"x".repeat(1_050)}";`),
+      line(3, "export const inside = 'x';"),
+      line(4, "export const after = 2;"),
+    ];
+    const spanning = await highlightRows(rows);
+    const afterLongLine = await highlightNativeReviewDiffVisibleRows({
+      rows,
+      files: [TYPESCRIPT_FILE],
+      scheme: "dark",
+      engine,
+      firstRowIndex: 2,
+      lastRowIndex: 3,
+      overscanRows: 0,
+    });
+
+    for (const id of ["line-3", "line-4"]) {
+      expect(spanning.tokensByRowId[id]?.some((token) => token.color !== null)).toBe(true);
+      expect(afterLongLine.tokensByRowId[id]).toEqual(spanning.tokensByRowId[id]);
+    }
   });
 
   it("preserves multiline grammar and row mapping across character-limited batches", async () => {
@@ -317,22 +335,5 @@ describe.each(["native", "javascript"] as const)("%s highlighting budgets", (eng
     expect(tokenization.calls).toHaveLength(1);
     expect(result.rowCount).toBe(0);
     expect(result.tokensByRowId).toEqual({});
-  });
-
-  it("applies the same long-line guard to streamed token chunks", async () => {
-    const content = "x".repeat(10_000);
-    const chunks: NativeReviewDiffTokenChunk[] = [];
-
-    await streamNativeReviewDiffTokens({
-      rows: [line(1, content)],
-      files: [TYPESCRIPT_FILE],
-      scheme: "dark",
-      engine,
-      onChunk: (chunk) => chunks.push(chunk),
-    });
-
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]?.tokensByRowId["line-1"]).toEqual([{ content, color: null, fontStyle: null }]);
-    expect(tokenization.calls).toHaveLength(0);
   });
 });

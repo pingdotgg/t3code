@@ -78,7 +78,7 @@ const FEED_IMAGE_CONTENT_TYPES: Readonly<Record<string, string>> = {
 
 type JsonObject = Record<string, unknown>;
 
-export class AgentDashboardStoreError extends Schema.TaggedErrorClass<AgentDashboardStoreError>()(
+export class AgentDashboardStoreError extends Schema.TaggedError<AgentDashboardStoreError>()(
   "AgentDashboardStoreError",
   {
     operation: Schema.String,

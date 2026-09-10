@@ -1,4 +1,5 @@
 import type {
+  CustomModelSetting,
   ProviderDriverKind,
   ModelCapabilities,
   ServerProvider,
@@ -14,7 +15,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
@@ -34,7 +35,7 @@ export interface CommandResult {
   readonly code: number;
 }
 
-export class ProviderCommandNotFoundError extends Schema.TaggedErrorClass<ProviderCommandNotFoundError>()(
+export class ProviderCommandNotFoundError extends Schema.TaggedError<ProviderCommandNotFoundError>()(
   "ProviderCommandNotFoundError",
   {
     binaryPath: Schema.String,
@@ -63,6 +64,7 @@ export interface ServerProviderPresentation {
   readonly displayName: string;
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
+  readonly reportsContextWindow?: boolean;
   readonly requiresNewThreadForModelChange?: boolean;
 }
 
@@ -104,67 +106,35 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
     return result;
   }).pipe(Effect.scoped);
 
-export function detailFromResult(
-  result: CommandResult & { readonly timedOut?: boolean },
-): string | undefined {
-  if (result.timedOut) return "Timed out while running command.";
-  const stderr = nonEmptyTrimmed(result.stderr);
-  if (stderr) return stderr;
-  const stdout = nonEmptyTrimmed(result.stdout);
-  if (stdout) return stdout;
-  if (result.code !== 0) {
-    return `Command exited with code ${result.code}.`;
-  }
-  return undefined;
-}
-
-export function extractAuthBoolean(value: unknown): boolean | undefined {
-  if (globalThis.Array.isArray(value)) {
-    for (const entry of value) {
-      const nested = extractAuthBoolean(entry);
-      if (nested !== undefined) return nested;
-    }
-    return undefined;
-  }
-
-  if (!value || typeof value !== "object") return undefined;
-
-  const record = value as Record<string, unknown>;
-  for (const key of ["authenticated", "isAuthenticated", "loggedIn", "isLoggedIn"] as const) {
-    if (typeof record[key] === "boolean") return record[key];
-  }
-  for (const key of ["auth", "status", "session", "account"] as const) {
-    const nested = extractAuthBoolean(record[key]);
-    if (nested !== undefined) return nested;
-  }
-  return undefined;
-}
-
 export function parseGenericCliVersion(output: string): string | null {
   const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
   return match?.[1] ?? null;
 }
 
+/**
+ * Append the user's custom models after the built-ins. A custom entry that
+ * declares its own capabilities keeps them; a bare slug gets the driver's
+ * default set. Slugs that collide with a built-in are dropped.
+ */
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
-  customModels: ReadonlyArray<string>,
+  customModels: ReadonlyArray<CustomModelSetting>,
   customModelCapabilities: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
   const resolvedBuiltInModels = [...builtInModels];
   const seen = new Set(resolvedBuiltInModels.map((model) => model.slug));
   const customEntries: ServerProviderModel[] = [];
 
-  for (const candidate of customModels) {
-    const normalized = normalizeCustomModelSlug(candidate);
-    if (!normalized || seen.has(normalized)) {
+  for (const entry of readCustomModelEntries(customModels)) {
+    if (seen.has(entry.slug)) {
       continue;
     }
-    seen.add(normalized);
+    seen.add(entry.slug);
     customEntries.push({
-      slug: normalized,
-      name: normalized,
+      slug: entry.slug,
+      name: entry.name,
       isCustom: true,
-      capabilities: customModelCapabilities,
+      capabilities: entry.capabilities ?? customModelCapabilities,
     });
   }
 
@@ -242,6 +212,9 @@ export function buildServerProvider(input: {
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
+      : {}),
+    ...(typeof input.presentation.reportsContextWindow === "boolean"
+      ? { reportsContextWindow: input.presentation.reportsContextWindow }
       : {}),
     ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
       ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }

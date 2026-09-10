@@ -6,12 +6,13 @@ import {
   FolderGitIcon,
   FolderIcon,
   HistoryIcon,
+  ScaleIcon,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
+import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -56,6 +57,8 @@ interface BranchToolbarProps {
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   startFromOrigin: boolean;
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
+  autoEnvironmentLabel?: string | undefined;
+  onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
@@ -66,6 +69,8 @@ interface BranchToolbarProps {
 }
 
 interface MobileRunContextSelectorProps {
+  autoEnvironmentLabel?: string | undefined;
+  onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
   envModeLocked: boolean;
   environmentId: EnvironmentId;
@@ -81,6 +86,8 @@ interface MobileRunContextSelectorProps {
 }
 
 const MobileRunContextSelector = memo(function MobileRunContextSelector({
+  autoEnvironmentLabel,
+  onAutoEnvironment,
   envLocked,
   envModeLocked,
   environmentId,
@@ -114,10 +121,14 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     // Button's base styles apply `-mx-0.5` to descendant SVGs, which eats 4px
     // out of whatever gap we set. mx-0! cancels that so gap-0.5 reads as 2px.
     <span className="inline-flex shrink-0 items-center gap-0.5">
-      <EnvironmentMachineIcon
-        kind={activeEnvironment?.machine ?? "server"}
-        className="size-3 shrink-0 mx-0!"
-      />
+      {autoEnvironmentLabel ? (
+        <ScaleIcon className="size-3 shrink-0 mx-0!" aria-hidden="true" />
+      ) : (
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          className="size-3 shrink-0 mx-0!"
+        />
+      )}
       <WorkspaceIcon className="size-3 shrink-0 mx-0!" />
     </span>
   ) : (
@@ -132,9 +143,10 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
       >
         <span
           data-composer-label-motion
-          className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+          className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
         >
-          {showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel}
+          {autoEnvironmentLabel ??
+            (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
         </span>
       </span>
     </>
@@ -167,9 +179,29 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             <MenuGroup>
               <MenuGroupLabel>Run on</MenuGroupLabel>
               <MenuRadioGroup
-                value={environmentId}
-                onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
+                value={autoEnvironmentLabel ? "auto" : environmentId}
+                onValueChange={(value) =>
+                  value === "auto"
+                    ? onAutoEnvironment?.()
+                    : onEnvironmentChange(value as EnvironmentId)
+                }
               >
+                {onAutoEnvironment && (
+                  <MenuRadioItem
+                    value="auto"
+                    disabled={envLocked}
+                    onClick={() => {
+                      if (autoEnvironmentLabel) onAutoEnvironment?.();
+                    }}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <ScaleIcon className="size-3" aria-hidden="true" />
+                      <span className="min-w-0 truncate">
+                        {autoEnvironmentLabel ?? "Auto balance"}
+                      </span>
+                    </span>
+                  </MenuRadioItem>
+                )}
                 {availableEnvironments.map((env) => (
                   <MenuRadioItem
                     key={env.environmentId}
@@ -242,12 +274,12 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
  */
 const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
 const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
-const COMPOSER_CONTEXT_CONTROL_SELECTOR = "[data-composer-context-control]";
+const COMPOSER_CONTEXT_LABEL_SELECTOR = "[data-composer-label]";
 
 function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   const [overflows, setOverflows] = useState(false);
-  const pendingControlRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
-  const controlAnimationsRef = useRef(new Map<HTMLElement, Animation>());
+  const pendingLabelRectsRef = useRef<Map<HTMLElement, DOMRect> | null>(null);
+  const labelAnimationsRef = useRef(new Map<HTMLElement, Animation>());
   // A render-synced mirror instead of useEffectEvent: the compiler memoizes
   // the event callback, which left observers reading the first render's null
   // element forever.
@@ -312,15 +344,9 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       for (const inner of label.querySelectorAll<HTMLElement>("*")) {
         textWidth = Math.max(textWidth, inner.scrollWidth);
       }
-      if (compact) {
-        // Compact: the label is squeezed to zero width but keeps reporting
-        // the full width it would need when expanded.
-        needed += textWidth;
-      } else {
-        // Expanded: the label is in flow; only the clipped remainder is
-        // missing from the content sum.
-        needed += Math.max(0, textWidth - label.clientWidth);
-      }
+      // Subtract the visible width even during an animation. The content
+      // sum already includes it; only the hidden text needs reserving.
+      needed += Math.max(0, textWidth - label.getBoundingClientRect().width);
     }
     const nextOverflows = resolveContextStripLabelsCompact({
       compact,
@@ -328,9 +354,9 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       availableWidth: available,
     });
     if (nextOverflows !== compact) {
-      pendingControlRectsRef.current = new Map(
-        Array.from(current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_CONTROL_SELECTOR)).map(
-          (control) => [control, control.getBoundingClientRect()],
+      pendingLabelRectsRef.current = new Map(
+        Array.from(current.querySelectorAll<HTMLElement>(COMPOSER_CONTEXT_LABEL_SELECTOR)).map(
+          (label) => [label, label.getBoundingClientRect()],
         ),
       );
     }
@@ -338,28 +364,29 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   }, []);
 
   useLayoutEffect(() => {
-    const previousRects = pendingControlRectsRef.current;
+    const previousRects = pendingLabelRectsRef.current;
     if (!previousRects) return;
-    pendingControlRectsRef.current = null;
+    pendingLabelRectsRef.current = null;
 
-    for (const animation of controlAnimationsRef.current.values()) {
+    for (const animation of labelAnimationsRef.current.values()) {
       animation.cancel();
     }
-    controlAnimationsRef.current.clear();
+    labelAnimationsRef.current.clear();
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
-    for (const [control, previousRect] of previousRects) {
-      if (!control.isConnected) continue;
-      const nextRect = control.getBoundingClientRect();
-      const deltaX = previousRect.left - nextRect.left;
-      const deltaY = previousRect.top - nextRect.top;
-      if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) continue;
+    for (const [label, previousRect] of previousRects) {
+      if (!label.isConnected) continue;
+      const nextWidth = label.getBoundingClientRect().width;
+      if (Math.abs(previousRect.width - nextWidth) < 0.5) continue;
 
-      const animation = control.animate(
+      // Animate the space occupied by each label so flex layout keeps the
+      // trailing controls anchored. Translating the whole group after its
+      // width snaps sends expanded text beyond the strip's right edge.
+      const animation = label.animate(
         [
-          { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` },
-          { transform: "translate3d(0, 0, 0)" },
+          { width: `${previousRect.width}px`, maxWidth: `${previousRect.width}px` },
+          { width: `${nextWidth}px`, maxWidth: `${nextWidth}px` },
         ],
         {
           duration: COMPOSER_CONTEXT_MOTION_DURATION_MS,
@@ -367,12 +394,12 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
           fill: "backwards",
         },
       );
-      controlAnimationsRef.current.set(control, animation);
+      labelAnimationsRef.current.set(label, animation);
       animation.addEventListener(
         "finish",
         () => {
-          if (controlAnimationsRef.current.get(control) === animation) {
-            controlAnimationsRef.current.delete(control);
+          if (labelAnimationsRef.current.get(label) === animation) {
+            labelAnimationsRef.current.delete(label);
           }
         },
         { once: true },
@@ -382,7 +409,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
 
   useEffect(
     () => () => {
-      for (const animation of controlAnimationsRef.current.values()) {
+      for (const animation of labelAnimationsRef.current.values()) {
         animation.cancel();
       }
     },
@@ -421,6 +448,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
+  autoEnvironmentLabel,
+  onAutoEnvironment,
   envLocked,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
@@ -436,7 +465,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
-  const serverThread = useThread(threadRef, { waitForShell: draftThread !== null });
+  const serverThread = useThreadShell(threadRef);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -518,6 +547,8 @@ export const BranchToolbar = memo(function BranchToolbar({
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
           <MobileRunContextSelector
+            autoEnvironmentLabel={autoEnvironmentLabel}
+            onAutoEnvironment={onAutoEnvironment}
             envLocked={envLocked}
             envModeLocked={envModeLocked}
             environmentId={environmentId}
@@ -544,6 +575,8 @@ export const BranchToolbar = memo(function BranchToolbar({
           {showEnvironmentIndicator && availableEnvironments && (
             <>
               <BranchToolbarEnvironmentSelector
+                autoEnvironmentLabel={autoEnvironmentLabel}
+                onAutoEnvironment={onAutoEnvironment}
                 envLocked={envLocked}
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}

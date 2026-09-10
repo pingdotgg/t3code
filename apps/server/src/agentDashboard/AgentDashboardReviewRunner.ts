@@ -65,7 +65,7 @@ export interface AgentDashboardReviewSelectionOptions {
   readonly allowNotDue?: boolean;
 }
 
-export class AgentDashboardReviewRunnerError extends Schema.TaggedErrorClass<AgentDashboardReviewRunnerError>()(
+export class AgentDashboardReviewRunnerError extends Schema.TaggedError<AgentDashboardReviewRunnerError>()(
   "AgentDashboardReviewRunnerError",
   {
     operation: Schema.String,

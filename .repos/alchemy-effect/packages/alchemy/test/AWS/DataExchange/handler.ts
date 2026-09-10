@@ -22,7 +22,7 @@ export class DataExchangeTestFunction extends Lambda.Function<Lambda.Function>()
 export default DataExchangeTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The /import route runs a full import job (create → start → poll to
     // COMPLETED), which takes tens of seconds.
     timeout: Duration.minutes(2),

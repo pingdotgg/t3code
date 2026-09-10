@@ -67,6 +67,7 @@ import {
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
+import { CursorTransportFailure } from "../acp/CursorTransportFailure.ts";
 import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
@@ -144,6 +145,7 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  assistantReply: CursorTransportFailure;
   stopped: boolean;
 }
 
@@ -544,7 +546,14 @@ export function makeCursorAdapter(
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
-            ...(sessionEnvironment ? { environment: sessionEnvironment } : {}),
+            ...(sessionEnvironment || mcpSession?.agentDeviceEnvironment
+              ? {
+                  environment: McpProviderSession.withAgentDeviceEnvironment(
+                    sessionEnvironment ?? process.env,
+                    mcpSession,
+                  ),
+                }
+              : {}),
             childProcessSpawner,
             cwd,
             runtimeMode: input.runtimeMode,
@@ -791,6 +800,7 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            assistantReply: new CursorTransportFailure(),
             stopped: false,
           };
 
@@ -804,6 +814,7 @@ export function makeCursorAdapter(
                   case "ModeChanged":
                     return;
                   case "AssistantItemStarted":
+                    ctx.assistantReply = new CursorTransportFailure();
                     yield* offerRuntimeEvent(
                       makeAcpAssistantItemEvent({
                         stamp: yield* makeEventStamp(),
@@ -861,6 +872,7 @@ export function makeCursorAdapter(
                     );
                     return;
                   case "ContentDelta":
+                    ctx.assistantReply.push(event.text);
                     yield* logNative(
                       ctx.threadId,
                       "session/update",
@@ -960,6 +972,7 @@ export function makeCursorAdapter(
           ctx.activeTurnId = turnId;
           if (steeringTurnId === undefined) {
             ctx.lastPlanFingerprint = undefined;
+            ctx.assistantReply = new CursorTransportFailure();
           }
           ctx.session = {
             ...ctx.session,
@@ -1063,6 +1076,17 @@ export function makeCursorAdapter(
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
             );
+
+          yield* ctx.acp.drainEvents;
+          const failure = ctx.assistantReply.failure;
+          if (ctx.promptsInFlight === 1 && result.stopReason !== "cancelled" && failure) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/prompt",
+              detail: "Cursor reported a transport failure.",
+              cause: failure,
+            });
+          }
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {
@@ -1215,6 +1239,7 @@ export function makeCursorAdapter(
     return {
       provider: PROVIDER,
       capabilities: { sessionModelSwitch: "in-session" },
+      compaction: { type: "slash-command", command: "/compress" },
       startSession,
       sendTurn,
       interruptTurn,

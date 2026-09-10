@@ -1,6 +1,6 @@
 export const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
 export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
-export const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
+const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
 
 export function getRestingComposerImagePreviewCounts(imageCount: number): {
   visibleCount: number;
@@ -26,13 +26,14 @@ export function shouldUseCompactComposerFooter(
 export function shouldUseRestingComposerLayout(input: {
   isExistingThread: boolean;
   isMobileViewport: boolean;
-  isFocused: boolean;
   isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
-  collapseOnBlur: boolean;
+  hasMultilinePrompt: boolean;
+  /** Whether the timeline has more content than fits above the composer. */
+  timelineOverflows: boolean;
 }): boolean {
-  // Passive draft content is deliberately absent here. Resting only clamps
-  // the prompt row and overlays its actions; non-image attachment and context
+  // Multiline drafts stay readable. Resting only clamps a single prompt
+  // line and overlays its actions; non-image attachment and context
   // rows keep their natural height above it while image previews move inline.
   // Banners and the tasks badge dock above the surface, so they are absent
   // too. Whether the context strip can host the relocated controls is
@@ -40,12 +41,22 @@ export function shouldUseRestingComposerLayout(input: {
   // desktop width, and where the strip is missing or too narrow the controls
   // simply return when the composer is focused.
   //
-  // A scroll collapse rests the composer regardless of the blur preference:
-  // the user asked for it with the gesture, and it lifts on the next
-  // composer interaction. With blur collapse off, losing focus alone never
-  // rests the composer.
-  const collapsed = input.isScrollCollapsed || (input.collapseOnBlur && !input.isFocused);
-  return input.isExistingThread && !input.isMobileViewport && collapsed && !input.hasExpandedChrome;
+  // Only a timeline scroll rests the composer: the user asked for it with the
+  // gesture, and it lifts on the next composer interaction. Losing focus never
+  // rests it, so clicking a message, copying output, or selecting text for a
+  // citation leaves the composer where it was.
+  //
+  // Resting exists to give reading space back to the timeline. A thread that
+  // fits above the composer has nothing to reclaim, so it stays expanded and
+  // never shows the collapsed row that a fresh thread would otherwise open on.
+  return (
+    input.isExistingThread &&
+    !input.isMobileViewport &&
+    input.timelineOverflows &&
+    input.isScrollCollapsed &&
+    !input.hasMultilinePrompt &&
+    !input.hasExpandedChrome
+  );
 }
 
 /**
@@ -179,4 +190,21 @@ export function resolveRestingComposerControlsLayout(
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
   return { hiddenCount, visible };
+}
+
+export function resolveScrollToEndClearance(input: {
+  overlayHeight: number;
+  mainSurfaceTop: number;
+  button: { left: number; right: number };
+  attachments: ReadonlyArray<{ top: number; left: number; right: number }>;
+}): number {
+  let contentTop = input.mainSurfaceTop;
+  let top = contentTop;
+  for (const attachment of input.attachments) {
+    contentTop = Math.min(contentTop, attachment.top);
+    if (attachment.left < input.button.right && attachment.right > input.button.left) {
+      top = Math.min(top, attachment.top);
+    }
+  }
+  return Math.ceil(input.overlayHeight - (top - contentTop));
 }

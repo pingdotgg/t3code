@@ -51,20 +51,21 @@ export interface Keyspace extends Resource<
  *
  * Keyspaces are serverless, free to create, and provisioned near-instantly,
  * so they make excellent building blocks and test fixtures.
- * @resource
- * @section Creating a Keyspace
- * @example Basic Keyspace
+ * ### Creating a Keyspace
+ * **Example:** Basic Keyspace
  * ```typescript
  * const keyspace = yield* Keyspace("AppData", {});
  * ```
  *
- * @example Named Keyspace with Tags
+ * **Example:** Named Keyspace with Tags
  * ```typescript
  * const keyspace = yield* Keyspace("AppData", {
  *   keyspaceName: "app_data",
  *   tags: { team: "platform" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Keyspace = Resource<Keyspace>("AWS.Keyspaces.Keyspace");
 

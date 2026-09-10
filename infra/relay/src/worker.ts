@@ -1,11 +1,13 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import * as Drizzle from "alchemy/Drizzle/Postgres";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as Etag from "effect/unstable/http/Etag";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
@@ -50,7 +52,15 @@ import {
   RelayApnsDeliveryQueue,
   RelayWebPushDeliveryDeadLetterQueue,
   RelayWebPushDeliveryQueue,
+  RelayFcmDeliveryQueue,
+  RelayFcmDeliveryDeadLetterQueue,
 } from "./queues.ts";
+import * as WebCrypto from "./WebCrypto.ts";
+import * as FcmAssertionSigner from "./agentActivity/FcmAssertionSigner.ts";
+import * as FcmClient from "./agentActivity/FcmClient.ts";
+import * as FcmDeliveryQueueSender from "./agentActivity/FcmDeliveryQueueSender.ts";
+import * as FcmDeliveries from "./agentActivity/FcmDeliveries.ts";
+import * as FcmDeliveryQueueConsumer from "./agentActivity/FcmDeliveryQueueConsumer.ts";
 import * as RelayConfiguration from "./Config.ts";
 import * as AgentActivityPublisher from "./agentActivity/AgentActivityPublisher.ts";
 import * as ApnsClient from "./agentActivity/ApnsClient.ts";
@@ -132,6 +142,8 @@ export const ApiLive = Api.make(
     const apnsDeliveryDeadLetterQueue = yield* RelayApnsDeliveryDeadLetterQueue;
     const webPushDeliveryQueue = yield* RelayWebPushDeliveryQueue;
     const webPushDeliveryDeadLetterQueue = yield* RelayWebPushDeliveryDeadLetterQueue;
+    const fcmDeliveryQueue = yield* RelayFcmDeliveryQueue;
+    const fcmDeliveryDeadLetterQueue = yield* RelayFcmDeliveryDeadLetterQueue;
     const cloudMintKeyPair = yield* CloudMintKeyPair;
     const relayApiZone = yield* RelayApiZone;
     const managedEndpointZone = yield* ManagedEndpointZone;
@@ -142,21 +154,30 @@ export const ApiLive = Api.make(
     //
     // 2. Create bindings
     //
-    const environment = yield* Config.schema(
-      RelayConfiguration.ApnsEnvironment,
-      "APNS_ENVIRONMENT",
+    const apnsEnabled = yield* Config.boolean("APNS_ENABLED").pipe(Config.withDefault(true));
+    const apnsCredentials = apnsEnabled
+      ? {
+          environment: yield* Config.schema(RelayConfiguration.ApnsEnvironment, "APNS_ENVIRONMENT"),
+          teamId: yield* Config.string("APNS_TEAM_ID"),
+          keyId: yield* Config.string("APNS_KEY_ID"),
+          bundleId: yield* Config.string("APNS_BUNDLE_ID"),
+          privateKey: yield* Config.redacted("APNS_PRIVATE_KEY"),
+        }
+      : null;
+    const fcmServiceAccount = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.redacted("FCM_SERVICE_ACCOUNT")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
     );
-    const apnsTeamId = yield* Config.string("APNS_TEAM_ID");
-    const apnsKeyId = yield* Config.string("APNS_KEY_ID");
-    const apnsBundleId = yield* Config.string("APNS_BUNDLE_ID");
-    const apnsPrivateKey = yield* Config.redacted("APNS_PRIVATE_KEY");
     const webPushVapidSubject = yield* Config.string("WEB_PUSH_VAPID_SUBJECT");
     const webPushVapidPublicKey = yield* Config.string("WEB_PUSH_VAPID_PUBLIC_KEY");
     const webPushVapidPrivateKey = yield* Config.redacted("WEB_PUSH_VAPID_PRIVATE_KEY");
-    const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
-    const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
     const webPushDeliveryJobSigningSecret = yield* randomWebPushDeliveryJobSigningSecret;
     const webPushDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(webPushDeliveryQueue);
+    const apnsDeliveryJobSigningSecret = yield* randomApnsDeliveryJobSigningSecret;
+    const apnsDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(apnsDeliveryQueue);
+    const fcmDeliveryQueueSender = yield* Cloudflare.Queues.WriteQueue(fcmDeliveryQueue);
 
     const axiomDatasetName = yield* observability.traces.name;
     const axiomIngestToken = yield* observability.workerIngestToken.token;
@@ -185,13 +206,8 @@ export const ApiLive = Api.make(
     const loadSettings = Effect.gen(function* () {
       return RelayConfiguration.RelayConfiguration.of({
         relayIssuer: relayPublicOrigin,
-        apns: {
-          environment,
-          teamId: apnsTeamId,
-          keyId: apnsKeyId,
-          bundleId: apnsBundleId,
-          privateKey: apnsPrivateKey,
-        },
+        ...(fcmServiceAccount ? { fcmServiceAccount } : {}),
+        apns: apnsCredentials,
         apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
         webPushDeliveryJobSigningSecret: yield* webPushDeliveryJobSigningSecret,
         webPush: {
@@ -244,11 +260,31 @@ export const ApiLive = Api.make(
       ),
       Layer.provideMerge(DpopProofs.layer),
       Layer.provideMerge(ApnsDeliveries.layer),
+      Layer.provideMerge(
+        FcmDeliveries.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FcmDeliveryQueueSender.FcmDeliveryQueueSender, {
+              send: (body) =>
+                fcmDeliveryQueueSender
+                  .send(body)
+                  .pipe(Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext)),
+            }),
+          ),
+          Layer.provideMerge(
+            FcmClient.layer.pipe(
+              Layer.provide(FcmAssertionSigner.layer),
+              Layer.provide(
+                Layer.succeed(WebCrypto.WebCrypto, { subtle: globalThis.crypto.subtle }),
+              ),
+            ),
+          ),
+        ),
+      ),
       Layer.provideMerge(ApnsClient.layer.pipe(Layer.provideMerge(ApnsProviderTokens.layer))),
       Layer.provideMerge(
         ApnsDeliveryQueue.layerCloudflareQueues(apnsDeliveryQueueSender, alchemyRuntimeContext),
       ),
-      Layer.provideMerge(Layer.merge(AgentActivityRows.layer, Devices.layer)),
+      Layer.provideMerge(Layer.mergeAll(AgentActivityRows.layer, Devices.layer)),
       Layer.provideMerge(Layer.merge(EnvironmentCredentials.layer, LiveActivities.layer)),
       Layer.provideMerge(
         Layer.mergeAll(
@@ -264,8 +300,12 @@ export const ApiLive = Api.make(
           Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
         ),
       ),
-      Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
-      Layer.provideMerge(webcryptoLayer),
+      Layer.provideMerge(
+        Layer.merge(
+          Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings),
+          webcryptoLayer,
+        ),
+      ),
     );
 
     const appLayer = relayApiLayer.pipe(
@@ -315,6 +355,23 @@ export const ApiLive = Api.make(
               Effect.withSpan("relay.web_push_delivery_queue.process_message"),
             ),
           ),
+          Effect.provide(runtimeLayer),
+        ),
+    );
+
+    yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
+      fcmDeliveryQueue,
+      {
+        batchSize: 10,
+        maxRetries: 5,
+        maxWaitTime: "1 second",
+        retryDelay: "30 seconds",
+        deadLetterQueue: fcmDeliveryDeadLetterQueue.queueName as unknown as string,
+      },
+      (stream) =>
+        stream.pipe(
+          Stream.withSpan("relay.fcm_delivery_queue.process_batch"),
+          Stream.runForEach(FcmDeliveryQueueConsumer.processMessage),
           Effect.provide(runtimeLayer),
         ),
     );

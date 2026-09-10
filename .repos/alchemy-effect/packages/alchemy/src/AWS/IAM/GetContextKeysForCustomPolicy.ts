@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * arguments and grants `iam:GetContextKeysForCustomPolicy` on `*`. Provide the
  * implementation with `Effect.provide(AWS.IAM.GetContextKeysForCustomPolicyHttp)`.
  *
- * @binding
- * @section Simulating Policies
- * @example Discover a Policy's Context Keys
+ * ### Simulating Policies
+ * **Example:** Discover a Policy's Context Keys
  * ```typescript
  * // init
  * const getContextKeys = yield* IAM.GetContextKeysForCustomPolicy();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   PolicyInputList: [policyJson],
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetContextKeysForCustomPolicy extends Binding.Service<
   GetContextKeysForCustomPolicy,

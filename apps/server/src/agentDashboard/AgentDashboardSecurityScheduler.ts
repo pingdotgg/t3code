@@ -27,7 +27,7 @@ export const SECURITY_INTERVAL_MINUTES = 120;
 const POLL_INTERVAL = Duration.seconds(30);
 const INTERVAL_MS = SECURITY_INTERVAL_MINUTES * 60_000;
 
-export class AgentDashboardSecuritySchedulerError extends Schema.TaggedErrorClass<AgentDashboardSecuritySchedulerError>()(
+export class AgentDashboardSecuritySchedulerError extends Schema.TaggedError<AgentDashboardSecuritySchedulerError>()(
   "AgentDashboardSecuritySchedulerError",
   {
     operation: Schema.String,

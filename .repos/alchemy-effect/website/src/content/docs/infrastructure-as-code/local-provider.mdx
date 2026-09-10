@@ -1,0 +1,241 @@
+---
+title: Local Providers
+description: Build the local implementation of a resource — dual registration with ProviderLayer.dual and the LocalProvider runner for long-running processes.
+---
+
+During `alchemy dev`, some resources shouldn't touch the cloud at all: a
+Worker runs in a local `workerd`, a dev server is a child process on your
+machine. A **local provider** is the implementation that serves a resource
+type in dev, alongside the **live provider** used by `alchemy deploy`.
+
+This guide is about *building* one. For the user-facing dev model — and
+opting a resource out of local emulation with `remote()` — see
+[Local development](/environments/local-development). If you haven't built
+a provider before, start with
+[Custom Provider](/infrastructure-as-code/custom-provider) — a local
+provider is just a second implementation of the same lifecycle contract.
+
+## What the engine does for you
+
+The engine remembers which implementation reconciled each resource. Moving
+a resource between local and live is planned as a **replacement**, and
+every instance is deleted by the provider that created it — so a deploy
+right after a dev session tears the local instances down with *your* local
+provider. You implement the lifecycle; the engine owns the switching.
+
+## Register both: `ProviderLayer.dual`
+
+```typescript
+import * as ProviderLayer from "alchemy/Local/ProviderLayer";
+import * as Layer from "effect/Layer";
+
+export const WorkerProvider = () =>
+  ProviderLayer.dual(Worker, {
+    live: () => LiveWorkerProvider(),
+    local: () =>
+      LocalWorkerProvider().pipe(Layer.provide(localRuntimeServices())),
+  });
+```
+
+`dual` registers the run's default mode eagerly and builds the other
+**lazily** — e.g. the local provider is only constructed during a deploy
+if it has an instance to tear down.
+
+### Route deploy-time data-plane calls: `dataPlane`
+
+Binding clients can be invoked at deploy time — inside an `Action` body or
+a plan-time `execute` — and their API calls must target whatever data
+plane the bound resource actually lives on. Pass the local mode's
+environment override (endpoint, credentials, region — the same layer the
+local lifecycle runs under) as `dataPlane`:
+
+```typescript
+ProviderLayer.dual(Bucket, {
+  live: () => BucketProvider(),
+  local: () => provideProviderContext(BucketProvider(), flociServices()),
+  dataPlane: flociServices,
+});
+```
+
+With it registered, a client bound to a local-mode resource is routed to
+the emulator even when the ambient profile carries live credentials, while
+a client bound to an `Alchemy.remote()` resource keeps hitting the real
+cloud — per bound resource, within the same Action.
+
+### Compose local deps inside the thunk
+
+Mode-specific dependency layers (`workerd`, Docker) go inside the `local`
+thunk, never globally — that's what keeps a plain `alchemy deploy` from
+constructing local machinery it doesn't need.
+
+:::note[Share dependency layers by reference]
+Variant builds are memoized by layer identity. If several local providers
+share a dependency layer (Cloudflare's `localRuntimeServices()`), the
+factory must return a module-memoized reference so they all get one
+instance per stack build.
+:::
+
+## Long-running processes: `LocalProvider.make`
+
+A process-shaped local provider has a problem ordinary providers don't:
+the "physical resource" is a running process that **state can't see** — a
+resource can be marked `created` while its process died with the last dev
+session. `LocalProvider.make` owns that machinery; you write how to boot
+one instance.
+
+### Declare the provider with `start`
+
+```typescript
+import * as LocalProvider from "alchemy/Local/LocalProvider";
+import * as Effect from "effect/Effect";
+
+export const DevProviderLocal = () =>
+  LocalProvider.make(
+    Dev,
+    import.meta.resolve("./Local.ts", import.meta.url),
+    Effect.gen(function* () {
+      const { spawn } = yield* CommandExecutor;
+
+      return {
+        start: Effect.fn(function* ({ news }) {
+          const child = yield* spawn(news);
+          const url = yield* waitForUrl(child);
+          return { url };
+        }),
+      } satisfies LocalProvider.LocalProviderSpec<Dev>;
+    }),
+  );
+```
+
+`start` boots one instance in the ambient `Scope` and returns Attributes at
+*readiness* — the process keeps running after `start` returns, until the
+runner closes the scope on restart or delete.
+
+### Handle processes that die on their own
+
+```diff lang="typescript"
+ start: Effect.fn(function* ({ news, invalidate }) {
+   const child = yield* spawn(news);
+   const url = yield* waitForUrl(child);
++  yield* child.exitCode.pipe(
++    Effect.exit,
++    Effect.flatMap(() => invalidate),
++    Effect.forkScoped,
++  );
+   return { url };
+ }),
+```
+
+`invalidate` drops the instance from the running registry, so the next plan
+reports `update` and reconcile boots a fresh one.
+
+### Narrow the restart surface with `resolveConfig`
+
+```diff lang="typescript"
+ return {
++  // Only these fields decide whether a running instance must restart.
++  resolveConfig: ({ news }) =>
++    Effect.succeed({ command: news.command, env: news.env }),
+   start: Effect.fn(function* ({ config, invalidate }) {
+-    const child = yield* spawn(news);
++    const child = yield* spawn(config);
+     // ...
+   }),
+ };
+```
+
+The runner canonically hashes `resolveConfig`'s result to decide
+noop-vs-restart, and hands the same value to `start` — so "what changed?"
+and "what starts?" can never drift.
+
+:::tip[Config must be plain data]
+`resolveConfig` runs inside `diff` on every plan: keep it cheap,
+side-effect-free, and free of closures or live objects. Derive plain
+*descriptors* here and materialize runtime-rich structures from them inside
+`start`.
+:::
+
+### Clean up cross-restart state with `stop`
+
+```diff lang="typescript"
+ return {
+   resolveConfig: ({ news }) => ...,
+   start: Effect.fn(function* ({ config, invalidate }) { ... }),
++  // Delete-only: NOT called on restarts.
++  stop: Effect.fn(function* ({ id }) {
++    yield* stopProxy(id);
++  }),
+ };
+```
+
+Anything acquired by `start` dies with the instance scope; `stop` is only
+for state that intentionally *survives* restarts — like a URL proxy kept so
+the address stays stable across rebuilds.
+
+### What the runner generates
+
+- **`diff`** — running instance + equal config hash → `noop`; anything
+  else → `update`. A fresh dev session has an empty registry, so processes
+  restart even though they were previously `created`.
+- **`reconcile`** — reuses the running instance on a hash match; otherwise
+  tears it down and forks `start` in a scope that outlives the deploy.
+- **`delete`** — tears down only the matching `instanceId` (a replacement's
+  old-generation delete can't kill its successor), then runs `stop`.
+- **`list`** — every running instance's Attributes.
+
+:::note[The dev sidecar]
+The second argument (`serverEntryUrl`) serves the provider over RPC: during
+`alchemy dev` the registry of running processes lives in a sidecar that
+survives user-code hot reloads. Outside dev, the provider is constructed
+in-process and no sidecar is spawned.
+:::
+
+## Not everything is a process
+
+If the local "instance" is just an entry in a shared registry — Cloudflare's
+local Queue is an entry in `LocalRuntimeState`, reconciled with three
+idempotent map operations — skip `LocalProvider.make` and write a plain
+provider registered via `dual`.
+
+## Testing
+
+```typescript
+const { test } = Test.make({ providers, dev: true }); // dev-mode default
+
+test.provider("promotes a dev worker to a live worker", (stack) =>
+  Effect.gen(function* () {
+    yield* program.pipe(stack.deploy); // local (dev default)
+    // Same props, pinned live: planned as a REPLACEMENT — the live
+    // provider creates the deployed worker, the local provider kills
+    // workerd.
+    yield* program.pipe(Alchemy.remote(), stack.deploy);
+    yield* stack.destroy();
+  }),
+);
+```
+
+`Test.make({ dev: true })` gives the file `alchemy dev` semantics, and
+`remote()` works in tests exactly like in programs.
+
+## Reference implementations
+
+- [`Command/Dev.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Command/Dev.ts)
+  — the smallest `LocalProvider.make` provider: spawn a command, extract
+  its URL, restart on prop changes.
+- [`Cloudflare/Workers/LocalWorkerProvider.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Workers/LocalWorkerProvider.ts)
+  — the full-size one: bundler watch loop, `workerd` instances, a URL
+  proxy torn down in `stop`.
+- [`Cloudflare/Queues/Queue.ts`](https://github.com/alchemy-run/alchemy/blob/main/packages/alchemy/src/Cloudflare/Queues/Queue.ts)
+  — the registry-style counter-example: a plain local provider under
+  `dual`.
+
+## Where next
+
+- [Local development](/environments/local-development) — the user-facing
+  dev loop, and opting resources out of local emulation with `remote()`.
+- [Custom Provider](/infrastructure-as-code/custom-provider) — the
+  lifecycle contract both implementations share.
+- [Resource lifecycle](/infrastructure-as-code/resource-lifecycle) —
+  when each lifecycle method fires, including replacements.
+- [Testing Providers](/testing/testing-providers) — the `test.provider`
+  harness used above.

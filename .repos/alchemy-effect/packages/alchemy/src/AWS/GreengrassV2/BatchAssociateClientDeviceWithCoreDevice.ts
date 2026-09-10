@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * management. The caller supplies the core device thing name and the client
  * device entries at runtime. Provide the implementation with
  * `Effect.provide(AWS.GreengrassV2.BatchAssociateClientDeviceWithCoreDeviceHttp)`.
- * @binding
- * @section Managing Client Devices
- * @example Associate Client Devices
+ * ### Managing Client Devices
+ * **Example:** Associate Client Devices
  * ```typescript
  * // init — account-level binding, no resource argument
  * const associateClientDevices =
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   entries: [{ thingName: "Sensor1" }, { thingName: "Sensor2" }],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchAssociateClientDeviceWithCoreDevice extends Binding.Service<
   BatchAssociateClientDeviceWithCoreDevice,

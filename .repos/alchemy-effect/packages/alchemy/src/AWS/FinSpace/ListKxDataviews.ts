@@ -7,14 +7,15 @@ import type { KxEnvironment } from "./KxEnvironment.ts";
  * Runtime binding for `finspace:ListKxDataviews` — lists the dataviews of a kdb database in the bound environment.
  * Provide the implementation with
  * `Effect.provide(AWS.FinSpace.ListKxDataviewsHttp)`.
- * @binding
- * @section Managing Dataviews
- * @example List a Database's Dataviews
+ * ### Managing Dataviews
+ * **Example:** List a Database's Dataviews
  * ```typescript
  * const listDataviews = yield* AWS.FinSpace.ListKxDataviews(kdb);
  *
  * const { kxDataviews } = yield* listDataviews({ databaseName: "ticks" });
  * ```
+ *
+ * @binding
  */
 export interface ListKxDataviews extends Binding.Service<
   ListKxDataviews,

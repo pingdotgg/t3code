@@ -12,9 +12,8 @@ import type { ComponentVersion } from "./ComponentVersion.ts";
  * injected from the binding; the caller names the artifact. Provide the
  * implementation with
  * `Effect.provide(AWS.GreengrassV2.GetComponentVersionArtifactHttp)`.
- * @binding
- * @section Reading Components
- * @example Mint An Artifact Download URL
+ * ### Reading Components
+ * **Example:** Mint An Artifact Download URL
  * ```typescript
  * // init — bind the operation to the component version
  * const getArtifact = yield* AWS.GreengrassV2.GetComponentVersionArtifact(component);
@@ -22,6 +21,8 @@ import type { ComponentVersion } from "./ComponentVersion.ts";
  * // runtime
  * const { preSignedUrl } = yield* getArtifact({ artifactName: "installer.zip" });
  * ```
+ *
+ * @binding
  */
 export interface GetComponentVersionArtifact extends Binding.Service<
   GetComponentVersionArtifact,

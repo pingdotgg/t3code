@@ -79,7 +79,7 @@ export const buildAgentDashboardImplementationNudgePrompt = (input: {
   ].join("\n\n");
 };
 
-export class AgentDashboardImplementationRunnerError extends Schema.TaggedErrorClass<AgentDashboardImplementationRunnerError>()(
+export class AgentDashboardImplementationRunnerError extends Schema.TaggedError<AgentDashboardImplementationRunnerError>()(
   "AgentDashboardImplementationRunnerError",
   {
     operation: Schema.String,

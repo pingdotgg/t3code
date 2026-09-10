@@ -52,7 +52,7 @@ const MAX_IMPLEMENTATION_RETRIES = 3;
 
 export const CONTINUOUS_IMPROVEMENT_RUN_KIND = "continuous-improvement";
 
-export class AgentDashboardContinuousImprovementError extends Schema.TaggedErrorClass<AgentDashboardContinuousImprovementError>()(
+export class AgentDashboardContinuousImprovementError extends Schema.TaggedError<AgentDashboardContinuousImprovementError>()(
   "AgentDashboardContinuousImprovementError",
   {
     operation: Schema.String,

@@ -3,6 +3,7 @@ import { useCallback } from "react";
 import { Alert } from "react-native";
 
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
+import { clearComposerDraftContent } from "../../state/use-composer-drafts";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { releaseEditingQueuedMessage } from "../../state/use-thread-outbox";
 
@@ -17,9 +18,11 @@ export function usePendingTaskListActions(): {
       navigation.navigate("NewTaskSheet", {
         screen: "NewTaskDraft",
         params: {
-          environmentId: String(pendingTask.message.environmentId),
-          projectId: String(pendingTask.creation.projectId),
-          pendingTaskId: String(pendingTask.message.messageId),
+          environmentId: String(pendingTask.environmentId),
+          projectId: String(pendingTask.projectId),
+          ...(pendingTask.kind === "pending"
+            ? { pendingTaskId: String(pendingTask.message.messageId) }
+            : { draftId: pendingTask.draftKey }),
         },
       });
     },
@@ -27,6 +30,24 @@ export function usePendingTaskListActions(): {
   );
 
   const confirmDeletePendingTask = useCallback((pendingTask: PendingNewTask) => {
+    if (pendingTask.kind === "draft") {
+      Alert.alert("Discard draft?", `“${pendingTask.title}” will be removed.`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Discard",
+          style: "destructive",
+          onPress: () => {
+            // Same reset a submit performs: the next task in this project
+            // re-resolves project defaults instead of inheriting the pick.
+            clearComposerDraftContent(pendingTask.draftKey, {
+              clearModelSelection: true,
+              clearWorkspaceSelection: true,
+            });
+          },
+        },
+      ]);
+      return;
+    }
     Alert.alert(
       "Delete pending task?",
       `“${pendingTask.title}” has not been sent yet and will be removed from the outbox.`,

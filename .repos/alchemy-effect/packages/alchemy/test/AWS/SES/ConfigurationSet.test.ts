@@ -10,6 +10,10 @@ import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
+// A verified subdomain with a valid certificate, used to host open/click
+// tracking links. SES rejects a redirect domain the account does not own.
+const TRACKING_REDIRECT_DOMAIN = process.env.AWS_TEST_SES_REDIRECT_DOMAIN;
+
 class ConfigurationSetStillExists extends Data.TaggedError(
   "ConfigurationSetStillExists",
 )<{ readonly name: string }> {}
@@ -193,6 +197,158 @@ test.provider(
       );
       expect(updatedFound!.Enabled).toBe(false);
       expect(updatedFound!.MatchingEventTypes).toHaveLength(4);
+
+      yield* stack.destroy();
+      yield* assertConfigurationSetDeleted(configSet.configurationSetName);
+    }),
+  { timeout: 120_000 },
+);
+
+// Tracking options and VDM options are the two aspects added alongside the
+// SESv2 coverage work; both are synced in place, never replaced.
+test.provider(
+  "syncs VDM options in place",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const configSet = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ConfigurationSet("VdmConfigSet", {
+            vdm: {
+              dashboardEngagementMetrics: "ENABLED",
+              guardianOptimizedSharedDelivery: "ENABLED",
+            },
+          });
+        }),
+      );
+
+      // out-of-band verification via distilled
+      const created = yield* sesv2.getConfigurationSet({
+        ConfigurationSetName: configSet.configurationSetName,
+      });
+      expect(created.VdmOptions?.DashboardOptions?.EngagementMetrics).toBe(
+        "ENABLED",
+      );
+      expect(created.VdmOptions?.GuardianOptions?.OptimizedSharedDelivery).toBe(
+        "ENABLED",
+      );
+
+      // flip both off in place — no replacement
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ConfigurationSet("VdmConfigSet", {
+            vdm: {
+              dashboardEngagementMetrics: "DISABLED",
+              guardianOptimizedSharedDelivery: "DISABLED",
+            },
+          });
+        }),
+      );
+      const updated = yield* sesv2.getConfigurationSet({
+        ConfigurationSetName: configSet.configurationSetName,
+      });
+      expect(updated.VdmOptions?.DashboardOptions?.EngagementMetrics).toBe(
+        "DISABLED",
+      );
+      expect(updated.VdmOptions?.GuardianOptions?.OptimizedSharedDelivery).toBe(
+        "DISABLED",
+      );
+
+      yield* stack.destroy();
+      yield* assertConfigurationSetDeleted(configSet.configurationSetName);
+    }),
+  { timeout: 120_000 },
+);
+
+// Open/click tracking needs a verified subdomain with a valid certificate,
+// which a bare account has none of — SES rejects an unowned redirect domain.
+test.provider.skipIf(!TRACKING_REDIRECT_DOMAIN)(
+  "syncs custom tracking options (AWS_TEST_SES_REDIRECT_DOMAIN)",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const configSet = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ConfigurationSet("TrackingConfigSet", {
+            tracking: {
+              customRedirectDomain: TRACKING_REDIRECT_DOMAIN!,
+              httpsPolicy: "REQUIRE",
+            },
+          });
+        }),
+      );
+
+      const created = yield* sesv2.getConfigurationSet({
+        ConfigurationSetName: configSet.configurationSetName,
+      });
+      expect(created.TrackingOptions?.CustomRedirectDomain).toBe(
+        TRACKING_REDIRECT_DOMAIN,
+      );
+      expect(created.TrackingOptions?.HttpsPolicy).toBe("REQUIRE");
+
+      // change only the HTTPS policy — applied in place
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ConfigurationSet("TrackingConfigSet", {
+            tracking: {
+              customRedirectDomain: TRACKING_REDIRECT_DOMAIN!,
+              httpsPolicy: "OPTIONAL",
+            },
+          });
+        }),
+      );
+      const updated = yield* sesv2.getConfigurationSet({
+        ConfigurationSetName: configSet.configurationSetName,
+      });
+      expect(updated.TrackingOptions?.HttpsPolicy).toBe("OPTIONAL");
+
+      yield* stack.destroy();
+      yield* assertConfigurationSetDeleted(configSet.configurationSetName);
+    }),
+  { timeout: 120_000 },
+);
+
+// putConfigurationSetVdmOptions replaces VdmOptions wholesale, so a caller
+// managing only one member would wipe the other. The provider backfills the
+// unmanaged member from observed state; this pins that behavior.
+test.provider(
+  "managing one VDM member preserves the other",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const configSet = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ConfigurationSet("VdmBackfill", {
+            vdm: {
+              dashboardEngagementMetrics: "ENABLED",
+              guardianOptimizedSharedDelivery: "ENABLED",
+            },
+          });
+        }),
+      );
+
+      // Re-deploy managing ONLY the dashboard member.
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* ConfigurationSet("VdmBackfill", {
+            vdm: { dashboardEngagementMetrics: "DISABLED" },
+          });
+        }),
+      );
+
+      const observed = yield* sesv2.getConfigurationSet({
+        ConfigurationSetName: configSet.configurationSetName,
+      });
+      expect(observed.VdmOptions?.DashboardOptions?.EngagementMetrics).toBe(
+        "DISABLED",
+      );
+      // Guardian was never mentioned in the second deploy — it must survive.
+      expect(
+        observed.VdmOptions?.GuardianOptions?.OptimizedSharedDelivery,
+      ).toBe("ENABLED");
 
       yield* stack.destroy();
       yield* assertConfigurationSetDeleted(configSet.configurationSetName);

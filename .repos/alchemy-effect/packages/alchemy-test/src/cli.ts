@@ -2,8 +2,8 @@
  * The `alchemy-test` CLI.
  *
  * ```sh
- * alchemy-test [paths...] [-t pattern] [--timeout ms] [--retry n]
- *              [--concurrency n] [--sequential] [--tui]
+ * alchemy-test [paths...] [-t pattern] [--exclude path]... [--timeout ms]
+ *              [--retry n] [--concurrency n] [--sequential] [--tui]
  *              [--profile name] [--fast]
  * ```
  *
@@ -11,6 +11,14 @@
  * bun process. Interactive terminals get the opentui view; otherwise tests
  * are logged line-by-line and failures are dumped at the end.
  */
+// The runner executes every test file's effects on ONE event loop, so any
+// fiber touching a relative path can race a transient process-wide chdir.
+// cross-spawn (bundled in vite/build tools the tests exercise) chdirs the
+// whole process to resolve a spawn's binary; `process.chdir.disabled` is
+// its own escape hatch (built for worker threads) — with it set, commands
+// still resolve via PATH and absolutize against the spawn's `cwd`.
+(process.chdir as { disabled?: boolean }).disabled = true;
+
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as Effect from "effect/Effect";
@@ -39,6 +47,13 @@ const testNamePattern = Flag.string("test-name-pattern").pipe(
   Flag.withAlias("t"),
   Flag.withDescription("Only run tests whose title matches this regex"),
   Flag.optional,
+);
+
+const exclude = Flag.string("exclude").pipe(
+  Flag.withDescription(
+    "Skip test files under this path (repeatable). Existing files/directories exclude by prefix; anything else is a case-insensitive substring filter. Explicitly passing an excluded path as a positional argument overrides the exclusion.",
+  ),
+  Flag.atLeast(0),
 );
 
 const timeout = Flag.integer("timeout").pipe(
@@ -126,6 +141,7 @@ const rootCommand = Command.make(
   {
     paths,
     testNamePattern,
+    exclude,
     timeout,
     retry,
     concurrency,
@@ -177,6 +193,7 @@ const rootCommand = Command.make(
     const options: RunOptions = {
       root,
       paths: args.paths,
+      exclude: args.exclude,
       filter: toFilter(args.testNamePattern),
       timeout: args.timeout,
       retry: args.retry,

@@ -74,7 +74,7 @@ interface PullRequestRollupLaunchResult {
   readonly repository: string;
 }
 
-export class AgentDashboardPullRequestRollupError extends Schema.TaggedErrorClass<AgentDashboardPullRequestRollupError>()(
+export class AgentDashboardPullRequestRollupError extends Schema.TaggedError<AgentDashboardPullRequestRollupError>()(
   "AgentDashboardPullRequestRollupError",
   {
     operation: Schema.String,

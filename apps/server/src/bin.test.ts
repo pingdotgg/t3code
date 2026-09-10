@@ -3,6 +3,7 @@ import * as NodeHttp from "node:http";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeChildProcess from "node:child_process";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -136,6 +137,225 @@ const readPersistedSnapshot = (baseDir: string) =>
       return yield* projectionSnapshotQuery.getSnapshot();
     }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
   });
+
+const makeProjectLookupFixture = Effect.fn("makeProjectLookupFixture")(function* (
+  withThread: boolean,
+  removeWorkspace: boolean,
+) {
+  const baseDir = NodeFS.mkdtempSync(
+    NodePath.join(NodeOS.tmpdir(), "t3-cli-project-lookup-state-"),
+  );
+  const workspaceRoot = NodeFS.mkdtempSync(
+    NodePath.join(NodeOS.tmpdir(), "t3-cli-project-lookup-git-"),
+  );
+  NodeChildProcess.execFileSync("git", ["init", "--initial-branch=main", workspaceRoot], {
+    stdio: "ignore",
+  });
+  yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+  const snapshot = yield* readPersistedSnapshot(baseDir);
+  const project = snapshot.projects.find((candidate) => candidate.workspaceRoot === workspaceRoot)!;
+  assert.isDefined(project);
+  if (withThread) {
+    const config = yield* makeCliTestServerConfig(baseDir);
+    yield* Effect.gen(function* () {
+      const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-project-lookup-thread"),
+        threadId: ThreadId.make("thread-project-lookup"),
+        projectId: project.id,
+        title: "Project lookup test",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        interactionMode: "default",
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+      });
+    }).pipe(Effect.provide(makeProjectPersistenceLayer(config)));
+  }
+  if (removeWorkspace) {
+    NodeFS.renameSync(workspaceRoot, `${workspaceRoot}-removed`);
+    assert.isFalse(NodeFS.existsSync(workspaceRoot));
+  }
+  return { baseDir, workspaceRoot, project };
+});
+
+it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) => {
+  it.effect("removes an empty project by ID without force after its directory is gone", () =>
+    Effect.gen(function* () {
+      const { baseDir, project } = yield* makeProjectLookupFixture(false, true);
+      yield* runCliWithRuntime(["project", "remove", project.id, "--base-dir", baseDir]);
+      const after = yield* readPersistedSnapshot(baseDir);
+      assert.isNotNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+    }),
+  );
+
+  it.effect.each([true, false])(
+    "requires force for child threads, then removes by ID; missing=%s",
+    (removeWorkspace) =>
+      Effect.gen(function* () {
+        const { baseDir, project } = yield* makeProjectLookupFixture(true, removeWorkspace);
+        const error = yield* runCliWithRuntime([
+          "project",
+          "remove",
+          project.id,
+          "--base-dir",
+          baseDir,
+        ]).pipe(Effect.flip);
+        assert.include(error.message, "cannot be deleted without force=true");
+        const retained = yield* readPersistedSnapshot(baseDir);
+        assert.isNull(
+          retained.projects.find((candidate) => candidate.id === project.id)!.deletedAt,
+        );
+        assert.isNull(
+          retained.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
+        );
+        yield* runCliWithRuntime([
+          "project",
+          "remove",
+          project.id,
+          "--force",
+          "--base-dir",
+          baseDir,
+        ]);
+        const after = yield* readPersistedSnapshot(baseDir);
+        assert.isNotNull(
+          after.projects.find((candidate) => candidate.id === project.id)!.deletedAt,
+        );
+        assert.isNotNull(
+          after.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
+        );
+      }),
+  );
+
+  it.effect("cannot remove the old environment's ID from a replacement empty database", () =>
+    Effect.gen(function* () {
+      const { baseDir, project } = yield* makeProjectLookupFixture(true, true);
+      const replacementDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-cli-project-lookup-new-state-"),
+      );
+      const error = yield* runCliWithRuntime([
+        "project",
+        "remove",
+        project.id,
+        "--force",
+        "--base-dir",
+        replacementDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "No active project found");
+      assert.include(String(error.cause), "Workspace root does not exist");
+      const original = yield* readPersistedSnapshot(baseDir);
+      assert.isNull(original.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+      const replacement = yield* readPersistedSnapshot(replacementDir);
+      assert.equal(replacement.projects.length, 0);
+    }),
+  );
+
+  it.effect("renames by ID and stored path, then force removes after the directory is gone", () =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture(true, true);
+      yield* runCliWithRuntime([
+        "project",
+        "rename",
+        project.id,
+        "Renamed by ID",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterIdRename = yield* readPersistedSnapshot(baseDir);
+      assert.equal(
+        afterIdRename.projects.find((candidate) => candidate.id === project.id)!.title,
+        "Renamed by ID",
+      );
+      yield* runCliWithRuntime([
+        "project",
+        "rename",
+        workspaceRoot,
+        "Renamed by stored path",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterPathRename = yield* readPersistedSnapshot(baseDir);
+      assert.equal(
+        afterPathRename.projects.find((candidate) => candidate.id === project.id)!.title,
+        "Renamed by stored path",
+      );
+      const error = yield* runCliWithRuntime([
+        "project",
+        "remove",
+        workspaceRoot,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "cannot be deleted without force=true");
+      yield* runCliWithRuntime([
+        "project",
+        "remove",
+        workspaceRoot,
+        "--force",
+        "--base-dir",
+        baseDir,
+      ]);
+      const after = yield* readPersistedSnapshot(baseDir);
+      assert.isNotNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+      assert.isNotNull(
+        after.threads.find((thread) => thread.id === "thread-project-lookup")!.deletedAt,
+      );
+      assert.isFalse(NodeFS.existsSync(workspaceRoot));
+    }),
+  );
+
+  it.effect("preserves normalized paths and distinct symlink project entries", () =>
+    Effect.gen(function* () {
+      const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture(false, false);
+      const normalizedInput = `${workspaceRoot}${NodePath.sep}.`;
+      yield* runCliWithRuntime([
+        "project",
+        "rename",
+        normalizedInput,
+        "Normalized",
+        "--base-dir",
+        baseDir,
+      ]);
+      const renamed = yield* readPersistedSnapshot(baseDir);
+      assert.equal(
+        renamed.projects.find((candidate) => candidate.id === project.id)!.title,
+        "Normalized",
+      );
+      const aliasPath = `${workspaceRoot}-alias`;
+      NodeFS.symlinkSync(workspaceRoot, aliasPath, "junction");
+      const error = yield* runCliWithRuntime([
+        "project",
+        "remove",
+        aliasPath,
+        "--force",
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      assert.include(error.message, "No active project found");
+      yield* runCliWithRuntime(["project", "add", aliasPath, "--base-dir", baseDir]);
+      const added = yield* readPersistedSnapshot(baseDir);
+      const aliasProject = added.projects.find(
+        (candidate) => candidate.workspaceRoot === aliasPath,
+      )!;
+      assert.notEqual(aliasProject.id, project.id);
+      yield* runCliWithRuntime([
+        "project",
+        "remove",
+        `${aliasPath}${NodePath.sep}.`,
+        "--base-dir",
+        baseDir,
+      ]);
+      const after = yield* readPersistedSnapshot(baseDir);
+      assert.isNotNull(
+        after.projects.find((candidate) => candidate.id === aliasProject.id)!.deletedAt,
+      );
+      assert.isNull(after.projects.find((candidate) => candidate.id === project.id)!.deletedAt);
+      assert.isTrue(NodeFS.existsSync(workspaceRoot));
+    }),
+  );
+});
 
 const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {

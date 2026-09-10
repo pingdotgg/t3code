@@ -47,7 +47,7 @@ export interface EndpointHealthcheckAttributes {
   /** The Cloudflare account the healthcheck belongs to. */
   accountId: string;
   /** Type of check performed. */
-  checkType: "icmp";
+  checkType: "icmp" | (string & {});
   /** The IP address of the host checks are performed against. */
   endpoint: string;
   /** Name associated with this check. */
@@ -71,18 +71,15 @@ export type EndpointHealthcheck = Resource<
  * IPs with the typed `InvalidHealthcheckEndpoint` error. The `endpoint` is
  * mutable in place via PUT (the UUID is stable across updates), but `name`
  * is create-only — changing it triggers a replacement.
- * @resource
- * @product Diagnostics
- * @category Observability & Analytics
- * @section Creating an endpoint healthcheck
- * @example Probe an on-net host
+ * ### Creating an endpoint healthcheck
+ * **Example:** Probe an on-net host
  * ```typescript
  * const check = yield* Cloudflare.Diagnostics.EndpointHealthcheck("core-router", {
  *   endpoint: "10.0.0.1",
  * });
  * ```
  *
- * @example With an explicit name
+ * **Example:** With an explicit name
  * ```typescript
  * const check = yield* Cloudflare.Diagnostics.EndpointHealthcheck("core-router", {
  *   endpoint: "10.0.0.1",
@@ -90,8 +87,8 @@ export type EndpointHealthcheck = Resource<
  * });
  * ```
  *
- * @section Updating
- * @example Re-point the probe at a different host
+ * ### Updating
+ * **Example:** Re-point the probe at a different host
  * ```typescript
  * // Changing `endpoint` updates the same healthcheck in place.
  * const check = yield* Cloudflare.Diagnostics.EndpointHealthcheck("core-router", {
@@ -100,6 +97,10 @@ export type EndpointHealthcheck = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/magic-wan/
+ *
+ * @resource
+ * @product Diagnostics
+ * @category Observability & Analytics
  */
 export const EndpointHealthcheck = Resource<EndpointHealthcheck>(TypeId);
 

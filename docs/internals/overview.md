@@ -18,6 +18,25 @@ versioned clients and servers. Subscriptions send the state a client needs, so a
 thread does not pay for every thread's history. Authentication of a socket does not authorize every
 method on it. See [environment auth](./environment-auth.md).
 
+### Pull request linking compatibility
+
+Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
+environment descriptor, never through a client version or an assumed coordinated release:
+
+| Environment capability                | Client behavior                                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
+| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
+| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
+
+New environments continue advertising the legacy flag, accepting legacy metadata commands, and
+emitting the derived `linkedPullRequest` field for older clients. That hostless field includes only
+links in the thread project's own repository; cross-host and cross-repository links require the
+multi-link protocol. New clients accept snapshots that
+omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
+does not schedule their removal. Missing new capabilities must also override cached multi-link data
+after an environment downgrade.
+
 Provider-specific behavior belongs behind an adapter. Orchestration works with normalized commands
 and events, so adding a provider should not require branches throughout the domain or clients.
 See [provider constraints](./providers.md).
@@ -62,6 +81,24 @@ Runtime receipts mark specific test milestones. Their
 [production layer](../../apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts) is a no-op;
 production behavior must use persisted state and events. These test signals are separate from the
 durable command receipts that make dispatch idempotent.
+
+The Electron shell acquires `DesktopPreReadyPlatform.layer` synchronously before asynchronous
+services. On Linux this sets the desktop-entry identity and global-shortcut portal flags before
+Chromium initializes its portal connection. Setting the identity later in `DesktopAppIdentity`
+is too late: Chromium caches the first registration, including failures. The identity must match
+the installed entry managed by `DesktopLinuxUrlHandler`. Pre-ready setup also refreshes that entry's
+`Exec` path before portal registration: AppImage updates can remove the previous executable, which
+makes the old entry invalid even though its filename is correct. The later URL handler avoids
+rewriting an identical entry while the portal may be reading it. On Wayland, Electron's synchronous
+shortcut-registration result only confirms submission; it does not confirm desktop consent or
+an active binding.
+
+Native modules never load in the Electron main process on the startup path, and the two the
+snapshot feature keeps are isolated: `@crowecawcaw/xa11y` runs only in forked Node-mode children
+(`SnapShotAccessibilityWorker`, `RegionSnapShotWorker`) and a worker thread, and `ffi-rs` loads
+lazily inside `WindowsForeground.ts` for a handful of Win32 calls. macOS window lookup shells out
+to `osascript` instead of a native addon. A crash or stall in any of these must not take the app
+down, so new native capability goes in a child with a deadline, not an `import` in main.
 
 See the [glossary](./glossary.md) for shared terms and the
 [development runbook](../operations/development.md) for setup and checks.

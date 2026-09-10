@@ -1,3 +1,4 @@
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import Constants from "expo-constants";
@@ -66,6 +67,7 @@ function checkedMenuState(checked: boolean) {
 }
 
 function AndroidHomeHeader(props: HomeHeaderProps) {
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   // Thread List v2 lays the list out in fixed creation order, so the
@@ -199,7 +201,11 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
     <>
       <NativeStackScreenOptions options={{ headerShown: false }} />
       <View
-        className="border-b border-header-border bg-header pb-3"
+        className={
+          materialYouStyleLayoutActive
+            ? "bg-header pb-3"
+            : "border-b border-header-border bg-header pb-3"
+        }
         style={{
           paddingHorizontal: HOME_HORIZONTAL_INSET,
           paddingTop: Math.max(insets.top, 12),
@@ -269,7 +275,13 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
             </Pressable>
           </View>
 
-          <View className="min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5">
+          <View
+            className={
+              materialYouStyleLayoutActive
+                ? "min-h-12 flex-row items-center gap-2.5 rounded-full border border-input-border bg-input px-3.5"
+                : "min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5"
+            }
+          >
             <SymbolView
               name="magnifyingglass"
               size={17}

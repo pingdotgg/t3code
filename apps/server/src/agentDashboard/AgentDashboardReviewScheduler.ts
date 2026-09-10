@@ -53,7 +53,7 @@ const LOCAL_COVERED_FINDING_TYPES = [
 const isCoveredFindingType = (value: unknown): value is AgentDashboardFindingType =>
   typeof value === "string" && COVERED_FINDING_TYPES.some((candidate) => candidate === value);
 
-export class AgentDashboardReviewSchedulerError extends Schema.TaggedErrorClass<AgentDashboardReviewSchedulerError>()(
+export class AgentDashboardReviewSchedulerError extends Schema.TaggedError<AgentDashboardReviewSchedulerError>()(
   "AgentDashboardReviewSchedulerError",
   {
     operation: Schema.String,

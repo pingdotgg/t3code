@@ -14,9 +14,8 @@ export interface ListDataSourceRunsRequest extends Omit<
  * Lists the runs of a data source in the bound domain. The domain id is injected from the binding.
  * Provide the implementation with
  * `Effect.provide(AWS.DataZone.ListDataSourceRunsHttp)`.
- * @binding
- * @section Data Source Runs
- * @example List Recent Runs
+ * ### Data Source Runs
+ * **Example:** List Recent Runs
  * ```typescript
  * // init — bind the operation to the domain
  * const listDataSourceRuns = yield* AWS.DataZone.ListDataSourceRuns(domain);
@@ -24,6 +23,8 @@ export interface ListDataSourceRunsRequest extends Omit<
  * // runtime
  * const runs = yield* listDataSourceRuns({ dataSourceIdentifier: dataSourceId });
  * ```
+ *
+ * @binding
  */
 export interface ListDataSourceRuns extends Binding.Service<
   ListDataSourceRuns,

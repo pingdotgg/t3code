@@ -43,7 +43,7 @@ const makeExporter = (
     headers: undefined,
     exportInterval: options?.exportInterval ?? "1 hour",
     maxBatchSize: options?.maxBatchSize ?? 1,
-    body: options?.body ?? (() => HttpBody.empty),
+    body: (data) => [options?.body?.(data) ?? HttpBody.empty, Effect.void],
     shutdownTimeout: options?.shutdownTimeout ?? "1 second"
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -57,7 +57,7 @@ const makeExporterRaw = (maxBatchSize: number | "disabled" = 1) =>
     headers: undefined,
     exportInterval: "1 hour",
     maxBatchSize,
-    body: () => HttpBody.empty,
+    body: () => [HttpBody.empty, Effect.void],
     shutdownTimeout: "1 second"
   })
 
@@ -250,67 +250,80 @@ describe("OtlpExporter", () => {
     }))
 
   it.effect("retries status 429 with numeric retry-after delay", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const { attempts, httpClient } = yield* makeHttpClient("2")
-        const exporter = yield* makeExporter(httpClient)
+    Effect.gen(function*() {
+      const { attempts, httpClient } = yield* makeHttpClient("2")
+      const exporter = yield* makeExporter(httpClient)
 
-        exporter.push({ value: 1 })
-        yield* yieldNowN(3)
+      exporter.push({ value: 1 })
+      yield* yieldNowN(3)
 
-        assert.strictEqual(yield* Ref.get(attempts), 1)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
 
-        yield* TestClock.adjust("1 second")
-        yield* yieldNowN(2)
-        assert.strictEqual(yield* Ref.get(attempts), 1)
+      yield* TestClock.adjust("1 second")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
 
-        yield* TestClock.adjust("1 second")
-        yield* yieldNowN(2)
-        assert.strictEqual(yield* Ref.get(attempts), 2)
-      })
-    ))
+      yield* TestClock.adjust("1 second")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 2)
+    }))
+
+  it.effect("retries status 429 with HTTP-date retry-after delay", () =>
+    Effect.gen(function*() {
+      const { attempts, httpClient } = yield* makeHttpClient("Thu, 01 Jan 1970 00:01:00 GMT")
+      const exporter = yield* makeExporter(httpClient)
+
+      exporter.push({ value: 1 })
+      yield* yieldNowN(3)
+
+      assert.strictEqual(yield* Ref.get(attempts), 1)
+
+      yield* TestClock.adjust("5 seconds")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
+
+      yield* TestClock.adjust("55 seconds")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 2)
+    }))
 
   it.effect("uses fallback retry-after delay when header is non-numeric", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const { attempts, httpClient } = yield* makeHttpClient("soon")
-        const exporter = yield* makeExporter(httpClient)
+    Effect.gen(function*() {
+      const { attempts, httpClient } = yield* makeHttpClient("soon")
+      const exporter = yield* makeExporter(httpClient)
 
-        exporter.push({ value: 1 })
-        yield* yieldNowN(3)
+      exporter.push({ value: 1 })
+      yield* yieldNowN(3)
 
-        assert.strictEqual(yield* Ref.get(attempts), 1)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
 
-        yield* TestClock.adjust("4 seconds")
-        yield* yieldNowN(2)
-        assert.strictEqual(yield* Ref.get(attempts), 1)
+      yield* TestClock.adjust("4 seconds")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
 
-        yield* TestClock.adjust("1 second")
-        yield* yieldNowN(2)
-        assert.strictEqual(yield* Ref.get(attempts), 2)
-      })
-    ))
+      yield* TestClock.adjust("1 second")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 2)
+    }))
 
   it.effect("uses fallback retry-after delay when header is missing", () =>
-    Effect.scoped(
-      Effect.gen(function*() {
-        const { attempts, httpClient } = yield* makeHttpClient(undefined)
-        const exporter = yield* makeExporter(httpClient)
+    Effect.gen(function*() {
+      const { attempts, httpClient } = yield* makeHttpClient(undefined)
+      const exporter = yield* makeExporter(httpClient)
 
-        exporter.push({ value: 1 })
-        yield* yieldNowN(3)
+      exporter.push({ value: 1 })
+      yield* yieldNowN(3)
 
-        assert.strictEqual(yield* Ref.get(attempts), 1)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
 
-        yield* TestClock.adjust("4 seconds")
-        yield* yieldNowN(2)
-        assert.strictEqual(yield* Ref.get(attempts), 1)
+      yield* TestClock.adjust("4 seconds")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 1)
 
-        yield* TestClock.adjust("1 second")
-        yield* yieldNowN(2)
-        assert.strictEqual(yield* Ref.get(attempts), 2)
-      })
-    ))
+      yield* TestClock.adjust("1 second")
+      yield* yieldNowN(2)
+      assert.strictEqual(yield* Ref.get(attempts), 2)
+    }))
 
   describe("flush", () => {
     it.effect("exports buffered items without advancing to the export interval", () =>
@@ -403,24 +416,22 @@ describe("OtlpExporter", () => {
       }))
 
     it.effect("deregisters an exporter when its scope closes", () =>
-      Effect.scoped(
-        Effect.gen(function*() {
-          const { attempts, httpClient } = yield* makeStatusHttpClient(200)
-          const flusher = yield* OtlpExporter.Flusher
-          const scope = yield* Scope.make()
+      Effect.gen(function*() {
+        const { attempts, httpClient } = yield* makeStatusHttpClient(200)
+        const flusher = yield* OtlpExporter.Flusher
+        const scope = yield* Scope.make()
 
-          yield* makeExporterRaw("disabled").pipe(
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.provideService(Scope.Scope, scope)
-          )
+        yield* makeExporterRaw("disabled").pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(Scope.Scope, scope)
+        )
 
-          yield* Scope.close(scope, Exit.void)
-          assert.strictEqual(yield* Ref.get(attempts), 1)
+        yield* Scope.close(scope, Exit.void)
+        assert.strictEqual(yield* Ref.get(attempts), 1)
 
-          yield* flusher.flush
-          assert.strictEqual(yield* Ref.get(attempts), 1)
-        }).pipe(Effect.provide(OtlpExporter.layerFlusher))
-      ))
+        yield* flusher.flush
+        assert.strictEqual(yield* Ref.get(attempts), 1)
+      }).pipe(Effect.provide(OtlpExporter.layerFlusher)))
 
     it.effect("succeeds with no registered exporters", () =>
       Effect.gen(function*() {

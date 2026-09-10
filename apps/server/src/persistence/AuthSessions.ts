@@ -69,6 +69,7 @@ export type GetAuthSessionByIdInput = typeof GetAuthSessionByIdInput.Type;
 
 export const ListActiveAuthSessionsInput = Schema.Struct({
   now: Schema.DateTimeUtcFromString,
+  connectedSessionIds: Schema.optionalKey(Schema.Array(AuthSessionId)),
 });
 export type ListActiveAuthSessionsInput = typeof ListActiveAuthSessionsInput.Type;
 
@@ -199,6 +200,7 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -282,7 +284,7 @@ export const make = Effect.gen(function* () {
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
     Result: AuthSessionRawDbRow,
-    execute: ({ now }) =>
+    execute: ({ now, connectedSessionIds = [] }) =>
       sql`
         SELECT
           session_id AS "sessionId",
@@ -301,7 +303,7 @@ export const make = Effect.gen(function* () {
           revoked_at AS "revokedAt"
         FROM auth_sessions
         WHERE revoked_at IS NULL
-          AND expires_at > ${now}
+          AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
         ORDER BY issued_at DESC, session_id DESC
       `,
   });

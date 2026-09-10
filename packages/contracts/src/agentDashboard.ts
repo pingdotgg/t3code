@@ -898,7 +898,7 @@ export const AgentDashboardResearchWatchItemInput = Schema.Struct({
 });
 export type AgentDashboardResearchWatchItemInput = typeof AgentDashboardResearchWatchItemInput.Type;
 
-export class AgentDashboardError extends Schema.TaggedErrorClass<AgentDashboardError>()(
+export class AgentDashboardError extends Schema.TaggedError<AgentDashboardError>()(
   "AgentDashboardError",
   {
     message: Schema.String,

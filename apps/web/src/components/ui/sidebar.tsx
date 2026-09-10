@@ -711,7 +711,14 @@ function SidebarContent({
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      <ScrollArea hideScrollbars scrollFade className="h-auto min-h-0 flex-1">
+      {/* Rows take focus on click. Scroll padding would make the browser nudge
+          the list whenever a focused row sits under the fade. */}
+      <ScrollArea
+        hideScrollbars
+        scrollFade
+        scrollFadePadding={false}
+        className="h-auto min-h-0 flex-1"
+      >
         <div
           className={cn(
             "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
@@ -898,14 +905,9 @@ function SidebarMenuAction({
   const defaultProps = {
     className: cn(
       "absolute top-1.5 right-1 flex aspect-square w-5 cursor-pointer items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 peer-hover/menu-button:text-sidebar-foreground [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0",
-      // Increases the hit area of the button on mobile.
       "after:-inset-2 after:absolute md:after:hidden",
-      "peer-data-[size=sm]/menu-button:top-1",
-      "peer-data-[size=default]/menu-button:top-1.5",
-      "peer-data-[size=lg]/menu-button:top-2.5",
-      "group-data-[collapsible=icon]:hidden",
       showOnHover &&
-        "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-foreground md:opacity-0",
+        "opacity-0 group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100",
       className,
     ),
     "data-sidebar": "menu-action",

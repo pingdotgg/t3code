@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, ImageIcon, TextIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
@@ -9,7 +9,14 @@ import { OpenMediaLink } from "../media/OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { isContextMenuOpen } from "../../contextMenuFallback";
+import {
+  SnapShotAccessibilityData,
+  SnapShotContentsButton,
+  snapShotAccessibilityDetails,
+} from "./SnapShotAttachmentDetails";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -57,7 +64,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   onClose,
 }: ExpandedImageDialogProps) {
   const [imageOffset, setImageOffset] = useState(0);
+  const zoomableImageRef = useRef<ZoomableImageHandle>(null);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
+  const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
   const index = (preview.index + imageOffset + preview.images.length) % preview.images.length;
   const item = preview.images[index];
   const source: MediaActionSource = item?.actionsSource ?? {
@@ -76,9 +85,14 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       }
     : source;
 
-  const navigateImage = useCallback((direction: -1 | 1) => {
-    setImageOffset((current) => current + direction);
-  }, []);
+  const navigateImage = useCallback(
+    (direction: -1 | 1) => {
+      setImageOffset(
+        (current) => (current + direction + preview.images.length) % preview.images.length,
+      );
+    },
+    [preview.images.length],
+  );
 
   // The element that opened the preview gets focus back on close. Without
   // this a close button click leaves focus on the unmounted dialog, and the
@@ -105,6 +119,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         onClose();
         return;
       }
+      if (zoomableImageRef.current?.pan(event.key)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (preview.images.length <= 1) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -127,6 +146,15 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     item.originalUrl && resolveExternalWebLinkHost(item.originalUrl) !== null ? (
       <OpenMediaLink originalUrl={item.originalUrl} />
     ) : null;
+  const accessibilityDetails = item.source ? snapShotAccessibilityDetails(item.source) : undefined;
+  const showingAccessibilityDetails =
+    Boolean(accessibilityDetails) && accessibilityDetailsSrc === item.src;
+  const contentsLabel = showingAccessibilityDetails
+    ? "Show screenshot"
+    : accessibilityDetails?.format === "json"
+      ? "Show accessibility JSON"
+      : "Show extracted text";
+  const ContentsIcon = showingAccessibilityDetails ? ImageIcon : TextIcon;
 
   return createPortal(
     <div
@@ -145,13 +173,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       {preview.images.length > 1 && (
         <Button
           type="button"
-          size="icon"
-          variant="ghost"
-          className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
+          size="icon-xl"
+          variant="overlay"
+          className="absolute left-2 top-1/2 z-20 -translate-y-1/2 sm:left-6"
           aria-label="Previous image"
           onClick={() => navigateImage(-1)}
         >
-          <ChevronLeftIcon className="size-5" />
+          <ChevronLeftIcon className="size-7" />
         </Button>
       )}
       <MediaActions source={actionsSource}>
@@ -168,6 +196,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           </Button>
           {item.type === "video" ? (
             <ExpandedVideo key={index} item={item} />
+          ) : showingAccessibilityDetails ? (
+            accessibilityDetails ? (
+              <SnapShotAccessibilityData
+                details={accessibilityDetails}
+                className="h-[min(86vh,40rem)] w-[min(92vw,42rem)] animate-[snap-shot-contents-enter_140ms_ease-out] rounded-lg border border-border/70 bg-background p-4 text-xs leading-5 shadow-2xl motion-reduce:animate-none"
+              />
+            ) : null
           ) : item.src === null || failedImageSrc === item.src ? (
             <ExpandedMediaFailure>
               <p>
@@ -178,30 +213,59 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               {openOriginalLink}
             </ExpandedMediaFailure>
           ) : (
-            <img
+            <ZoomableImage
+              ref={zoomableImageRef}
+              key={`${index}:${item.src}`}
               src={item.src}
-              alt={item.name}
-              className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
-              draggable={false}
+              name={item.name}
               onError={() => setFailedImageSrc(item.src)}
             />
           )}
-          <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
-            {item.name}
-            {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
-          </p>
+          <div className="mt-2 flex max-w-[92vw] items-center justify-center gap-1.5 text-xs text-white/80">
+            <span className="truncate">
+              {item.name}
+              {preview.images.length > 1 ? ` (${index + 1}/${preview.images.length})` : ""}
+            </span>
+            {accessibilityDetails && item.source ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      aria-label={contentsLabel}
+                      aria-pressed={showingAccessibilityDetails}
+                      className="[--control-icon-color:currentColor] hover:bg-white/10 hover:text-white"
+                      onClick={() =>
+                        setAccessibilityDetailsSrc(showingAccessibilityDetails ? null : item.src)
+                      }
+                      size="icon-micro"
+                      variant="ghost-muted"
+                    />
+                  }
+                >
+                  <ContentsIcon className="size-3" aria-hidden="true" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">{contentsLabel}</TooltipPopup>
+              </Tooltip>
+            ) : item.source ? (
+              <SnapShotContentsButton
+                source={item.source}
+                side="top"
+                className="hover:bg-white/10 hover:text-white"
+              />
+            ) : null}
+          </div>
         </div>
       </MediaActions>
       {preview.images.length > 1 && (
         <Button
           type="button"
-          size="icon"
-          variant="ghost"
-          className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
+          size="icon-xl"
+          variant="overlay"
+          className="absolute right-2 top-1/2 z-20 -translate-y-1/2 sm:right-6"
           aria-label="Next image"
           onClick={() => navigateImage(1)}
         >
-          <ChevronRightIcon className="size-5" />
+          <ChevronRightIcon className="size-7" />
         </Button>
       )}
     </div>,

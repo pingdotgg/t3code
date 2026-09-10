@@ -182,6 +182,9 @@ const capabilitiesLayer = Layer.effectContext(
       scopes: AuthStandardClientScopes,
     });
     const cloudSession = CloudSession.of({
+      identity: Effect.sync(() =>
+        Option.fromNullishOr(appAtomRegistry.get(managedRelaySessionAtom)),
+      ),
       clerkToken: Effect.gen(function* () {
         const session = appAtomRegistry.get(managedRelaySessionAtom);
         if (session === null) {

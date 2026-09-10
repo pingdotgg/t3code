@@ -15,6 +15,7 @@ import {
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -149,8 +150,13 @@ export function DraftHeroHeadline({
             );
             if (!hasExplicitComposerModelSelection(currentDraft)) {
               applyStickyState(draftId);
-              if (project.defaultModelSelection) {
-                setModelSelection(draftId, project.defaultModelSelection, {
+              const defaultModelSelection =
+                project.defaultModelSelection ??
+                environments.find(
+                  (environment) => environment.environmentId === project.environmentId,
+                )?.serverConfig?.settings.defaultModelSelection;
+              if (defaultModelSelection) {
+                setModelSelection(draftId, defaultModelSelection, {
                   replaceOptions: true,
                 });
               }
@@ -159,7 +165,13 @@ export function DraftHeroHeadline({
         >
           {projectPickerEntries.map(({ group }) => {
             return (
-              <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
+              <MenuRadioItem
+                key={group.projectKey}
+                value={group.projectKey}
+                closeOnClick
+                className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+              >
+                <ProjectFavicon project={group} className="size-4 shrink-0" />
                 <Tooltip>
                   <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
                     {group.displayName}

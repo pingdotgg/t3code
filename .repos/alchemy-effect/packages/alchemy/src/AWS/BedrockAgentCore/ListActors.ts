@@ -15,9 +15,8 @@ export interface ListActorsRequest extends Omit<
  * AgentCore data-plane API against it. Provide `AgentCore.ListActorsHttp`
  * on the Function effect to implement the binding.
  *
- * @binding
- * @section Listing Actors
- * @example List Actors
+ * ### Listing Actors
+ * **Example:** List Actors
  * ```typescript
  * // init
  * const listActors = yield* AgentCore.ListActors(memory);
@@ -32,6 +31,8 @@ export interface ListActorsRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface ListActors extends Binding.Service<
   ListActors,

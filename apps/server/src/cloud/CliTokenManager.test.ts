@@ -88,23 +88,9 @@ const provideTestEnv = Effect.provide(
 
 const isAuthorizationError = Schema.is(CliTokenManager.CloudCliAuthorizationError);
 
-class PromptRejectedError extends Schema.TaggedErrorClass<PromptRejectedError>()(
-  "PromptRejectedError",
-  { message: Schema.String },
-) {}
-
-it("formats loopback authorization with a headless-host fallback", () => {
-  assert.equal(
-    CliTokenManager.formatLoopbackAuthorizationPrompt("https://clerk.example.test/authorize"),
-    [
-      "Open this URL to authorize T3 Connect:",
-      "  https://clerk.example.test/authorize",
-      "",
-      "Press \u001b[1mEnter\u001b[22m to open it in your browser.",
-      "No browser on this device? Press \u001b[1mH\u001b[22m to switch to headless mode.",
-    ].join("\n"),
-  );
-});
+class PromptRejectedError extends Schema.TaggedError<PromptRejectedError>()("PromptRejectedError", {
+  message: Schema.String,
+}) {}
 
 const makeTestTerminal = (queue: Queue.Queue<Terminal.UserInput>) =>
   Terminal.make({

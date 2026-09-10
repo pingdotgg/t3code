@@ -28,7 +28,7 @@ export type WebPushNotification = {
   readonly subscription: typeof relayWebPushSubscriptions.$inferSelect;
 };
 
-export class WebPushSubscriptionPersistenceError extends Schema.TaggedErrorClass<WebPushSubscriptionPersistenceError>()(
+export class WebPushSubscriptionPersistenceError extends Schema.TaggedError<WebPushSubscriptionPersistenceError>()(
   "WebPushSubscriptionPersistenceError",
   { cause: Schema.Defect() },
 ) {}

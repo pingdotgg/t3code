@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.CreateInvitationsHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Invite Member Accounts
+ * ### Administrator & Invitations
+ * **Example:** Invite Member Accounts
  * ```typescript
  * // init — account-level binding, no resource argument
  * const createInvitations = yield* AWS.Macie2.CreateInvitations();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { unprocessedAccounts } = yield* createInvitations({ accountIds });
  * ```
+ *
+ * @binding
  */
 export interface CreateInvitations extends Binding.Service<
   CreateInvitations,

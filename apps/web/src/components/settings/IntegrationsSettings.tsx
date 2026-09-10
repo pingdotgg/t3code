@@ -1,3 +1,4 @@
+import { DeviceHostsSettings } from "./DeviceHostsSettings";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
@@ -12,6 +13,7 @@ import {
   type BrowserLinkTarget,
   type BrowserProfile,
   type EnvironmentId,
+  type SshDeviceHostConfig,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -20,7 +22,6 @@ import {
   DEFAULT_BROWSER_RECORDING_FRAME_RATE,
   DEFAULT_BROWSER_VIEWPORT,
   DEFAULT_PREVIEW_APPEARANCE,
-  DEFAULT_UNIFIED_SETTINGS,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_VIEWPORT_MAX_AREA,
@@ -35,14 +36,26 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { MoreVertical, Plus as PlusIcon } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
+import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  AgentDeviceSetupStatus,
+  DeviceHubSetupStatus,
+  PlatformStatus,
+  platformSetupStatus,
+  deviceHubDescription,
+  agentDeviceDescription,
+} from "~/components/device/DeviceSetup";
 import { isElectron } from "../../env";
 
 import { Badge } from "../ui/badge";
@@ -55,6 +68,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { readLocalApi } from "~/localApi";
+
 import { toastManager } from "../ui/toast";
 import {
   AlertDialog,
@@ -84,11 +99,11 @@ import {
   persistClientSettingsUpdate,
   useClientSettings,
   useClientSettingsHydrated,
-  usePrimarySettings,
   useUpdatePrimarySettings,
 } from "~/hooks/useSettings";
 
 import {
+  SettingsUnavailableGroup,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -514,7 +529,7 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a chat link to open it in your default browser either way."
+      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
       resetAction={
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
@@ -550,41 +565,191 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
 }
 
 function AgentBrowserAccessSetting() {
-  const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
-
   return (
     <SettingsRow
-      serverScoped
       {...searchableSetting("agent-browser-access")}
-      description="Allow agents to use the preview browser. Off hides browser tools from agents, not you."
-      status={
-        settings.enableAgentBrowserAccess
-          ? undefined
-          : "Applies to sessions started from now on; a running agent keeps the tools it was given."
-      }
-      resetAction={
-        settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess ? (
-          <SettingResetButton
-            label="agent browser access"
-            onClick={() =>
-              updateSettings({
-                enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
-              })
-            }
-          />
-        ) : null
-      }
+      description="Choose whether agents can use the preview browser for all projects or a specific project."
       control={
-        <Switch
-          checked={settings.enableAgentBrowserAccess}
-          onCheckedChange={(checked) =>
-            updateSettings({ enableAgentBrowserAccess: Boolean(checked) })
+        <Button
+          render={
+            <Link to="/settings/projects" search={{ project: undefined, machine: undefined }} />
           }
-          aria-label="Allow agent browser access"
-        />
+          size="sm"
+          variant="outline"
+        >
+          Project settings
+        </Button>
       }
     />
+  );
+}
+
+function DeviceIntegrationSettings() {
+  const primaryEnvironment = usePrimaryEnvironment();
+  const { environments } = useEnvironments();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected =
+    environments.find((environment) => environment.environmentId === selectedId) ??
+    environments.find(
+      (environment) => environment.environmentId === primaryEnvironment?.environmentId,
+    ) ??
+    environments[0];
+  const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
+  const environmentId = connected ? selected.environmentId : null;
+
+  return (
+    <SettingsSection id="devices" title="Devices">
+      {environments.length > 1 ? (
+        <SettingsRow
+          title="Environment"
+          description="Device support and hosts are shared by all projects in this environment."
+          control={
+            <Select
+              value={selected?.environmentId ?? ""}
+              onValueChange={(value) => setSelectedId(value)}
+            >
+              <SelectTrigger size="sm" aria-label="Device environment">
+                <SelectValue>{selected?.label ?? "Select environment"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {environments.map((environment) => (
+                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                    {environment.label}
+                    {environment.connection.phase === "connected" ? "" : " · Offline"}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      ) : null}
+      <DeviceIntegrationControls
+        key={selected?.environmentId ?? "none"}
+        environmentId={environmentId}
+        hosts={selected?.serverConfig?.settings.deviceHosts ?? []}
+        enabled={selected?.serverConfig?.settings.enableDeviceSupport ?? false}
+        agentAccessEnabled={selected?.serverConfig?.settings.enableAgentDeviceAccess ?? false}
+      />
+    </SettingsSection>
+  );
+}
+
+function DeviceIntegrationControls({
+  environmentId,
+  hosts,
+  enabled,
+  agentAccessEnabled,
+}: {
+  environmentId: EnvironmentId | null;
+  hosts: ReadonlyArray<SshDeviceHostConfig>;
+  enabled: boolean;
+  agentAccessEnabled: boolean;
+}) {
+  const { state, loaded } = useDeviceState(environmentId);
+  const configure = useAtomCommand(deviceEnvironment.configure);
+  const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
+  const [pending, setPending] = useState<"hub" | "check" | "agent" | null>(null);
+  const busy = state.hostStatus === "installing" || state.hostStatus === "starting";
+  const [platformsRevealed, setPlatformsRevealed] = useState(false);
+  // Keep diagnostics visible through subsequent agent setup and refresh phases.
+  if (platformsRevealed && !enabled) setPlatformsRevealed(false);
+  if (enabled && !platformsRevealed && state.hostStatus === "ready" && pending !== "hub") {
+    setPlatformsRevealed(true);
+  }
+
+  const update = async (
+    kind: NonNullable<typeof pending>,
+    input: { enabled?: boolean; agentAccessEnabled?: boolean },
+  ) => {
+    if (!environmentId) return;
+    setPending(kind);
+    try {
+      const result = await configure({ environmentId, input });
+      if (result._tag === "Success" && input.enabled === true && !state.onboardingCompleted) {
+        await configure({ environmentId, input: { onboardingCompleted: true } });
+      }
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("device-hub")}
+        description={deviceHubDescription}
+        control={
+          <>
+            {pending === "hub" ? <DeviceHubSetupStatus state={state} pending compact /> : null}
+            <Switch
+              checked={enabled}
+              disabled={!loaded || !environmentId || busy || pending !== null}
+              aria-label="Device hub"
+              onCheckedChange={(checked) =>
+                void update("hub", {
+                  enabled: Boolean(checked),
+                  ...(checked ? {} : { agentAccessEnabled: false }),
+                })
+              }
+            />
+          </>
+        }
+      />
+      <AnimatedHeight>
+        {platformsRevealed ? (
+          <SettingsRow
+            {...searchableSetting("device-platform-support")}
+            status={
+              <div className="flex flex-wrap gap-x-5 gap-y-2">
+                <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
+                <PlatformStatus
+                  compact
+                  platform="Android"
+                  status={platformSetupStatus(state, "android")}
+                />
+              </div>
+            }
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!environmentId || !enabled || busy || pending !== null}
+                onClick={() => {
+                  if (!environmentId) return;
+                  setPending("check");
+                  void list({ environmentId, input: {} }).finally(() => setPending(null));
+                }}
+              >
+                {pending === "check" ? "Checking…" : "Refresh"}
+              </Button>
+            }
+          />
+        ) : null}
+      </AnimatedHeight>
+      <SettingsRow
+        {...searchableSetting("agent-device-access")}
+        description={agentDeviceDescription}
+        control={
+          <>
+            {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
+            <Switch
+              checked={agentAccessEnabled}
+              disabled={!loaded || !environmentId || !enabled || busy || pending !== null}
+              aria-label="Agent device access"
+              onCheckedChange={(checked) =>
+                void update("agent", { agentAccessEnabled: Boolean(checked) })
+              }
+            />
+          </>
+        }
+      />
+      {state.hostStatus === "failed" && state.hostStatusDetail ? (
+        <p role="alert" className="px-4 py-3 text-xs text-destructive">
+          {state.hostStatusDetail}
+        </p>
+      ) : null}
+      <DeviceHostsSettings environmentId={environmentId} hosts={hosts} />
+    </>
   );
 }
 
@@ -619,32 +784,6 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
         />
       }
     />
-  );
-}
-
-/**
- * Frames the client-local preview defaults as one unavailable block.
- *
- * Disabling each control on its own left the labels and descriptions at full
- * strength, so the group still read as editable. Boxing it puts the reason at
- * the top and dims everything it covers, which is also why the explanation
- * sits outside the dimmed area — the one part that must stay readable is the
- * part saying why the rest isn't.
- *
- * Disabled rather than hidden because these are *client* settings: editing
- * them from a browser tab would write preferences belonging to a different
- * client, reading as though the desktop app had been configured when it
- * hadn't.
- */
-function DesktopOnlyBrowserDefaults({ children }: { readonly children: ReactNode }) {
-  return (
-    <div className="border-border/60 bg-muted/20 py-1.5">
-      <div className="flex items-start gap-2 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground sm:px-4">
-        <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-        <p>Only available in the desktop app.</p>
-      </div>
-      <div className="[&_h3]:opacity-64 [&_p]:opacity-64">{children}</div>
-    </div>
   );
 }
 
@@ -801,11 +940,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       .then(setSources)
       .catch(() => setSources((previous) => previous ?? []));
   }, []);
-
-  // Loaded once so the first open is instant instead of flashing a spinner.
-  useEffect(() => {
-    loadSources();
-  }, [loadSources]);
 
   // Runs one import for the wizard. A new profile is registered only once the
   // import succeeds — the cookies land in its partition first — so a blocked
@@ -1168,6 +1302,19 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
+          onOpenFullDiskAccessSettings={() => {
+            // Rejects outside the desktop shell (and on shells that predate the
+            // method), so the one toast covers every way the link can fail.
+            void readLocalApi()
+              ?.shell.openSystemSettings("full-disk-access")
+              .catch(() => {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not open System Settings",
+                  description: "Open Privacy & Security → Full Disk Access manually.",
+                });
+              });
+          }}
           onClose={() => setImportSession(null)}
         />
       ) : null}
@@ -1198,11 +1345,14 @@ export function IntegrationsSettingsPanel() {
             sits outside the block covering the desktop-only defaults. */}
         <AgentBrowserAccessSetting />
         {previewDefaultsDisabled ? (
-          <DesktopOnlyBrowserDefaults>{previewDefaults}</DesktopOnlyBrowserDefaults>
+          <SettingsUnavailableGroup message="Only available in the desktop app.">
+            {previewDefaults}
+          </SettingsUnavailableGroup>
         ) : (
           previewDefaults
         )}
       </SettingsSection>
+      <DeviceIntegrationSettings />
     </SettingsPageContainer>
   );
 }

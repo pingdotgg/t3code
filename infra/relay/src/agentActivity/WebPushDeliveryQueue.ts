@@ -16,7 +16,7 @@ import {
   type SignedWebPushDeliveryJob,
 } from "./webPushDeliveryJobs.ts";
 
-export class WebPushDeliveryQueueError extends Schema.TaggedErrorClass<WebPushDeliveryQueueError>()(
+export class WebPushDeliveryQueueError extends Schema.TaggedError<WebPushDeliveryQueueError>()(
   "WebPushDeliveryQueueError",
   { cause: Schema.Defect() },
 ) {}

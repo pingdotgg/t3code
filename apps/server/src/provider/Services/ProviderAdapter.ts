@@ -31,6 +31,20 @@ export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 export type ProviderAdapterSessionStartInput = ProviderSessionStartInput & {
   readonly environment?: NodeJS.ProcessEnv;
 };
+/**
+ * How ProviderService runs manual context compaction for an adapter.
+ * Native adapters expose a start call and must emit a compacted thread state
+ * when they finish. Slash-command adapters get the command sent as a turn.
+ */
+export type ProviderCompaction<TError> =
+  | {
+      readonly type: "native";
+      readonly start: (
+        threadId: ThreadId,
+        modelSelection?: ProviderSendTurnInput["modelSelection"],
+      ) => Effect.Effect<void, TError>;
+    }
+  | { readonly type: "slash-command"; readonly command: `/${string}` };
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -75,10 +89,8 @@ export interface ProviderAdapterShape<TError> {
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
-  readonly compactThread?: (
-    threadId: ThreadId,
-    modelSelection?: ProviderSendTurnInput["modelSelection"],
-  ) => Effect.Effect<void, TError>;
+  /** Omitted when this adapter does not support manual context compaction. */
+  readonly compaction?: ProviderCompaction<TError>;
 
   /**
    * Interrupt an active turn.

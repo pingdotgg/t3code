@@ -549,6 +549,22 @@ export const clientApi = HttpApiBuilder.group(
       .handle(
         "listDevices",
         Effect.fn("relay.api.client.listDevices")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
+          const { userId } = yield* RelayClientPrincipal;
+          const registered = yield* devices.listForUser({ userId });
+          return {
+            devices: registered.flatMap((device) =>
+              device.platform === "ios" && device.iosMajorVersion !== null
+                ? [{ ...device, platform: "ios" as const, iosMajorVersion: device.iosMajorVersion }]
+                : [],
+            ),
+          };
+        }, mapRelayCommonApiErrors("not_authorized")),
+      )
+      .handle(
+        "listDevicesV2",
+        Effect.fn("relay.api.client.listDevicesV2")(function* () {
+          yield* appendRelayCredentialResponseHeaders;
           const { userId } = yield* RelayClientPrincipal;
           return { devices: yield* devices.listForUser({ userId }) };
         }, mapRelayCommonApiErrors("not_authorized")),
@@ -1041,6 +1057,24 @@ export const serverApi = HttpApiBuilder.group(
               reason: "upstream_unavailable",
               traceId,
             }),
+          FcmDeliveryError: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "upstream_unavailable",
+              traceId,
+            }),
+          WebPushDeliveryQueueError: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "upstream_unavailable",
+              traceId,
+            }),
+          WebPushSubscriptionPersistenceError: (_error, traceId) =>
+            new RelayInternalError({
+              code: "internal_error",
+              reason: "persistence_failed",
+              traceId,
+            }),
         }),
         mapRelayCommonApiErrors("not_authorized"),
       ),
@@ -1176,7 +1210,7 @@ export const pwaApi = HttpApiBuilder.group(
   }),
 );
 
-class ClerkTokenVerificationFailed extends Schema.TaggedErrorClass<ClerkTokenVerificationFailed>()(
+class ClerkTokenVerificationFailed extends Schema.TaggedError<ClerkTokenVerificationFailed>()(
   "ClerkTokenVerificationFailed",
   {
     cause: Schema.Defect(),

@@ -25,7 +25,7 @@ const TypeId = "~effect/platform/Terminal"
  * A `Terminal` represents a command-line interface which can read input from a
  * user and display messages to a user.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface Terminal {
@@ -118,10 +118,10 @@ const QuitErrorTypeId = "effect/platform/Terminal/QuitError"
  *
  * @see {@link isQuitError} for checking unknown errors when handling terminal cancellation
  *
- * @category QuitError
+ * @category errors
  * @since 4.0.0
  */
-export class QuitError extends Schema.ErrorClass<QuitError>("QuitError")({
+export class QuitError extends Schema.Error<QuitError>("QuitError")({
   _tag: Schema.tag("QuitError")
 }) {
   /**

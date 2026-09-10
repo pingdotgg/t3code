@@ -14,7 +14,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
   {
     main: import.meta.url,
-    url: true,
+    workersDev: true,
   },
   PrPackage.handler(),
 ) {}

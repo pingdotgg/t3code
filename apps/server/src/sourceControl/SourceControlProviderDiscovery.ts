@@ -115,7 +115,7 @@ export function providerAuth(input: {
   };
 }
 
-export function unknownAuth(detail?: string): SourceControlProviderAuth {
+function unknownAuth(detail?: string): SourceControlProviderAuth {
   return providerAuth({ status: "unknown", detail });
 }
 

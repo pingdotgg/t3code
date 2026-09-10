@@ -140,7 +140,7 @@ export const NeonDatabase = Effect.gen(function* () {
 
   const branch = yield* Neon.Branch("Branch", {
     project,
-    migrationsDir: schema.out,
+    migrations: schema,
   });
 
   return { project, branch, schema };
@@ -173,7 +173,7 @@ its own walk-through in [Shared database across stages](/cloudflare/data/shared-
 ## 3. The backend RPC Worker
 
 `Cloudflare.Workers.RpcWorker` takes the `RpcGroup` directly in props and serves it.
-We pass `url: false` because this backend is only ever reached through the
+We pass `workersDev: false` because this backend is only ever reached through the
 private service binding — there's no need for a public `workers.dev` URL. Inside
 Init we bind Hyperdrive once and build a Drizzle client; the handlers then run a
 query per procedure. Database failures are unexpected, so we `Effect.orDie` them
@@ -187,7 +187,7 @@ we raise inside the `flatMap` stays a normal, typed failure the client can catch
 ```typescript
 // src/backend/api.ts
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import * as Drizzle from "alchemy/Drizzle/Postgres";
 import { eq } from "drizzle-orm";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -198,7 +198,7 @@ import { relations, Todos } from "./schema.ts";
 
 export default class Backend extends Cloudflare.Workers.RpcWorker<Backend>()(
   "Backend",
-  { main: import.meta.filename, url: false, schema: TodoRpcs },
+  { main: import.meta.filename, workersDev: false, schema: TodoRpcs },
   Effect.gen(function* () {
     const conn = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
     const db = yield* Drizzle.Postgres(conn.connectionString, { relations });
@@ -288,9 +288,8 @@ import Backend from "./src/backend/api.ts";
 import { Hyperdrive, NeonDatabase } from "./src/backend/database.ts";
 
 export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
-  compatibility: { flags: ["nodejs_compat", "enable_request_signal"] },
+  compatibility: { flags: ["enable_request_signal"] },
   env: { BACKEND: Backend },
-  assets: { runWorkerFirst: true },
 }) {}
 
 export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
@@ -312,7 +311,7 @@ export default Alchemy.Stack(
 
     // `Backend` doesn't need to be yielded here: the `BACKEND` service binding
     // on `Website` already pulls it into the resource graph, and it has no
-    // public URL of its own (`url: false`), so there's nothing to return.
+    // public URL of its own (`workersDev: false`), so there's nothing to return.
 
     return {
       websiteUrl: website.url.as<string>(),

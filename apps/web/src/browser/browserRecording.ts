@@ -10,7 +10,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
 
-export class BrowserRecordingUnavailableError extends Schema.TaggedErrorClass<BrowserRecordingUnavailableError>()(
+export class BrowserRecordingUnavailableError extends Schema.TaggedError<BrowserRecordingUnavailableError>()(
   "BrowserRecordingUnavailableError",
   {
     tabId: Schema.String,
@@ -21,7 +21,7 @@ export class BrowserRecordingUnavailableError extends Schema.TaggedErrorClass<Br
   }
 }
 
-export class BrowserRecordingConflictError extends Schema.TaggedErrorClass<BrowserRecordingConflictError>()(
+export class BrowserRecordingConflictError extends Schema.TaggedError<BrowserRecordingConflictError>()(
   "BrowserRecordingConflictError",
   {
     requestedTabId: Schema.String,
@@ -33,7 +33,7 @@ export class BrowserRecordingConflictError extends Schema.TaggedErrorClass<Brows
   }
 }
 
-export class BrowserRecordingStartCancelledError extends Schema.TaggedErrorClass<BrowserRecordingStartCancelledError>()(
+export class BrowserRecordingStartCancelledError extends Schema.TaggedError<BrowserRecordingStartCancelledError>()(
   "BrowserRecordingStartCancelledError",
   {
     tabId: Schema.String,
@@ -44,7 +44,7 @@ export class BrowserRecordingStartCancelledError extends Schema.TaggedErrorClass
   }
 }
 
-export class BrowserRecordingFormatUnavailableError extends Schema.TaggedErrorClass<BrowserRecordingFormatUnavailableError>()(
+export class BrowserRecordingFormatUnavailableError extends Schema.TaggedError<BrowserRecordingFormatUnavailableError>()(
   "BrowserRecordingFormatUnavailableError",
   { tabId: Schema.String },
 ) {
@@ -53,7 +53,7 @@ export class BrowserRecordingFormatUnavailableError extends Schema.TaggedErrorCl
   }
 }
 
-export class BrowserRecordingCaptureTimeoutError extends Schema.TaggedErrorClass<BrowserRecordingCaptureTimeoutError>()(
+export class BrowserRecordingCaptureTimeoutError extends Schema.TaggedError<BrowserRecordingCaptureTimeoutError>()(
   "BrowserRecordingCaptureTimeoutError",
   {
     tabId: Schema.String,
@@ -65,7 +65,7 @@ export class BrowserRecordingCaptureTimeoutError extends Schema.TaggedErrorClass
   }
 }
 
-export class BrowserRecordingOperationError extends Schema.TaggedErrorClass<BrowserRecordingOperationError>()(
+export class BrowserRecordingOperationError extends Schema.TaggedError<BrowserRecordingOperationError>()(
   "BrowserRecordingOperationError",
   {
     operation: Schema.Literals([
@@ -123,6 +123,8 @@ interface ActiveRecording {
   releaseSurfaceActivity: (() => void) | null;
   stream: MediaStream | null;
   recorder: MediaRecorder | null;
+  savedBlob?: Blob;
+  uploadPromise?: Promise<string>;
   lifecycle: BrowserRecordingLifecycle;
 }
 
@@ -238,17 +240,29 @@ export function findActiveBrowserRecordingRuntimeTabId(
 }
 
 const preferredMimeTypes = [
-  "video/webm;codecs=av1",
-  "video/webm;codecs=vp9",
+  "video/mp4;codecs=avc1",
   "video/mp4;codecs=avc1.640028",
   "video/mp4;codecs=avc1.42e01e",
+  "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
 ] as const;
 
 const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
   const mimeType = preferredMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  const settings = stream.getVideoTracks()[0]?.getSettings();
+  // Browser defaults under-budget native-resolution text and motion. Scale with captured pixels
+  // and frames, while bounding storage and encoder load for very large displays.
+  const videoBitsPerSecond = Math.round(
+    Math.min(
+      50_000_000,
+      Math.max(
+        2_500_000,
+        (settings?.width ?? 1920) * (settings?.height ?? 1080) * (settings?.frameRate ?? 30) * 0.05,
+      ),
+    ),
+  );
+  return new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond });
 };
 
 const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
@@ -256,7 +270,7 @@ const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
   // stream already arrives at that tab's native size and needs no source or dimension constraints.
   navigator.mediaDevices.getDisplayMedia({
     audio: false,
-    video: { frameRate: { max: frameRate } },
+    video: { frameRate: { ideal: frameRate, max: frameRate } },
   });
 
 const stopMediaRecorder = async (recorder: MediaRecorder | null): Promise<void> => {
@@ -516,10 +530,12 @@ export async function startBrowserRecording(
   activeRecordings.set(tabId, recording);
   publishActiveRecordingTabIds();
   try {
-    const frameRatePromise = ensureClientSettingsHydrated().then(
-      () => getClientSettings().browserRecordingFrameRate,
-    );
-    const [frameRate] = await Promise.all([frameRatePromise, waitForBrowserRecordingPaint()]);
+    await ensureClientSettingsHydrated().catch((cause: unknown) => {
+      clearActiveRecording(recording);
+      throw cause;
+    });
+    const frameRate = getClientSettings().browserRecordingFrameRate;
+    await waitForBrowserRecordingPaint();
     const throwIfStartupCancelled = async (): Promise<void> => {
       // Once a grant starts, a stop lets startup finish so the caller receives an artifact.
       // Only a contended start can be cancelled before it reaches native capture.
@@ -678,6 +694,9 @@ const finalizeBrowserRecording = async (
           cause,
         });
       }
+      // Encoding has flushed; release native capture before materializing and saving the file.
+      stopMediaStream(recording.stream);
+      recording.stream = null;
       const mimeType =
         recording.recorder.mimeType ||
         recording.chunks.find((chunk) => chunk.type.length > 0)?.type;
@@ -691,6 +710,7 @@ const finalizeBrowserRecording = async (
           mimeType,
           new Uint8Array(await blob.arrayBuffer()),
         );
+        recording.savedBlob = blob;
         result = { _tag: "Success", artifact };
       } catch (cause) {
         throw new BrowserRecordingOperationError({
@@ -796,4 +816,17 @@ export function stopBrowserRecording(
     });
   recording.lifecycle = { phase: "stopping", stopPromise };
   return stopPromise;
+}
+
+/** Joins local stops and shares one upload among concurrent automation requests. */
+export async function stopBrowserRecordingForUpload(
+  tabId: string,
+  upload: (artifact: DesktopPreviewRecordingArtifact, blob: Blob) => Promise<string>,
+): Promise<(DesktopPreviewRecordingArtifact & { uploadedAttachmentId: string }) | null> {
+  const recording = activeRecordings.get(tabId);
+  if (!recording) return null;
+  const artifact = await stopBrowserRecording(tabId);
+  if (!artifact || !recording.savedBlob) return null;
+  recording.uploadPromise ??= upload(artifact, recording.savedBlob);
+  return { ...artifact, uploadedAttachmentId: await recording.uploadPromise };
 }

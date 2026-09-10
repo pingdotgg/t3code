@@ -33,8 +33,8 @@ import { uuidv4 } from "./uuid";
  * This module owns the server side of a composer attachment's lifecycle.
  * `prepareTurnAttachments` acquires pending uploads (verifying and reusing
  * persisted ones), hands the uploaded ids back to the attachment's durable
- * owner (queued outbox message or composer draft), and returns a release
- * handle for after the turn consumed the bytes. Nothing outside this module
+ * owner (queued outbox message or composer draft), and leaves their cleanup
+ * to that owner after it checks shared references. Nothing outside this module
  * mints or deletes pending uploads. The local-file side of the lifecycle is
  * owned by `removeThreadOutboxMessage` / the composer draft mutators, which
  * release files through `releaseUnusedComposerAttachmentFiles`.
@@ -149,8 +149,6 @@ export interface PreparedTurnAttachments {
   readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   /** Every pending upload backing this turn (reused and newly minted). */
   readonly pendingAttachmentIds: ReadonlyArray<string>;
-  /** Deletes all pending uploads once the delivered turn holds the bytes. */
-  readonly releaseUploads: () => Promise<void>;
 }
 
 export type PrepareTurnAttachmentsResult =
@@ -306,7 +304,6 @@ export async function prepareTurnAttachments(input: {
     attachments,
     draftAttachments,
     pendingAttachmentIds,
-    releaseUploads: () => releasePendingAttachmentUploads(environmentId, pendingAttachmentIds),
   });
 
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {

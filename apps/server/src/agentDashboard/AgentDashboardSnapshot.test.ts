@@ -70,6 +70,7 @@ const shellSnapshot: OrchestrationShellSnapshot = {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      pullRequests: [],
     },
     {
       id: worktreeThreadId,
@@ -100,6 +101,7 @@ const shellSnapshot: OrchestrationShellSnapshot = {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      pullRequests: [],
     },
   ],
 };

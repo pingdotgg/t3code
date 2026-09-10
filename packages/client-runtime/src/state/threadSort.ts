@@ -107,7 +107,7 @@ export function getThreadSortTimestamp(
  * top instead of sinking back to its creation-order slot. Shared by web and
  * mobile so both render the same order. Malformed timestamps sink to 0.
  */
-export function activeThreadAnchorTimestampMs(thread: {
+function activeThreadAnchorTimestampMs(thread: {
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
 }): number {
@@ -205,25 +205,27 @@ export function pinOrderKeyBetween(before: string | null, after: string | null):
   return pinOrderMidpoint(a, b);
 }
 
-/** Evenly spaced keys for rewriting a whole pinned section (used when a
-    drop lands next to keyless threads, so single-key insertion has nothing
-    to anchor on). Two base-26 digits give 675 slots — far beyond any real
-    pinned section — with monotonicity enforced as a belt-and-braces. */
+/** Evenly spaced keys for materializing an order. Wider keys keep a large
+    active list from exhausting the space between two-digit keys. */
 export function generateSpreadPinOrderKeys(count: number): string[] {
-  const space = PIN_ORDER_DIGITS.length * PIN_ORDER_DIGITS.length;
+  let width = 2;
+  let space = PIN_ORDER_DIGITS.length ** width;
+  while (space <= (count + 1) * 2) {
+    width += 1;
+    space *= PIN_ORDER_DIGITS.length;
+  }
   const step = space / (count + 1);
   const keys: string[] = [];
-  let previous = 0;
   for (let i = 0; i < count; i += 1) {
-    let value = Math.max(Math.round(step * (i + 1)), previous + 1);
+    let value = Math.round(step * (i + 1));
     // Skip values whose low digit is the minimum (a trailing "a" key).
     if (value % PIN_ORDER_DIGITS.length === 0) value += 1;
-    value = Math.min(value, space - 1);
-    previous = value;
-    keys.push(
-      PIN_ORDER_DIGITS.charAt(Math.floor(value / PIN_ORDER_DIGITS.length)) +
-        PIN_ORDER_DIGITS.charAt(value % PIN_ORDER_DIGITS.length),
-    );
+    let key = "";
+    for (let digit = 0; digit < width; digit += 1) {
+      key = PIN_ORDER_DIGITS.charAt(value % PIN_ORDER_DIGITS.length) + key;
+      value = Math.floor(value / PIN_ORDER_DIGITS.length);
+    }
+    keys.push(key);
   }
   return keys;
 }
@@ -233,15 +235,21 @@ export function generateSpreadPinOrderKeys(count: number): string[] {
  * sits between two keyed (or absent) neighbors, this is a single write to
  * the moved thread. When a neighbor is keyless (threads pinned before
  * reordering shipped), the whole section gets fresh spread keys — a
- * one-time materialization; every move after that is single-write.
+ * one-time materialization; every move after that is single-write. Active
+ * reordering uses the same planner with activeOrderKey values.
  */
 export function planPinnedReorder(input: {
   /** Thread ids in the desired visual order (after the move). */
   readonly orderedIds: readonly string[];
+  /** Include retained keys from hidden rows; only orderedIds receive writes. */
   readonly keysById: ReadonlyMap<string, string | null | undefined>;
   readonly movedId: string;
 }): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
   const { orderedIds, keysById, movedId } = input;
+  const visibleIds = new Set(orderedIds);
+  const reservedKeys = new Set(
+    [...keysById].flatMap(([id, key]) => (!visibleIds.has(id) && key != null ? [key] : [])),
+  );
   const movedIndex = orderedIds.indexOf(movedId);
   if (movedIndex === -1) return [];
   const beforeId = movedIndex > 0 ? orderedIds[movedIndex - 1] : null;
@@ -251,11 +259,14 @@ export function planPinnedReorder(input: {
   const beforeUsable = beforeId === null || beforeKey != null;
   const afterUsable = afterId === null || afterKey != null;
   if (beforeUsable && afterUsable) {
-    const key = pinOrderKeyBetween(beforeKey, afterKey);
+    let key = pinOrderKeyBetween(beforeKey, afterKey);
+    while (key !== null && reservedKeys.has(key)) key = pinOrderKeyBetween(key, afterKey);
     if (key !== null) return [{ id: movedId, orderKey: key }];
   }
   // Keyless neighbor (or corrupt keys): rewrite the section in the new order.
-  const keys = generateSpreadPinOrderKeys(orderedIds.length);
+  const keys = generateSpreadPinOrderKeys(orderedIds.length + reservedKeys.size)
+    .filter((key) => !reservedKeys.has(key))
+    .slice(0, orderedIds.length);
   return orderedIds.flatMap((id, index) => {
     const key = keys[index]!;
     return keysById.get(id) === key ? [] : [{ id, orderKey: key }];
@@ -301,6 +312,36 @@ export function sortPinnedThreadsByOrderKey<
     );
   });
   return [...keyed, ...keyless];
+}
+
+/** New and reopened threads lead the active list. Arranged threads follow
+    their saved keys; activity leaves both groups in place. */
+export function sortActiveThreadsByOrderKey<
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null | undefined;
+    readonly activeOrderKey?: string | null | undefined;
+    readonly environmentId?: string | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  return [...threads].sort((left, right) => {
+    const leftKey = left.activeOrderKey;
+    const rightKey = right.activeOrderKey;
+    if (leftKey == null && rightKey != null) return -1;
+    if (leftKey != null && rightKey == null) return 1;
+    let order = 0;
+    if (leftKey != null && rightKey != null) {
+      order = leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    } else {
+      order = activeThreadAnchorTimestampMs(right) - activeThreadAnchorTimestampMs(left);
+    }
+    return (
+      order ||
+      left.id.localeCompare(right.id) ||
+      (left.environmentId ?? "").localeCompare(right.environmentId ?? "")
+    );
+  });
 }
 
 /**

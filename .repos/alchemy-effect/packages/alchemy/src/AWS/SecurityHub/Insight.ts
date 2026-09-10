@@ -48,8 +48,8 @@ export interface Insight extends Resource<
  * attribute. Read its aggregated results at runtime with the
  * {@link GetInsightResults} binding.
  *
- * @section Creating an Insight
- * @example Critical Findings by Resource
+ * ### Creating an Insight
+ * **Example:** Critical Findings by Resource
  * ```typescript
  * const insight = yield* AWS.SecurityHub.Insight("CriticalByResource", {
  *   filters: {
@@ -60,7 +60,7 @@ export interface Insight extends Resource<
  * });
  * ```
  *
- * @example Read Insight Results at Runtime
+ * **Example:** Read Insight Results at Runtime
  * ```typescript
  * const getInsightResults = yield* AWS.SecurityHub.GetInsightResults();
  * const { InsightResults } = yield* getInsightResults({

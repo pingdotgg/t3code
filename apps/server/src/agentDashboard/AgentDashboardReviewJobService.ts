@@ -75,7 +75,7 @@ export const evaluateReviewProgressWatchdog = (input: {
     : { kind: "nudge", attempt: nudgeCount + 1 };
 };
 
-export class AgentDashboardReviewJobServiceError extends Schema.TaggedErrorClass<AgentDashboardReviewJobServiceError>()(
+export class AgentDashboardReviewJobServiceError extends Schema.TaggedError<AgentDashboardReviewJobServiceError>()(
   "AgentDashboardReviewJobServiceError",
   {
     operation: Schema.String,

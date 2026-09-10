@@ -269,6 +269,7 @@ it.effect("starts the provider turn before snoozing the internal review thread",
     };
     const commands = yield* Ref.make<Array<OrchestrationCommand>>([]);
     const projection = {
+      getUserInputActivity: () => Effect.die("unused"),
       getCommandReadModel: () => Effect.die("unused"),
       getSnapshot: () => Effect.die("unused"),
       getShellSnapshot: () =>
@@ -286,6 +287,7 @@ it.effect("starts the provider turn before snoozing the internal review thread",
       getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
       getProjectShellById: () => Effect.succeed(Option.none()),
       getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+      getImportedAgentSessionSources: () => Effect.succeed([]),
       getThreadCheckpointContext: () => Effect.succeed(Option.none()),
       getFullThreadDiffContext: () => Effect.succeed(Option.none()),
       getThreadShellById: () =>
@@ -295,7 +297,9 @@ it.effect("starts the provider turn before snoozing the internal review thread",
           } as never),
         ),
       getThreadDetailById: () => Effect.succeed(Option.none()),
+      getThreadRuntimeContext: () => Effect.succeed(Option.none()),
       getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+      getTurnStartMessage: () => Effect.succeed(Option.none()),
       searchThreads: () => Effect.succeed({ matches: [] }),
     } satisfies ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
     const orchestration = {
@@ -304,12 +308,17 @@ it.effect("starts the provider turn before snoozing the internal review thread",
           Effect.map((current) => ({ sequence: current.length })),
         ),
       readEvents: () => Stream.empty,
+      readThreadEvents: () => Stream.empty,
+      getThreadReplayStats: () => Effect.die("unused"),
       streamDomainEvents: Stream.empty,
+      subscribeDomainEvents: Effect.succeed(Stream.empty),
       latestSequence: Effect.succeed(0),
     } satisfies OrchestrationEngine.OrchestrationEngineService["Service"];
     const startup = {
       awaitCommandReady: Effect.void,
       markHttpListening: Effect.void,
+      markRunningProviderSessionsForContinuation: Effect.succeed([]),
+      clearProviderSessionContinuationMarkers: () => Effect.void,
       enqueueCommand: <A, E>(effect: Effect.Effect<A, E>) => effect,
     } satisfies ServerRuntimeStartup.ServerRuntimeStartup["Service"];
     const reviewModelSelection = {

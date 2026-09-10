@@ -13,6 +13,8 @@ vp run dev
 Open the one-time pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
 
+Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
+
 ## Choosing a dev process
 
 Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
@@ -68,6 +70,24 @@ Use `vp run lint:mobile` for native mobile changes. CI owns the full suite; see
 [ci.yml](../../.github/workflows/ci.yml) for its current jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused
 Windows investigation while that suite is not a required gate.
+
+### Unused code
+
+`vp run knip:check` checks unused files and dependencies across the repo, then
+unused runtime exports in `apps/server`, `apps/desktop`, `apps/web`, and every internal package under
+`packages/`. CI enforces both checks.
+Exported types and Effect schemas are allowed without consumers. The schema preprocessor
+recognizes schema types, including aliases and schema classes; functions that create or decode
+schemas remain checked. Canonical Effect service construction APIs stay exported with an explicit
+`@public` annotation, which Knip recognizes. Completely unused files remain checked too.
+Named exports in web UI component modules are kept as complete component sets. Knip ignores
+unused exports in `apps/web/src/components/ui/*.tsx`, while still reporting an entire unused file.
+Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
+or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
+The full export audit still has findings and is not a repo-wide CI gate. Extend the
+export check's workspace selectors as more workspaces become clean. Review callers before
+deleting code; production mode can also report development scripts and test fixtures.
+Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
 
 ## Desktop artifacts
 

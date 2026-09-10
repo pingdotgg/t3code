@@ -151,7 +151,7 @@ export const buildDecisionFollowUpPrompt = (candidate: DecisionFollowUpCandidate
   ].join("\n");
 };
 
-export class AgentDashboardDecisionFollowUpError extends Schema.TaggedErrorClass<AgentDashboardDecisionFollowUpError>()(
+export class AgentDashboardDecisionFollowUpError extends Schema.TaggedError<AgentDashboardDecisionFollowUpError>()(
   "AgentDashboardDecisionFollowUpError",
   {
     operation: Schema.String,

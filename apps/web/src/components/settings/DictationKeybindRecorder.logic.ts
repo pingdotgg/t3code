@@ -47,7 +47,7 @@ function standaloneKeyToken(key: string): string | null {
 }
 
 export function dictationKeybindingFromKeyboardEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,
 ): string | null {
   const keybinding = keybindingFromKeyboardEvent(event, platform);

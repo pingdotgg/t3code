@@ -35,10 +35,11 @@ import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestPrimaryControl,
+  allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
+  resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
-  describePullRequestState,
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
@@ -85,6 +86,21 @@ const TIMELINE_SOURCE: Pick<
   mergedAt: null,
   closedAt: null,
 };
+
+describe("pull request merge method", () => {
+  it("uses the current choice, then the project default, then the last choice", () => {
+    expect(
+      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], null, "squash", "rebase"),
+    ).toBe("squash");
+    expect(
+      resolvePullRequestMergeMethod(["merge", "squash", "rebase"], "rebase", "squash", "merge"),
+    ).toBe("rebase");
+    expect(resolvePullRequestMergeMethod(["merge", "rebase"], null, "squash", "rebase")).toBe(
+      "rebase",
+    );
+    expect(resolvePullRequestMergeMethod(["squash"], null, "merge", "rebase")).toBe("squash");
+  });
+});
 
 describe("pull request activity refresh", () => {
   const first = {
@@ -196,15 +212,6 @@ describe("pull request primary control", () => {
       "resolve",
     );
     expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
-  });
-});
-
-describe("pull request state description", () => {
-  it("keeps draft and conflicts orthogonal to the terminal states", () => {
-    expect(describePullRequestState("open", true)).toBe("Draft");
-    expect(describePullRequestState("open", false)).toBe("Ready for review");
-    expect(describePullRequestState("merged", true)).toBe("Merged");
-    expect(describePullRequestState("closed", false)).toBe("Closed");
   });
 });
 
@@ -1414,10 +1421,64 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
   });
 
+  it("isolates stored and displayed details between hosts with the same repository and number", () => {
+    const storage = makeStorage();
+    const publicRef = { ...reference, host: "github.com" };
+    const enterpriseRef = { ...reference, host: "github.example.com" };
+    const publicDetail = detail();
+    const enterpriseDetail = detail({
+      title: "Enterprise change",
+      url: "https://github.example.com/acme/web/pull/7",
+    });
+    writePullRequestDetailSnapshot(storage, "env-1", publicRef, publicDetail);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
+    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, enterpriseDetail);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", publicRef)?.title).toBe(
+      publicDetail.title,
+    );
+    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)?.title).toBe(
+      enterpriseDetail.title,
+    );
+    expect(
+      resolveDisplayedPullRequestDetail({
+        live: null,
+        cached: publicDetail,
+        reference: enterpriseRef,
+      }),
+    ).toBeNull();
+    expect(
+      resolveDisplayedPullRequestDetail({
+        live: null,
+        cached: enterpriseDetail,
+        reference: enterpriseRef,
+      }),
+    ).toBe(enterpriseDetail);
+    writePullRequestDetailSnapshot(storage, "env-1", enterpriseRef, publicDetail);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", enterpriseRef)).toBeNull();
+  });
+
   it("shrugs off corrupt storage and no storage at all", () => {
     const storage = makeStorage();
     storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
   });
+});
+
+describe("single-PR merge compatibility during stack discovery", () => {
+  it.each([
+    [false, true, false, null, true],
+    [false, false, true, null, true],
+    [true, false, true, null, false],
+    [true, false, false, "Lookup failed", false],
+    [true, true, false, null, false],
+    [true, false, false, null, true],
+  ] as const)(
+    "capability=%s stack=%s pending=%s error=%s permits=%s",
+    (supportsStackActions, hasStack, stackPending, stackError, allowed) => {
+      expect(
+        allowsSinglePullRequestMerge({ supportsStackActions, hasStack, stackPending, stackError }),
+      ).toBe(allowed);
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
+import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import type { EnvironmentId, GitHubAccountId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
@@ -6,27 +6,25 @@ import type { Options as ReactMarkdownOptions } from "react-markdown";
 import { cn } from "~/lib/utils";
 import { openExternalWithGitHubAccount } from "~/lib/openPullRequestLink";
 import { readLocalApi } from "~/localApi";
+import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
+import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export interface PullRequestMarkdownContextValue {
   readonly repositoryUrl: string | null;
   readonly githubAccountId: GitHubAccountId | null;
+  readonly threadRef: ScopedThreadRef | null;
 }
 
 export const PullRequestMarkdownContext = createContext<PullRequestMarkdownContextValue>({
   repositoryUrl: null,
   githubAccountId: null,
+  threadRef: null,
 });
 
-/**
- * A pull request body, rendered with the app's markdown renderer plus a card for each upload
- * embedded in it, which that renderer drops on the floor.
- *
- * These upload URLs do not identify the media format. The card links to GitHub, where the
- * original upload can be opened or downloaded even when its codec cannot play in the client.
- */
+/** Renders PR uploads inline, with retry and an original link when video playback fails. */
 export function PullRequestMarkdown({
   text,
   cwd,
@@ -42,13 +40,16 @@ export function PullRequestMarkdown({
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
-  const { repositoryUrl, githubAccountId } = useContext(PullRequestMarkdownContext);
+  const context = useContext(PullRequestMarkdownContext);
+  const repositoryUrl = context.repositoryUrl;
+  const githubAccountId = context.githubAccountId;
+  const resolvedThreadRef = threadRef ?? context.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
     [repositoryUrl],
   );
   return (
-    <div className={cn("space-y-3", className)}>
+    <div className={cn("space-y-3", className)} data-image-gallery>
       {segments.map((segment) => {
         if (segment.kind === "markdown") {
           return (
@@ -56,14 +57,25 @@ export function PullRequestMarkdown({
               key={segment.id}
               text={segment.text}
               cwd={cwd}
-              threadRef={threadRef ?? undefined}
+              threadRef={resolvedThreadRef}
+              pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
             />
           );
         }
-        const isVideo = segment.media === "video";
-        const Icon = isVideo ? PlayIcon : PaperclipIcon;
+        if (segment.media === "video") {
+          return (
+            <MediaVideoPlayer
+              key={`${segment.id}:${segment.url}`}
+              src={segment.url}
+              originalUrl={segment.url}
+              label="Pull request video"
+              className="w-full"
+              videoClassName="rounded-lg border border-border/60"
+            />
+          );
+        }
         return (
           // A plain anchor rather than the page's openExternal button: the desktop window
           // turns a blocked _blank into openExternal itself, and in a browser tab — where
@@ -84,10 +96,8 @@ export function PullRequestMarkdown({
             }}
             className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm hover:bg-muted/60"
           >
-            <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">
-              {isVideo ? "Play video on GitHub" : "Open attachment on GitHub"}
-            </span>
+            <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">Open attachment on GitHub</span>
             <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </a>
         );

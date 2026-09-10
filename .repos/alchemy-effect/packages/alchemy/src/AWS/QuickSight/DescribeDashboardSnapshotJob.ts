@@ -11,9 +11,8 @@ import type { Dashboard } from "./Dashboard.ts";
  * `AwsAccountId` and `DashboardId` are injected from the binding. Provide the
  * implementation with
  * `Effect.provide(AWS.QuickSight.DescribeDashboardSnapshotJobHttp)`.
- * @binding
- * @section Dashboard Snapshots
- * @example Poll A Snapshot Job Until It Completes
+ * ### Dashboard Snapshots
+ * **Example:** Poll A Snapshot Job Until It Completes
  * ```typescript
  * // init — bind the operation to the dashboard
  * const describeSnapshotJob =
@@ -28,6 +27,8 @@ import type { Dashboard } from "./Dashboard.ts";
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeDashboardSnapshotJob extends Binding.Service<
   DescribeDashboardSnapshotJob,

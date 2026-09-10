@@ -14,8 +14,9 @@ export interface ListMicrovmImageBuildsRequest extends Omit<
  * Bind it to a {@link MicrovmImage} to list builds for an image version,
  * optionally filtered by architecture/chipset (the `imageIdentifier` is
  * injected).
+ * ### Image Builds
+ *
  * @binding
- * @section Image Builds
  */
 export interface ListMicrovmImageBuilds extends Binding.Service<
   ListMicrovmImageBuilds,

@@ -1,12 +1,15 @@
 import {
+  type CustomModelSetting,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
-  type ModelCapabilities,
+  ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -32,7 +35,7 @@ function getRawSelectionValueById(
   return selection?.value;
 }
 
-export function getProviderOptionSelectionValue(
+function getProviderOptionSelectionValue(
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
   id: string,
 ): string | boolean | undefined {
@@ -247,6 +250,71 @@ export function normalizeCustomModelSlug(model: string | null | undefined): stri
   return model.trim() || null;
 }
 
+/** A custom model setting with its optional fields resolved. */
+export interface CustomModelDefinition {
+  readonly slug: string;
+  readonly name: string;
+  readonly capabilities: ModelCapabilities | null;
+}
+
+const decodeCustomModelCapabilities = Schema.decodeUnknownOption(ModelCapabilities);
+
+/**
+ * Read a `customModels` setting into resolved definitions. Accepts the typed
+ * union as well as the opaque `providerInstances[id].config` blob clients see,
+ * so it tolerates bare slugs, malformed rows, and unparseable capabilities
+ * (dropped rather than failing the whole list). Slugs are trimmed and
+ * deduplicated, first occurrence wins; `name` falls back to the slug.
+ */
+export function readCustomModelEntries(value: unknown): CustomModelDefinition[] {
+  if (!Array.isArray(value)) return [];
+  const entries: CustomModelDefinition[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    const record =
+      typeof raw === "string"
+        ? { slug: raw }
+        : raw !== null && typeof raw === "object"
+          ? (raw as { slug?: unknown; name?: unknown; capabilities?: unknown })
+          : null;
+    if (!record) continue;
+    const slug = normalizeCustomModelSlug(typeof record.slug === "string" ? record.slug : null);
+    if (!slug || seen.has(slug)) continue;
+    seen.add(slug);
+    const name =
+      (typeof record.name === "string" ? normalizeCustomModelSlug(record.name) : null) ?? slug;
+    const capabilities =
+      record.capabilities === undefined || record.capabilities === null
+        ? null
+        : Option.getOrNull(decodeCustomModelCapabilities(record.capabilities));
+    entries.push({
+      slug,
+      name,
+      capabilities: capabilities
+        ? createModelCapabilities({ optionDescriptors: capabilities.optionDescriptors ?? [] })
+        : null,
+    });
+  }
+  return entries;
+}
+
+/**
+ * Write a definition back to the compact stored shape: a bare slug when it
+ * carries nothing custom, otherwise an entry with only the set fields.
+ */
+export function toCustomModelSetting(entry: CustomModelDefinition): CustomModelSetting {
+  const descriptors = entry.capabilities?.optionDescriptors ?? [];
+  const name = entry.name !== entry.slug ? entry.name : undefined;
+  if (!name && descriptors.length === 0) return entry.slug;
+  return {
+    slug: entry.slug,
+    ...(name ? { name } : {}),
+    ...(descriptors.length > 0
+      ? { capabilities: createModelCapabilities({ optionDescriptors: descriptors }) }
+      : {}),
+  };
+}
+
 export function resolveSelectableModel(
   provider: ProviderDriverKind,
   value: string | null | undefined,
@@ -288,7 +356,7 @@ export function resolveSelectableModel(
 }
 
 /** Trim a string, returning null for empty/missing values. */
-export function trimOrNull<T extends string>(value: T | null | undefined): T | null {
+function trimOrNull<T extends string>(value: T | null | undefined): T | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim() as T;
   return trimmed || null;

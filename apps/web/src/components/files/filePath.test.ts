@@ -67,8 +67,15 @@ describe("fileBreadcrumbChildren", () => {
     ]);
   });
 
-  it("uses natural file-name ordering", () => {
-    expect(fileBreadcrumbChildren(entries, "src/lib").map((entry) => entry.label)).toEqual([
+  it("uses natural file-name ordering and preserves input order for equivalent names", () => {
+    const files = ["file10.ts", "File2.ts", "file02.ts", "file2.ts"].map((name) => ({
+      path: `src/lib/${name}`,
+      kind: "file" as const,
+    }));
+
+    expect(fileBreadcrumbChildren(files, "src/lib").map((entry) => entry.label)).toEqual([
+      "File2.ts",
+      "file02.ts",
       "file2.ts",
       "file10.ts",
     ]);

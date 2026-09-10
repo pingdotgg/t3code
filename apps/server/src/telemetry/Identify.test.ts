@@ -33,26 +33,6 @@ const findIdentityLog = (
   errorTag: string,
 ) => logs.find((log) => log.annotations.source === source && log.annotations.errorTag === errorTag);
 
-it("preserves exact telemetry identity causes without deriving messages from them", () => {
-  const decodeCause = new Error("private nested decode details");
-  const decodeError = new Identify.TelemetryIdentityDecodeError({
-    source: "codex",
-    filePath: "/tmp/auth.json",
-    cause: decodeCause,
-  });
-  const readCause = new Error("private nested read details");
-  const readError = new Identify.TelemetryIdentityReadError({
-    source: "anonymous",
-    filePath: "/tmp/anonymous-id",
-    cause: readCause,
-  });
-
-  assert.strictEqual(decodeError.cause, decodeCause);
-  assert.strictEqual(readError.cause, readCause);
-  assert.notInclude(decodeError.message, decodeCause.message);
-  assert.notInclude(readError.message, readCause.message);
-});
-
 it.layer(NodeServices.layer)("telemetry identity", (it) => {
   it.effect("uses the persisted anonymous id when provider identities are absent", () =>
     Effect.gen(function* () {

@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 
-export const BROWSER_IMPORT_SOURCE_IDS = [
+const BROWSER_IMPORT_SOURCE_IDS = [
   "chrome",
   "edge",
   "brave",
@@ -25,6 +25,7 @@ export const BROWSER_IMPORT_SOURCE_IDS = [
   "arc",
   "helium",
   "firefox",
+  "safari",
 ] as const;
 
 export const BrowserImportSourceId = Schema.Literals(BROWSER_IMPORT_SOURCE_IDS);
@@ -42,6 +43,7 @@ export const BrowserImportUnavailableReason = Schema.Literals([
   "notInstalled",
   "needsKeychainApproval",
   "keychainItemMissing",
+  "needsFullDiskAccess",
   "browserRunning",
   "unsupportedPlatform",
 ]);
@@ -137,13 +139,13 @@ export const BrowserImportResult = Schema.Struct({
 });
 export type BrowserImportResult = typeof BrowserImportResult.Type;
 
-export const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<
-  Record<BrowserImportUnavailableReason, string>
-> = {
+const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<Record<BrowserImportUnavailableReason, string>> = {
   notInstalled: "Not installed on this machine.",
   needsKeychainApproval: "Needs Keychain access to read its cookies.",
   keychainItemMissing:
     "No encryption key in your Keychain — sign in to that browser once, then retry.",
+  needsFullDiskAccess:
+    "Give T3 Code Full Disk Access in System Settings → Privacy & Security, then retry.",
   browserRunning: "Quit the browser first so its cookie database can be read.",
   unsupportedPlatform: "Importing from this browser isn't possible on this platform.",
 };

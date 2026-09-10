@@ -35,7 +35,7 @@ export class CostExplorerTestFunction extends Lambda.Function<Lambda.Function>()
 export default CostExplorerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Cost Explorer queries routinely take several seconds; the AWS default
     // 3s Lambda timeout is too tight.
     timeout: Duration.seconds(30),

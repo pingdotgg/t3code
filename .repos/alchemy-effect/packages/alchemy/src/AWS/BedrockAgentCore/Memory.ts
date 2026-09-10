@@ -99,9 +99,8 @@ export interface Memory extends Resource<
  * Provisioning is asynchronous: the provider waits for the memory to reach
  * `ACTIVE` (~2-3 minutes) before returning.
  *
- * @resource
- * @section Creating Memories
- * @example Short-Term Memory Only
+ * ### Creating Memories
+ * **Example:** Short-Term Memory Only
  * ```typescript
  * import * as AgentCore from "alchemy/AWS/BedrockAgentCore";
  *
@@ -110,7 +109,7 @@ export interface Memory extends Resource<
  * });
  * ```
  *
- * @example Memory with a Semantic Long-Term Strategy
+ * **Example:** Memory with a Semantic Long-Term Strategy
  * ```typescript
  * const memory = yield* AgentCore.Memory("AgentMemory", {
  *   eventExpiryDuration: "90 days",
@@ -125,8 +124,8 @@ export interface Memory extends Resource<
  * });
  * ```
  *
- * @section Using Memory from a Function
- * @example Record and Query Events
+ * ### Using Memory from a Function
+ * **Example:** Record and Query Events
  * ```typescript
  * // init
  * const createEvent = yield* AgentCore.CreateEvent(memory);
@@ -156,6 +155,8 @@ export interface Memory extends Resource<
  *   }),
  * };
  * ```
+ *
+ * @resource
  */
 export const Memory = Resource<Memory>("AWS.BedrockAgentCore.Memory");
 

@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 
-export class CdpConnectionError extends Schema.TaggedErrorClass<CdpConnectionError>()(
+export class CdpConnectionError extends Schema.TaggedError<CdpConnectionError>()(
   "CdpConnectionError",
   { endpoint: Schema.String, cause: Schema.Defect() },
 ) {
@@ -26,7 +26,7 @@ export class CdpConnectionError extends Schema.TaggedErrorClass<CdpConnectionErr
   }
 }
 
-export class CdpCommandError extends Schema.TaggedErrorClass<CdpCommandError>()("CdpCommandError", {
+export class CdpCommandError extends Schema.TaggedError<CdpCommandError>()("CdpCommandError", {
   method: Schema.String,
   detail: Schema.String,
 }) {

@@ -36,7 +36,7 @@ const connectUnavailableCommand = Command.make("connect", {
   command: Argument.string("command").pipe(Argument.variadic),
 }).pipe(
   Command.withDescription("T3 Connect is unavailable in builds without public configuration."),
-  Command.withHidden,
+  Command.unlisted,
   Command.withHandler(() =>
     Effect.fail(
       new CliError.ShowHelp({

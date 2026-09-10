@@ -20,9 +20,8 @@ export interface DescribeJobRequest extends Omit<
  * the bound {@link Vault} — its action, status code, and completion flag.
  * Provide the implementation with
  * `Effect.provide(AWS.Glacier.DescribeJobHttp)`.
- * @binding
- * @section Retrieving Archives
- * @example Poll a retrieval job
+ * ### Retrieving Archives
+ * **Example:** Poll a retrieval job
  * ```typescript
  * const describeJob = yield* AWS.Glacier.DescribeJob(vault);
  *
@@ -31,6 +30,8 @@ export interface DescribeJobRequest extends Omit<
  *   // fetch with GetJobOutput
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeJob extends Binding.Service<
   DescribeJob,

@@ -90,9 +90,8 @@ export interface Workspace extends Resource<
  * the account when `authenticationProviders` includes `AWS_SSO`. Workspace
  * provisioning is asynchronous and can take a few minutes.
  *
- * @resource
- * @section Creating a Workspace
- * @example SSO-Authenticated Workspace
+ * ### Creating a Workspace
+ * **Example:** SSO-Authenticated Workspace
  * ```typescript
  * const workspace = yield* Grafana.Workspace("Dashboards", {
  *   accountAccessType: "CURRENT_ACCOUNT",
@@ -101,6 +100,8 @@ export interface Workspace extends Resource<
  *   dataSources: ["PROMETHEUS", "CLOUDWATCH"],
  * });
  * ```
+ *
+ * @resource
  */
 export const Workspace = Resource<Workspace>("AWS.Grafana.Workspace");
 

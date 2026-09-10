@@ -12,14 +12,15 @@ export interface StopApplicationRequest extends Omit<
  * Runtime binding for `kinesisanalytics:StopApplication` — stops the bound
  * Flink application. By default the job is stopped gracefully (taking a
  * snapshot when snapshots are enabled); `Force: true` skips the snapshot.
- * @binding
- * @section Operating the Application
- * @example Force-stop the Flink job
+ * ### Operating the Application
+ * **Example:** Force-stop the Flink job
  * ```typescript
  * const stopApplication = yield* AWS.KinesisAnalyticsV2.StopApplication(app);
  *
  * const { OperationId } = yield* stopApplication({ Force: true });
  * ```
+ *
+ * @binding
  */
 export interface StopApplication extends Binding.Service<
   StopApplication,

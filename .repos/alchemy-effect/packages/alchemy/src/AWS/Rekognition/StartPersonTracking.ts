@@ -16,9 +16,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.StartPersonTrackingHttp)`.
  *
- * @binding
- * @section Video Analysis
- * @example Start Person Tracking
+ * ### Video Analysis
+ * **Example:** Start Person Tracking
  * ```typescript
  * // init
  * const startPersonTracking = yield* AWS.Rekognition.StartPersonTracking();
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // started.JobId
  * ```
+ *
+ * @binding
  */
 export interface StartPersonTracking extends Binding.Service<
   StartPersonTracking,

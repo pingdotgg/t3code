@@ -39,7 +39,7 @@ function responseStatus(cause: unknown): number | null {
   return typeof statusCode === "number" ? statusCode : null;
 }
 
-export class WebPushDeliveryTransportError extends Schema.TaggedErrorClass<WebPushDeliveryTransportError>()(
+export class WebPushDeliveryTransportError extends Schema.TaggedError<WebPushDeliveryTransportError>()(
   "WebPushDeliveryTransportError",
   { cause: Schema.Defect() },
 ) {}

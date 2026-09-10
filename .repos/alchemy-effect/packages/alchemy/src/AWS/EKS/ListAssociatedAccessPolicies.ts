@@ -10,9 +10,8 @@ import type { Cluster } from "./Cluster.ts";
  * The cluster `clusterName` is injected from the bound {@link Cluster} and `eks:ListAssociatedAccessPolicies` is granted on the cluster's sub-resource ARNs.
  * Provide the implementation with
  * `Effect.provide(AWS.EKS.ListAssociatedAccessPoliciesHttp)`.
- * @binding
- * @section Inspecting Identity and Access
- * @example List a Principal's Access Policies
+ * ### Inspecting Identity and Access
+ * **Example:** List a Principal's Access Policies
  * ```typescript
  * // init
  * const listAssociatedAccessPolicies =
@@ -23,6 +22,8 @@ import type { Cluster } from "./Cluster.ts";
  *   principalArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListAssociatedAccessPolicies extends Binding.Service<
   ListAssociatedAccessPolicies,

@@ -1,0 +1,109 @@
+---
+title: Tigris
+description: S3-compatible object storage billed through Fly. Bind Fly.PutObject / Fly.GetObject.
+---
+
+A [`Fly.Bucket`](/providers/fly/bucket) is Tigris S3-compatible
+object storage, billed through Fly. It is org-scoped. There is no
+parent [App](/fly/compute/apps).
+
+Tigris speaks the S3 API. Bind [`PutObject`](/providers/fly/putobject)
+/ [`GetObject`](/providers/fly/getobject) in a
+[Service](/fly/compute/services). Alchemy injects the Tigris
+endpoint and credentials. You never read `AWS_*` yourself.
+
+## Create a Bucket
+
+Alchemy generates a unique name unless you pass one.
+
+```typescript
+const data = yield* Fly.Bucket("Data");
+```
+
+## A stable name
+
+Pass `name` when you need a stable Tigris bucket name.
+
+```typescript
+const data = yield* Fly.Bucket("Data", {
+  name: "my-bucket",
+});
+```
+
+:::caution[Changing `name` replaces the Bucket]
+Tigris cannot rename a bucket. Alchemy creates the new name, then
+deletes the old one.
+:::
+
+## Put and get objects
+
+Bind `PutObject` / `GetObject` in Service init. Provide the matching
+`*Http` layers.
+
+```typescript
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { app: Site, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    const putObject = yield* Fly.PutObject(Data);
+    const getObject = yield* Fly.GetObject(Data);
+
+    return {
+      fetch: Effect.gen(function* () {
+        yield* putObject({
+          Key: "hello.txt",
+          Body: "hello",
+          ContentType: "text/plain",
+        });
+        const obj = yield* getObject({ Key: "hello.txt" });
+        return HttpServerResponse.json({ ok: obj.ETag !== undefined });
+      }),
+    };
+  }).pipe(Effect.provide([Fly.PutObjectHttp, Fly.GetObjectHttp])),
+) {}
+```
+
+## Public access
+
+Buckets are private by default. `public: true` serves objects
+without credentials.
+
+```typescript
+const assets = yield* Fly.Bucket("Assets", {
+  public: true,
+});
+```
+
+## Custom domain
+
+`domainName` sets `website.domain_name` on the add-on. Point a
+CNAME at `{name}.t3.tigrisbucket.io`.
+
+```typescript
+const assets = yield* Fly.Bucket("Assets", {
+  public: true,
+  domainName: "assets.example.com",
+});
+```
+
+## Organization
+
+Org defaults to the current token. Pass `orgSlug` to pin it.
+
+```typescript
+const data = yield* Fly.Bucket("Data", {
+  orgSlug: "my-org",
+});
+```
+
+:::caution[Changing `orgSlug` replaces the Bucket]
+The bucket is created in the new org. The old bucket is deleted.
+:::
+
+## Where next
+
+[Services](/fly/compute/services) is the Machine that binds
+`PutObject` / `GetObject`.
+The [`Bucket` reference](/providers/fly/bucket) lists every prop.

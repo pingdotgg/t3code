@@ -35,7 +35,7 @@ const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
  * whole menu with the one item that cannot be honoured is what left a right-click on a link
  * showing the platform's cut-and-paste menu instead of a way to copy the link.
  */
-export function externalLinkContextMenuItems(options: {
+function externalLinkContextMenuItems(options: {
   readonly canOpenInPreview: boolean;
   readonly threadLinkAction?: "link-to-thread" | "unlink-from-thread" | undefined;
 }): readonly ContextMenuItem<ExternalLinkContextMenuAction>[] {

@@ -29,11 +29,12 @@ export {
   pullRequestDiffLoaderLayer,
 } from "./pullRequestDiffHttp.ts";
 
+/** @public Required to name the error in consumers' inferred pull request results. */
 export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
   "EnvironmentHttpConnectionNotReadyError",
 )<{ readonly message: string }> {}
 
-export const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
+const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
 function createPullRequestRefreshAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -59,6 +60,20 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   });
 }
 
+/** The host-native stack a pull request belongs to; null where it is not stacked. */
+export function createPullRequestStackAtomFamily<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  refreshes = createPullRequestRefreshAtomFamily(runtime),
+) {
+  return createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:stack",
+    tag: WS_METHODS.pullRequestsStack,
+    staleTimeMs: 60_000,
+    idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
+    refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+  });
+}
+
 export function pullRequestDetailToVcsStatus(
   detail: PullRequestDetail | PullRequestSummary,
 ): NonNullable<VcsStatusResult["pr"]> {
@@ -75,8 +90,8 @@ export function pullRequestDetailToVcsStatus(
 }
 
 /**
- * Every read shells out to the GitHub CLI, so results are reused for a short while and
- * refreshed explicitly. Mutations run serially per environment: `gh` actions on the same
+ * Reopening a PR within a minute reuses detail and activity. Explicit refreshes and
+ * turn notifications still revalidate. Mutations run serially per environment: actions on the same
  * pull request are order-sensitive, and the detail view refetches after each one.
  */
 export function createPullRequestEnvironmentAtoms<R, E>(
@@ -91,11 +106,18 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const activity = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:activity",
     tag: WS_METHODS.pullRequestsActivity,
-    staleTimeMs: 15_000,
+    staleTimeMs: 60_000,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
   });
   return {
     refreshes,
+    linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:linked-threads",
+      tag: WS_METHODS.pullRequestsLinkedThreads,
+      staleTimeMs: 0,
+      refreshIntervalMs: 10_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list",
       tag: WS_METHODS.pullRequestsList,
@@ -118,7 +140,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:detail",
       tag: WS_METHODS.pullRequestsDetail,
-      staleTimeMs: 15_000,
+      staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     activity,
@@ -158,6 +180,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           JSON.stringify([
             environmentId,
             input.projectId,
+            input.host?.toLowerCase() ?? null,
             input.repository,
             input.number,
             input.commit ?? null,
@@ -190,9 +213,14 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsUpdateComment,
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
-      onSuccess: ({ environmentId, input: { projectId, repository, number } }, registry) =>
+      onSuccess: ({ environmentId, input: { projectId, host, repository, number } }, registry) =>
         Effect.sync(() =>
-          registry.refresh(activity({ environmentId, input: { projectId, repository, number } })),
+          registry.refresh(
+            activity({
+              environmentId,
+              input: { projectId, ...(host === undefined ? {} : { host }), repository, number },
+            }),
+          ),
         ),
     }),
     submitReview: createEnvironmentRpcCommand(runtime, {

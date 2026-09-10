@@ -114,6 +114,9 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
       if (/access_denied|denied access|cancelled/i.test(error.value.errorMessage)) {
         return "Google sign-in was not approved. Start sign-in again.";
       }
+      if (error.value.method === "session/new" && error.value.code === -32603) {
+        return "Antigravity authenticated, but could not initialize a session or load models.";
+      }
       if (!usesBrowser && error.value.code === -32602) {
         return "Antigravity rejected the configured credentials. Check the provider settings.";
       }

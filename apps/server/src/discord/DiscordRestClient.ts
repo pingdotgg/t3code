@@ -18,7 +18,7 @@ export const DISCORD_API_BASE = "https://discord.com/api/v10";
  */
 const bucketKey = (method: string, route: string): string => `${method} ${route}`;
 
-export class DiscordRequestError extends Schema.TaggedErrorClass<DiscordRequestError>()(
+export class DiscordRequestError extends Schema.TaggedError<DiscordRequestError>()(
   "DiscordRequestError",
   {
     route: Schema.String,
@@ -31,7 +31,7 @@ export class DiscordRequestError extends Schema.TaggedErrorClass<DiscordRequestE
   }
 }
 
-export class DiscordResponseError extends Schema.TaggedErrorClass<DiscordResponseError>()(
+export class DiscordResponseError extends Schema.TaggedError<DiscordResponseError>()(
   "DiscordResponseError",
   {
     route: Schema.String,

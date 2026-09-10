@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Lists every account assignment a user or group holds across the organization — "what can this principal access?" for access portals. Only valid on organization instances, called from the management account. The instance's
  * `InstanceArn` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.ListAccountAssignmentsForPrincipalHttp)`.
- * @binding
- * @section Auditing Access
- * @example List a Principal's Assignments
+ * ### Auditing Access
+ * **Example:** List a Principal's Assignments
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const listAccountAssignmentsForPrincipal = yield* AWS.IdentityCenter.ListAccountAssignmentsForPrincipal(instance);
@@ -23,6 +22,8 @@ import type { Instance } from "./Instance.ts";
  *   PrincipalType: "GROUP",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListAccountAssignmentsForPrincipal extends Binding.Service<
   ListAccountAssignmentsForPrincipal,

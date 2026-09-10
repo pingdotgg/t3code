@@ -7,6 +7,19 @@ within each theme. Appearance preferences are saved separately on each device or
 Mobile has its own themes and text, code, and terminal preferences. It does not follow environment
 themes or defaults.
 
+On Android 12 or newer, choose the **Material You** theme in Appearance to use colors from
+your wallpaper. Selecting another theme replaces those colors. Like other themes, Material You
+can be selected separately for light and dark appearances.
+Android also offers **Material You Layout**, which changes shapes and spacing independently
+of the selected theme.
+
+## Motion
+
+The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
+**Panel animations** slider above 0 ms to add motion, up to 400 ms, unless reduced motion is enabled
+in your operating system. Moving between threads always snaps to the selected thread's panel state
+without replaying its transitions.
+
 ## Custom themes
 
 On web and desktop, choose **Create theme** to adjust a palette, or import a T3 Code or VS Code

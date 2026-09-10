@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * last 24 hours, optionally filtered by namespace — the discovery half of
  * point-in-time recovery tooling. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.ListRecoveryPointsHttp)`.
- * @binding
- * @section Working with Recovery Points
- * @example List Recovery Points for a Namespace
+ * ### Working with Recovery Points
+ * **Example:** List Recovery Points for a Namespace
  * ```typescript
  * // init — resolve the runtime client
  * const listRecoveryPoints = yield* AWS.RedshiftServerless.ListRecoveryPoints();
  *
  * const { recoveryPoints } = yield* listRecoveryPoints({ namespaceName });
  * ```
+ *
+ * @binding
  */
 export interface ListRecoveryPoints extends Binding.Service<
   ListRecoveryPoints,

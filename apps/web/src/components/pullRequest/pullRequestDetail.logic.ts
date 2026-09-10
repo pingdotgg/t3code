@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 
 import {
   PullRequestDetail,
@@ -11,6 +12,7 @@ import {
   type PullRequestCommit,
   type PullRequestDetailView,
   type PullRequestMergeability,
+  type PullRequestMergeMethod,
   type PullRequestReaction,
   type PullRequestReviewThread,
   type PullRequestState,
@@ -20,6 +22,37 @@ import {
 } from "@t3tools/contracts";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+
+export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: "Merge",
+  squash: "Squash and merge",
+  rebase: "Rebase and merge",
+};
+
+/** Old environments keep their existing actions; new ones must finish stack discovery first. */
+export function allowsSinglePullRequestMerge(input: {
+  supportsStackActions: boolean;
+  hasStack: boolean;
+  stackPending: boolean;
+  stackError: string | null;
+}): boolean {
+  return (
+    !input.supportsStackActions ||
+    (!input.hasStack && !input.stackPending && input.stackError === null)
+  );
+}
+
+export function resolvePullRequestMergeMethod(
+  allowed: ReadonlyArray<PullRequestMergeMethod>,
+  current: PullRequestMergeMethod | null,
+  projectDefault: PullRequestMergeMethod | undefined,
+  lastSelected: PullRequestMergeMethod,
+): PullRequestMergeMethod {
+  for (const method of [current, projectDefault, lastSelected]) {
+    if (method && allowed.includes(method)) return method;
+  }
+  return allowed[0] ?? "merge";
+}
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const bitbucketRepositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -187,13 +220,6 @@ export function isStackedPullRequestBase(
     ? defaultRef.name.slice(remotePrefix.length)
     : defaultRef.name;
   return defaultBranch !== baseBranch;
-}
-
-/** Plain-language state, shown beside the author. Conflicts are a merge signal, not a state. */
-export function describePullRequestState(state: PullRequestState, isDraft: boolean): string {
-  if (state === "merged") return "Merged";
-  if (state === "closed") return "Closed";
-  return isDraft ? "Draft" : "Ready for review";
 }
 
 /** Chronological ascending, oldest to newest — reversed for the "newest" reading order. */
@@ -1016,6 +1042,7 @@ export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): bo
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
 export interface PullRequestDetailSnapshotRef {
+  readonly host?: string | undefined;
   readonly projectId: string;
   readonly repository: string;
   readonly number: number;
@@ -1025,7 +1052,9 @@ const pullRequestDetailSnapshotKey = (
   environmentId: string,
   reference: PullRequestDetailSnapshotRef,
 ) =>
-  `t3.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
+  reference.host
+    ? `t3.pullRequests.detail:${JSON.stringify([environmentId, reference.projectId, reference.host.toLowerCase(), reference.repository.toLowerCase(), reference.number])}`
+    : `t3.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
 
 const decodeDetailSnapshot = Schema.decodeUnknownOption(PullRequestDetail);
 
@@ -1044,7 +1073,9 @@ export function readPullRequestDetailSnapshot(
     const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference));
     if (!raw) return null;
     const decoded = decodeDetailSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
+    return decoded._tag === "Some"
+      ? resolveDisplayedPullRequestDetail({ live: null, cached: decoded.value, reference })
+      : null;
   } catch {
     return null;
   }
@@ -1078,7 +1109,9 @@ export function resolveDisplayedPullRequestDetail(input: {
     input.cached !== null &&
     input.cached.projectId === input.reference.projectId &&
     input.cached.repository.toLowerCase() === input.reference.repository.toLowerCase() &&
-    input.cached.number === input.reference.number
+    input.cached.number === input.reference.number &&
+    (input.reference.host === undefined ||
+      parseChangeRequestUrl(input.cached.url)?.host === input.reference.host.toLowerCase())
   ) {
     return input.cached;
   }

@@ -138,7 +138,7 @@ export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
 
 /** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
-export function manifestUpdatedAtMs(manifest: ModelManifestData): number {
+function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   if (manifest.updatedAt === undefined) return 0;
   const parsed = Date.parse(manifest.updatedAt);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -207,7 +207,7 @@ export const encodeManifestCache = Schema.encodeEffect(
 );
 
 /** True when the manifest classifies `slug` as legacy for `driverKind`. */
-export function isLegacyModel(
+function isLegacyModel(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
   slug: string,
@@ -310,8 +310,8 @@ export class ModelManifest extends Context.Service<
   }
 >()("t3/provider/ModelManifest") {}
 
-/** Constant service for tests and callers that only need the bundled data. */
-export const BundledOnlyModelManifest: ModelManifest["Service"] = {
+/** Constant service backing the bundled-data test layer. */
+const BundledOnlyModelManifest: ModelManifest["Service"] = {
   current: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   refresh: Effect.succeed(BUNDLED_MODEL_MANIFEST),
   refreshInBackground: Effect.void,

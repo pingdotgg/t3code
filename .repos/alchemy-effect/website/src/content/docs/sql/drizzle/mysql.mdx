@@ -1,0 +1,209 @@
+---
+title: MySQL
+description: Drizzle on MySQL — declare the schema, generate and apply migrations on deploy, and query from a Worker with Drizzle.MySQL over Hyperdrive.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `drizzle-orm @effect/sql-mysql2 mysql2`;
+export const devDeps = `drizzle-kit`;
+
+Drizzle on MySQL, end to end: a schema module, a `Drizzle.Schema`
+resource that generates migration SQL on deploy, a PlanetScale
+branch that applies it, and a Worker that queries through
+`Drizzle.MySQL` over Hyperdrive.
+
+Install the toolchain — all optional peers of alchemy:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Define the schema
+
+Drizzle schemas are plain TypeScript modules using the `mysql-core`
+column builders:
+
+```typescript
+// src/schema.ts
+import { defineRelations } from "drizzle-orm";
+import { int, mysqlTable, varchar } from "drizzle-orm/mysql-core";
+
+export const Users = mysqlTable("users", {
+  id: int("id").primaryKey().autoincrement(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+});
+
+export const Posts = mysqlTable("posts", {
+  id: int("id").primaryKey().autoincrement(),
+  userId: int("user_id").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+});
+
+export const relations = defineRelations({ Users, Posts }, (t) => ({
+  Users: { posts: t.many.Posts() },
+  Posts: {
+    user: t.one.Users({ from: t.Posts.userId, to: t.Users.id }),
+  },
+}));
+```
+
+## Declare the schema resource and database
+
+`Drizzle.Schema` diffs the schema module on each deploy and writes
+pending migration SQL to `out` — `dialect: "mysql"` selects
+drizzle-kit's MySQL differ. Passing `schema.out` as the branch's
+`migrations` prop creates the dependency edge: generate first, apply
+second, in one `alchemy deploy`. On PlanetScale:
+
+```typescript
+// src/db.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
+import * as Planetscale from "alchemy/Planetscale";
+import * as Effect from "effect/Effect";
+
+export const Db = Effect.gen(function* () {
+  const schema = yield* Drizzle.Schema("app-schema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+    dialect: "mysql",
+  });
+
+  const database = yield* Planetscale.MySQLDatabase("app-db", {
+    region: { slug: "us-east" },
+    clusterSize: "PS_10",
+  });
+
+  const branch = yield* Planetscale.MySQLBranch("app-branch", {
+    database,
+    isProduction: false,
+    migrations: schema,
+  });
+
+  const password = yield* Planetscale.MySQLPassword("app-password", {
+    database,
+    branch,
+    role: "readwriter",
+  });
+
+  return { database, branch, password };
+});
+
+export const Hyperdrive = Effect.gen(function* () {
+  const { password } = yield* Db;
+  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+    origin: password.origin,
+  });
+});
+```
+
+Register `Drizzle.providers()` alongside your cloud providers in the
+Stack. [Migrations](/sql/drizzle/migrations) covers what the schema
+resource does — and does not — decide on your behalf.
+
+## Connect in a Worker
+
+Hyperdrive pools connections at the edge; `Drizzle.MySQL` takes its
+connection string:
+
+```typescript
+// src/api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle/MySQL";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Hyperdrive } from "./db.ts";
+import { relations, Users } from "./schema.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const conn = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
+    const db = yield* Drizzle.MySQL(conn.connectionString, { relations });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* db.select().from(Users);
+        return yield* HttpServerResponse.json({ users });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+) {}
+```
+
+On Workers the underlying `@effect/sql-mysql2` client defaults to
+the text protocol (Hyperdrive's MySQL proxy has no
+`COM_STMT_PREPARE`) and eval-free row parsers (the isolate forbids
+runtime code generation) — see
+[Workers defaults](/sql/effect-sql/mysql#workers-defaults). Pool
+options like TLS for a direct connection go through
+`config.client`, which also overrides the detected defaults:
+
+```typescript
+const db = yield* Drizzle.MySQL(connectionString, {
+  relations,
+  client: { poolConfig: { ssl: { rejectUnauthorized: true } } },
+});
+```
+
+Nothing connects at init — the pool opens on the first query of an
+event, is reused for every query in that event, and closes when the
+event settles (see
+[Connection lifecycle](/sql/effect-sql/lifecycle)). Plan and deploy
+never open a connection.
+
+## Queries are Effects
+
+Every builder yields directly, with `SqlError` in the typed error
+channel. MySQL has no `RETURNING` clause — inserts report generated
+ids via `$returningId()`, and upserts use `onDuplicateKeyUpdate`:
+
+```typescript
+const [{ id }] = yield* db
+  .insert(Users)
+  .values({ name, email })
+  .$returningId();
+
+yield* db
+  .insert(Users)
+  .values({ id, name, email })
+  .onDuplicateKeyUpdate({ set: { name } });
+
+yield* db.delete(Users).where(eq(Users.id, id));
+```
+
+Because `relations` was passed to `Drizzle.MySQL`, the typed
+`db.query.*` API is available:
+
+```typescript
+const user = yield* db.query.Users.findFirst({
+  where: { id },
+  with: { posts: true },
+});
+```
+
+## Where next
+
+- [Migrations](/sql/drizzle/migrations) — what deploy-time schema
+  generation actually does, and when it asks for a decision.
+- [Add Drizzle ORM (Cloudflare tutorial)](/cloudflare/data/drizzle)
+  — the same flow in the Cloudflare hub, with Postgres and MySQL
+  tabs and deploy walkthrough.
+- [Effect SQL: MySQL](/sql/effect-sql/mysql) — tagged-template SQL
+  over the same pool, no ORM.
+- [PlanetScale MySQL](/planetscale/data/mysql) — the database
+  resources behind this page.

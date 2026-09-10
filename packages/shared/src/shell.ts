@@ -12,8 +12,6 @@ import * as Path from "effect/Path";
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
 import * as Context from "effect/Context";
 
-const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
-const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
@@ -177,18 +175,6 @@ export function listLoginShellCandidates(
   }
 
   return candidates;
-}
-
-export function extractPathFromShellOutput(output: string): string | null {
-  const startIndex = output.indexOf(PATH_CAPTURE_START);
-  if (startIndex === -1) return null;
-
-  const valueStartIndex = startIndex + PATH_CAPTURE_START.length;
-  const endIndex = output.indexOf(PATH_CAPTURE_END, valueStartIndex);
-  if (endIndex === -1) return null;
-
-  const pathValue = output.slice(valueStartIndex, endIndex).trim();
-  return pathValue.length > 0 ? pathValue : null;
 }
 
 export function readPathFromLoginShell(
@@ -544,7 +530,8 @@ function cacheCommandResolution(
   });
 }
 
-const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
+// Trace each command lookup, not every candidate file it probes.
+const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
@@ -605,12 +592,15 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return cached.resolvedPath;
   }
 
+  // Keep case variants: Windows can make PATH directories case-sensitive.
   const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length > 0) {
-      pathEntries.push(pathEntry);
-    }
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
   }
 
   for (const pathEntry of pathEntries) {

@@ -149,13 +149,14 @@ export function consumeBrokerMessages<B extends Broker, Req = never>(
  * layer (which registers the event-source mapping, IAM grants, and runtime
  * dispatch).
  *
- * @example
+ * **Example:** Example
  * ```typescript
  * // equivalent to consumeBrokerMessages(broker, props, process)
  * yield* BrokerEventSource.use((source) =>
  *   source(broker, props, process),
  * );
  * ```
+ *
  * @binding
  */
 export class BrokerEventSource extends Context.Service<

@@ -40,7 +40,8 @@ export type BuiltInDriversEnv =
   | CursorDriverEnv
   | GrokDriverEnv
   | HermesDriverEnv
-  | OpenCodeDriverEnv;
+  | OpenCodeDriverEnv
+  | AntigravityDriverEnv;
 
 /**
  * Ordered list of built-in drivers. Order matters only for tie-breaking in

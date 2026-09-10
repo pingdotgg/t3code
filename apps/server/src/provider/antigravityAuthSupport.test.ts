@@ -15,6 +15,7 @@ import * as Ndjson from "effect/unstable/encoding/Ndjson";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
   ANTIGRAVITY_AUTH_BROWSER_MARKER,
@@ -508,6 +509,42 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       yield* prepareAntigravityProfile({ profileDirectory: profile.geminiHome });
       expect(yield* fs.readFileString(profile.tokenPath)).toBe("synthetic-token-fixture");
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "links the user's global skill directories into the profile without touching real content",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const userHome = path.join(temporaryDirectory, "home");
+        const profileDirectory = path.join(temporaryDirectory, "profile");
+        const configSkills = path.join(userHome, ".gemini", "config", "skills");
+        const cliSkills = path.join(userHome, ".gemini", "antigravity-cli", "skills");
+        yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        const configLink = path.join(profileDirectory, "config", "skills");
+        const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
+        expect(yield* fs.readLink(configLink)).toBe(configSkills);
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(yield* fs.exists(path.join(configLink, "review"))).toBe(true);
+        // Only the skill directories are shared; the rest of the profile stays private.
+        expect(yield* fs.exists(path.join(profileDirectory, "config", "mcp_config.json"))).toBe(
+          false,
+        );
+
+        // A stale link is repointed; a real directory the user placed there is kept.
+        yield* fs.remove(cliLink);
+        yield* fs.symlink(path.join(temporaryDirectory, "elsewhere"), cliLink);
+        yield* fs.remove(configLink);
+        yield* fs.makeDirectory(path.join(configLink, "own-skill"), { recursive: true });
+        yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(cliLink)).toBe(cliSkills);
+        expect(yield* fs.exists(path.join(configLink, "own-skill"))).toBe(true);
+        expect((yield* fs.stat(configLink)).type).toBe("Directory");
+      }),
   );
 
   it.effect("rewrites the GCP block on every launch and never stores the API key", () =>

@@ -211,7 +211,7 @@ export const make = <
 > =>
   makeWith<Key, A, E, R, ServiceMode>({
     ...options,
-    timeToLive: options.timeToLive ? () => options.timeToLive! : defaultTimeToLive
+    timeToLive: options.timeToLive !== undefined ? () => options.timeToLive! : defaultTimeToLive
   })
 
 const Proto = {

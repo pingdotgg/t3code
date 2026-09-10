@@ -227,14 +227,13 @@ export interface Subnet extends Resource<
  * Changing the `vpcId`, `cidrBlock`, availability zone, or an IPAM/IPv6 pool
  * replaces the subnet.
  *
- * @resource
- * @section Creating a Subnet
+ * ### Creating a Subnet
  * A subnet carves a smaller CIDR range out of its parent VPC's block. The
  * `cidrBlock` must be a subset of the VPC CIDR and must not overlap any sibling
  * subnet. You can also let AWS IPAM allocate the range via `ipv4IpamPoolId` +
  * `ipv4NetmaskLength`.
  *
- * @example Basic Subnet
+ * **Example:** Basic Subnet
  * ```typescript
  * const subnet = yield* AWS.EC2.Subnet("TestSubnet", {
  *   vpcId: vpc.vpcId,
@@ -245,12 +244,12 @@ export interface Subnet extends Resource<
  * The minimal subnet: a `/24` (256 addresses) inside the VPC. Without an
  * explicit `availabilityZone`, AWS picks one for you.
  *
- * @section Availability Zone Placement
+ * ### Availability Zone Placement
  * Each subnet lives in exactly one AZ. Pin it with `availabilityZone` (the zone
  * name, e.g. `us-east-1a`) or `availabilityZoneId` (the stable zone ID, e.g.
  * `use1-az1`) to spread tiers across zones for high availability.
  *
- * @example Subnet pinned to an Availability Zone
+ * **Example:** Subnet pinned to an Availability Zone
  * ```typescript
  * const subnet = yield* AWS.EC2.Subnet("Az1Subnet", {
  *   vpcId: vpc.vpcId,
@@ -263,8 +262,8 @@ export interface Subnet extends Resource<
  * resources redundantly across zones. Use `availabilityZoneId` instead when you
  * need the physical zone to line up across different AWS accounts.
  *
- * @section Public IP Assignment
- * @example Public subnet
+ * ### Public IP Assignment
+ * **Example:** Public subnet
  * ```typescript
  * const publicSubnet = yield* AWS.EC2.Subnet("PublicSubnet", {
  *   vpcId: vpc.vpcId,
@@ -279,13 +278,13 @@ export interface Subnet extends Resource<
  * here automatically get a public IPv4 address. Combine it with an internet
  * gateway route so those instances can reach the internet.
  *
- * @section IPv6 Subnets
+ * ### IPv6 Subnets
  * For dual-stack VPCs, give the subnet an IPv6 `cidrBlock`, auto-assign IPv6
  * addresses on launch with `assignIpv6AddressOnCreation`, and optionally enable
  * `enableDns64` so the Amazon DNS resolver synthesizes IPv6 addresses for
  * IPv4-only destinations (NAT64).
  *
- * @example IPv6-enabled subnet
+ * **Example:** IPv6-enabled subnet
  * ```typescript
  * const subnet = yield* AWS.EC2.Subnet("Ipv6Subnet", {
  *   vpcId: vpc.vpcId,
@@ -300,14 +299,14 @@ export interface Subnet extends Resource<
  * lets them reach IPv4-only services through a NAT gateway. The IPv6 `/64` must
  * come from the parent VPC's IPv6 block.
  *
- * @section DNS Hostname Options
+ * ### DNS Hostname Options
  * Control what hostnames instances receive on launch. `hostnameType` chooses
  * between IP-based names (`ip-name`) and resource-based names (`resource-name`),
  * and the `enableResourceNameDnsARecordOnLaunch` /
  * `enableResourceNameDnsAAAARecordOnLaunch` flags register A / AAAA records for
  * resource-name hosts.
  *
- * @example Resource-name DNS hostnames
+ * **Example:** Resource-name DNS hostnames
  * ```typescript
  * const subnet = yield* AWS.EC2.Subnet("ResourceNameSubnet", {
  *   vpcId: vpc.vpcId,
@@ -322,8 +321,8 @@ export interface Subnet extends Resource<
  * so they stay stable across stop/start. Enabling the A/AAAA records makes those
  * names resolvable over IPv4 and IPv6.
  *
- * @section Public & Private Tiers
- * @example A public and a private subnet in one VPC
+ * ### Public & Private Tiers
+ * **Example:** A public and a private subnet in one VPC
  * ```typescript
  * const vpc = yield* AWS.EC2.Vpc("MyVpc", {
  *   cidrBlock: "10.0.0.0/16",
@@ -349,6 +348,8 @@ export interface Subnet extends Resource<
  * internet gateway) for load balancers and a private subnet (no public IPs) for
  * application and database instances. Both share the same AZ here, but in
  * production you'd replicate the pair across AZs.
+ *
+ * @resource
  */
 export const Subnet = Resource<Subnet>("AWS.EC2.Subnet");
 

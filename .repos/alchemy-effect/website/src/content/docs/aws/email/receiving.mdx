@@ -1,0 +1,265 @@
+---
+title: Email receiving
+description: Receive inbound email with SES — rule sets and rules that store mail in S3, fan out to SNS, invoke a Lambda, or bounce it, plus IP filters and the active rule set pointer.
+---
+
+**SES email receiving** turns a domain you've verified into an
+inbound mail endpoint. Mail arriving at any address on the domain
+is matched against an ordered list of **receipt rules**, and each
+rule runs a list of **actions**: store the raw message in S3,
+publish a notification to SNS, invoke a Lambda, bounce it back to
+the sender, add a header, or stop processing.
+
+The receiving primitives:
+
+- A **[`ReceiptRuleSet`](/providers/aws/ses/receiptruleset)** is
+  the ordered container for rules. An account can hold many, but
+  only one is active at a time.
+- A **[`ReceiptRule`](/providers/aws/ses/receiptrule)** matches
+  inbound mail by recipient and applies an ordered list of
+  actions.
+- The
+  **[`ActiveReceiptRuleSet`](/providers/aws/ses/activereceiptruleset)**
+  is the single rule set SES actually evaluates — an account
+  singleton pointer.
+- A **[`ReceiptFilter`](/providers/aws/ses/receiptfilter)**
+  allows or blocks inbound mail by source IP, before rules run.
+- **[`SendBounce`](/providers/aws/ses/sendbounce)** is a runtime
+  binding for bouncing a received message from inside a Lambda.
+
+:::note
+Email receiving is only available in a subset of AWS regions —
+today **`us-east-1`**, **`us-west-2`**, and **`eu-west-1`**.
+Deploy the stack that owns these resources to one of them, and
+point your domain's MX record at that region's SES inbound
+endpoint (e.g. `inbound-smtp.us-east-1.amazonaws.com`).
+:::
+
+## Create the Stack
+
+The snippets below run inside a Stack's `Effect.gen` body:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as AWS from "alchemy/AWS";
+import * as SES from "alchemy/AWS/SES";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "InboundMail",
+  { providers: AWS.providers(), state: AWS.state() },
+  Effect.gen(function* () {
+    // resources go here
+    return {};
+  }),
+);
+```
+
+## Create a rule set
+
+A rule set starts empty — it's just the ordered container the
+rules hang off:
+
+```typescript
+const ruleSet = yield* SES.ReceiptRuleSet("Inbound", {});
+```
+
+Omitting `ruleSetName` lets Alchemy generate a deterministic name
+from the app, stage, and logical id. Nothing is evaluated against
+inbound mail until a rule set is made active (below).
+
+## Store inbound mail in S3
+
+The running example is a support inbox: store every raw message
+in a bucket, then notify a topic that new mail arrived. Start with
+the S3 action:
+
+```typescript
+const bucket = yield* AWS.S3.Bucket("InboundMail", {
+  forceDestroy: true,
+});
+
+const inbound = yield* SES.ReceiptRule("Support", {
+  ruleSetName: ruleSet.ruleSetName,
+  recipients: ["support@example.com"],
+  actions: [
+    {
+      S3Action: {
+        BucketName: bucket.bucketName,
+        ObjectKeyPrefix: "support/",
+      },
+    },
+  ],
+});
+```
+
+SES writes the full raw MIME message to the bucket under the
+prefix, keyed by message id. The bucket's policy must allow the
+SES service principal (`ses.amazonaws.com`) to `s3:PutObject` — SES
+validates this when the rule is created, so add it to the bucket
+before the rule.
+
+## Fan out to SNS
+
+Actions run in array order. Add an `SNSAction` after the S3 action
+so SES publishes a notification once the message is stored:
+
+```typescript
+const topic = yield* AWS.SNS.Topic("InboundNotifications", {});
+
+const inbound = yield* SES.ReceiptRule("Support", {
+  ruleSetName: ruleSet.ruleSetName,
+  recipients: ["support@example.com"],
+  actions: [
+    {
+      S3Action: {
+        BucketName: bucket.bucketName,
+        ObjectKeyPrefix: "support/",
+      },
+    },
+    { SNSAction: { TopicArn: topic.topicArn, Encoding: "UTF-8" } },
+  ],
+});
+```
+
+Anything subscribed to the topic — a queue, a Lambda, an
+HTTP endpoint — now fans out from the single notification. The
+topic's access policy must allow `ses.amazonaws.com` to
+`sns:Publish`. (An `SNSAction` publishes a notification, not the
+message body; for large messages the S3 copy is the source of
+truth.)
+
+## Invoke a Lambda on inbound mail
+
+A `LambdaAction` hands the matched message to a function. Point it
+at the function's ARN and choose `Event` (async, fire-and-forget)
+or `RequestResponse` (synchronous, lets the function influence
+delivery):
+
+```typescript
+const rule = yield* SES.ReceiptRule("Process", {
+  ruleSetName: ruleSet.ruleSetName,
+  recipients: ["support@example.com"],
+  actions: [
+    {
+      LambdaAction: {
+        FunctionArn: processor.functionArn,
+        InvocationType: "Event",
+      },
+    },
+  ],
+});
+```
+
+See [Lambda](/aws/compute/lambda) for standing up the `processor`
+function itself. SES's permission to invoke it is granted the same
+way as S3 and SNS — the function's resource policy must allow
+`ses.amazonaws.com` to `lambda:InvokeFunction`.
+
+## Order rules with `after`
+
+Rules evaluate top to bottom. The `after` prop pins a rule
+immediately behind another one in the set. Here a catch-all bounce
+runs after the support rule, rejecting mail to unknown recipients:
+
+```typescript
+const bounce = yield* SES.ReceiptRule("BounceUnknown", {
+  ruleSetName: ruleSet.ruleSetName,
+  after: inbound.ruleName,
+  actions: [
+    {
+      BounceAction: {
+        SmtpReplyCode: "550",
+        Message: "Mailbox does not exist",
+        Sender: "mailer-daemon@example.com",
+      },
+    },
+  ],
+});
+```
+
+A rule with no `recipients` matches everything, so ordering it
+last makes it a fallthrough. Omit `after` to place a rule at the
+top of the set.
+
+## Activate the rule set
+
+Rules do nothing until their set is the account's active one.
+`ActiveReceiptRuleSet` is the pointer SES evaluates against every
+inbound message:
+
+```typescript
+yield* SES.ActiveReceiptRuleSet("Active", {
+  ruleSetName: ruleSet.ruleSetName,
+});
+```
+
+Only one rule set is active per account and region. Re-pointing
+this resource at a different set switches receiving over in place.
+Destroying it deactivates receiving — but only if the account is
+still pointed at the set this resource activated; if something else
+has since taken over, the destroy is a no-op.
+
+## Filter senders by IP
+
+`ReceiptFilter` is an account-level allow/block list on the source
+IP of inbound connections, applied before any rule runs. Block
+filters win over allow filters:
+
+```typescript
+yield* SES.ReceiptFilter("BlockBadActors", {
+  ipFilter: { policy: "Block", cidr: "203.0.113.0/24" },
+});
+```
+
+`cidr` takes a single address (`203.0.113.7`) or a range
+(`203.0.113.0/24`). Filters have no update API, so changing the
+policy or range replaces the filter.
+
+## Bounce a message from a Lambda
+
+When a `LambdaAction` invokes your function synchronously, the
+function can bounce the message itself. `SES.SendBounce` is a
+runtime binding — an account-level operation with no resource to
+scope to, so it's bound with no argument and its implementation is
+provided as `SES.SendBounceHttp`:
+
+```typescript
+// init — inside the Lambda's Effect.gen body
+const sendBounce = yield* SES.SendBounce();
+```
+
+At runtime, generate the bounce from the id of the message SES
+delivered to you:
+
+```typescript
+yield* sendBounce({
+  OriginalMessageId: messageId,
+  BounceSender: "mailer-daemon@example.com",
+  BouncedRecipientInfoList: [
+    { Recipient: "nobody@example.com", BounceType: "DoesNotExist" },
+  ],
+});
+```
+
+Provide the implementation on the function with
+`Effect.provide(SES.SendBounceHttp)`. You can only bounce a message
+within 24 hours of receiving it, and only mail SES actually
+received for you.
+
+## Where next
+
+- [Lambda](/aws/compute/lambda) — the function a `LambdaAction`
+  invokes.
+- [S3](/aws/data/s3) — the bucket inbound mail lands in.
+- [SNS](/aws/messaging/sns) — fan the notification out to queues
+  and functions.
+
+Reference:
+
+- [ReceiptRuleSet API reference](/providers/aws/ses/receiptruleset)
+- [ReceiptRule API reference](/providers/aws/ses/receiptrule)
+- [ActiveReceiptRuleSet API reference](/providers/aws/ses/activereceiptruleset)
+- [ReceiptFilter API reference](/providers/aws/ses/receiptfilter)
+- [SendBounce API reference](/providers/aws/ses/sendbounce)

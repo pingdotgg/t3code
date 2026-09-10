@@ -57,6 +57,7 @@ const makeProject = (workspaceRoot: string): OrchestrationProjectShell => ({
 
 const makeProjection = (project: OrchestrationProjectShell) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+    getUserInputActivity: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () =>
@@ -75,11 +76,14 @@ const makeProjection = (project: OrchestrationProjectShell) =>
     getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
     getProjectShellById: () => Effect.succeed(Option.none()),
     getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+    getImportedAgentSessionSources: () => Effect.succeed([]),
     getThreadCheckpointContext: () => Effect.succeed(Option.none()),
     getFullThreadDiffContext: () => Effect.succeed(Option.none()),
     getThreadShellById: () => Effect.succeed(Option.none()),
+    getThreadRuntimeContext: () => Effect.succeed(Option.none()),
     getThreadDetailById: () => Effect.succeed(Option.none()),
     getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+    getTurnStartMessage: () => Effect.succeed(Option.none()),
   });
 
 const completedReviewRun = (): AgentDashboardAutomationRun => ({

@@ -12,7 +12,7 @@
  */
 import * as Config from "../../Config.ts"
 import * as Effect from "../../Effect.ts"
-import { dual, identity } from "../../Function.ts"
+import { dual, identity, type LazyArg } from "../../Function.ts"
 import * as Option from "../../Option.ts"
 import { type Pipeable, pipeArguments } from "../../Pipeable.ts"
 import * as Predicate from "../../Predicate.ts"
@@ -226,7 +226,11 @@ export interface Transform<Kind extends ParamKind, in out A, out B> extends Para
   readonly _tag: "Transform"
   readonly kind: Kind
   readonly param: Param<Kind, A>
-  readonly f: (parse: Parse<A>) => Parse<B>
+  readonly alternatives: ReadonlyArray<LazyArg<Param<Kind, unknown>>>
+  readonly f: (
+    parse: Parse<A>,
+    alternatives: ReadonlyArray<LazyArg<Parse<unknown>>>
+  ) => Parse<B>
 }
 
 /**
@@ -272,17 +276,15 @@ const Proto = {
  *
  * **Example** (Checking for params)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const maybeParam = Param.string(Param.flagKind, "name")
  *
- * if (Param.isParam(maybeParam)) {
- *   console.log("This is a Param")
- * }
+ * Param.isParam(maybeParam) // => true
  * ```
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isParam = (u: unknown): u is Param<any, ParamKind> => Predicate.hasProperty(u, TypeId)
@@ -292,17 +294,17 @@ export const isParam = (u: unknown): u is Param<any, ParamKind> => Predicate.has
  *
  * **Example** (Checking for single params)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const nameParam = Param.string(Param.flagKind, "name")
  * const optionalParam = Param.optional(nameParam)
  *
- * console.log(Param.isSingle(nameParam)) // true
- * console.log(Param.isSingle(optionalParam)) // false
+ * Param.isSingle(nameParam) // => true
+ * Param.isSingle(optionalParam) // => false
  * ```
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isSingle = <const Kind extends ParamKind, A>(
@@ -358,7 +360,7 @@ export const makeSingle = <const Kind extends ParamKind, A>(params: {
  *
  * **Example** (Creating string parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create a string flag
@@ -368,6 +370,7 @@ export const makeSingle = <const Kind extends ParamKind, A>(params: {
  * const fileArg = Param.string(Param.argumentKind, "file")
  *
  * // Usage in CLI: --name "John Doe" or as positional argument
+ * const kinds = [nameFlag.kind, fileArg.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -388,7 +391,7 @@ export const string = <const Kind extends ParamKind>(
  *
  * **Example** (Creating boolean parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create a boolean flag
@@ -397,8 +400,10 @@ export const string = <const Kind extends ParamKind>(
  * // Create a boolean argument
  * const enableArg = Param.boolean(Param.argumentKind, "enable")
  *
- * // Usage in CLI: --verbose (defaults to true when present, false when absent)
- * // or as positional: true/false
+ * // Usage in CLI: --verbose (true) or --no-verbose (false).
+ * // The flag is required unless made optional or given a fallback.
+ * // Boolean positional arguments accept true/false.
+ * const kinds = [verboseFlag.kind, enableArg.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -419,7 +424,7 @@ export const boolean = <const Kind extends ParamKind>(
  *
  * **Example** (Creating integer parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create an integer flag
@@ -429,6 +434,7 @@ export const boolean = <const Kind extends ParamKind>(
  * const countArg = Param.integer(Param.argumentKind, "count")
  *
  * // Usage in CLI: --port 8080 or as positional argument: 42
+ * const kinds = [portFlag.kind, countArg.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -449,7 +455,7 @@ export const integer = <const Kind extends ParamKind>(
  *
  * **Example** (Creating float parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create a float flag
@@ -459,6 +465,7 @@ export const integer = <const Kind extends ParamKind>(
  * const thresholdArg = Param.float(Param.argumentKind, "threshold")
  *
  * // Usage in CLI: --rate 0.95 or as positional argument: 3.14159
+ * const kinds = [rateFlag.kind, thresholdArg.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -479,7 +486,7 @@ export const float = <const Kind extends ParamKind>(
  *
  * **Example** (Creating date parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create a date flag
@@ -490,6 +497,7 @@ export const float = <const Kind extends ParamKind>(
  *
  * // Usage in CLI: --start-date "2023-12-25" or as positional: "2023-01-01"
  * // Parses to JavaScript Date object
+ * const kinds = [startFlag.kind, dueDateArg.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -511,7 +519,7 @@ export const date = <const Kind extends ParamKind>(
  *
  * **Example** (Creating valued choices)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * type Animal = Dog | Cat
@@ -528,6 +536,7 @@ export const date = <const Kind extends ParamKind>(
  *   ["dog", { _tag: "Dog" }],
  *   ["cat", { _tag: "Cat" }]
  * ])
+ * animal.kind // => "flag"
  * ```
  *
  * @category constructors
@@ -549,7 +558,7 @@ export const choiceWithValue = <
  *
  * **Example** (Creating string choices)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const logLevel = Param.choice(Param.flagKind, "log-level", [
@@ -558,6 +567,7 @@ export const choiceWithValue = <
  *   "warn",
  *   "error"
  * ])
+ * logLevel.kind // => "flag"
  * ```
  *
  * @category constructors
@@ -576,7 +586,7 @@ export const choice = <
  *
  * **Example** (Creating path parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Basic path parameter
@@ -591,6 +601,7 @@ export const choice = <
  *   mustExist: true,
  *   typeName: "config-file"
  * })
+ * const kinds = [outputPath.kind, inputPath.kind, configFile.kind] // => ["flag", "flag", "flag"]
  * ```
  *
  * @category constructors
@@ -622,7 +633,7 @@ export const path = <Kind extends ParamKind>(
  *
  * **Example** (Creating directory parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Basic directory parameter
@@ -632,6 +643,7 @@ export const path = <Kind extends ParamKind>(
  * const sourceDir = Param.directory(Param.flagKind, "source", { mustExist: true })
  *
  * // Usage: --output-dir /path/to/dir --source /existing/dir
+ * const kinds = [outputDir.kind, sourceDir.kind] // => ["flag", "flag"]
  * ```
  *
  * @category constructors
@@ -660,7 +672,7 @@ export const directory = <Kind extends ParamKind>(
  *
  * **Example** (Creating file parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Basic file parameter
@@ -670,6 +682,7 @@ export const directory = <Kind extends ParamKind>(
  * const inputFile = Param.file(Param.flagKind, "input", { mustExist: true })
  *
  * // Usage: --output result.txt --input existing-file.txt
+ * const kinds = [outputFile.kind, inputFile.kind] // => ["flag", "flag"]
  * ```
  *
  * @category constructors
@@ -694,7 +707,7 @@ export const file = <Kind extends ParamKind>(
  *
  * **Example** (Creating redacted parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create a password parameter
@@ -704,6 +717,7 @@ export const file = <Kind extends ParamKind>(
  * const apiKey = Param.redacted(Param.argumentKind, "api-key")
  *
  * // Usage: --password (value will be hidden in help/logs)
+ * const kinds = [password.kind, apiKey.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -724,7 +738,7 @@ export const redacted = <Kind extends ParamKind>(
  *
  * **Example** (Reading file text)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Read a config file as string
@@ -734,6 +748,7 @@ export const redacted = <Kind extends ParamKind>(
  * const templateContent = Param.fileText(Param.argumentKind, "template")
  *
  * // Usage: --config config.txt (reads file content into string)
+ * const kinds = [configContent.kind, templateContent.kind] // => ["flag", "argument"]
  * ```
  *
  * @category constructors
@@ -756,7 +771,7 @@ export const fileText = <Kind extends ParamKind>(kind: Kind, name: string): Para
  *
  * **Example** (Parsing file contents)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Will use the extension of the file passed on the command line to determine
@@ -767,6 +782,7 @@ export const fileText = <Kind extends ParamKind>(kind: Kind, name: string): Para
  * const jsonConfig = Param.fileParse(Param.flagKind, "json-config", {
  *   format: "json"
  * })
+ * const kinds = [config.kind, jsonConfig.kind] // => ["flag", "flag"]
  * ```
  *
  * @category constructors
@@ -788,7 +804,7 @@ export const fileParse = <Kind extends ParamKind>(
  *
  * **Example** (Validating file contents)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Param } from "effect/unstable/cli"
  * // Parse JSON config file
@@ -807,6 +823,7 @@ export const fileParse = <Kind extends ParamKind>(
  * })
  *
  * // Usage: --config config.json (reads and validates file content)
+ * const kinds = [config.kind, yamlConfig.kind] // => ["flag", "flag"]
  * ```
  *
  * @category constructors
@@ -839,7 +856,7 @@ export const fileSchema = <Kind extends ParamKind, A>(
  *
  * **Example** (Parsing key-value pairs)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const env = Param.keyValuePair(Param.flagKind, "env")
@@ -847,6 +864,7 @@ export const fileSchema = <Kind extends ParamKind, A>(
  *
  * const props = Param.keyValuePair(Param.flagKind, "property")
  * // --property name=value --property debug=true
+ * const kinds = [env.kind, props.kind] // => ["flag", "flag"]
  * ```
  *
  * @category constructors
@@ -878,7 +896,7 @@ export const keyValuePair = <Kind extends ParamKind>(
  *
  * **Example** (Creating sentinel parameters)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const disabledDebugParam = Param.none(Param.flagKind)
@@ -886,8 +904,8 @@ export const keyValuePair = <Kind extends ParamKind>(
  * const makeDebugParam = (enableDebug: boolean) =>
  *   enableDebug ? Param.string(Param.flagKind, "debug") : disabledDebugParam
  *
- * console.log(makeDebugParam(true) === disabledDebugParam) // false
- * console.log(makeDebugParam(false) === disabledDebugParam) // true
+ * makeDebugParam(true) === disabledDebugParam // => false
+ * makeDebugParam(false) === disabledDebugParam // => true
  * ```
  *
  * @category constructors
@@ -917,7 +935,7 @@ const FLAG_DASH_REGEXP = /^-+/
  *
  * **Example** (Adding parameter aliases)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const force = Param.boolean(Param.flagKind, "force").pipe(
@@ -930,6 +948,7 @@ const FLAG_DASH_REGEXP = /^-+/
  *   Param.optional,
  *   Param.withAlias("-c") // finds the underlying Single and adds alias
  * )
+ * const kinds = [force.kind, count.kind] // => ["flag", "flag"]
  * ```
  *
  * @category combinators
@@ -956,13 +975,14 @@ export const withAlias: {
  *
  * **Example** (Adding help descriptions)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const verbose = Param.boolean(Param.flagKind, "verbose").pipe(
  *   Param.withAlias("-v"),
  *   Param.withDescription("Enable verbose output")
  * )
+ * verbose.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -990,12 +1010,13 @@ export const withDescription: {
  *
  * **Example** (Hiding a flag from help)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const experimental = Param.boolean(Param.flagKind, "experimental-foo").pipe(
  *   Param.withHidden
  * )
+ * experimental.kind // => "flag"
  * ```
  *
  * @category metadata
@@ -1013,12 +1034,13 @@ export const withHidden = <Kind extends ParamKind, A>(self: Param<Kind, A>): Par
  *
  * **Example** (Mapping parsed values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const port = Param.integer(Param.flagKind, "port").pipe(
  *   Param.map((n) => ({ port: n, url: `http://localhost:${n}` }))
  * )
+ * port.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1044,24 +1066,49 @@ export const map: {
 
 const transform = <Kind extends ParamKind, A, B>(
   self: Param<Kind, A>,
-  f: (parse: Parse<A>) => Parse<B>
-) =>
-  Object.assign(Object.create(Proto), {
+  f: (
+    parse: Parse<A>,
+    alternatives: ReadonlyArray<LazyArg<Parse<unknown>>>
+  ) => Parse<B>,
+  alternatives: ReadonlyArray<LazyArg<Param<Kind, unknown>>> = []
+): Transform<Kind, A, B> => {
+  const alternativeParsers = alternatives.map((alternative) => () => alternative().parse)
+  return Object.assign(Object.create(Proto), {
     _tag: "Transform",
     kind: self.kind,
     param: self,
+    alternatives,
     f,
-    parse: f(self.parse)
+    parse: f(self.parse, alternativeParsers)
   })
+}
 
 /**
  * Transforms the parsed value of an option using an effectful mapping function.
  *
  * **Example** (Mapping parsed values effectfully)
  *
- * ```ts
- * import { Effect } from "effect"
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { CliError, Param } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const validatedEmail = Param.string(Param.flagKind, "email").pipe(
  *   Param.mapEffect((email) =>
@@ -1077,6 +1124,14 @@ const transform = <Kind extends ParamKind, A, B>(
  *       )
  *   )
  * )
+ *
+ * const [, value] = await Effect.runPromise(
+ *   validatedEmail.parse({
+ *     arguments: [],
+ *     flags: { email: ["alice@example.com"] }
+ *   }).pipe(Effect.provide(CliTestLayer))
+ * )
+ * value // => "alice@example.com"
  * ```
  *
  * @category combinators
@@ -1109,8 +1164,27 @@ export const mapEffect: {
  *
  * **Example** (Mapping thrown errors)
  *
- * ```ts
+ * ```ts import.meta.vitest
+ * import { Effect, FileSystem, Layer, Path, Stdio, Terminal } from "effect"
  * import { Param } from "effect/unstable/cli"
+ * import { ChildProcessSpawner } from "effect/unstable/process"
+ *
+ * const CliTestLayer = Layer.mergeAll(
+ *   FileSystem.layerNoop({}),
+ *   Path.layer,
+ *   Stdio.layerTest({}),
+ *   Layer.succeed(Terminal.Terminal, Terminal.make({
+ *     columns: Effect.succeed(80),
+ *     rows: Effect.succeed(24),
+ *     readInput: Effect.die("unused"),
+ *     readLine: Effect.die("unused"),
+ *     display: () => Effect.void
+ *   })),
+ *   Layer.succeed(
+ *     ChildProcessSpawner.ChildProcessSpawner,
+ *     ChildProcessSpawner.make(() => Effect.die("unused"))
+ *   )
+ * )
  *
  * const parsedJson = Param.string(Param.flagKind, "config").pipe(
  *   Param.mapTryCatch(
@@ -1119,6 +1193,14 @@ export const mapEffect: {
  *       `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`
  *   )
  * )
+ *
+ * const [, value] = await Effect.runPromise(
+ *   parsedJson.parse({
+ *     arguments: [],
+ *     flags: { config: ['{"enabled":true}'] }
+ *   }).pipe(Effect.provide(CliTestLayer))
+ * )
+ * value // => { enabled: true }
  * ```
  *
  * @category combinators
@@ -1174,13 +1256,14 @@ export const mapTryCatch: {
  *
  * **Example** (Making parameters optional)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Create an optional port option
  * // - When not provided: returns Option.none()
  * // - When provided: returns Option.some(parsedValue)
  * const port = Param.optional(Param.integer(Param.flagKind, "port"))
+ * port.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1190,18 +1273,7 @@ export const optional = <Kind extends ParamKind, A>(
   param: Param<Kind, A>
 ): Param<Kind, Option.Option<A>> => {
   const parse: Parse<Option.Option<A>> = Effect.fnUntraced(function*(args) {
-    const single = getUnderlyingSingleOrThrow(param)
-
-    // Handle boolean params that are explicitly marked as optional (i.e. the
-    // end user wants to return `Option.none()` instead of `false` when the
-    // flag (or its negated variant) are not present on the command line
-    if (
-      isFlagParam(single) &&
-      Primitive.isBoolean(single.primitiveType) &&
-      ![single.name, ...single.aliases].some((name) => (args.flags[name] ?? []).length > 0)
-    ) {
-      return [args.arguments, Option.none()] as const
-    }
+    getUnderlyingSingleOrThrow(param)
 
     return yield* param.parse(args).pipe(
       Effect.map(([leftover, value]) => [leftover, Option.some(value)] as const),
@@ -1230,7 +1302,7 @@ export const optional = <Kind extends ParamKind, A>(
  *
  * **Example** (Providing default values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Using the pipe operator to make an option optional
@@ -1244,6 +1316,7 @@ export const optional = <Kind extends ParamKind, A>(
  *   Param.withDescription("Enable verbose output"),
  *   Param.withDefault(false)
  * )
+ * const kinds = [port.kind, verbose.kind] // => ["flag", "flag"]
  * ```
  *
  * @category combinators
@@ -1405,7 +1478,7 @@ export type VariadicParamOptions = {
  *
  * **Example** (Accepting multiple values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Basic variadic parameter (0 to infinity)
@@ -1422,6 +1495,7 @@ export type VariadicParamOptions = {
  *   min: 2, // at least 2 times
  *   max: 2 // at most 2 times
  * })
+ * const kinds = [tags.kind, inputs.kind, limited.kind] // => ["flag", "flag", "flag"]
  * ```
  *
  * @category combinators
@@ -1459,7 +1533,7 @@ export const variadic = <Kind extends ParamKind, A>(
  *
  * **Example** (Bounding repeated values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Allow 1-3 file inputs
@@ -1478,6 +1552,7 @@ export const variadic = <Kind extends ParamKind, A>(
  *
  * // Parse: --tag dev --tag staging --tag v1.0
  * // Result: ["dev", "staging", "v1.0"]
+ * const kinds = [files.kind, tags.kind] // => ["flag", "flag"]
  * ```
  *
  * @category combinators
@@ -1507,7 +1582,7 @@ export const between: {
  *
  * **Example** (Limiting repeated values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Allow at most 3 warning suppressions
@@ -1517,6 +1592,7 @@ export const between: {
  *
  * // Parse: --suppress warning1 --suppress warning2
  * // Result: ["warning1", "warning2"]
+ * suppressions.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1542,7 +1618,7 @@ export const atMost: {
  *
  * **Example** (Requiring repeated values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * // Require at least 2 input files
@@ -1553,6 +1629,7 @@ export const atMost: {
  *
  * // Parse: --input file1.txt --input file2.txt --input file3.txt
  * // Result: ["file1.txt", "file2.txt", "file3.txt"]
+ * inputs.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1579,7 +1656,7 @@ export const atLeast: {
  *
  * **Example** (Filtering and transforming values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Option } from "effect"
  * import { Param } from "effect/unstable/cli"
  * const positiveInt = Param.integer(Param.flagKind, "count").pipe(
@@ -1588,6 +1665,7 @@ export const atLeast: {
  *     (n) => `Expected positive integer, got ${n}`
  *   )
  * )
+ * positiveInt.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1630,7 +1708,7 @@ export const filterMap: {
  *
  * **Example** (Filtering parsed values)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const evenNumber = Param.integer(Param.flagKind, "num").pipe(
@@ -1639,6 +1717,7 @@ export const filterMap: {
  *     (n) => `Expected even number, got ${n}`
  *   )
  * )
+ * evenNumber.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1670,7 +1749,7 @@ export const filter: {
  *
  * **Example** (Setting metavars)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const port = Param.integer(Param.flagKind, "port").pipe(
@@ -1680,6 +1759,7 @@ export const filter: {
  *     () => "Port must be between 1 and 65535"
  *   )
  * )
+ * port.kind // => "flag"
  * ```
  *
  * @category metadata
@@ -1703,7 +1783,7 @@ export const withMetavar: {
  *
  * **Example** (Validating with schemas)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Schema } from "effect"
  * import { Param } from "effect/unstable/cli"
  * const isEmail = Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
@@ -1715,6 +1795,7 @@ export const withMetavar: {
  * const email = Param.string(Param.flagKind, "email").pipe(
  *   Param.withSchema(Email)
  * )
+ * email.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1752,32 +1833,33 @@ export const withSchema: {
  *
  * **Example** (Falling back to another parameter)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const config = Param.file(Param.flagKind, "config").pipe(
  *   Param.orElse(() => Param.string(Param.flagKind, "config-url"))
  * )
+ * config.kind // => "flag"
  * ```
  *
  * @category combinators
  * @since 4.0.0
  */
 export const orElse: {
-  <B, Kind extends ParamKind>(
-    orElse: (error: CliError.CliError) => Param<Kind, B>
-  ): <A>(self: Param<Kind, A>) => Param<Kind, A | B>
+  <B, Kind extends ParamKind>(orElse: LazyArg<Param<Kind, B>>): <A>(self: Param<Kind, A>) => Param<Kind, A | B>
   <Kind extends ParamKind, A, B>(
     self: Param<Kind, A>,
-    orElse: (error: CliError.CliError) => Param<Kind, B>
+    orElse: LazyArg<Param<Kind, B>>
   ): Param<Kind, A | B>
 } = dual(2, <Kind extends ParamKind, A, B>(
   self: Param<Kind, A>,
-  orElse: (error: CliError.CliError) => Param<Kind, B>
+  orElse: LazyArg<Param<Kind, B>>
 ) =>
   transform(
     self,
-    (parse: Parse<A>): Parse<A | B> => (args: ParsedArgs) => Effect.catch(parse(args), (err) => orElse(err).parse(args))
+    (parse: Parse<A>, alternatives): Parse<A | B> => (args: ParsedArgs) =>
+      Effect.catch(parse(args), () => (alternatives[0]!() as Parse<B>)(args)),
+    [orElse]
   ))
 
 /**
@@ -1791,13 +1873,14 @@ export const orElse: {
  *
  * **Example** (Returning fallback results)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Param } from "effect/unstable/cli"
  *
  * const configSource = Param.file(Param.flagKind, "config").pipe(
  *   Param.orElseResult(() => Param.string(Param.flagKind, "config-url"))
  * )
  * // Returns Result<string, string>
+ * configSource.kind // => "flag"
  * ```
  *
  * @category combinators
@@ -1805,27 +1888,28 @@ export const orElse: {
  */
 export const orElseResult: {
   <Kind extends ParamKind, B>(
-    orElse: (error: CliError.CliError) => Param<Kind, B>
+    orElse: LazyArg<Param<Kind, B>>
   ): <A>(self: Param<Kind, A>) => Param<Kind, Result.Result<A, B>>
   <Kind extends ParamKind, A, B>(
     self: Param<Kind, A>,
-    orElse: (error: CliError.CliError) => Param<Kind, B>
+    orElse: LazyArg<Param<Kind, B>>
   ): Param<Kind, Result.Result<A, B>>
 } = dual(2, <Kind extends ParamKind, A, B>(
   self: Param<Kind, A>,
-  orElse: (error: CliError.CliError) => Param<Kind, B>
+  orElse: LazyArg<Param<Kind, B>>
 ) => {
   return transform(
     self,
-    (parse: Parse<A>): Parse<Result.Result<A, B>> => (args: ParsedArgs) =>
+    (parse: Parse<A>, alternatives): Parse<Result.Result<A, B>> => (args: ParsedArgs) =>
       Effect.catch(
         Effect.map(parse(args), ([leftover, value]) => [leftover, Result.succeed(value)] as const),
-        (err) =>
+        () =>
           Effect.map(
-            orElse(err).parse(args),
+            (alternatives[0]!() as Parse<B>)(args),
             ([leftover, value]) => [leftover, Result.fail(value)] as const
           )
-      )
+      ),
+    [orElse]
   )
 })
 
@@ -1873,13 +1957,7 @@ const parseFlag: <A>(
   const providedValues = args.flags[name]
 
   if (providedValues === undefined || providedValues.length === 0) {
-    // Option not provided (empty array due to initialization)
-    if (Primitive.isBoolean(primitiveType)) {
-      // Boolean params default to false when not present
-      return [args.arguments, false as any] as const
-    } else {
-      return yield* new CliError.MissingOption({ option: name })
-    }
+    return yield* new CliError.MissingOption({ option: name })
   }
 
   // Parse the first value (later we can handle multiple)
@@ -2042,7 +2120,12 @@ const transformSingle = <Kind extends ParamKind, A>(
   return matchParam(param, {
     Single: (single) => f(single),
     Map: (mapped) => map(transformSingle(mapped.param, f), mapped.f),
-    Transform: (mapped) => transform(transformSingle(mapped.param, f), mapped.f),
+    Transform: (mapped) =>
+      transform(
+        transformSingle(mapped.param, f),
+        mapped.f,
+        mapped.alternatives.map((alternative) => () => transformSingle(alternative(), f))
+      ),
     Optional: (p) => optional(transformSingle(p.param, f)) as Param<Kind, A>,
     Variadic: (p) =>
       variadic(transformSingle(p.param, f), {
@@ -2064,7 +2147,10 @@ export const extractSingleParams = <Kind extends ParamKind, A>(
   return matchParam(param, {
     Single: (single) => [single as Single<Kind, unknown>],
     Map: (mapped) => extractSingleParams(mapped.param),
-    Transform: (mapped) => extractSingleParams(mapped.param),
+    Transform: (mapped) => [
+      ...extractSingleParams(mapped.param),
+      ...mapped.alternatives.flatMap((alternative) => extractSingleParams(alternative()))
+    ],
     Optional: (optional) => extractSingleParams(optional.param),
     Variadic: (variadic) => extractSingleParams(variadic.param)
   })

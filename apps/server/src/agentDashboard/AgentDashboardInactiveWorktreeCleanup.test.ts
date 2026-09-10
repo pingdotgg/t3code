@@ -55,6 +55,7 @@ const thread = (overrides: Partial<OrchestrationThreadShell> = {}): Orchestratio
   hasPendingApprovals: false,
   hasPendingUserInput: false,
   hasActionableProposedPlan: false,
+  pullRequests: [],
   backgroundLiveness: null,
   ...overrides,
 });

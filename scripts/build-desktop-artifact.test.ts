@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -24,6 +26,7 @@ import {
   DESKTOP_ELECTRON_LANGUAGES,
   DESKTOP_FILE_EXCLUSIONS,
   DESKTOP_EXTRA_RESOURCES,
+  LINUX_CAPTURE_EXTRA_RESOURCES,
   LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
   MAC_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
@@ -61,6 +64,7 @@ import {
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   stageResourceMonitor,
+  stageLinuxCaptureHelper,
   stageWslRuntimeArchive,
   bundlesWslRuntime,
   STAGE_INSTALL_ARGS,
@@ -72,11 +76,11 @@ import {
   WindowsPrimaryNativeProbeError,
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
+  WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_EXTRA_RESOURCES,
   WINDOWS_SERVER_ASAR_RESOURCE,
-  WINDOWS_SERVER_ASAR_UNPACK_GLOB,
   WINDOWS_SERVER_RESOURCE_SOURCE_DIR,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
@@ -87,6 +91,7 @@ import {
 } from "./build-desktop-artifact.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 // A minimal stand-in for the staged sidecar roots packed into the WSL archive.
 const stageWslRuntimeTreeFixture = Effect.fn("stageWslRuntimeTreeFixture")(function* (
@@ -562,6 +567,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!apps/desktop/prod-resources/windows-server/**/*",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz",
       "!apps/desktop/prod-resources/wsl-runtime.tar.gz.sha256",
+      "!apps/desktop/gnome-extension",
+      "!apps/desktop/gnome-extension/**/*",
     ]);
     assert.equal(WINDOWS_SERVER_RESOURCE_SOURCE_DIR, "apps/desktop/prod-resources/windows-server");
     assert.deepStrictEqual(WINDOWS_SERVER_EXTRA_RESOURCES, [
@@ -614,15 +621,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         false,
       );
 
-      // All platforms keep app.asar fully packed; Windows ships the server
-      // tree as the hand-packed server.asar sidecar in extraResources instead
-      // of unpacking thousands of loose files at install time.
+      // Windows unpacks native files explicitly so their JavaScript and metadata
+      // stay archived. Other platforms retain electron-builder's defaults.
+      assert.notProperty(mac, "asar");
+      assert.notProperty(linux, "asar");
       assert.notProperty(mac, "asarUnpack");
       assert.notProperty(linux, "asarUnpack");
-      assert.notProperty(win, "asarUnpack");
+      assert.deepStrictEqual(win.asar, { smartUnpack: false });
+      assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
+      assert.deepStrictEqual(winWithoutWslPrebuild.asar, win.asar);
+      assert.deepStrictEqual(winWithoutWslPrebuild.asarUnpack, win.asarUnpack);
       assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
+        ...LINUX_CAPTURE_EXTRA_RESOURCES,
         { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
       ]);
       assert.deepStrictEqual(win.extraResources, [
@@ -643,13 +655,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
-      // Native binaries and helper executables cannot load from inside an
-      // asar; everything else stays packed. The Claude SDK platform packages
-      // and .bin shims never ship.
-      assert.equal(
-        WINDOWS_SERVER_ASAR_UNPACK_GLOB,
-        "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}",
-      );
+      // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
@@ -659,12 +665,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(mac.dmg, {
         title: "T3 Code (Alpha) 1.2.3 Installer",
         background: "dmg/dmg-background-latest.png",
-        window: { width: 540, height: 412 },
+        window: { width: 640, height: 432 },
         contents: [
-          { x: 130, y: 220, type: "file" },
-          { x: 410, y: 220, type: "link", path: "/Applications" },
+          { x: 166, y: 214, type: "file" },
+          { x: 474, y: 214, type: "link", path: "/Applications" },
         ],
-        iconSize: 80,
+        iconSize: 120,
         iconTextSize: 12,
       });
       // Linux must register the renderer schemes so the generated .desktop
@@ -673,10 +679,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
       assert.deepStrictEqual(mac.files, [...DESKTOP_FILE_EXCLUSIONS, ...MAC_FILE_EXCLUSIONS]);
+      assert.deepStrictEqual(linux.files, DESKTOP_FILE_EXCLUSIONS);
+      assert.deepStrictEqual(win.files, DESKTOP_FILE_EXCLUSIONS);
+      assert.deepStrictEqual(winWithoutWslPrebuild.files, win.files);
       assert.notProperty(mac.mac as Record<string, unknown>, "sign");
       for (const config of [linux, win]) {
         assert.deepStrictEqual(config.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
-        assert.deepStrictEqual(config.files, DESKTOP_FILE_EXCLUSIONS);
       }
       assert.deepStrictEqual(mac.electronLanguages, DESKTOP_ELECTRON_LANGUAGES);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
@@ -687,6 +695,34 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
       "!**/node_modules/node-pty/third_party/conpty/**/*",
     ]);
+  });
+
+  it("unpacks native binaries while keeping their JavaScript and metadata archived", () => {
+    for (const file of [
+      "node_modules/@napi-rs/keyring/keyring.win32-x64-msvc.node",
+      "node_modules/@clerk/electron-passkeys/electron-passkeys.win32-x64-msvc.node",
+      "node_modules/@ff-labs/fff-bin-win32-x64/fff_c.dll",
+      "node_modules/node-pty/prebuilds/win32-x64/conpty/OpenConsole.exe",
+      "node_modules/native/addon.so",
+      "node_modules/native/addon.so.1",
+      "node_modules/native/addon.dylib",
+    ]) {
+      assert.isTrue(
+        NodePath.matchesGlob(file, WINDOWS_NATIVE_ASAR_UNPACK_GLOB),
+        `${file} must be available as a real file`,
+      );
+    }
+
+    for (const file of [
+      "node_modules/@napi-rs/keyring/index.js",
+      "node_modules/@napi-rs/keyring/keytar.js",
+      "node_modules/@clerk/electron-passkeys/index.js",
+    ]) {
+      assert.isFalse(
+        NodePath.matchesGlob(file, WINDOWS_NATIVE_ASAR_UNPACK_GLOB),
+        `${file} should remain inside the archive`,
+      );
+    }
   });
 
   it("stages only server runtime externals in macOS packages", () => {
@@ -1039,6 +1075,78 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("builds and stages native capture helpers for each Linux architecture", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-kde-stage-test-" });
+        const protocols = path.join(repoRoot, "native/hyprland-snap-shot/protocols");
+        yield* fs.makeDirectory(protocols, { recursive: true });
+        yield* fs.writeFileString(path.join(protocols, "capture.xml"), "BSD protocol notice");
+        for (const backend of ["kde", "hyprland"] as const) {
+          for (const [arch, target] of [
+            ["x64", "x86_64-unknown-linux-gnu"],
+            ["arm64", "aarch64-unknown-linux-gnu"],
+          ] as const) {
+            const binary = path.join(
+              repoRoot,
+              `native/${backend}-snap-shot/target`,
+              target,
+              `release/t3-${backend}-snap-shot`,
+            );
+            const stageResourcesDir = path.join(repoRoot, "stage", backend, arch);
+            const spawner = Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) =>
+                Effect.gen(function* () {
+                  assert.equal(command._tag, "StandardCommand");
+                  if (command._tag !== "StandardCommand") return mockProcess(1);
+                  assert.equal(command.command, "cargo");
+                  assert.deepEqual(command.args, [
+                    "build",
+                    "--locked",
+                    "--release",
+                    "--manifest-path",
+                    path.join(repoRoot, `native/${backend}-snap-shot/Cargo.toml`),
+                    "--target",
+                    target,
+                  ]);
+                  yield* fs.makeDirectory(path.dirname(binary), { recursive: true });
+                  yield* fs.writeFileString(binary, `helper-${arch}`);
+                  return mockProcess(0);
+                }),
+              ),
+            );
+            yield* stageLinuxCaptureHelper({
+              backend,
+              repoRoot,
+              stageResourcesDir,
+              arch,
+              verbose: false,
+            }).pipe(Effect.provide(spawner));
+            const installed = path.join(
+              stageResourcesDir,
+              `${backend}-capture/t3-${backend}-snap-shot`,
+            );
+            assert.equal(yield* fs.readFileString(installed), `helper-${arch}`);
+            assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
+            if (backend === "hyprland")
+              assert.equal(
+                yield* fs.readFileString(
+                  path.join(stageResourcesDir, "hyprland-capture/protocols/capture.xml"),
+                ),
+                "BSD protocol notice",
+              );
+          }
+        }
+      }),
+    ),
+  );
+
+  // The fixture's t3code.exe is a text placeholder, not an executable. These
+  // cases reach the native-load probe, so pin only that host-platform check to
+  // Linux. Host-native paths and the real Windows tar/archive checks still run.
   it.effect("validates every ASAR-unpacked native in the packaged Windows payload", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1067,7 +1175,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
       }),
-    ),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
   it.effect("validates the emitted WSL archive and its SHA-256 sidecar", () =>
@@ -1086,7 +1194,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         assert.equal(result.packagedAppDir, fixture.packagedAppDir);
       }),
-    ),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
   it.effect("rejects a Windows package missing its expected WSL runtime", () =>
@@ -1234,11 +1342,12 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         command.args.some((arg) => arg.endsWith("build-browser-secret.mjs")),
       );
       assert.isDefined(helper);
+      const path = yield* Path.Path;
       assert.deepStrictEqual(helper.args.slice(-4), [
         "--arch",
         "x64",
         "--output",
-        "/stage/resources/browser-secret/t3-browser-secret",
+        path.join("/stage/resources", "browser-secret", "t3-browser-secret"),
       ]);
     }).pipe(
       Effect.provide(
@@ -1460,7 +1569,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, BundleNotSelfContainedError);
         assert.include(error.output, "t3code-deliberately-missing-package");
       }),
-    ),
+    ).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
   it.effect("preserves both Linux icon resize failures with structural context", () => {
@@ -1531,8 +1640,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               "format",
               "png",
               "-z",
-              "380",
-              "540",
+              "432",
+              "640",
               sourcePath,
               "--out",
               path.join(dmgDir, "dmg-background-nightly.png"),
@@ -1543,8 +1652,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               "format",
               "png",
               "-z",
-              "760",
-              "1080",
+              "864",
+              "1280",
               sourcePath,
               "--out",
               path.join(dmgDir, "dmg-background-nightly@2x.png"),
@@ -1700,7 +1809,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
-      assert.match(String(mac.sign), /\/scripts\/sign-macos\.ts$/);
+      assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
@@ -2191,7 +2300,7 @@ it("keeps the prefix of a UNC path instead of going relative", () => {
   assert.deepStrictEqual(paths[0], "\\\\server\\share\\tmp\\node_modules");
 });
 
-it.effect("rebases packaged links into the isolated tree", () =>
+it.effect.skipIf(!symlinksSupported)("rebases packaged links into the isolated tree", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

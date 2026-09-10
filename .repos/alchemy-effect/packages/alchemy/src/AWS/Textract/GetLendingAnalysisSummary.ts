@@ -7,9 +7,8 @@ import * as Binding from "../../Binding.ts";
  * document-group summary of an asynchronous lending-analysis job started
  * with `StartLendingAnalysis`.
  *
- * @binding
- * @section Asynchronous Lending Analysis
- * @example Summarize a Lending Analysis Job
+ * ### Asynchronous Lending Analysis
+ * **Example:** Summarize a Lending Analysis Job
  * ```typescript
  * // init
  * const getLendingAnalysisSummary =
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * const result = yield* getLendingAnalysisSummary({ JobId: jobId });
  * const groups = result.Summary?.DocumentGroups;
  * ```
+ *
+ * @binding
  */
 export interface GetLendingAnalysisSummary extends Binding.Service<
   GetLendingAnalysisSummary,

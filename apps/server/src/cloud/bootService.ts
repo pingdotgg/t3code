@@ -373,7 +373,7 @@ function selectBootServiceManager(input: {
   return undefined;
 }
 
-export class BootServiceUnsupportedError extends Schema.TaggedErrorClass<BootServiceUnsupportedError>()(
+export class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(
   "BootServiceUnsupportedError",
   { platform: Schema.String },
 ) {
@@ -382,7 +382,7 @@ export class BootServiceUnsupportedError extends Schema.TaggedErrorClass<BootSer
   }
 }
 
-export class BootServiceCommandError extends Schema.TaggedErrorClass<BootServiceCommandError>()(
+export class BootServiceCommandError extends Schema.TaggedError<BootServiceCommandError>()(
   "BootServiceCommandError",
   {
     step: Schema.String,
@@ -399,7 +399,7 @@ export class BootServiceCommandError extends Schema.TaggedErrorClass<BootService
   }
 }
 
-export class BootServiceInstallError extends Schema.TaggedErrorClass<BootServiceInstallError>()(
+export class BootServiceInstallError extends Schema.TaggedError<BootServiceInstallError>()(
   "BootServiceInstallError",
   { cause: Schema.Defect() },
 ) {
@@ -433,7 +433,7 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
   }
 }
 
-export class BootServicePrerequisiteError extends Schema.TaggedErrorClass<BootServicePrerequisiteError>()(
+export class BootServicePrerequisiteError extends Schema.TaggedError<BootServicePrerequisiteError>()(
   "BootServicePrerequisiteError",
   { problem: BootServiceProblem, cause: Schema.optional(Schema.Defect()) },
 ) {
@@ -442,7 +442,7 @@ export class BootServicePrerequisiteError extends Schema.TaggedErrorClass<BootSe
   }
 }
 
-export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootServiceUpdatePendingError>()(
+export class BootServiceUpdatePendingError extends Schema.TaggedError<BootServiceUpdatePendingError>()(
   "BootServiceUpdatePendingError",
   {},
 ) {
@@ -451,7 +451,7 @@ export class BootServiceUpdatePendingError extends Schema.TaggedErrorClass<BootS
   }
 }
 
-export class BootServiceDowngradeRefusedError extends Schema.TaggedErrorClass<BootServiceDowngradeRefusedError>()(
+export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootServiceDowngradeRefusedError>()(
   "BootServiceDowngradeRefusedError",
   {
     installedVersion: Schema.String,
@@ -555,9 +555,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* fs.makeDirectory(directory, { recursive: true });
         const tempPath = yield* fs.makeTempFileScoped({ directory, prefix: ".service-write-" });
         yield* fs.writeFileString(tempPath, contents, { mode: 0o600 });
-        yield* (yield* fs.open(tempPath, { flag: "r" })).sync;
+        // Opened read-write: Windows refuses to flush a handle without write access.
+        yield* (yield* fs.open(tempPath, { flag: "r+" })).sync;
         yield* fs.rename(tempPath, filePath);
-        yield* (yield* fs.open(directory, { flag: "r" })).sync;
+        // Windows has no directory fsync (EPERM); NTFS journals the rename.
+        yield* (yield* fs.open(directory, { flag: "r" })).sync.pipe(
+          Effect.catchIf(
+            (error) => (error.reason.cause as NodeJS.ErrnoException | undefined)?.code === "EPERM",
+            () => Effect.void,
+          ),
+        );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
   const plan: BootServicePlan = {

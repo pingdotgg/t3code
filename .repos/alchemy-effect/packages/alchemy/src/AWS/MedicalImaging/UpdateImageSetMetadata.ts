@@ -22,9 +22,8 @@ export interface UpdateImageSetMetadataRequest extends Omit<
  * via `revertToVersionId`. Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.UpdateImageSetMetadataHttp)`.
  *
- * @binding
- * @section Updating Image Sets
- * @example Revert an Image Set to a Previous Version
+ * ### Updating Image Sets
+ * **Example:** Revert an Image Set to a Previous Version
  * ```typescript
  * const updateMetadata = yield* MedicalImaging.UpdateImageSetMetadata(datastore);
  *
@@ -35,6 +34,8 @@ export interface UpdateImageSetMetadataRequest extends Omit<
  * });
  * // updated.latestVersionId
  * ```
+ *
+ * @binding
  */
 export interface UpdateImageSetMetadata extends Binding.Service<
   UpdateImageSetMetadata,

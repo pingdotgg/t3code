@@ -75,8 +75,8 @@ export interface ApiCallEventsProps extends EventRouteProps {
  * the host. Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming API Call Events
- * @example React to S3 Bucket Configuration Changes
+ * ### Consuming API Call Events
+ * **Example:** React to S3 Bucket Configuration Changes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

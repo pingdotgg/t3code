@@ -3,11 +3,12 @@ import { dictationKeybindingFromKeyboardEvent } from "./DictationKeybindRecorder
 
 function keyboardEvent(
   overrides: Partial<
-    Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">
+    Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">
   > = {},
 ) {
   return {
     key: "m",
+    code: "KeyM",
     metaKey: false,
     ctrlKey: false,
     altKey: false,

@@ -103,7 +103,7 @@ const seedWithPriorImport = (sessionId: string) =>
       metadata: {},
       payload: {
         threadId: THREAD,
-        messageId: MessageId.make(`import:${sessionId}:0`),
+        messageId: MessageId.make(`import:${sessionId}:000000`),
         role: "user",
         text: "the earlier conversation",
         turnId: TurnId.make(`import:${sessionId}`),
@@ -162,7 +162,7 @@ it.layer(NodeServices.layer)("thread.history.import", (it) => {
       const messageIds = events
         .slice(1)
         .map((event) => (event.payload as Record<string, unknown>)["messageId"]);
-      expect(messageIds).toEqual(["import:newer-session:0", "import:newer-session:1"]);
+      expect(messageIds).toEqual(["import:newer-session:000000", "import:newer-session:000001"]);
     }),
   );
 
@@ -214,7 +214,7 @@ it.layer(NodeServices.layer)("thread.history.import", (it) => {
       );
 
       expect(first).toEqual(second);
-      expect(first[0]).toBe(`import:${SESSION}:0`);
+      expect(first[0]).toBe(`import:${SESSION}:000000`);
       expect(new Set(first).size).toBe(first.length);
     }),
   );

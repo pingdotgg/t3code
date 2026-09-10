@@ -28,7 +28,7 @@ import type { ProjectionActivitySummary } from "../orchestration/Services/Projec
 
 type DashboardVcsStatus = VcsStatusResult | VcsStatusLocalResult;
 
-export class AgentDashboardSnapshotReadError extends Schema.TaggedErrorClass<AgentDashboardSnapshotReadError>()(
+export class AgentDashboardSnapshotReadError extends Schema.TaggedError<AgentDashboardSnapshotReadError>()(
   "AgentDashboardSnapshotReadError",
   {
     operation: Schema.String,

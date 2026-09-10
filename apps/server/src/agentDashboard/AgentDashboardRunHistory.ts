@@ -19,7 +19,7 @@ import * as ServerConfig from "../config.ts";
 const MAX_RUNS = 2_000;
 const HISTORY_FILENAME = "automation-runs.json";
 
-export class AgentDashboardRunHistoryError extends Schema.TaggedErrorClass<AgentDashboardRunHistoryError>()(
+export class AgentDashboardRunHistoryError extends Schema.TaggedError<AgentDashboardRunHistoryError>()(
   "AgentDashboardRunHistoryError",
   {
     operation: Schema.String,

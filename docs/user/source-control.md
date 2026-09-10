@@ -91,3 +91,39 @@ reopening a declined pull request.
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
+
+## Linked pull requests
+
+A thread can hold several pull requests, including reviews from another repository on the same host.
+Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
+pull request link in the conversation. Creating a pull request from Git actions links it automatically.
+Agents can link their pull requests with the `link_pull_request` tool.
+
+Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
+on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
+also lists the threads that link to it, including archived threads, so you can return to their context.
+
+Thread badges show a stack's layer count or the current review number with a count of additional
+links. On mobile, the Git overview lists linked reviews and their stacks; tap a review to open it.
+Linking and unlinking are available in the web and desktop clients.
+
+The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
+row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
+closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
+when requested. With **Auto-settle merged threads** enabled, a thread can settle after every linked
+review is terminal. An open or unsynced link keeps it active.
+
+Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
+out from the matching organization and repository.
+
+## GitHub stacks
+
+The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a
+review to navigate its layers. **Merge stack** submits the selected pull request and every unmerged
+layer below it to GitHub together, respecting branch rules and merge queues. The confirmation shows
+the scope and merge strategy. GitHub rebases the remaining stack after merging.
+
+**Rebase stack** updates remote branches from bottom to top without changing your local checkout.
+It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
+layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
+even when its changes look independent. Stack actions require an environment that supports them.

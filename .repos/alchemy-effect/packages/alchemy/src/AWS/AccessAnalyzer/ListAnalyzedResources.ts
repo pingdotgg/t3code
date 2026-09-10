@@ -15,9 +15,8 @@ export interface ListAnalyzedResourcesRequest extends Omit<
  * Lists the resources the analyzer has scanned, optionally filtered by
  * resource type. Provide the implementation with
  * `Effect.provide(AWS.AccessAnalyzer.ListAnalyzedResourcesHttp)`.
- * @binding
- * @section Scanning Resources
- * @example List Analyzed S3 Buckets
+ * ### Scanning Resources
+ * **Example:** List Analyzed S3 Buckets
  * ```typescript
  * const listResources =
  *   yield* AWS.AccessAnalyzer.ListAnalyzedResources(analyzer);
@@ -25,6 +24,8 @@ export interface ListAnalyzedResourcesRequest extends Omit<
  *   resourceType: "AWS::S3::Bucket",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListAnalyzedResources extends Binding.Service<
   ListAnalyzedResources,

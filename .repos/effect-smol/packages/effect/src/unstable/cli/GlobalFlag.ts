@@ -58,7 +58,7 @@ export interface Action<A> {
 /**
  * Setting flag: configure command handler's environment (--log-level, --config).
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface Setting<Id extends string, A> extends Context.Service<Setting.Identifier<Id>, A> {
@@ -155,7 +155,8 @@ let settingIdCounter = 0
 export const Help: Action<boolean> = action({
   flag: Flag.boolean("help").pipe(
     Flag.withAlias("h"),
-    Flag.withDescription("Show help information")
+    Flag.withDescription("Show help information"),
+    Flag.withDefault(false)
   ),
   run: Effect.fnUntraced(function*(_, { builtIns, command, commandPath }) {
     const formatter = yield* CliOutput.Formatter
@@ -177,7 +178,8 @@ export const Help: Action<boolean> = action({
 export const Version: Action<boolean> = action({
   flag: Flag.boolean("version").pipe(
     Flag.withAlias("v"),
-    Flag.withDescription("Show version information")
+    Flag.withDescription("Show version information"),
+    Flag.withDefault(false)
   ),
   run: Effect.fnUntraced(function*(_, { command, version }) {
     const formatter = yield* CliOutput.Formatter
@@ -198,7 +200,8 @@ export const Version: Action<boolean> = action({
  */
 export const Wizard: Action<boolean> = action({
   flag: Flag.boolean("wizard").pipe(
-    Flag.withDescription("Start wizard mode for a command")
+    Flag.withDescription("Start wizard mode for a command"),
+    Flag.withDefault(false)
   ),
   run: () => Effect.void
 })

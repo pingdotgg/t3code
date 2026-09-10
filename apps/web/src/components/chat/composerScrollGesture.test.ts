@@ -4,11 +4,40 @@ import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
   resetComposerScrollGesture,
+  shouldCollapseComposerForScrollKey,
   suppressActiveComposerScrollGesture,
 } from "./composerScrollGesture";
 
 const RESET_MS = 120;
 const THRESHOLD_PX = 24;
+
+describe("composer keyboard scroll collapse", () => {
+  const middle = {
+    scrollTop: 500,
+    scrollHeight: 1500,
+    clientHeight: 500,
+    isAtLogicalEnd: false,
+  };
+
+  it.each(["PageUp", "PageDown", "Home", "End"])("collapses on %s in the timeline", (key) => {
+    expect(shouldCollapseComposerForScrollKey({ ...middle, key })).toBe(true);
+  });
+
+  it.each(["PageUp", "Home"])("does not collapse on %s at the top", (key) => {
+    expect(shouldCollapseComposerForScrollKey({ ...middle, key, scrollTop: 0 })).toBe(false);
+  });
+
+  it.each(["PageDown", "End"])("does not collapse on %s at the logical end", (key) => {
+    expect(shouldCollapseComposerForScrollKey({ ...middle, key, isAtLogicalEnd: true })).toBe(
+      false,
+    );
+    expect(shouldCollapseComposerForScrollKey({ ...middle, key, scrollTop: 1000 })).toBe(false);
+  });
+
+  it("ignores unrelated keys", () => {
+    expect(shouldCollapseComposerForScrollKey({ ...middle, key: "Enter" })).toBe(false);
+  });
+});
 
 function record(
   state: ReturnType<typeof createComposerScrollGestureState>,

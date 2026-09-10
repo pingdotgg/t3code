@@ -51,7 +51,7 @@ export interface WorktreeRemoteSafety {
   readonly lastCommitAtMs: number | null;
 }
 
-export class AgentDashboardInactiveWorktreeCleanupError extends Schema.TaggedErrorClass<AgentDashboardInactiveWorktreeCleanupError>()(
+export class AgentDashboardInactiveWorktreeCleanupError extends Schema.TaggedError<AgentDashboardInactiveWorktreeCleanupError>()(
   "AgentDashboardInactiveWorktreeCleanupError",
   {
     operation: Schema.String,

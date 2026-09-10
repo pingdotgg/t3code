@@ -15,6 +15,8 @@ import {
   TerminalError,
   TerminalHistoryError,
   TerminalNotRunningError,
+  TerminalProviderInstanceNotFoundError,
+  TerminalProviderEnvironmentError,
   TerminalResizeError,
   TerminalSessionLookupError,
   TerminalWriteError,
@@ -26,11 +28,15 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalResizeInput,
+  type ResourceMonitorProcessTableEntry,
   type TerminalRestartInput,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
   type TerminalSummary,
   type TerminalWriteInput,
+  ClaudeSettings,
+  CodexSettings,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -52,13 +58,20 @@ import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
+import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
+import { deriveProviderInstanceConfigMap } from "../provider/Layers/ProviderInstanceRegistryHydration.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   increment,
   terminalRestartsTotal,
   terminalSessionsTotal,
 } from "../observability/Metrics.ts";
+import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
+import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export {
@@ -69,6 +82,8 @@ export {
   TerminalError,
   TerminalHistoryError,
   TerminalNotRunningError,
+  TerminalProviderInstanceNotFoundError,
+  TerminalProviderEnvironmentError,
   TerminalResizeError,
   TerminalSessionLookupError,
   TerminalWriteError,
@@ -79,6 +94,7 @@ const DEFAULT_HISTORY_BYTE_LIMIT = 8 * 1024 * 1024;
 const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
+const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -86,12 +102,14 @@ const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const MAX_TERMINAL_LABEL_LENGTH = 128;
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 
-class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
+class TerminalSubprocessCheckError extends Schema.TaggedError<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
   {
     cause: Schema.optional(Schema.Defect()),
-    command: Schema.Literals(["powershell", "ps"]),
+    command: Schema.Literals(["powershell", "ps", "resource-monitor"]),
     exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
     timedOut: Schema.optional(Schema.Boolean),
     stdoutTruncated: Schema.optional(Schema.Boolean),
@@ -109,7 +127,7 @@ class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubpr
   }
 }
 
-class TerminalProcessSignalError extends Schema.TaggedErrorClass<TerminalProcessSignalError>()(
+class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSignalError>()(
   "TerminalProcessSignalError",
   {
     cause: Schema.optional(Schema.Defect()),
@@ -626,6 +644,13 @@ interface TerminalProcessTableSnapshot {
   readonly commandById: ReadonlyMap<number, string>;
 }
 
+export function subprocessSnapshotPollDelayMs(
+  pollIntervalMs: number,
+  failureCount: number,
+): number {
+  return Math.min(pollIntervalMs * 2 ** failureCount, MAX_SUBPROCESS_POLL_INTERVAL_MS);
+}
+
 function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
   const childrenByParent = new Map<number, number[]>();
   const commandById = new Map<number, string>();
@@ -645,15 +670,15 @@ function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
   return { childrenByParent, commandById };
 }
 
-function parseWindowsProcessTable(stdout: string): TerminalProcessTableSnapshot {
+function processTableSnapshotFromProcesses(
+  processes: ReadonlyArray<ResourceMonitorProcessTableEntry>,
+): TerminalProcessTableSnapshot {
   const childrenByParent = new Map<number, number[]>();
   const commandById = new Map<number, string>();
-  for (const line of stdout.split(/\r?\n/g)) {
-    const [pidRaw, parentPidRaw, nameRaw] = line.trim().split("|", 3);
-    const pid = Number(pidRaw);
-    const parentPid = Number(parentPidRaw);
+  for (const process of processes) {
+    const { pid, ppid: parentPid, name } = process;
     if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue;
-    commandById.set(pid, nameRaw?.trim() ?? "");
+    commandById.set(pid, name.trim());
     const children = childrenByParent.get(parentPid) ?? [];
     children.push(pid);
     childrenByParent.set(parentPid, children);
@@ -748,14 +773,11 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
     TerminalSubprocessCheckError,
     ProcessRunner.ProcessRunner
   > {
+    const processRunner = yield* ProcessRunner.ProcessRunner;
     const command =
       'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
-    const processRunner = yield* ProcessRunner.ProcessRunner;
     const result = yield* processRunner
       .run({
-        // powershell.exe is a real executable — never spawn it through cmd.exe
-        // shell mode, which would re-tokenize the `-Command` payload (pipes,
-        // semicolons) before PowerShell ever sees it.
         command: "powershell.exe",
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
         timeout: "1500 millis",
@@ -765,16 +787,10 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
       })
       .pipe(
         Effect.mapError(
-          (cause) =>
-            new TerminalSubprocessCheckError({
-              cause,
-              command: "powershell",
-            }),
+          (cause) => new TerminalSubprocessCheckError({ cause, command: "powershell" }),
         ),
       );
     if (result.code !== 0 || result.timedOut || result.stdoutTruncated) {
-      // Not authoritative: an empty or partial table would mark every terminal
-      // idle and clear its registered process ids. Failing skips the tick.
       return yield* new TerminalSubprocessCheckError({
         command: "powershell",
         exitCode: result.code,
@@ -782,7 +798,15 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
         stdoutTruncated: result.stdoutTruncated,
       });
     }
-    return parseWindowsProcessTable(result.stdout);
+    const processes = result.stdout.split(/\r?\n/g).flatMap((line) => {
+      const [pidRaw, ppidRaw, name = ""] = line.trim().split("|", 3);
+      const pid = Number(pidRaw);
+      const ppid = Number(ppidRaw);
+      return Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid)
+        ? [{ pid, ppid, name }]
+        : [];
+    });
+    return processTableSnapshotFromProcesses(processes);
   },
 );
 
@@ -1267,8 +1291,13 @@ function createTerminalSpawnEnv(
   }
   if (runtimeEnv) {
     for (const [key, value] of Object.entries(runtimeEnv)) {
-      spawnEnv[key] = value;
+      spawnEnv[key] =
+        key === "CODEX_HOME" || key === "CLAUDE_CONFIG_DIR" ? expandHomePath(value) : value;
     }
+  }
+  // Both PTY backends feed truecolor-capable terminal clients.
+  if (spawnEnv.COLORTERM === undefined || spawnEnv.COLORTERM === "") {
+    spawnEnv.COLORTERM = "truecolor";
   }
   return stripAppImageRuntimeEnv(spawnEnv);
 }
@@ -1290,6 +1319,10 @@ interface TerminalManagerOptions {
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
   subprocessInspector?: TerminalSubprocessInspector;
+  processTable?: Effect.Effect<
+    ReadonlyArray<ResourceMonitorProcessTableEntry>,
+    TerminalSubprocessCheckError
+  >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -1302,17 +1335,85 @@ interface TerminalManagerOptions {
     readonly threadId: string;
     readonly terminalId: string;
   }) => Effect.Effect<void>;
+  resolveProviderInstanceEnvironment?: (
+    providerInstanceId: string,
+    env: Record<string, string> | undefined,
+  ) => Effect.Effect<
+    Record<string, string>,
+    TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
+  >;
 }
 
+export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
+  "terminal.resolveProviderInstanceTerminalEnvironment",
+)(function* (input: {
+  readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+  readonly path: Path.Path;
+  readonly rawProviderInstanceId: string;
+  readonly env: Record<string, string> | undefined;
+}) {
+  const providerInstanceId = ProviderInstanceId.make(input.rawProviderInstanceId);
+  const settings = yield* input.serverSettings.getSettings.pipe(
+    Effect.mapError((cause) => new TerminalProviderEnvironmentError({ providerInstanceId, cause })),
+  );
+  const instance = deriveProviderInstanceConfigMap(settings)[providerInstanceId];
+  if (instance === undefined) {
+    return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
+  }
+
+  let resolved = mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
+  if (instance.driver === "codex") {
+    const config = decodeCodexSettings(instance.config ?? {});
+    if (Option.isSome(config)) {
+      const layout = yield* resolveCodexHomeLayout(config.value).pipe(
+        Effect.provideService(Path.Path, input.path),
+      );
+      if (layout.effectiveHomePath)
+        resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
+    }
+  } else if (instance.driver === "claudeAgent") {
+    const config = decodeClaudeSettings(instance.config ?? {});
+    if (Option.isSome(config)) {
+      resolved = yield* makeClaudeEnvironment(config.value, resolved).pipe(
+        Effect.provideService(Path.Path, input.path),
+      );
+    }
+  }
+
+  return Object.fromEntries(
+    Object.entries(resolved).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+});
+
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
   const { terminalLogsDir } = yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
+  const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const path = yield* Path.Path;
+  const resolveProviderInstanceEnvironment = Effect.fn(
+    "terminal.resolveProviderInstanceEnvironment",
+  )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
+    resolveProviderInstanceTerminalEnvironment({
+      serverSettings,
+      path,
+      rawProviderInstanceId,
+      env,
+    }),
+  );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
     ptyAdapter,
+    processTable: nativeTelemetry.processTable.pipe(
+      Effect.mapError(
+        (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
+      ),
+    ),
     registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
     unregisterTerminal: portDiscovery.unregisterTerminal,
+    resolveProviderInstanceEnvironment,
   });
 });
 
@@ -1335,26 +1436,81 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
+    function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
+      input: Input,
+    ): Effect.fn.Return<
+      Input,
+      TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
+    > {
+      if (input.providerInstanceId === undefined) return input;
+      const resolver = options.resolveProviderInstanceEnvironment;
+      if (resolver === undefined) {
+        return yield* new TerminalProviderInstanceNotFoundError({
+          providerInstanceId: ProviderInstanceId.make(input.providerInstanceId),
+        });
+      }
+      const env = yield* resolver(input.providerInstanceId, input.env);
+      return { ...input, env };
+    },
+  );
   // One process-table snapshot per poll tick, shared across every terminal.
   // Per-terminal `pgrep`/`ps` calls multiply spawn load by terminal count and
   // can exhaust the PID space on hosts with many sessions (#6332).
-  const fetchProcessTableSnapshot = (
+  const fallbackProcessTableSnapshot = (
     platform === "win32"
       ? windowsProcessTableSnapshot()
       : posixProcessTableSnapshot(yield* resolvePosixPsCommand())
   ).pipe(Effect.provideService(ProcessRunner.ProcessRunner, processRunner));
+  const fetchProcessTableSnapshot: Effect.Effect<
+    {
+      readonly snapshot: TerminalProcessTableSnapshot;
+      /**
+       * False when the sidecar snapshot failed and this table came from the
+       * spawned fallback. The data is still applied, but the tick counts as
+       * a failure so polling backs off instead of hot-looping the fallback.
+       */
+      readonly snapshotSucceeded: boolean;
+    },
+    TerminalSubprocessCheckError
+  > = options.processTable
+    ? options.processTable.pipe(
+        Effect.map((entries) => ({
+          snapshot: processTableSnapshotFromProcesses(entries),
+          snapshotSucceeded: true,
+        })),
+        Effect.catch(() =>
+          fallbackProcessTableSnapshot.pipe(
+            Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: false })),
+          ),
+        ),
+      )
+    : fallbackProcessTableSnapshot.pipe(
+        Effect.map((snapshot) => ({ snapshot, snapshotSucceeded: true })),
+      );
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector: Effect.Effect<
-    TerminalSubprocessInspector,
+    {
+      readonly inspector: TerminalSubprocessInspector;
+      readonly snapshotSucceeded: boolean;
+    },
     TerminalSubprocessCheckError
   > =
     customSubprocessInspector !== undefined
-      ? Effect.succeed(customSubprocessInspector)
+      ? Effect.succeed({ inspector: customSubprocessInspector, snapshotSucceeded: true })
       : Effect.map(
           fetchProcessTableSnapshot,
-          (snapshot): TerminalSubprocessInspector =>
-            (terminalPid) =>
+          ({
+            snapshot,
+            snapshotSucceeded,
+          }): {
+            readonly inspector: TerminalSubprocessInspector;
+            readonly snapshotSucceeded: boolean;
+          } => ({
+            inspector: (terminalPid) =>
               Effect.succeed(deriveSubprocessInspectResult(snapshot, terminalPid, platform)),
+            snapshotSucceeded,
+          }),
         );
   const subprocessPollIntervalMs =
     options.subprocessPollIntervalMs ?? DEFAULT_SUBPROCESS_POLL_INTERVAL_MS;
@@ -2206,7 +2362,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (runningSessions.length === 0) {
-      return;
+      return true;
     }
 
     const inspectorOption = yield* acquireSubprocessInspector.pipe(
@@ -2214,15 +2370,22 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.catch((reason) =>
         Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
           reason,
-        }).pipe(Effect.as(Option.none<TerminalSubprocessInspector>())),
+        }).pipe(
+          Effect.as(
+            Option.none<{
+              readonly inspector: TerminalSubprocessInspector;
+              readonly snapshotSucceeded: boolean;
+            }>(),
+          ),
+        ),
       ),
     );
 
     if (Option.isNone(inspectorOption)) {
-      return;
+      return false;
     }
 
-    const subprocessInspector = inspectorOption.value;
+    const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
@@ -2291,6 +2454,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       concurrency: "unbounded",
       discard: true,
     });
+    return snapshotSucceeded;
   });
 
   const hasRunningSessions = readManagerState.pipe(
@@ -2299,14 +2463,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     ),
   );
 
+  let subprocessSnapshotFailureCount = 0;
   yield* Effect.forever(
     hasRunningSessions.pipe(
       Effect.flatMap((active) =>
         active
           ? pollSubprocessActivity().pipe(
-              Effect.flatMap(() => Effect.sleep(subprocessPollIntervalMs)),
+              Effect.flatMap((snapshotSucceeded) => {
+                subprocessSnapshotFailureCount = snapshotSucceeded
+                  ? 0
+                  : Math.min(subprocessSnapshotFailureCount + 1, 30);
+                const delayMs = subprocessSnapshotPollDelayMs(
+                  subprocessPollIntervalMs,
+                  subprocessSnapshotFailureCount,
+                );
+                return Effect.sleep(delayMs);
+              }),
             )
-          : Effect.sleep(subprocessPollIntervalMs),
+          : Effect.sync(() => {
+              subprocessSnapshotFailureCount = 0;
+            }).pipe(Effect.flatMap(() => Effect.sleep(subprocessPollIntervalMs))),
       ),
     ),
   ).pipe(Effect.forkIn(workerScope));
@@ -2464,7 +2640,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const open: TerminalManager["Service"]["open"] = (input) =>
-    withThreadLock(input.threadId, openLocked(input));
+    withThreadLock(
+      input.threadId,
+      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+    );
 
   const openOrAttachForStream = (input: TerminalAttachInput) =>
     withThreadLock(
@@ -2481,11 +2660,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             });
           }
 
-          return yield* openLocked({
+          const resolvedInput = yield* resolveLaunchInputEnvironment({
             ...input,
             terminalId,
             cwd: input.cwd,
           });
+          return yield* openLocked(resolvedInput);
         }
 
         const session = existing.value;
@@ -2493,11 +2673,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const targetRows = input.rows ?? session.rows;
 
         if (!session.process && input.cwd && input.restartIfNotRunning === true) {
-          return yield* openLocked({
+          const resolvedInput = yield* resolveLaunchInputEnvironment({
             ...input,
             terminalId,
             cwd: input.cwd,
           });
+          return yield* openLocked(resolvedInput);
         }
 
         if (
@@ -2749,84 +2930,87 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
+  const restartResolved = (input: TerminalRestartInput) =>
+    Effect.gen(function* () {
+      yield* increment(terminalRestartsTotal, { scope: "thread" });
+      const terminalId = input.terminalId;
+      yield* assertValidCwd(input.cwd);
+
+      const sessionKey = toSessionKey(input.threadId, terminalId);
+      const existingSession = yield* getSession(input.threadId, terminalId);
+      let session: TerminalSessionState;
+      if (Option.isNone(existingSession)) {
+        const cols = input.cols ?? DEFAULT_OPEN_COLS;
+        const rows = input.rows ?? DEFAULT_OPEN_ROWS;
+        session = {
+          threadId: input.threadId,
+          terminalId,
+          cwd: input.cwd,
+          worktreePath: input.worktreePath ?? null,
+          status: "starting",
+          pid: null,
+          history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
+          pendingHistoryControlSequence: "",
+          pendingProcessEvents: [],
+          pendingProcessEventIndex: 0,
+          processEventDrainRunning: false,
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: yield* nowIso,
+          eventSequence: 0,
+          cols,
+          rows,
+          process: null,
+          unsubscribeData: null,
+          unsubscribeExit: null,
+          hasRunningSubprocess: false,
+          childCommandLabel: null,
+          runtimeEnv: normalizedRuntimeEnv(input.env),
+        };
+        const createdSession = session;
+        yield* modifyManagerState((state) => {
+          const sessions = new Map(state.sessions);
+          sessions.set(sessionKey, createdSession);
+          return [undefined, { ...state, sessions }] as const;
+        });
+        yield* evictInactiveSessionsIfNeeded();
+      } else {
+        session = existingSession.value;
+        yield* stopProcess(session);
+        session.cwd = input.cwd;
+        session.worktreePath = input.worktreePath ?? null;
+        session.runtimeEnv = normalizedRuntimeEnv(input.env);
+      }
+
+      const cols = input.cols ?? session.cols;
+      const rows = input.rows ?? session.rows;
+
+      session.history.clear();
+      session.pendingHistoryControlSequence = "";
+      session.pendingProcessEvents = [];
+      session.pendingProcessEventIndex = 0;
+      session.processEventDrainRunning = false;
+      yield* persistHistory(input.threadId, terminalId, session.history);
+      yield* startSession(
+        session,
+        {
+          threadId: input.threadId,
+          terminalId,
+          cwd: input.cwd,
+          ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+          cols,
+          rows,
+          ...(input.env ? { env: input.env } : {}),
+        },
+        "restarted",
+      );
+      return snapshot(session);
+    });
+
   const restart: TerminalManager["Service"]["restart"] = (input) =>
     withThreadLock(
       input.threadId,
-      Effect.gen(function* () {
-        yield* increment(terminalRestartsTotal, { scope: "thread" });
-        const terminalId = input.terminalId;
-        yield* assertValidCwd(input.cwd);
-
-        const sessionKey = toSessionKey(input.threadId, terminalId);
-        const existingSession = yield* getSession(input.threadId, terminalId);
-        let session: TerminalSessionState;
-        if (Option.isNone(existingSession)) {
-          const cols = input.cols ?? DEFAULT_OPEN_COLS;
-          const rows = input.rows ?? DEFAULT_OPEN_ROWS;
-          session = {
-            threadId: input.threadId,
-            terminalId,
-            cwd: input.cwd,
-            worktreePath: input.worktreePath ?? null,
-            status: "starting",
-            pid: null,
-            history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
-            pendingHistoryControlSequence: "",
-            pendingProcessEvents: [],
-            pendingProcessEventIndex: 0,
-            processEventDrainRunning: false,
-            exitCode: null,
-            exitSignal: null,
-            updatedAt: yield* nowIso,
-            eventSequence: 0,
-            cols,
-            rows,
-            process: null,
-            unsubscribeData: null,
-            unsubscribeExit: null,
-            hasRunningSubprocess: false,
-            childCommandLabel: null,
-            runtimeEnv: normalizedRuntimeEnv(input.env),
-          };
-          const createdSession = session;
-          yield* modifyManagerState((state) => {
-            const sessions = new Map(state.sessions);
-            sessions.set(sessionKey, createdSession);
-            return [undefined, { ...state, sessions }] as const;
-          });
-          yield* evictInactiveSessionsIfNeeded();
-        } else {
-          session = existingSession.value;
-          yield* stopProcess(session);
-          session.cwd = input.cwd;
-          session.worktreePath = input.worktreePath ?? null;
-          session.runtimeEnv = normalizedRuntimeEnv(input.env);
-        }
-
-        const cols = input.cols ?? session.cols;
-        const rows = input.rows ?? session.rows;
-
-        session.history.clear();
-        session.pendingHistoryControlSequence = "";
-        session.pendingProcessEvents = [];
-        session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
-        yield* persistHistory(input.threadId, terminalId, session.history);
-        yield* startSession(
-          session,
-          {
-            threadId: input.threadId,
-            terminalId,
-            cwd: input.cwd,
-            ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-            cols,
-            rows,
-            ...(input.env ? { env: input.env } : {}),
-          },
-          "restarted",
-        );
-        return snapshot(session);
-      }),
+      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(restartResolved)),
     );
 
   const close: TerminalManager["Service"]["close"] = (input) =>

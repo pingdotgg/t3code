@@ -49,7 +49,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
 
-export const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
+const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "play", label: "Play" },
   { id: "test", label: "Test" },
   { id: "lint", label: "Lint" },

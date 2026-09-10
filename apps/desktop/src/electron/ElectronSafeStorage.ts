@@ -11,7 +11,7 @@ const electronSafeStorageErrorFields = {
   cause: Schema.Defect(),
 };
 
-export class ElectronSafeStorageAvailabilityError extends Schema.TaggedErrorClass<ElectronSafeStorageAvailabilityError>()(
+export class ElectronSafeStorageAvailabilityError extends Schema.TaggedError<ElectronSafeStorageAvailabilityError>()(
   "ElectronSafeStorageAvailabilityError",
   {
     ...electronSafeStorageErrorFields,
@@ -22,7 +22,7 @@ export class ElectronSafeStorageAvailabilityError extends Schema.TaggedErrorClas
   }
 }
 
-export class ElectronSafeStorageEncryptError extends Schema.TaggedErrorClass<ElectronSafeStorageEncryptError>()(
+export class ElectronSafeStorageEncryptError extends Schema.TaggedError<ElectronSafeStorageEncryptError>()(
   "ElectronSafeStorageEncryptError",
   {
     ...electronSafeStorageErrorFields,
@@ -33,7 +33,7 @@ export class ElectronSafeStorageEncryptError extends Schema.TaggedErrorClass<Ele
   }
 }
 
-export class ElectronSafeStorageDecryptError extends Schema.TaggedErrorClass<ElectronSafeStorageDecryptError>()(
+export class ElectronSafeStorageDecryptError extends Schema.TaggedError<ElectronSafeStorageDecryptError>()(
   "ElectronSafeStorageDecryptError",
   {
     ...electronSafeStorageErrorFields,
@@ -50,7 +50,6 @@ export const ElectronSafeStorageError = Schema.Union([
   ElectronSafeStorageDecryptError,
 ]);
 export type ElectronSafeStorageError = typeof ElectronSafeStorageError.Type;
-export const isElectronSafeStorageError = Schema.is(ElectronSafeStorageError);
 
 export class ElectronSafeStorage extends Context.Service<
   ElectronSafeStorage,
@@ -66,6 +65,7 @@ export class ElectronSafeStorage extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronSafeStorage") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
 

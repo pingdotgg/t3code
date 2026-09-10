@@ -1,0 +1,18 @@
+---
+// The single prerendered exception in this SSR-first app — under
+// `output: "server"` a page must opt IN to prerendering. Exercises the
+// hybrid path: served from assets in production, by the prerender
+// middleware in dev.
+export const prerender = true;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>About</title>
+  </head>
+  <body>
+    <h1>About</h1>
+    <p id="mode">prerendered</p>
+  </body>
+</html>

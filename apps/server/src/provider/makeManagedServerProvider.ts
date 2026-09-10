@@ -39,7 +39,7 @@ function withUsageLimits(
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
-  readonly maintenanceCapabilities: ServerProviderShape["maintenanceCapabilities"];
+  readonly resolveMaintenance: ServerProviderShape["resolveMaintenance"];
   readonly getSettings: Effect.Effect<Settings, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
@@ -283,7 +283,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
 
   return {
-    maintenanceCapabilities: input.maintenanceCapabilities,
+    resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,

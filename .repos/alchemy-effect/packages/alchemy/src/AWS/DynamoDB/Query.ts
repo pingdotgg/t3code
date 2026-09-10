@@ -11,9 +11,8 @@ export interface QueryRequest extends Omit<DynamoDB.QueryInput, "TableName"> {}
  * Bind this operation to a `Table` inside a function runtime to get a callable
  * that queries items by key condition, automatically injecting the table name.
  * Provide the `QueryHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Reading Data
- * @example Query Items by Partition Key
+ * ### Reading Data
+ * **Example:** Query Items by Partition Key
  * ```typescript
  * const query = yield* AWS.DynamoDB.Query(table);
  *
@@ -23,6 +22,8 @@ export interface QueryRequest extends Omit<DynamoDB.QueryInput, "TableName"> {}
  * });
  * const items = response.Items;
  * ```
+ *
+ * @binding
  */
 export interface Query extends Binding.Service<
   Query,

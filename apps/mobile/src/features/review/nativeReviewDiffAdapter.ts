@@ -6,8 +6,6 @@ import type {
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
-import { resolveMobileCodeSurface } from "../../lib/appearancePreferences";
-import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
 import { computeWordAltDiffRanges } from "./reviewWordDiffs";
@@ -25,12 +23,7 @@ const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
 
-export const NATIVE_REVIEW_DIFF_ROW_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
-
-export const NATIVE_REVIEW_DIFF_STYLE = createNativeReviewDiffStyle(
-  resolveMobileCodeSurface(MOBILE_CODE_SURFACE.fontSize),
-);
 
 function opaqueNativeHexColor(color: string, background: string): string {
   const hex = NATIVE_HEX_COLOR.exec(color);

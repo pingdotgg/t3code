@@ -17,9 +17,8 @@ export interface ListParticipantReplicasRequest extends Omit<
  * destination stages a participant's media is replicated to and each
  * replica's state.
  *
- * @binding
- * @section Replicating Participants
- * @example List a participant's replicas
+ * ### Replicating Participants
+ * **Example:** List a participant's replicas
  * ```typescript
  * // init
  * const listParticipantReplicas = yield* IVSRealtime.ListParticipantReplicas(stage);
@@ -29,6 +28,8 @@ export interface ListParticipantReplicasRequest extends Omit<
  *   participantId: "abcDEF123",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListParticipantReplicas extends Binding.Service<
   ListParticipantReplicas,

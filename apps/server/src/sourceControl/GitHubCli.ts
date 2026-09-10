@@ -34,7 +34,7 @@ const gitHubCliFailureFields = {
   cause: Schema.Defect(),
 } as const;
 
-export class GitHubCliUnavailableError extends Schema.TaggedErrorClass<GitHubCliUnavailableError>()(
+export class GitHubCliUnavailableError extends Schema.TaggedError<GitHubCliUnavailableError>()(
   "GitHubCliUnavailableError",
   gitHubCliFailureFields,
 ) {
@@ -47,7 +47,7 @@ export class GitHubCliUnavailableError extends Schema.TaggedErrorClass<GitHubCli
   }
 }
 
-export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHubCliAuthenticationError>()(
+export class GitHubCliAuthenticationError extends Schema.TaggedError<GitHubCliAuthenticationError>()(
   "GitHubCliAuthenticationError",
   gitHubCliFailureFields,
 ) {
@@ -60,7 +60,7 @@ export class GitHubCliAuthenticationError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
-export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRateLimitError>()(
+export class GitHubCliRateLimitError extends Schema.TaggedError<GitHubCliRateLimitError>()(
   "GitHubCliRateLimitError",
   gitHubCliFailureFields,
 ) {
@@ -73,7 +73,7 @@ export class GitHubCliRateLimitError extends Schema.TaggedErrorClass<GitHubCliRa
   }
 }
 
-export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitHubPullRequestNotFoundError>()(
+export class GitHubPullRequestNotFoundError extends Schema.TaggedError<GitHubPullRequestNotFoundError>()(
   "GitHubPullRequestNotFoundError",
   gitHubCliFailureFields,
 ) {
@@ -86,7 +86,7 @@ export class GitHubPullRequestNotFoundError extends Schema.TaggedErrorClass<GitH
   }
 }
 
-export class GitHubRepositoryAccessError extends Schema.TaggedErrorClass<GitHubRepositoryAccessError>()(
+export class GitHubRepositoryAccessError extends Schema.TaggedError<GitHubRepositoryAccessError>()(
   "GitHubRepositoryAccessError",
   gitHubCliFailureFields,
 ) {
@@ -99,7 +99,7 @@ export class GitHubRepositoryAccessError extends Schema.TaggedErrorClass<GitHubR
   }
 }
 
-export class GitHubCliCommandError extends Schema.TaggedErrorClass<GitHubCliCommandError>()(
+export class GitHubCliCommandError extends Schema.TaggedError<GitHubCliCommandError>()(
   "GitHubCliCommandError",
   gitHubCliFailureFields,
 ) {
@@ -118,7 +118,7 @@ const gitHubCliDecodeFields = {
   cause: Schema.Defect(),
 } as const;
 
-export class GitHubPullRequestListDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestListDecodeError>()(
+export class GitHubPullRequestListDecodeError extends Schema.TaggedError<GitHubPullRequestListDecodeError>()(
   "GitHubPullRequestListDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -131,7 +131,7 @@ export class GitHubPullRequestListDecodeError extends Schema.TaggedErrorClass<Gi
   }
 }
 
-export class GitHubChangeRequestListDecodeError extends Schema.TaggedErrorClass<GitHubChangeRequestListDecodeError>()(
+export class GitHubChangeRequestListDecodeError extends Schema.TaggedError<GitHubChangeRequestListDecodeError>()(
   "GitHubChangeRequestListDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -144,7 +144,7 @@ export class GitHubChangeRequestListDecodeError extends Schema.TaggedErrorClass<
   }
 }
 
-export class GitHubPullRequestDecodeError extends Schema.TaggedErrorClass<GitHubPullRequestDecodeError>()(
+export class GitHubPullRequestDecodeError extends Schema.TaggedError<GitHubPullRequestDecodeError>()(
   "GitHubPullRequestDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -157,7 +157,7 @@ export class GitHubPullRequestDecodeError extends Schema.TaggedErrorClass<GitHub
   }
 }
 
-export class GitHubRepositoryDecodeError extends Schema.TaggedErrorClass<GitHubRepositoryDecodeError>()(
+export class GitHubRepositoryDecodeError extends Schema.TaggedError<GitHubRepositoryDecodeError>()(
   "GitHubRepositoryDecodeError",
   gitHubCliDecodeFields,
 ) {
@@ -229,6 +229,8 @@ export interface GitHubPullRequestSummary {
   readonly headRefName: string;
   readonly state?: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt?: string;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -397,6 +399,7 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
   };
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -570,7 +573,7 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 1),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
@@ -652,7 +655,7 @@ export const make = Effect.gen(function* () {
           "view",
           input.reference,
           "--json",
-          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

@@ -19,15 +19,16 @@ export interface DeleteChatControlsConfigurationRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.DeleteChatControlsConfigurationHttp)`.
  *
- * @binding
- * @section Admin Controls
- * @example Delete Chat Controls
+ * ### Admin Controls
+ * **Example:** Delete Chat Controls
  * ```typescript
  * const deleteControls =
  *   yield* AWS.QBusiness.DeleteChatControlsConfiguration(app);
  *
  * yield* deleteControls();
  * ```
+ *
+ * @binding
  */
 export interface DeleteChatControlsConfiguration extends Binding.Service<
   DeleteChatControlsConfiguration,

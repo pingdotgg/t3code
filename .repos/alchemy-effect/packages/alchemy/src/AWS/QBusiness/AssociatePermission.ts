@@ -21,9 +21,8 @@ export interface AssociatePermissionRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.QBusiness.AssociatePermissionHttp)`.
  *
- * @binding
- * @section Cross-Account Permissions
- * @example Grant an ISV SearchRelevantContent
+ * ### Cross-Account Permissions
+ * **Example:** Grant an ISV SearchRelevantContent
  * ```typescript
  * const associate = yield* AWS.QBusiness.AssociatePermission(app);
  *
@@ -33,6 +32,8 @@ export interface AssociatePermissionRequest extends Omit<
  *   principal: "arn:aws:iam::123456789012:role/IsvRole",
  * });
  * ```
+ *
+ * @binding
  */
 export interface AssociatePermission extends Binding.Service<
   AssociatePermission,

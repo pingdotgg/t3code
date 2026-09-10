@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Layer, LayerMap } from "effect"
+import { Effect, Exit, Layer, LayerMap, Option, Scope } from "effect"
 import { TestClock } from "effect/testing"
 
 const makeLayer = (key: string, acquired: Array<string>, released: Array<string>): Layer.Layer<any> =>
@@ -16,6 +16,61 @@ const makeLayer = (key: string, acquired: Array<string>, released: Array<string>
   ) as Layer.Layer<any>
 
 describe("LayerMap", () => {
+  it.effect("contextEffectOption does not build missing entries and returns existing entries", () =>
+    Effect.gen(function*() {
+      const acquired: Array<string> = []
+      const layerMap = yield* LayerMap.make(
+        (key: string) => Layer.effectDiscard(Effect.sync(() => acquired.push(key))) as Layer.Layer<any>
+      )
+
+      assert.deepStrictEqual(yield* layerMap.contextEffectOption("key"), Option.none())
+      assert.deepStrictEqual(acquired, [])
+
+      const ownerScope = yield* Scope.make()
+      const borrowerScope = yield* Scope.make()
+      yield* layerMap.contextEffect("key").pipe(Scope.provide(ownerScope))
+      const cached = yield* layerMap.contextEffectOption("key").pipe(Scope.provide(borrowerScope))
+      assert.isTrue(Option.isSome(cached))
+      assert.deepStrictEqual(acquired, ["key"])
+
+      yield* Scope.close(ownerScope, Exit.void)
+      yield* Scope.close(borrowerScope, Exit.void)
+    }))
+
+  it.effect("Service contextEffectOption does not build missing entries and returns existing entries", () =>
+    Effect.gen(function*() {
+      const acquired: Array<string> = []
+      class TestMap extends LayerMap.Service<TestMap>()("LayerMapTest/ContextEffectOption", {
+        lookup: (key: string) => Layer.effectDiscard(Effect.sync(() => acquired.push(key))) as Layer.Layer<any>
+      }) {}
+
+      yield* Effect.gen(function*() {
+        assert.deepStrictEqual(yield* TestMap.contextEffectOption("key"), Option.none())
+        assert.deepStrictEqual(acquired, [])
+
+        const ownerScope = yield* Scope.make()
+        const borrowerScope = yield* Scope.make()
+        yield* TestMap.contextEffect("key").pipe(Scope.provide(ownerScope))
+        const cached = yield* TestMap.contextEffectOption("key").pipe(Scope.provide(borrowerScope))
+        assert.isTrue(Option.isSome(cached))
+        assert.deepStrictEqual(acquired, ["key"])
+
+        yield* Scope.close(ownerScope, Exit.void)
+        yield* Scope.close(borrowerScope, Exit.void)
+      }).pipe(Effect.provide(TestMap.layer))
+    }))
+
+  it.effect("make preloads the requested keys", () =>
+    Effect.gen(function*() {
+      const acquired: Array<string> = []
+      yield* LayerMap.make(
+        (key: string) => Layer.effectDiscard(Effect.sync(() => acquired.push(key))) as Layer.Layer<any>,
+        { preloadKeys: ["a", "b"] }
+      )
+
+      assert.deepStrictEqual(acquired, ["a", "b"])
+    }))
+
   it.effect("make supports dynamic idleTimeToLive", () =>
     Effect.gen(function*() {
       const acquired: Array<string> = []

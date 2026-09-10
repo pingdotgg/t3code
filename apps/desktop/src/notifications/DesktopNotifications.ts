@@ -79,7 +79,7 @@ export const make = Effect.gen(function* () {
         notification.show();
         return "attempted" as const;
       });
-    });
+    }).pipe(Effect.catch(() => Effect.succeed("error" as const)));
 
   return DesktopNotifications.of({ show });
 });

@@ -862,61 +862,6 @@ export function deriveAgentPanelModel({
 }
 
 /**
- * Members ordered by urgency for the capped inline workflow card: running and
- * failed first, then waiting, then most recently updated.
- */
-export function workflowCardMembers(
-  group: AgentPanelWorkflowGroup,
-  limit: number,
-): { readonly visible: ReadonlyArray<RuntimeSubagent>; readonly overflow: number } {
-  const all = [...group.phases.flatMap((phase) => phase.members), ...group.unphasedMembers];
-  const urgency = (agent: RuntimeSubagent): number => {
-    if (agent.status === "failed") return 0;
-    if (agent.status === "running") return 1;
-    if (agent.status === "waiting") return 2;
-    return 3;
-  };
-  const ordered = all
-    .slice()
-    .sort((a, b) => urgency(a) - urgency(b) || b.updatedAt.localeCompare(a.updatedAt));
-  return {
-    visible: ordered.slice(0, limit),
-    overflow: Math.max(0, ordered.length - limit),
-  };
-}
-
-/** Kinds the timeline should not render as generic rows (fold input only). */
-export function isSubagentActivityKind(kind: string): boolean {
-  return (
-    kind === "task.started" ||
-    kind === "task.progress" ||
-    kind === "task.updated" ||
-    kind === "task.completed" ||
-    kind === "tool.progress"
-  );
-}
-
-/**
- * Quiet-timeline guarantee: tool rows attributed to an owning agent belong in
- * the Agents surface, not the parent chat. Unattributed rows must stay.
- */
-export function isAgentAttributedToolActivity(activity: OrchestrationThreadActivity): boolean {
-  if (typeof activity.payload !== "object" || activity.payload === null) {
-    return false;
-  }
-  const payload = activity.payload as Record<string, unknown>;
-  return typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
-}
-
-/** Timeline-bypassing synthesized rows (Codex children, workflow members). */
-export function isTimelineBypassActivity(activity: OrchestrationThreadActivity): boolean {
-  if (typeof activity.payload !== "object" || activity.payload === null) {
-    return false;
-  }
-  return (activity.payload as Record<string, unknown>).timelineBypass === true;
-}
-
-/**
  * Compact model chip text: strips vendor prefixes/date-or-context suffixes
  * ("claude-sonnet-5[1m]" → "sonnet-5[1m]", "claude-opus-4-20250514" →
  * "opus-4"). Unknown ids pass through untouched; effort appends as "· high".
