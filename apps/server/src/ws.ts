@@ -61,6 +61,8 @@ import {
   type ServerLifecycleStreamEvent,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  type FilesystemCreateDirectoryFailure,
+  FilesystemCreateDirectoryError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   RpcClientId,
@@ -258,6 +260,27 @@ function filesystemBrowseFailureContext(error: WorkspaceEntries.WorkspaceEntries
       return { failure: "current_project_required" };
     case "WorkspaceEntriesReadDirectoryError":
       return { failure: "read_directory_failed", parentPath: error.parentPath };
+    default:
+      return unexpectedCompatibilityError(error);
+  }
+}
+
+function filesystemCreateDirectoryFailureContext(
+  error: WorkspaceEntries.WorkspaceEntriesCreateDirectoryFailure,
+): {
+  readonly failure: FilesystemCreateDirectoryFailure;
+  readonly resolvedPath?: string;
+  readonly platform?: string;
+} {
+  switch (error._tag) {
+    case "WorkspaceEntriesWindowsPathUnsupportedError":
+      return { failure: "windows_path_unsupported", platform: error.platform };
+    case "WorkspaceEntriesCurrentProjectRequiredError":
+      return { failure: "current_project_required" };
+    case "WorkspaceEntriesInvalidDirectoryNameError":
+      return { failure: "invalid_directory_name" };
+    case "WorkspaceEntriesCreateDirectoryError":
+      return { failure: "create_directory_failed", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -2346,6 +2369,21 @@ const makeWsRpcLayer = (
                   new FilesystemBrowseError({
                     ...input,
                     ...filesystemBrowseFailureContext(cause),
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.filesystemCreateDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.filesystemCreateDirectory,
+            workspaceEntries.createDirectory(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new FilesystemCreateDirectoryError({
+                    ...input,
+                    ...filesystemCreateDirectoryFailureContext(cause),
                     cause,
                   }),
               ),

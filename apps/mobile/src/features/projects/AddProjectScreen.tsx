@@ -24,6 +24,7 @@ import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  getBrowseCreateDirectoryTarget,
   getFilesystemBrowsePath,
 } from "@t3tools/client-runtime/state/filesystem";
 import {
@@ -779,16 +780,87 @@ function FolderBrowser(props: {
     () => filterFilesystemBrowseEntries(browseState.data?.entries ?? [], browseFilterQuery),
     [browseFilterQuery, browseState.data?.entries],
   );
+  // Only once the listing has loaded, so a folder that already exists is never
+  // offered as a new one.
+  const createDirectoryTarget =
+    browseState.data === null
+      ? null
+      : getBrowseCreateDirectoryTarget({
+          directoryPath: browsePath.directoryPath,
+          leafName: browseFilterQuery,
+          entries: browseState.data.entries,
+          caseSensitive: !isWindowsPlatform(props.environment.platform),
+        });
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreatingDirectory, setIsCreatingDirectory] = useState(false);
+  const createDirectory = useAtomCommand(filesystemEnvironment.createDirectory, {
+    reportFailure: false,
+  });
+  const reloadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    reportDefect: false,
+    refresh: true,
+  });
+
+  const createBrowsedDirectory = async (target: {
+    readonly parentPath: string;
+    readonly name: string;
+  }) => {
+    if (isCreatingDirectory) return;
+    setCreateError(null);
+    setIsCreatingDirectory(true);
+    const result = await createDirectory({
+      environmentId: props.environment.environmentId,
+      input: { parentPath: target.parentPath, name: target.name },
+    });
+    if (AsyncResult.isFailure(result)) {
+      setCreateError(errorMessage(Cause.squash(result.cause)));
+      setIsCreatingDirectory(false);
+      return;
+    }
+    // Re-read the folder it was created in before stepping into it, so going
+    // back up shows the new folder instead of the cached listing.
+    await reloadBrowsePath({
+      environmentId: props.environment.environmentId,
+      input: { partialPath: target.parentPath },
+    });
+    await props.navigateToBrowsePath({
+      browseDirectoryPath: target.parentPath,
+      selectedDirectoryName: target.name,
+    });
+    setIsCreatingDirectory(false);
+  };
 
   return (
     <>
       <SectionTitle>Browse folders</SectionTitle>
       {browseState.error ? <ErrorBanner message={browseState.error} /> : null}
+      {createError ? <ErrorBanner message={createError} /> : null}
       <ListSection>
         {browseState.isPending && browseState.data === null ? (
           <View className="items-center py-5">
             <ActivityIndicator colorClassName={"accent-icon-muted"} />
           </View>
+        ) : null}
+        {createDirectoryTarget ? (
+          <ListRow
+            title={`New folder "${createDirectoryTarget.name}"`}
+            subtitle={`Create in ${createDirectoryTarget.parentPath}`}
+            disabled={isCreatingDirectory}
+            icon={
+              <SymbolView
+                name="folder.badge.plus"
+                size={17}
+                tintColorClassName={"accent-icon-muted"}
+                type="monochrome"
+              />
+            }
+            isFirst
+            right={null}
+            onPress={() => {
+              void createBrowsedDirectory(createDirectoryTarget);
+            }}
+          />
         ) : null}
         {browsePath.canBrowseUp ? (
           <ListRow
@@ -801,7 +873,7 @@ function FolderBrowser(props: {
                 type="monochrome"
               />
             }
-            isFirst
+            isFirst={createDirectoryTarget === null}
             right={null}
             onPress={() => {
               if (browsePath.parentPath) {
@@ -824,7 +896,7 @@ function FolderBrowser(props: {
                 type="monochrome"
               />
             }
-            isFirst={index === 0 && !browsePath.canBrowseUp}
+            isFirst={index === 0 && !browsePath.canBrowseUp && createDirectoryTarget === null}
             right={null}
             onPress={() => {
               void props.navigateToBrowsePath({

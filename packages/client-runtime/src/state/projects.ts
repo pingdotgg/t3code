@@ -77,6 +77,21 @@ function splitAbsolutePath(value: string): {
   return null;
 }
 
+function trimTrailingSeparators(value: string): string {
+  return value.replace(/[\\/]+$/, "");
+}
+
+// Home- and project-relative paths keep their leading token (`~`, `.`, `..`) as
+// the first crumb, since that is the anchor every deeper crumb resolves from.
+function leadingBrowseSegment(
+  directoryPath: string,
+  separator: "/" | "\\",
+): [BrowsePathSegment | null, string[]] {
+  const [head, ...rest] = splitPathSegments(directoryPath, separator);
+  if (head === undefined) return [null, []];
+  return [{ label: head, path: `${head}${separator}` }, rest];
+}
+
 export function isFilesystemBrowseQuery(value: string, platform = ""): boolean {
   const allowWindowsPaths = isWindowsPlatform(platform);
   return (
@@ -188,6 +203,44 @@ export function getBrowseParentPath(currentPath: string): string | null {
     return `${trimmed.slice(0, 2)}${separator}`;
   }
   return trimmed.slice(0, lastSeparatorIndex + 1);
+}
+
+export interface BrowsePathSegment {
+  /** The segment as it is shown in a breadcrumb (`~`, `/`, `C:`, or a folder name). */
+  readonly label: string;
+  /** The browse path this segment stands for, always ending in a separator. */
+  readonly path: string;
+}
+
+/**
+ * Breadcrumb segments for the directory a picker is listing. Every `path` is
+ * itself a browse path, so selecting a segment navigates to that ancestor.
+ * Returns an empty list for anything that is not a directory path yet.
+ */
+export function getBrowsePathSegments(currentPath: string): BrowsePathSegment[] {
+  const directoryPath = getBrowseDirectoryPath(currentPath.trim());
+  if (directoryPath.length === 0) return [];
+
+  const absolutePath = splitAbsolutePath(directoryPath);
+  const separator = absolutePath?.separator ?? preferredPathSeparator(directoryPath);
+  const [root, segments] = absolutePath
+    ? [
+        {
+          label: absolutePath.root === "/" ? "/" : trimTrailingSeparators(absolutePath.root),
+          path: absolutePath.root,
+        },
+        absolutePath.segments,
+      ]
+    : leadingBrowseSegment(directoryPath, separator);
+  if (root === null) return [];
+
+  const crumbs: BrowsePathSegment[] = [root];
+  let crumbPath = root.path;
+  for (const segment of segments) {
+    crumbPath = `${crumbPath}${segment}${separator}`;
+    crumbs.push({ label: segment, path: crumbPath });
+  }
+  return crumbs;
 }
 
 export function canNavigateUp(currentPath: string): boolean {

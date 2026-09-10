@@ -7,6 +7,7 @@ import {
   findProjectByPath,
   getBrowseLeafPathSegment,
   getBrowseParentPath,
+  getBrowsePathSegments,
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
@@ -94,6 +95,33 @@ describe("projectPaths", () => {
     expect(getBrowseParentPath("\\\\server\\share\\repo\\")).toBe("\\\\server\\share\\");
     expect(getBrowseParentPath("C:\\")).toBeNull();
     expect(getBrowseParentPath("/home/user\\project/docs/")).toBe("/home/user\\project/");
+  });
+
+  it("breaks a browsed directory into navigable breadcrumb segments", () => {
+    expect(getBrowsePathSegments("~/projects/t3")).toEqual([
+      { label: "~", path: "~/" },
+      { label: "projects", path: "~/projects/" },
+    ]);
+    expect(getBrowsePathSegments("/home/user/code/")).toEqual([
+      { label: "/", path: "/" },
+      { label: "home", path: "/home/" },
+      { label: "user", path: "/home/user/" },
+      { label: "code", path: "/home/user/code/" },
+    ]);
+    expect(getBrowsePathSegments("C:\\Work\\Repo\\")).toEqual([
+      { label: "C:", path: "C:\\" },
+      { label: "Work", path: "C:\\Work\\" },
+      { label: "Repo", path: "C:\\Work\\Repo\\" },
+    ]);
+    expect(getBrowsePathSegments("\\\\server\\share\\repo\\")).toEqual([
+      { label: "\\\\server\\share", path: "\\\\server\\share\\" },
+      { label: "repo", path: "\\\\server\\share\\repo\\" },
+    ]);
+    expect(getBrowsePathSegments("../sibling/")).toEqual([
+      { label: "..", path: "../" },
+      { label: "sibling", path: "../sibling/" },
+    ]);
+    expect(getBrowsePathSegments("  ")).toEqual([]);
   });
 
   it("detects browse path boundaries", () => {

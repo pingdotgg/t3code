@@ -383,6 +383,15 @@ export function filterCommandPaletteGroups(input: {
   });
 }
 
+export interface BrowseCreateDirectoryAction {
+  /** The folder name the user typed but that the listing does not contain. */
+  readonly name: string;
+  /** The browsed directory the folder is created in, shown as the item description. */
+  readonly directoryPath: string;
+  readonly icon: ReactNode;
+  readonly run: () => void | Promise<void>;
+}
+
 export function buildBrowseGroups(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseQuery: string;
@@ -391,8 +400,31 @@ export function buildBrowseGroups(input: {
   directoryIcon: ReactNode;
   browseUp: () => void | Promise<void>;
   browseTo: (name: string) => void | Promise<void>;
+  createDirectory?: BrowseCreateDirectoryAction | null;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
+
+  const createDirectory = input.createDirectory;
+  if (createDirectory) {
+    items.push({
+      kind: "action",
+      value: "browse:create-directory",
+      searchTerms: [
+        input.browseQuery,
+        createDirectory.name,
+        "new folder",
+        "create folder",
+        "mkdir",
+      ],
+      title: `New folder "${createDirectory.name}"`,
+      description: `Create in ${createDirectory.directoryPath}`,
+      icon: createDirectory.icon,
+      keepOpen: true,
+      run: async () => {
+        await createDirectory.run();
+      },
+    });
+  }
 
   if (input.canBrowseUp) {
     items.push({
@@ -423,6 +455,27 @@ export function buildBrowseGroups(input: {
   }
 
   return [{ value: "directories", label: "Directories", items }];
+}
+
+/**
+ * The folder Tab completion should open: whatever the user highlighted, the
+ * folder they typed in full, or the only remaining match. Anything more
+ * ambiguous than that is left alone so Tab never guesses.
+ */
+export function resolveBrowseCompletionTarget(input: {
+  readonly browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  readonly exactEntry: FilesystemBrowseEntry | null;
+  readonly highlightedItemValue: string | null;
+}): FilesystemBrowseEntry | null {
+  const highlighted =
+    input.highlightedItemValue === null
+      ? null
+      : (input.browseEntries.find(
+          (entry) => `browse:${entry.fullPath}` === input.highlightedItemValue,
+        ) ?? null);
+  if (highlighted) return highlighted;
+  if (input.exactEntry) return input.exactEntry;
+  return input.browseEntries.length === 1 ? (input.browseEntries[0] ?? null) : null;
 }
 
 export function filterPinnedBrowseEntries(input: {

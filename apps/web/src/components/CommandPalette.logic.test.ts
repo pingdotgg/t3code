@@ -9,6 +9,7 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  resolveBrowseCompletionTarget,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -469,6 +470,105 @@ describe("buildBrowseGroups", () => {
     finishNavigation?.();
     await action;
     expect(actionSettled).toBe(true);
+  });
+});
+
+describe("browse folder creation item", () => {
+  const entries = [{ name: "Downloads", fullPath: "/Users/test/Downloads" }];
+
+  it("leads the listing with the folder to create and runs it once activated", async () => {
+    const run = vi.fn(() => Promise.resolve());
+    const groups = buildBrowseGroups({
+      browseEntries: entries,
+      browseQuery: "~/scratch",
+      canBrowseUp: true,
+      upIcon: null,
+      directoryIcon: null,
+      browseUp: vi.fn(),
+      browseTo: vi.fn(),
+      createDirectory: { name: "scratch", directoryPath: "~/", icon: null, run },
+    });
+    const items = groups[0]?.items ?? [];
+    const createItem = items[0];
+    if (!createItem || createItem.kind !== "action") {
+      throw new Error("Expected a create-folder action");
+    }
+
+    expect(createItem.value).toBe("browse:create-directory");
+    expect(createItem.title).toBe('New folder "scratch"');
+    expect(createItem.description).toBe("Create in ~/");
+    expect(createItem.keepOpen).toBe(true);
+    expect(items.map((item) => item.value)).toEqual([
+      "browse:create-directory",
+      "browse:up",
+      "browse:/Users/test/Downloads",
+    ]);
+
+    await createItem.run();
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("omits the item when there is nothing to create", () => {
+    const groups = buildBrowseGroups({
+      browseEntries: entries,
+      browseQuery: "~/",
+      canBrowseUp: false,
+      upIcon: null,
+      directoryIcon: null,
+      browseUp: vi.fn(),
+      browseTo: vi.fn(),
+      createDirectory: null,
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual(["browse:/Users/test/Downloads"]);
+  });
+});
+
+describe("resolveBrowseCompletionTarget", () => {
+  const entries = [
+    { name: "code", fullPath: "/Users/test/code" },
+    { name: "codex", fullPath: "/Users/test/codex" },
+  ];
+
+  it("prefers the highlighted folder, then the typed one, then the only match", () => {
+    expect(
+      resolveBrowseCompletionTarget({
+        browseEntries: entries,
+        exactEntry: entries[0] ?? null,
+        highlightedItemValue: "browse:/Users/test/codex",
+      }),
+    ).toEqual(entries[1]);
+    expect(
+      resolveBrowseCompletionTarget({
+        browseEntries: entries,
+        exactEntry: entries[0] ?? null,
+        highlightedItemValue: "browse:up",
+      }),
+    ).toEqual(entries[0]);
+    expect(
+      resolveBrowseCompletionTarget({
+        browseEntries: entries.slice(1),
+        exactEntry: null,
+        highlightedItemValue: null,
+      }),
+    ).toEqual(entries[1]);
+  });
+
+  it("stays out of the way when the folder is ambiguous", () => {
+    expect(
+      resolveBrowseCompletionTarget({
+        browseEntries: entries,
+        exactEntry: null,
+        highlightedItemValue: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolveBrowseCompletionTarget({
+        browseEntries: [],
+        exactEntry: null,
+        highlightedItemValue: null,
+      }),
+    ).toBeNull();
   });
 });
 

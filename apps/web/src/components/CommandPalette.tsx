@@ -16,6 +16,7 @@ import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  getBrowseCreateDirectoryTarget,
   getFilesystemBrowsePath,
 } from "@t3tools/client-runtime/state/filesystem";
 import {
@@ -88,6 +89,7 @@ import {
   ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
+  getBrowsePathSegments,
   hasTrailingPathSeparator,
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
@@ -135,6 +137,7 @@ import {
   filterPinnedBrowseEntries,
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
+  resolveBrowseCompletionTarget,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
@@ -142,6 +145,7 @@ import {
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import { CommandPaletteBrowseBreadcrumb } from "./CommandPaletteBrowseBreadcrumb";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
@@ -176,6 +180,7 @@ import {
 import type { Project } from "../types";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+const EMPTY_BREADCRUMB_SEGMENTS: ReturnType<typeof getBrowsePathSegments> = [];
 
 function projectFavicon(project: Project) {
   return <ProjectFavicon project={project} className="size-4" />;
@@ -584,6 +589,16 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
     reportDefect: false,
   });
+  // A folder created from the picker has to invalidate the listing it was
+  // created in, so the same query is also run with `refresh` after a mkdir.
+  const reloadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    reportDefect: false,
+    refresh: true,
+  });
+  const createBrowseDirectoryCommand = useAtomCommand(filesystemEnvironment.createDirectory, {
+    reportFailure: false,
+  });
   const cloneRepository = useAtomCommand(sourceControlEnvironment.cloneRepository, {
     reportFailure: false,
   });
@@ -974,6 +989,17 @@ function OpenCommandPaletteDialog(props: {
         : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery),
     [browseEntries, browseEnvironmentPlatform, browsePath.filterQuery, pinnedCloneDirectoryName],
   );
+
+  // The clone destination keeps the repository folder appended to the browsed
+  // path, so that leaf is the pending clone target rather than a name the user
+  // is typing to filter or create.
+  const browseLeafName =
+    pinnedCloneDirectoryName.length > 0 &&
+    (isWindowsPlatform(browseEnvironmentPlatform)
+      ? pinnedCloneDirectoryName.toLowerCase() === browsePath.filterQuery.toLowerCase()
+      : pinnedCloneDirectoryName === browsePath.filterQuery)
+      ? ""
+      : browsePath.filterQuery;
 
   const prefetchBrowsePath = useCallback(
     async (
@@ -2101,22 +2127,27 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
+  const browseToDirectory = useCallback(
+    async (directoryPath: string): Promise<void> => {
+      const nextQuery = getCloneDestinationPath(directoryPath, pinnedCloneDirectoryName);
+      await browseNavigation.run(
+        () => prefetchBrowsePath(directoryPath),
+        () => {
+          setHighlightedItemValue(null);
+          setQuery(nextQuery);
+          setBrowseGeneration((generation) => generation + 1);
+        },
+      );
+    },
+    [browseNavigation, pinnedCloneDirectoryName, prefetchBrowsePath],
+  );
+
   const browseUp = useCallback(async (): Promise<void> => {
-    const parentPath = browsePath.parentPath;
-    if (parentPath === null) {
+    if (browsePath.parentPath === null) {
       return;
     }
-
-    const nextQuery = getCloneDestinationPath(parentPath, pinnedCloneDirectoryName);
-    await browseNavigation.run(
-      () => prefetchBrowsePath(parentPath),
-      () => {
-        setHighlightedItemValue(null);
-        setQuery(nextQuery);
-        setBrowseGeneration((generation) => generation + 1);
-      },
-    );
-  }, [browseNavigation, browsePath.parentPath, pinnedCloneDirectoryName, prefetchBrowsePath]);
+    await browseToDirectory(browsePath.parentPath);
+  }, [browsePath.parentPath, browseToDirectory]);
 
   // Resolve the add-project path from browse data when available. When the
   // query has a trailing separator (e.g. "~/projects/foo/"), parentPath is the
@@ -2128,6 +2159,58 @@ function OpenCommandPaletteDialog(props: {
 
   const canBrowseUp = !relativePathNeedsActiveProject && browsePath.canBrowseUp;
 
+  // Only offer to create the typed name once the listing it would join has
+  // loaded, and never the repository folder the clone destination pins on --
+  // the clone creates that one itself.
+  const createDirectoryTarget =
+    !browseResult || relativePathNeedsActiveProject
+      ? null
+      : getBrowseCreateDirectoryTarget({
+          directoryPath: browsePath.directoryPath,
+          leafName: browseLeafName,
+          entries: browseEntries,
+          caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
+        });
+
+  async function createBrowseDirectory(target: {
+    readonly parentPath: string;
+    readonly name: string;
+  }): Promise<void> {
+    if (browseEnvironmentId === null) {
+      return;
+    }
+    const browseCwd = currentProjectCwdForBrowse;
+    const result = await createBrowseDirectoryCommand({
+      environmentId: browseEnvironmentId,
+      input: {
+        parentPath: target.parentPath,
+        name: target.name,
+        ...(browseCwd ? { cwd: browseCwd } : {}),
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not create folder",
+            description: errorMessage(squashAtomCommandFailure(result)),
+          }),
+        );
+      }
+      return;
+    }
+
+    await reloadBrowsePath({
+      environmentId: browseEnvironmentId,
+      input: {
+        partialPath: target.parentPath,
+        ...(browseCwd ? { cwd: browseCwd } : {}),
+      },
+    });
+    await browseTo(target.name);
+  }
+
   const browseGroups = buildBrowseGroups({
     browseEntries: visibleBrowseEntries,
     browseQuery: query,
@@ -2136,6 +2219,15 @@ function OpenCommandPaletteDialog(props: {
     directoryIcon: <FolderIcon className={ITEM_ICON_CLASS} />,
     browseUp,
     browseTo,
+    createDirectory:
+      createDirectoryTarget === null
+        ? null
+        : {
+            name: createDirectoryTarget.name,
+            directoryPath: createDirectoryTarget.parentPath,
+            icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+            run: () => createBrowseDirectory(createDirectoryTarget),
+          },
   });
   const cloneDestinationBrowseGroups = useMemo(
     () =>
@@ -2273,6 +2365,29 @@ function OpenCommandPaletteDialog(props: {
       event.preventDefault();
       void submitAddProjectCloneFlow();
       return;
+    }
+
+    if (
+      isBrowsing &&
+      event.key === "ArrowUp" &&
+      (isPrimaryModifierPressed(event) || event.altKey)
+    ) {
+      event.preventDefault();
+      void browseUp();
+      return;
+    }
+
+    if (isBrowsing && event.key === "Tab" && !event.shiftKey) {
+      const completionTarget = resolveBrowseCompletionTarget({
+        browseEntries: visibleBrowseEntries,
+        exactEntry: exactBrowseEntry,
+        highlightedItemValue,
+      });
+      if (completionTarget) {
+        event.preventDefault();
+        void browseTo(completionTarget.name);
+        return;
+      }
     }
 
     const shouldSubmitBrowsePath =
@@ -2432,79 +2547,82 @@ function OpenCommandPaletteDialog(props: {
     primaryEnvironmentId,
   ]);
 
+  // Both accessory buttons already show their label and shortcut, so they carry
+  // no tooltip: a popup repeating the label rendered over the dialog header and
+  // read as a second, broken button.
   const inputAccessory =
     addProjectCloneFlow?.step === "repository" ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
-              aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
-              disabled={!canSubmitRemoteProjectFlow}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                void submitAddProjectCloneFlow();
-              }}
-            />
-          }
-        >
-          <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
-          <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-            <Kbd>Enter</Kbd>
-          </KbdGroup>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{remoteProjectButtonLabel ?? "Continue"} (Enter)</TooltipPopup>
-      </Tooltip>
+      <Button
+        variant="outline"
+        size="xs"
+        tabIndex={-1}
+        className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+        aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
+        disabled={!canSubmitRemoteProjectFlow}
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={() => {
+          void submitAddProjectCloneFlow();
+        }}
+      >
+        <span>{isRemoteProjectPending ? "Working" : remoteProjectButtonLabel}</span>
+        <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+          <Kbd>Enter</Kbd>
+        </KbdGroup>
+      </Button>
     ) : isBrowsing ? (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="outline"
-              size="xs"
-              tabIndex={-1}
-              className={cn(
-                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
-                hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
-              )}
-              aria-label={`${submitActionLabel} (${addShortcutLabel})`}
-              disabled={
-                !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
-                relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
-              }
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                if (relativePathNeedsActiveProject) {
-                  return;
-                }
-                if (isCloneDestinationStep) {
-                  void submitAddProjectCloneFlow(resolvedAddProjectPath);
-                } else {
-                  void handleAddProject(resolvedAddProjectPath);
-                }
-              }}
-            />
+      <Button
+        variant="outline"
+        size="xs"
+        tabIndex={-1}
+        className={cn(
+          "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+          hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
+        )}
+        aria-label={`${submitActionLabel} (${addShortcutLabel})`}
+        disabled={
+          !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
+          relativePathNeedsActiveProject ||
+          (isCloneDestinationStep && isRemoteProjectPending)
+        }
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        onClick={() => {
+          if (relativePathNeedsActiveProject) {
+            return;
           }
-        >
-          <span>
-            {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
-          </span>
-          <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-            <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
-          </KbdGroup>
-        </TooltipTrigger>
-        <TooltipPopup side="top">
-          {submitActionLabel} ({addShortcutLabel})
-        </TooltipPopup>
-      </Tooltip>
+          if (isCloneDestinationStep) {
+            void submitAddProjectCloneFlow(resolvedAddProjectPath);
+          } else {
+            void handleAddProject(resolvedAddProjectPath);
+          }
+        }}
+      >
+        <span>
+          {isCloneDestinationStep && isRemoteProjectPending ? "Cloning" : submitActionLabel}
+        </span>
+        <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
+          <Kbd>{hasHighlightedBrowseItem ? `${submitModifierLabel} Enter` : "Enter"}</Kbd>
+        </KbdGroup>
+      </Button>
+    ) : null;
+
+  const browseBreadcrumbSegments = useMemo(
+    () =>
+      isBrowsing && !relativePathNeedsActiveProject
+        ? getBrowsePathSegments(browseDirectoryPath)
+        : EMPTY_BREADCRUMB_SEGMENTS,
+    [browseDirectoryPath, isBrowsing, relativePathNeedsActiveProject],
+  );
+
+  const footerHints =
+    isBrowsing && !relativePathNeedsActiveProject ? (
+      <KbdGroup className="items-center gap-1.5">
+        <Kbd>Tab</Kbd>
+        <span>Open folder</span>
+      </KbdGroup>
     ) : null;
 
   const footerActionLabel =
@@ -2531,6 +2649,7 @@ function OpenCommandPaletteDialog(props: {
       aria-label="Command palette"
       autoHighlight={isBrowsing || isRemoteProjectCloneFlow ? false : "always"}
       footerActionLabel={footerActionLabel}
+      footerHints={footerHints}
       footerTrailing={footerTrailing}
       inputAccessory={inputAccessory}
       inputProps={{
@@ -2589,6 +2708,14 @@ function OpenCommandPaletteDialog(props: {
             </span>
           </div>
         </div>
+      ) : null}
+      {browseBreadcrumbSegments.length > 0 ? (
+        <CommandPaletteBrowseBreadcrumb
+          onNavigate={(path) => {
+            void browseToDirectory(path);
+          }}
+          segments={browseBreadcrumbSegments}
+        />
       ) : null}
       <CommandPaletteResults
         groups={displayedGroups}

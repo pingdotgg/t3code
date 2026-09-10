@@ -5279,6 +5279,53 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("creates and lists a picker folder through websocket rpc", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-create-folder-" });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const results = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const created = yield* client[WS_METHODS.filesystemCreateDirectory]({
+              parentPath: parentDir,
+              name: "scratch",
+            });
+            const listing = yield* client[WS_METHODS.filesystemBrowse]({
+              partialPath: `${parentDir}/`,
+            });
+            const escaped = yield* client[WS_METHODS.filesystemCreateDirectory]({
+              parentPath: parentDir,
+              name: "../escape",
+            }).pipe(Effect.result);
+            return { created, listing, escaped };
+          }),
+        ),
+      );
+
+      assert.equal(results.created.path, path.join(parentDir, "scratch"));
+      assert.deepEqual(
+        results.listing.entries.map((entry) => entry.name),
+        ["scratch"],
+      );
+      if (
+        results.escaped._tag !== "Failure" ||
+        results.escaped.failure._tag !== "FilesystemCreateDirectoryError"
+      ) {
+        assert.fail("Expected a FilesystemCreateDirectoryError");
+      }
+      assert.equal(results.escaped.failure.failure, "invalid_directory_name");
+      assert.equal(
+        results.escaped.failure.message,
+        `Failed to create folder '../escape' in '${parentDir}'.`,
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc server.upsertKeybinding", () =>
     Effect.gen(function* () {
       const rule: KeybindingRule = {

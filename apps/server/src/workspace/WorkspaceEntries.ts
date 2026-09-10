@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
   ProjectSearchContentsInput,
@@ -66,12 +68,49 @@ export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedError<Works
   }
 }
 
+export class WorkspaceEntriesInvalidDirectoryNameError extends Schema.TaggedError<WorkspaceEntriesInvalidDirectoryNameError>()(
+  "WorkspaceEntriesInvalidDirectoryNameError",
+  {
+    parentPath: Schema.String,
+    name: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `'${this.name}' is not a valid folder name for '${this.parentPath}'.`;
+  }
+}
+
+export class WorkspaceEntriesCreateDirectoryError extends Schema.TaggedError<WorkspaceEntriesCreateDirectoryError>()(
+  "WorkspaceEntriesCreateDirectoryError",
+  {
+    cwd: Schema.optional(Schema.String),
+    parentPath: Schema.String,
+    name: Schema.String,
+    resolvedPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    const cwd = this.cwd ? ` from '${this.cwd}'` : "";
+    return `Failed to create workspace directory '${this.resolvedPath}'${cwd}.`;
+  }
+}
+
 export const WorkspaceEntriesBrowseError = Schema.Union([
   WorkspaceEntriesWindowsPathUnsupportedError,
   WorkspaceEntriesCurrentProjectRequiredError,
   WorkspaceEntriesReadDirectoryError,
 ]);
 export type WorkspaceEntriesBrowseError = typeof WorkspaceEntriesBrowseError.Type;
+
+export const WorkspaceEntriesCreateDirectoryFailure = Schema.Union([
+  WorkspaceEntriesWindowsPathUnsupportedError,
+  WorkspaceEntriesCurrentProjectRequiredError,
+  WorkspaceEntriesInvalidDirectoryNameError,
+  WorkspaceEntriesCreateDirectoryError,
+]);
+export type WorkspaceEntriesCreateDirectoryFailure =
+  typeof WorkspaceEntriesCreateDirectoryFailure.Type;
 
 export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootNotExistsError,
@@ -90,6 +129,9 @@ export class WorkspaceEntries extends Context.Service<
     readonly browse: (
       input: FilesystemBrowseInput,
     ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
+    readonly createDirectory: (
+      input: FilesystemCreateDirectoryInput,
+    ) => Effect.Effect<FilesystemCreateDirectoryResult, WorkspaceEntriesCreateDirectoryFailure>;
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
@@ -103,10 +145,17 @@ export class WorkspaceEntries extends Context.Service<
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
+/**
+ * Resolves a browse-style path (`~/...`, absolute, or project-relative) that
+ * both listing and folder creation start from.
+ */
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
-  input: FilesystemBrowseInput,
+  input: { readonly partialPath: string; readonly cwd?: string | undefined },
   path: Path.Path,
-): Effect.fn.Return<string, WorkspaceEntriesBrowseError> {
+): Effect.fn.Return<
+  string,
+  WorkspaceEntriesWindowsPathUnsupportedError | WorkspaceEntriesCurrentProjectRequiredError
+> {
   const platform = yield* HostProcessPlatform;
   if (platform !== "win32" && isWindowsAbsolutePath(input.partialPath)) {
     return yield* new WorkspaceEntriesWindowsPathUnsupportedError({
@@ -228,6 +277,42 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const createDirectory: WorkspaceEntries["Service"]["createDirectory"] = Effect.fn(
+    "WorkspaceEntries.createDirectory",
+  )(function* (input) {
+    const parentPath = yield* resolveBrowseTarget(
+      { partialPath: input.parentPath, ...(input.cwd ? { cwd: input.cwd } : {}) },
+      path,
+    );
+    const name = input.name.trim();
+    // The picker only ever adds a child of the directory it is showing, so a
+    // name carrying separators or dot segments is rejected instead of being
+    // resolved somewhere else on the host.
+    if (name.length === 0 || name === "." || name === ".." || /[\\/]/.test(name)) {
+      return yield* new WorkspaceEntriesInvalidDirectoryNameError({
+        parentPath: input.parentPath,
+        name: input.name,
+      });
+    }
+
+    const resolvedPath = path.join(parentPath, name);
+    yield* Effect.tryPromise({
+      // Recursive so naming a folder inside a path the user typed but has not
+      // created yet works, and so a folder that already exists is a no-op.
+      try: () => NodeFSP.mkdir(resolvedPath, { recursive: true }),
+      catch: (cause) =>
+        new WorkspaceEntriesCreateDirectoryError({
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          parentPath: input.parentPath,
+          name,
+          resolvedPath,
+          cause,
+        }),
+    });
+
+    return { path: resolvedPath };
+  });
+
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
@@ -279,7 +364,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
+  return WorkspaceEntries.of({ browse, createDirectory, list, refresh, search, searchContents });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(
