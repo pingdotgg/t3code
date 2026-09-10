@@ -30,7 +30,6 @@ import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { DeviceHostsSettings } from "./DeviceHostsSettings";
 import { PROJECT_GROUPING_MODE_LABELS } from "./ProjectSettingsPanel";
 import { ProjectDefaultActionsSettings } from "./ProjectDefaultActionsSettings";
 import { searchableSetting } from "./settingsSearch";
@@ -390,11 +389,6 @@ export function ProjectDefaultsSettings({
           }
         />
       </SettingsSection>
-      <DeviceHostsSettings
-        key={environmentId ?? "all"}
-        environmentId={environmentId && targets.length === 1 ? environmentId : null}
-        hosts={serverSettings.deviceHosts ?? []}
-      />
       <SettingsSection title="Checkout">
         <SettingsRow
           title="Checkout"

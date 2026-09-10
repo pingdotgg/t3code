@@ -405,7 +405,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "device-hosts",
     title: "Device hosts",
-    to: "/settings/projects",
+    to: "/settings/integrations",
     searchTerms: ["ssh remote simulator emulator ios android mac mini identity key connection"],
   },
   {

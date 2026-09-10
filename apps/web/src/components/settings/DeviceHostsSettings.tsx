@@ -1,4 +1,12 @@
-import type { EnvironmentId, SshDeviceHostConfig } from "@t3tools/contracts";
+import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
+import { AppleIcon, AndroidIcon } from "../Icons";
+import { DeviceHostAvailability } from "../device/DeviceHostAvailability";
+import { Spinner } from "../ui/spinner";
+import type {
+  DevicePlatformAvailability,
+  EnvironmentId,
+  SshDeviceHostConfig,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { randomUUID } from "../../lib/utils";
 import { useState } from "react";
@@ -7,7 +15,9 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { SettingsSection } from "./settingsLayout";
+import { MoreVertical, PlusIcon } from "lucide-react";
+import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
+import { SettingsRow } from "./settingsLayout";
 
 /** Host names and identity paths belong to the selected environment, never all environments. */
 export function DeviceHostsSettings(props: {
@@ -21,7 +31,14 @@ export function DeviceHostsSettings(props: {
   const [busy, setBusy] = useState(false);
   const validPort = (port: number | undefined) =>
     port === undefined || (Number.isInteger(port) && port >= 1 && port <= 65535);
-  const [result, setResult] = useState<string | null>(null);
+  const [checks, setChecks] = useState<
+    Record<
+      string,
+      { pending?: boolean; platforms?: ReadonlyArray<DevicePlatformAvailability>; error?: string }
+    >
+  >({});
+  const setCheck = (id: string, value: (typeof checks)[string]) =>
+    setChecks((current) => ({ ...current, [id]: value }));
   const save = async (hosts: ReadonlyArray<SshDeviceHostConfig>) => {
     if (!props.environmentId) return;
     setBusy(true);
@@ -32,44 +49,45 @@ export function DeviceHostsSettings(props: {
       });
       if (saved._tag === "Success") {
         setEditing(null);
-        setResult(null);
       }
     } finally {
       setBusy(false);
     }
   };
   const testConnection = async (host: SshDeviceHostConfig) => {
-    if (!props.environmentId) return;
-    setBusy(true);
-    setResult(null);
+    if (!props.environmentId || checks[host.id]?.pending) return;
+    setCheck(host.id, { pending: true });
     try {
       const summary = await test({ environmentId: props.environmentId, input: host });
-      if (summary._tag === "Failure") {
-        setResult(Cause.pretty(summary.cause));
-        return;
-      }
-      setResult(
-        summary.value.platforms
-          .map((platform) =>
-            platform.available
-              ? `${platform.platform === "ios" ? "iOS" : "Android"} available`
-              : platform.reason,
-          )
-          .join(". "),
+      setCheck(
+        host.id,
+        summary._tag === "Failure"
+          ? { error: Cause.pretty(summary.cause) }
+          : { platforms: summary.value.platforms },
       );
     } catch (error) {
-      setResult(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
+      setCheck(host.id, { error: error instanceof Error ? error.message : String(error) });
     }
   };
   return (
-    <SettingsSection id="device-hosts" title="Device hosts">
-      <div className="space-y-3 p-4">
-        <p className="text-sm text-muted-foreground">
-          Connect simulators on other machines over SSH. Keys, aliases, and paths are read on the
-          selected environment. Device tools install there on first use.
-        </p>
+    <SettingsRow
+      id="device-hosts"
+      title="Device hosts"
+      description="Add remote machines with simulator or emulator runtimes installed, and this environment will connect over SSH and set up device tools automatically."
+      control={
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || !props.environmentId || editing !== null}
+          onClick={() => {
+            setEditing({ id: randomUUID(), label: "", target: "" });
+          }}
+        >
+          <PlusIcon className="size-3.5" /> Add host
+        </Button>
+      }
+    >
+      <div className="pt-3 pb-2">
         {!props.environmentId ? (
           <p className="text-sm text-muted-foreground">
             Select one connected environment to manage its device hosts.
@@ -78,54 +96,122 @@ export function DeviceHostsSettings(props: {
           <>
             {props.hosts.map((host) => {
               const status = state.hostStatuses[host.id];
+              const check = checks[host.id];
+              const platforms =
+                check?.platforms ??
+                state.hosts.find((value) => value.id === host.id)?.platforms ??
+                [];
+              const progress = check?.pending
+                ? "Checking connection…"
+                : status?.status === "installing"
+                  ? "Installing device support…"
+                  : status?.status === "starting"
+                    ? "Connecting…"
+                    : null;
+              const error =
+                check?.error ?? (status?.status === "failed" ? status.detail : undefined);
               return (
                 <div
                   key={host.id}
-                  className="flex flex-wrap items-center gap-2 rounded-md border p-3"
+                  className="flex items-center gap-2 border-t border-border/50 py-2.5"
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{host.label}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {host.target}
-                      {status ? ` · ${status.status}` : ""}
-                    </p>
-                    {status?.detail ? (
-                      <p className="text-xs text-muted-foreground">{status.detail}</p>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="truncate text-sm font-medium">{host.label}</p>
+                      {platforms
+                        .filter((platform) => platform.available)
+                        .map((platform) => (
+                          <Tooltip key={platform.platform}>
+                            <TooltipTrigger
+                              render={
+                                <span
+                                  tabIndex={0}
+                                  role="img"
+                                  aria-label={
+                                    platform.platform === "ios"
+                                      ? "iOS available"
+                                      : "Android available"
+                                  }
+                                  className="shrink-0 text-muted-foreground"
+                                />
+                              }
+                            >
+                              {platform.platform === "ios" ? (
+                                <AppleIcon className="size-3.5" />
+                              ) : (
+                                <AndroidIcon className="size-3.5" />
+                              )}
+                            </TooltipTrigger>
+                            <TooltipPopup>
+                              {platform.platform === "ios" ? "iOS available" : "Android available"}
+                            </TooltipPopup>
+                          </Tooltip>
+                        ))}
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+                    {error ? (
+                      <div className="mt-1" role="status">
+                        <details className="text-xs text-destructive">
+                          <summary>Connection failed</summary>
+                          <p className="mt-1 whitespace-pre-wrap break-words">{error}</p>
+                        </details>
+                      </div>
                     ) : null}
                   </div>
+                  {progress ? (
+                    <span
+                      role="status"
+                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                    >
+                      <Spinner className="size-3" />
+                      {progress}
+                    </span>
+                  ) : null}
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          size="icon-sm"
+                          variant="ghost-muted"
+                          disabled={busy}
+                          aria-label={host.label + " options"}
+                        />
+                      }
+                    >
+                      <MoreVertical />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuItem
+                        onClick={() => {
+                          setEditing(host);
+                        }}
+                      >
+                        Edit
+                      </MenuItem>
+                      <MenuItem
+                        variant="destructive"
+                        onClick={() =>
+                          void save(props.hosts.filter((value) => value.id !== host.id))
+                        }
+                      >
+                        Remove
+                      </MenuItem>
+                    </MenuPopup>
+                  </Menu>
                   <Button
                     size="sm"
                     variant="outline"
-                    disabled={busy}
+                    disabled={busy || progress !== null}
                     onClick={() => void testConnection(host)}
                   >
                     Test connection
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => {
-                      setEditing(host);
-                      setResult(null);
-                    }}
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => void save(props.hosts.filter((value) => value.id !== host.id))}
-                  >
-                    Remove
                   </Button>
                 </div>
               );
             })}
             {editing ? (
               <form
-                className="space-y-3 rounded-md border p-3"
+                className="space-y-3 border-t border-border/50 py-3"
                 onSubmit={(event) => {
                   event.preventDefault();
                   void save([...props.hosts.filter((host) => host.id !== editing.id), editing]);
@@ -216,34 +302,33 @@ export function DeviceHostsSettings(props: {
                     disabled={busy}
                     onClick={() => {
                       setEditing(null);
-                      setResult(null);
                     }}
                   >
                     Cancel
                   </Button>
                 </div>
+                {checks[editing.id]?.pending ? (
+                  <span
+                    role="status"
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                  >
+                    <Spinner className="size-3" />
+                    Checking connection…
+                  </span>
+                ) : null}
+                {checks[editing.id]?.platforms ? (
+                  <DeviceHostAvailability platforms={checks[editing.id]?.platforms ?? []} />
+                ) : null}
+                {checks[editing.id]?.error ? (
+                  <p role="alert" className="text-xs text-destructive">
+                    {checks[editing.id]?.error}
+                  </p>
+                ) : null}
               </form>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => {
-                  setEditing({ id: randomUUID(), label: "", target: "" });
-                  setResult(null);
-                }}
-              >
-                Add SSH host
-              </Button>
-            )}
-            {result ? (
-              <p role="status" className="text-sm text-muted-foreground">
-                {result}
-              </p>
             ) : null}
           </>
         )}
       </div>
-    </SettingsSection>
+    </SettingsRow>
   );
 }

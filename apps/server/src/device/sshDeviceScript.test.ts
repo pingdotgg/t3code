@@ -7,10 +7,34 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { quoteRemoteArg, remoteDeviceScript } from "./sshDeviceScript.ts";
+import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+
+it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcessPlatform) === "win32") return;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-java-"));
+      try {
+        const javaHome = NodePath.join(home, ".local/opt/android-studio/jbr");
+        await NodeFSP.mkdir(NodePath.join(javaHome, "bin"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(javaHome, "bin/java"),
+          "#!/bin/sh\necho test-java\n",
+          { mode: 0o755 },
+        );
+        const result = await exec("/bin/sh", ["-c", `${remoteDeviceEnvironment}\njava`], {
+          env: { HOME: home, PATH: "/nonexistent", JAVA_HOME: "" },
+        });
+        expect(result.stdout.trim()).toBe("test-java");
+      } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
+    });
+  }),
+);
 
 it.effect("preserves shell metacharacters and newlines in remote arguments", () =>
   Effect.gen(function* () {
