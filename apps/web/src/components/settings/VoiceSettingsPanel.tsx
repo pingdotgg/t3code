@@ -8,16 +8,8 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import {
-  CheckIcon,
-  DownloadIcon,
-  GlobeIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  Trash2Icon,
-  XIcon,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { CheckIcon, DownloadIcon, GlobeIcon, RefreshCwIcon, Trash2Icon, XIcon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
@@ -26,7 +18,6 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { usePreparedConnection } from "../../state/session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
@@ -51,7 +42,7 @@ function ModelCard(props: {
     <div
       className={`rounded-lg border px-3.5 py-3 ${model.active ? "border-accent/50 bg-accent/5" : "border-border/70 bg-card/30"}`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-medium">{model.name}</span>
@@ -111,7 +102,7 @@ function ModelCard(props: {
         <div className="mt-3">
           <div className="h-1 overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full bg-accent transition-[width] duration-200"
+              className="h-full bg-primary transition-[width] duration-200"
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -139,7 +130,6 @@ export function VoiceSettingsPanel() {
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [operation, setOperation] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
 
   const refreshMicrophones = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -206,16 +196,8 @@ export function VoiceSettingsPanel() {
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
   );
   const currentStatus = status?.prepared === prepared ? status.value : null;
-  const filteredModels = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return needle
-      ? models.filter((model) =>
-          `${model.name} ${model.description}`.toLowerCase().includes(needle),
-        )
-      : models;
-  }, [models, query]);
-  const installed = filteredModels.filter((model) => model.state !== "downloadable");
-  const available = filteredModels.filter((model) => model.state === "downloadable");
+  const installed = models.filter((model) => model.state !== "downloadable");
+  const available = models.filter((model) => model.state === "downloadable");
 
   return (
     <SettingsPageContainer>
@@ -273,102 +255,103 @@ export function VoiceSettingsPanel() {
           }
         />
       </SettingsSection>
-      <SettingsSection title="Transcription Models" id={searchableSetting("local-voice-input").id}>
-        <p className="text-xs text-muted-foreground">
-          Models run on the connected T3 environment. Recordings are deleted after transcription.
-        </p>
-        {currentStatus?.supported && prepared ? (
-          <div className="space-y-4">
-            <div className="relative">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search transcription models"
-                className="h-8 pl-8 text-xs"
-              />
-            </div>
-            {installed.length > 0 ? (
-              <div className="space-y-2">
-                <h3 className="text-xs font-medium text-muted-foreground">Your models</h3>
-                {installed.map((model) => (
-                  <ModelCard
-                    key={model.id}
-                    model={model}
-                    busy={operation !== null}
-                    onDownload={() =>
-                      runModelOperation(model.id, () =>
-                        runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
-                      )
-                    }
-                    onSelect={() =>
-                      runModelOperation(model.id, () =>
-                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                      )
-                    }
-                    onCancel={() =>
-                      void runtime
-                        .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                        .then(refreshModels)
-                    }
-                    onDelete={() =>
-                      void ensureLocalApi()
-                        .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
-                        .then((confirmed) => {
-                          if (confirmed)
-                            runModelOperation(model.id, () =>
-                              runtime.runPromise(removeEnvironmentSpeechModel(prepared, model.id)),
-                            );
+      <SettingsSection
+        title="Transcription Models"
+        id={searchableSetting("local-voice-input").id}
+        variant="plain"
+      >
+        <div className="space-y-4 px-3 sm:px-4">
+          <p className="max-w-xl text-[12px] leading-relaxed text-muted-foreground/80">
+            Models run on the connected T3 environment. Recordings are deleted after transcription.
+          </p>
+          {currentStatus?.supported && prepared ? (
+            <div className="space-y-4">
+              {installed.length > 0 ? (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-medium text-muted-foreground">Your models</h3>
+                  {installed.map((model) => (
+                    <ModelCard
+                      key={model.id}
+                      model={model}
+                      busy={operation !== null}
+                      onDownload={() =>
+                        runModelOperation(model.id, () =>
+                          runtime.runPromise(downloadEnvironmentSpeechModel(prepared, model.id)),
+                        )
+                      }
+                      onSelect={() =>
+                        runModelOperation(model.id, () =>
+                          runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                        )
+                      }
+                      onCancel={() =>
+                        void runtime
+                          .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                          .then(refreshModels)
+                      }
+                      onDelete={() =>
+                        void ensureLocalApi()
+                          .dialogs.confirm(`Delete ${model.name} from this T3 environment?`)
+                          .then((confirmed) => {
+                            if (confirmed)
+                              runModelOperation(model.id, () =>
+                                runtime.runPromise(
+                                  removeEnvironmentSpeechModel(prepared, model.id),
+                                ),
+                              );
+                          })
+                      }
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {available.length > 0 ? (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-medium text-muted-foreground">Available models</h3>
+                  {available.map((model) => (
+                    <ModelCard
+                      key={model.id}
+                      model={model}
+                      busy={operation !== null}
+                      onDownload={() =>
+                        runModelOperation(model.id, async () => {
+                          await runtime.runPromise(
+                            downloadEnvironmentSpeechModel(prepared, model.id),
+                          );
+                          await runtime.runPromise(
+                            selectEnvironmentSpeechModel(prepared, model.id),
+                          );
                         })
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
-            {available.length > 0 ? (
-              <div className="space-y-2">
-                <h3 className="text-xs font-medium text-muted-foreground">Available models</h3>
-                {available.map((model) => (
-                  <ModelCard
-                    key={model.id}
-                    model={model}
-                    busy={operation !== null}
-                    onDownload={() =>
-                      runModelOperation(model.id, async () => {
-                        await runtime.runPromise(
-                          downloadEnvironmentSpeechModel(prepared, model.id),
-                        );
-                        await runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id));
-                      })
-                    }
-                    onSelect={() =>
-                      runModelOperation(model.id, () =>
-                        runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
-                      )
-                    }
-                    onCancel={() =>
-                      void runtime
-                        .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
-                        .then(refreshModels)
-                    }
-                    onDelete={() => undefined}
-                  />
-                ))}
-              </div>
-            ) : null}
-            {filteredModels.length === 0 ? (
-              <div className="py-8 text-center text-xs text-muted-foreground">
-                No models match your search.
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
-            {currentStatus && !currentStatus.supported
-              ? currentStatus.reason
-              : "Connect to a current T3 environment to manage transcription models."}
-          </div>
-        )}
+                      }
+                      onSelect={() =>
+                        runModelOperation(model.id, () =>
+                          runtime.runPromise(selectEnvironmentSpeechModel(prepared, model.id)),
+                        )
+                      }
+                      onCancel={() =>
+                        void runtime
+                          .runPromise(cancelEnvironmentSpeechModelDownload(prepared, model.id))
+                          .then(refreshModels)
+                      }
+                      onDelete={() => undefined}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {models.length === 0 ? (
+                <div className="py-8 text-center text-xs text-muted-foreground">
+                  No transcription models are available.
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+              {currentStatus && !currentStatus.supported
+                ? currentStatus.reason
+                : "Connect to a current T3 environment to manage transcription models."}
+            </div>
+          )}
+        </div>
       </SettingsSection>
     </SettingsPageContainer>
   );
