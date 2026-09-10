@@ -589,6 +589,14 @@ function appendTable(
   return runs;
 }
 
+export function nativeMarkdownBlockSpacing(
+  previous: MarkdownNode | undefined,
+  current: MarkdownNode,
+): number {
+  if (!previous) return 0;
+  return current.type === "heading" ? 20 : previous.type === "heading" ? 10 : 12;
+}
+
 function appendDocumentBlock(
   runs: NativeMarkdownTextRun[],
   node: MarkdownNode,
@@ -599,11 +607,7 @@ function appendDocumentBlock(
       const children = node.children ?? [];
       for (const [index, child] of children.entries()) {
         if (index > 0) {
-          const previous = children[index - 1];
-          appendSpacer(
-            runs,
-            child.type === "heading" ? 20 : previous?.type === "heading" ? 10 : 12,
-          );
+          appendSpacer(runs, nativeMarkdownBlockSpacing(children[index - 1], child));
         }
         appendDocumentBlock(runs, child, depth);
       }

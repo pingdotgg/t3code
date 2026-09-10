@@ -6,6 +6,9 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+On Android, long-press message text to select within a paragraph or list item.
+Use the message’s copy button to copy the whole message.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can

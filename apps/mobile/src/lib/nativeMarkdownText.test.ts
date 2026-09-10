@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import {
+  nativeMarkdownBlockSpacing,
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
@@ -381,6 +382,11 @@ describe("nativeMarkdownDocumentRuns", () => {
         .filter((run) => run.role === "spacer")
         .map((run) => run.spacing),
     ).toEqual([20, 10, 12]);
+    expect(
+      node.children?.map((child, index) =>
+        nativeMarkdownBlockSpacing(node.children?.[index - 1], child),
+      ),
+    ).toEqual([0, 20, 10, 12]);
   });
 
   it("renders tight list items whose inline nodes are direct children", () => {
