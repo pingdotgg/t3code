@@ -119,7 +119,7 @@ beforeEach(async () => {
   await act(() => {
     renderer = create(
       <AppAtomRegistryProvider>
-        <PreviewAutomationHosts />
+        <PreviewAutomationHosts getActiveThreadRef={() => null} />
       </AppAtomRegistryProvider>,
     );
   });

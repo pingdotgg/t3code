@@ -41,6 +41,7 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
 /** Advertised by current desktop hosts for mixed-version routing. */
 export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
+  "openFile",
   "resize",
   "setColorScheme",
 ] as const;
@@ -113,6 +114,36 @@ export const PreviewAutomationOpenInput = Schema.Struct({
       "Opens the collaborative browser for the current thread. Use preview_navigate afterward when readiness waiting matters.",
   });
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
+
+export const WorkspaceHtmlPath = Schema.String.annotate({
+  description: "Workspace-relative path to the generated HTML design document.",
+})
+  .check(Schema.isTrimmed())
+  .check(Schema.isNonEmpty())
+  .check(Schema.isMaxLength(1024))
+  .check(
+    Schema.makeFilter((path) => {
+      const segments = path.split(/[\\/]/);
+      return (
+        segments[0] === ".t3" &&
+        segments[1] === "designs" &&
+        segments.length > 2 &&
+        !path.startsWith("/") &&
+        !path.startsWith("\\") &&
+        !/^[a-z]:[\\/]/i.test(path) &&
+        !segments.includes("..") &&
+        /\.html?$/i.test(path)
+      );
+    }),
+  );
+
+export const isWorkspaceHtmlPath = Schema.is(WorkspaceHtmlPath);
+
+export const PreviewAutomationOpenFileInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  path: WorkspaceHtmlPath,
+});
+export type PreviewAutomationOpenFileInput = typeof PreviewAutomationOpenFileInput.Type;
 
 export const BrowserNavigationTarget = Schema.Union([
   Schema.Struct({

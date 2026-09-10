@@ -136,3 +136,16 @@ automatically. HTML previews cannot access your T3 Code session.
 
 On mobile, select a PDF attachment or link to open it. iOS uses the native viewer;
 Android opens the system chooser.
+
+## Design before coding
+
+In the desktop app, start a message with `/design` and describe the interface. The agent creates
+four visual directions before it changes production code. The design opens in the right panel and
+refreshes as the agent develops it.
+
+Use the design toolbar to select, move, resize, add, edit, style, draw on, or delete elements. You
+can also add notes, undo or redo edits, and choose the artboard to implement. Changes save to the
+design automatically.
+
+The design stays linked to its thread. The agent sees the chosen artboard, focused element, manual
+edits, notes, and drawings. Ask it to revise or implement the design without attaching it again.

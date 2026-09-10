@@ -16,6 +16,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewSetDesignEditingInputSchema,
   BrowserImportResult,
   BrowserImportSource,
   DesktopPreviewClearDataInputSchema,
@@ -49,6 +50,9 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeRecordingFrames((frame) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
+  );
+  yield* manager.subscribeDesignChanges((event) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_DESIGN_CHANGE_CHANNEL, event),
   );
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
@@ -159,6 +163,15 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({ tabId, colorScheme }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setColorScheme(tabId, colorScheme);
+  }),
+});
+export const setDesignEditing = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_DESIGN_EDITING_CHANNEL,
+  payload: DesktopPreviewSetDesignEditingInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setDesignEditing")(function* ({ tabId, editing }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setDesignEditing(tabId, editing);
   }),
 });
 export const setAudioMuted = DesktopIpc.makeIpcMethod({
@@ -480,6 +493,7 @@ export const methods = [
   resetZoom,
   hardReload,
   setColorScheme,
+  setDesignEditing,
   setAudioMuted,
   openDevTools,
   clearCookies,

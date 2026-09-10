@@ -5,6 +5,7 @@ import {
   Camera,
   ExternalLink,
   MousePointerClick,
+  Pencil,
   PictureInPicture2,
 } from "lucide-react";
 import {
@@ -42,6 +43,8 @@ interface Props {
   onPictureInPicture?: (() => void) | undefined;
   pictureInPicture?: boolean | undefined;
   pictureInPictureDisabled?: boolean | undefined;
+  onToggleDesignEditing?: (() => void) | undefined;
+  designEditing?: boolean | undefined;
   /**
    * When provided, renders an annotation-mode toggle button to the right of
    * the URL input. Pressed while annotation mode is active (button shows in `pressed`
@@ -85,6 +88,8 @@ export function PreviewChromeRow({
   onPictureInPicture,
   pictureInPicture,
   pictureInPictureDisabled,
+  onToggleDesignEditing,
+  designEditing,
   onPickElement,
   pickActive,
   pickDisabled,
@@ -236,6 +241,19 @@ export function PreviewChromeRow({
             </InputGroupAddon>
           ) : null}
         </InputGroup>
+
+        {onToggleDesignEditing ? (
+          <Button
+            variant={designEditing ? "secondary" : "ghost"}
+            size="xs"
+            onClick={onToggleDesignEditing}
+            aria-pressed={designEditing ? "true" : "false"}
+            type="button"
+          >
+            <Pencil />
+            Edit
+          </Button>
+        ) : null}
 
         {onPickElement ? (
           <Tooltip>

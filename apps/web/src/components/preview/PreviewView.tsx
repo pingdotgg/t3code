@@ -1,6 +1,6 @@
 "use client";
 
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -8,12 +8,14 @@ import {
 import {
   DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
+  type DesktopPreviewDesignChange,
   type PreviewAnnotationPayload,
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { designPathFromUrl } from "@t3tools/shared/designPrompt";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -23,6 +25,7 @@ import {
   useThreadRecentHistory,
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
+import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { ensureLocalApi } from "~/localApi";
 import {
@@ -32,6 +35,8 @@ import {
 } from "~/previewStateStore";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
+import { useProject, useThread } from "~/state/entities";
+import { projectEnvironment } from "~/state/projects";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -89,6 +94,17 @@ function previewProfileName(
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 
+export function applyDesignChange(
+  change: DesktopPreviewDesignChange,
+  tabId: string,
+  save: (html: string) => void,
+  attach: (annotation: PreviewAnnotationPayload) => void,
+): void {
+  if (change.tabId !== tabId) return;
+  save(change.html);
+  if (change.annotation) attach(change.annotation);
+}
+
 /**
  * Single-tab preview surface: chrome row on top, one webview below, empty
  * state when no session exists for the thread.
@@ -102,6 +118,7 @@ export function PreviewView({
 }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
+  const [designEditing, setDesignEditing] = useState(false);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -119,6 +136,11 @@ export function PreviewView({
   );
   const addPreviewAnnotation = useComposerDraftStore((store) => store.addPreviewAnnotation);
   const addImage = useComposerDraftStore((store) => store.addImage);
+  const thread = useThread(threadRef);
+  const project = useProject(
+    thread ? scopeProjectRef(threadRef.environmentId, thread.projectId) : null,
+  );
+  const writeDesign = useAtomCommand(projectEnvironment.writeFile);
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const environmentHostname = environmentHttpBaseUrl
     ? new URL(environmentHttpBaseUrl).hostname
@@ -149,6 +171,34 @@ export function PreviewView({
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
+  const designPath = environmentHttpBaseUrl ? designPathFromUrl(url, environmentHttpBaseUrl) : null;
+  const designCwd = thread?.worktreePath ?? project?.workspaceRoot ?? null;
+  const designSaver = useMemo(
+    () =>
+      designPath && designCwd
+        ? new FileSaveCoordinator({
+            debounceMs: 0,
+            persist: async (contents) => {
+              const result = await writeDesign({
+                environmentId: threadRef.environmentId,
+                input: { cwd: designCwd, relativePath: designPath, contents },
+              });
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add({
+                  type: "error",
+                  title: "Unable to save design",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                });
+              }
+              return result;
+            },
+            onPendingChange: () => {},
+            onConfirmed: () => {},
+          })
+        : null,
+    [designCwd, designPath, threadRef.environmentId, writeDesign],
+  );
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
@@ -169,6 +219,42 @@ export function PreviewView({
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
+
+  useEffect(() => () => designSaver?.dispose(), [designSaver]);
+
+  useEffect(() => {
+    if (!previewBridge || !runtimeTabId || !designSaver) return;
+    return previewBridge.onDesignChange((change) => {
+      applyDesignChange(
+        change,
+        runtimeTabId,
+        (html) => designSaver.change(html),
+        (annotation) => addPreviewAnnotation(threadRefRef.current, annotation),
+      );
+    });
+  }, [addPreviewAnnotation, designSaver, runtimeTabId]);
+
+  useEffect(() => {
+    setDesignEditing(false);
+  }, [designPath, runtimeTabId]);
+
+  useEffect(() => {
+    const bridge = previewBridge;
+    if (
+      !bridge ||
+      !runtimeTabId ||
+      !designPath ||
+      loading ||
+      !visible ||
+      isUnreachable ||
+      !designEditing
+    )
+      return;
+    void bridge.setDesignEditing(runtimeTabId, true);
+    return () => {
+      void bridge.setDesignEditing(runtimeTabId, false);
+    };
+  }, [designEditing, designPath, isUnreachable, loading, runtimeTabId, visible]);
 
   const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
   const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
@@ -721,6 +807,12 @@ export function PreviewView({
         onCapture={previewBridge && tabId ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
+        onToggleDesignEditing={
+          visible && !isUnreachable && previewBridge && runtimeTabId && designPath
+            ? () => setDesignEditing((active) => !active)
+            : undefined
+        }
+        designEditing={designEditing}
         onPictureInPicture={previewBridge && tabId ? handlePictureInPicture : undefined}
         pictureInPicture={miniPlayer?.tabId === tabId}
         pictureInPictureDisabled={!desktopOverlay?.hasWebContents || isUnreachable}
@@ -777,6 +869,7 @@ export function PreviewView({
           <BrowserSurfaceSlot
             key={runtimeTabId}
             tabId={runtimeTabId}
+            surface="right-panel"
             visible={visible && !isUnreachable}
             className="absolute inset-0 h-full w-full"
           />

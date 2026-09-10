@@ -8,10 +8,14 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { act, Profiler } from "react";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { FileSaveCoordinator } from "~/components/files/fileSaveCoordinator";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  writeDesign: vi.fn(),
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
@@ -31,7 +35,10 @@ const mocks = vi.hoisted(() => ({
   addPreviewAnnotation: vi.fn(),
   addImage: vi.fn(),
   toggleAnnotation: null as (() => void) | null,
+  toggleDesignEditing: null as (() => void) | null,
   pictureInPicture: false,
+  previewUrl: "http://example.com/",
+  loadFailed: false,
   showEmptyState: false,
   loading: false,
   recordVisitForThread: vi.fn(),
@@ -54,6 +61,21 @@ vi.mock("~/browserHistoryStore", () => ({
   removeUrlForThread: vi.fn(),
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT: 50,
   useThreadRecentHistory: () => EMPTY_HISTORY,
+}));
+
+vi.mock("~/components/files/fileSaveCoordinator", () => ({
+  FileSaveCoordinator: vi.fn(function () {
+    return { dispose: vi.fn() };
+  }),
+}));
+
+vi.mock("~/state/entities", () => ({
+  useThread: () => ({ projectId: "project-1", worktreePath: "/workspace" }),
+  useProject: () => ({ workspaceRoot: "/workspace" }),
+}));
+
+vi.mock("~/state/projects", () => ({
+  projectEnvironment: { writeFile: mocks.writeDesign },
 }));
 
 vi.mock("~/state/session", async (importOriginal) => ({
@@ -124,11 +146,19 @@ vi.mock("~/previewStateStore", () => ({
           "tab-1": {
             threadId: "thread-1",
             tabId: "tab-1",
-            navStatus: {
-              _tag: "Success",
-              url: "http://example.com/",
-              title: "Example",
-            },
+            navStatus: mocks.loadFailed
+              ? {
+                  _tag: "LoadFailed",
+                  url: mocks.previewUrl,
+                  title: "Example",
+                  code: -105,
+                  description: "ERR_NAME_NOT_RESOLVED",
+                }
+              : {
+                  _tag: "Success",
+                  url: mocks.previewUrl,
+                  title: "Example",
+                },
             canGoBack: false,
             canGoForward: false,
             updatedAt: "2026-07-13T00:00:00.000Z",
@@ -147,7 +177,8 @@ vi.mock("~/state/preview", () => ({
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => vi.fn(),
+  useAtomCommand: (command: unknown) =>
+    command === mocks.writeDesign ? mocks.writeDesign : vi.fn(),
 }));
 
 vi.mock("~/browser/browserRecording", () => ({
@@ -207,6 +238,7 @@ vi.mock("./previewBridge", () => ({
   previewBridge: {
     navigate: mocks.navigate,
     pickElement: mocks.pickElement,
+    setDesignEditing: vi.fn(async () => undefined),
     pictureInPicture: {
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
@@ -218,6 +250,7 @@ vi.mock("./PreviewChromeRow", () => ({
   PreviewChromeRow: (props: {
     onSubmit: (url: string) => void;
     onPickElement?: () => void;
+    onToggleDesignEditing?: () => void;
     onPictureInPicture?: () => void;
     pictureInPicture?: boolean;
     trailingActions?: {
@@ -226,6 +259,7 @@ vi.mock("./PreviewChromeRow", () => ({
   }) => {
     mocks.submittedUrl = props.onSubmit;
     mocks.toggleAnnotation = props.onPickElement ?? null;
+    mocks.toggleDesignEditing = props.onToggleDesignEditing ?? null;
     mocks.togglePictureInPicture = props.onPictureInPicture ?? null;
     mocks.toggleNativePictureInPicture =
       props.trailingActions?.props.onNativePictureInPicture ?? null;
@@ -252,7 +286,7 @@ vi.mock("./AgentBrowserCursor", () => ({ AgentBrowserCursor: () => null }));
 vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null }));
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
-import { PreviewView } from "./PreviewView";
+import { applyDesignChange, PreviewView } from "./PreviewView";
 import { toastManager } from "~/components/ui/toast";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 
@@ -347,7 +381,10 @@ describe("PreviewView navigation", () => {
     vi.mocked(toastManager.add).mockClear();
     mocks.addImage.mockClear();
     mocks.toggleAnnotation = null;
+    mocks.toggleDesignEditing = null;
     mocks.pictureInPicture = false;
+    mocks.loadFailed = false;
+    mocks.previewUrl = "http://example.com/";
     mocks.showEmptyState = false;
     mocks.loading = false;
     mocks.recordVisitForThread.mockClear();
@@ -519,6 +556,21 @@ describe("PreviewView navigation", () => {
     );
   });
 
+  it.each([
+    ["outside the visible preview", false, false],
+    ["after the design fails to load", true, true],
+  ])("hides design editing controls %s", (_scenario, visible, loadFailed) => {
+    mocks.loadFailed = loadFailed;
+    mocks.previewUrl =
+      "http://172.25.85.75:3773/api/assets/design?t3-design=1&t3-design-path=.t3%2Fdesigns%2Fthread-1.html";
+
+    renderToStaticMarkup(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible={visible} />,
+    );
+
+    expect(mocks.toggleDesignEditing).toBeNull();
+  });
+
   it("forwards Cmd/Ctrl+Enter annotations to the composer send path", async () => {
     const annotation = {
       id: "annotation-1",
@@ -619,5 +671,55 @@ describe("PreviewView navigation", () => {
     await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalledWith(sent, null));
     expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, sent);
     expect(mocks.addImage).not.toHaveBeenCalled();
+  });
+
+  it("reports failed design writes to the user", async () => {
+    mocks.previewUrl =
+      "http://172.25.85.75:3773/api/assets/design?t3-design=1&t3-design-path=.t3%2Fdesigns%2Fthread-1.html";
+    const failure = AsyncResult.failure(Cause.fail(new Error("Disk full")));
+    mocks.writeDesign.mockResolvedValueOnce(failure);
+    renderToStaticMarkup(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />);
+    const options = vi.mocked(FileSaveCoordinator).mock.calls.at(-1)![0];
+    await expect(options.persist("<p>Edited</p>")).resolves.toBe(failure);
+    expect(toastManager.add).toHaveBeenCalledWith({
+      type: "error",
+      title: "Unable to save design",
+      description: "Disk full",
+    });
+  });
+
+  it("saves and attaches a design selection only for the active tab", () => {
+    const save = vi.fn();
+    const attach = vi.fn();
+    const annotation = {
+      id: "design-cta",
+      pageUrl: "http://127.0.0.1/design",
+      pageTitle: "Design",
+      comment: "Selected design element",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-08-18T00:00:00.000Z",
+    };
+
+    applyDesignChange(
+      { tabId: "tab_design", html: "<!doctype html><p>Saved</p>", annotation },
+      "tab_design",
+      save,
+      attach,
+    );
+    applyDesignChange(
+      { tabId: "other", html: "<!doctype html><p>Wrong</p>", annotation },
+      "tab_design",
+      save,
+      attach,
+    );
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith("<!doctype html><p>Saved</p>");
+    expect(attach).toHaveBeenCalledOnce();
+    expect(attach).toHaveBeenCalledWith(annotation);
   });
 });

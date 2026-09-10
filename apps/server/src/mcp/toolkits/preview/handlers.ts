@@ -6,6 +6,7 @@ import {
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
+  type PreviewAutomationOpenFileInput,
   PreviewAutomationRecordingArtifact,
   type ThreadId,
   type PreviewAutomationOperation,
@@ -159,6 +160,8 @@ const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+  design_open: (input: PreviewAutomationOpenFileInput) =>
+    invokeTargeted<PreviewAutomationStatus>("openFile", input),
   preview_navigate: (input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>

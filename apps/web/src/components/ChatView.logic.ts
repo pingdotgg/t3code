@@ -18,6 +18,7 @@ import {
   type ThreadLinkedPullRequest,
   type TurnId,
 } from "@t3tools/contracts";
+import { expandDesignCommand } from "@t3tools/shared/designPrompt";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
@@ -719,6 +720,20 @@ export function deriveComposerSendState(options: {
       sendableTerminalContexts.length > 0 ||
       elementContextCount > 0,
   };
+}
+
+export function resolveProviderPromptForSend(options: {
+  isElectron: boolean;
+  prompt: string;
+  trimmedPrompt: string;
+  threadId: string;
+}): string {
+  if (!options.isElectron) return options.prompt;
+  const expanded = expandDesignCommand({
+    prompt: options.trimmedPrompt,
+    threadId: options.threadId,
+  });
+  return expanded === options.trimmedPrompt ? options.prompt : expanded;
 }
 
 export function buildExpiredTerminalContextToastCopy(

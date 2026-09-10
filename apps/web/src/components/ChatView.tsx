@@ -405,6 +405,7 @@ import {
   readFileAsDataUrl,
   resolveFileAttachmentUrl,
   reconcileMountedTerminalThreadIds,
+  resolveProviderPromptForSend,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -6708,8 +6709,14 @@ export default function ChatView(props: ChatViewProps) {
     const composerElementContextsSnapshot = [...composerElementContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const providerPrompt = resolveProviderPromptForSend({
+      isElectron,
+      prompt: promptForSend,
+      trimmedPrompt: trimmed,
+      threadId: threadIdForSend,
+    });
     const messageTextWithContexts = appendElementContextsToPrompt(
-      appendTerminalContextsToPrompt(promptForSend, composerTerminalContextsSnapshot),
+      appendTerminalContextsToPrompt(providerPrompt, composerTerminalContextsSnapshot),
       composerElementContextsSnapshot,
     );
     const messageTextWithPreviewAnnotations = composerPreviewAnnotationsSnapshot.reduce(

@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef } from "react";
 
-import { acquireBrowserSurface } from "./browserSurfaceStore";
+import { acquireBrowserSurface, type BrowserSurfacePlacement } from "./browserSurfaceStore";
 
 export function BrowserSurfaceSlot(props: {
   readonly tabId: string;
@@ -12,6 +12,7 @@ export function BrowserSurfaceSlot(props: {
   readonly layoutVersion?: string | number;
   readonly className?: string;
   readonly fitSourceContent?: boolean;
+  readonly surface: BrowserSurfacePlacement;
 }) {
   const {
     tabId,
@@ -21,6 +22,7 @@ export function BrowserSurfaceSlot(props: {
     layoutVersion,
     className,
     fitSourceContent = false,
+    surface,
   } = props;
   const elementRef = useRef<HTMLDivElement | null>(null);
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
@@ -29,7 +31,7 @@ export function BrowserSurfaceSlot(props: {
   useLayoutEffect(() => {
     const element = elementRef.current;
     if (!element) return;
-    let lease = acquireBrowserSurface(tabId, fitSourceContent);
+    let lease = acquireBrowserSurface(tabId, fitSourceContent, surface);
     const update = () => {
       const rect = element.getBoundingClientRect();
       const presentation = presentationRef.current;
@@ -46,7 +48,7 @@ export function BrowserSurfaceSlot(props: {
       );
       if (presentation.visible && !presented) {
         lease.release();
-        lease = acquireBrowserSurface(tabId, fitSourceContent);
+        lease = acquireBrowserSurface(tabId, fitSourceContent, surface);
         lease.present(
           {
             x: Math.round(rect.x),
@@ -73,7 +75,7 @@ export function BrowserSurfaceSlot(props: {
       if (updateRef.current === update) updateRef.current = null;
       lease.release();
     };
-  }, [fitSourceContent, tabId]);
+  }, [fitSourceContent, surface, tabId]);
 
   useLayoutEffect(() => {
     presentationRef.current = { visible, cornerRadius, zIndex };
