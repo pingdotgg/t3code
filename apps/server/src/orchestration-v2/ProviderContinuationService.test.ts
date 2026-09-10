@@ -107,6 +107,55 @@ function testLayer(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      const original = delegatedProjection();
+      const interruptedRunId = RunId.make("interrupted-mailbox-run");
+      const recovered = {
+        ...original,
+        runs: [
+          ...original.runs,
+          {
+            id: interruptedRunId,
+            status: "interrupted",
+            userMessageId: MessageId.make("original-user-input"),
+          },
+        ],
+        messages: [
+          {
+            id: delegatedMessageId,
+            runId: interruptedRunId,
+            delegatedCompletion: { parentRunId, generation: 1, taskIds: [] },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests;
+        yield* requests.offer({
+          threadId,
+          providerThreadId,
+          driver,
+          detail: null,
+          delivery: "message_text",
+          delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+        });
+        const command = (yield* Queue.take(dispatched)) as {
+          messageId: MessageId;
+          delegatedCompletion: { generation: number; taskIds: readonly string[] };
+        };
+        assert.equal(command.messageId, delegatedMessageId);
+        assert.equal(command.delegatedCompletion.generation, 1);
+        assert.equal(command.delegatedCompletion.taskIds.length, 2);
+      }).pipe(
+        Effect.provide(
+          testLayer({ dispatched, getThreadProjection: () => Effect.succeed(recovered) }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
   it.effect("marks an adapter-buffered wake with the provider creation source", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
