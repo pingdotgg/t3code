@@ -1,4 +1,9 @@
 import {
+  normalizeDevinSessionUpdate,
+  normalizeDevinToolCall,
+  extractDevinSubagentUpdate,
+} from "./DevinAcp.ts";
+import {
   AcpRegistrySettings,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -112,9 +117,21 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
 
 export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const runtimeCoordinator = options.runtimeCoordinator;
+  const isDevin = options.settings.agentId === "devin";
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
+    ...(isDevin
+      ? {
+          clientCapabilitiesMeta: {
+            "cognition.ai/subagentSupport": true,
+            "cognition.ai/messageGrouping": true,
+          },
+          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeToolCall: normalizeDevinToolCall,
+          extractSubagentUpdate: extractDevinSubagentUpdate,
+        }
+      : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
     ...(runtimeCoordinator === undefined
       ? {}
@@ -155,6 +172,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     clientTerminals: {
       childProcessSpawner: options.childProcessSpawner,
       environment: options.environment,
+      shellCommands: isDevin,
     },
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
   });

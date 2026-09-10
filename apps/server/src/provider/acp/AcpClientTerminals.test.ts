@@ -75,6 +75,27 @@ describe("AcpClientTerminals", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
+    Effect.gen(function* () {
+      const terminals = yield* makeAcpClientTerminals({
+        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        defaultCwd: process.cwd(),
+        shellCommands: true,
+        environmentForSession: () => ({ T3_ACP_MCP_NODE: "mailbox-probe" }),
+      });
+      yield* Effect.addFinalizer(() => terminals.disposeAll);
+      // Same command-only shape as the failed production commands and live capture.
+      const terminal = yield* terminals.create({
+        sessionId: "devin",
+        command: 'printf "%s\\n" "$T3_ACP_MCP_NODE" | tr a-z A-Z',
+      });
+      const exit = yield* terminals.waitForExit({ sessionId: "devin", ...terminal });
+      const output = yield* terminals.output({ sessionId: "devin", ...terminal });
+      expect(exit.exitCode).toBe(0);
+      expect(output.output.trim()).toBe("MAILBOX-PROBE");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("truncates buffered output from the beginning at the byte limit", () =>
     withTerminals((terminals) =>
       Effect.gen(function* () {
