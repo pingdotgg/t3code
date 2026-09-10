@@ -225,10 +225,11 @@ export const make = (dependencies: Dependencies) => {
   ): Effect.Effect<PullRequestFilesViewedResult, PullRequestError> =>
     Effect.gen(function* () {
       const viewer = yield* requiredViewerOf(project, "filesViewed");
-      const marks = yield* filesViewedStore
+      const held = yield* filesViewedStore
         .list(filesViewedScope(project, ref.number, viewer))
         .pipe(Effect.mapError(toFilesViewedStoreError("filesViewed")));
-      if (marks.length === 0) return { files: [], truncated: false };
+      const marks = held.files;
+      if (marks.length === 0) return { files: [], truncated: held.truncated };
       // A host that will not say what its head has of a file costs the marks their staleness,
       // which is what `fileRevisionsOf` answers null for, rather than costing the reader every
       // tick they have made. Who the reader is, above, cannot give way like that: these rows are
@@ -263,8 +264,10 @@ export const make = (dependencies: Dependencies) => {
                 : ("dismissed" as const),
           };
         }),
-        // Every mark is a row this environment holds, so there is no page to run out of.
-        truncated: false,
+        // The store carries a bounded number of marks per scope, so a reader who has ticked more
+        // than that is short of some of them and told so, the same as a host-kept read that ran
+        // out of pages.
+        truncated: held.truncated,
       };
     });
 

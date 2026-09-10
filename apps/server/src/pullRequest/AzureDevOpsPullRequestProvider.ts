@@ -10,6 +10,7 @@ import {
   parseAzureDevOpsDiffCursor,
   MAX_DIFF_SLICE_BYTES,
   MAX_DIFF_SLICE_EDITS,
+  MAX_DIFF_SLICE_FILES,
   byteLength,
   MAX_FILE_DIFF_EDITS,
   type AzureDevOpsFileTexts,
@@ -431,6 +432,8 @@ export const make = Effect.gen(function* () {
             1,
             Math.min(
               DIFF_FILE_CONCURRENCY,
+              // The file budget needs no estimate: a file spends exactly one of it.
+              MAX_DIFF_SLICE_FILES - sections.length,
               admits(MAX_DIFF_SLICE_BYTES - bytes, bytes),
               admits(MAX_DIFF_SLICE_EDITS - MAX_FILE_DIFF_EDITS - edits, edits),
             ),
@@ -472,13 +475,17 @@ export const make = Effect.gen(function* () {
             index += 1;
             // A file whose diff was given up on spent the whole of what one file is allowed and
             // has only a header to show for it, so the byte budget alone would let a change full
-            // of them spend that over and over in one request. Checked after the file is added
+            // of them spend that over and over in one request. A file the diff never ran on at
+            // all, because it is binary or oversize or only renamed, weighs almost nothing in
+            // either budget and still costs its two reads, which is what the file count bounds.
+            // Checked after the file is added
             // rather than before it, so every slice carries at least one: a section heavier than
             // the whole budget would otherwise never be added, and the read would answer the same
             // slice forever without moving the cursor.
             if (
               bytes >= MAX_DIFF_SLICE_BYTES ||
               edits + MAX_FILE_DIFF_EDITS > MAX_DIFF_SLICE_EDITS ||
+              sections.length >= MAX_DIFF_SLICE_FILES ||
               file.abandoned
             ) {
               full = true;

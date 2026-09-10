@@ -1523,10 +1523,20 @@ it.effect("uses a manual rate limit to pause later reads", () =>
         action: "close",
       }),
     );
-    const error = yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    const paused = yield* service.list({ state: "open", involvement: "all" });
 
+    // The listing itself never reaches the host, and the repository behind it is reported as one
+    // that could not be read.
     assert.strictEqual(listCalls, 0);
-    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.deepStrictEqual(paused.entries, []);
+    assert.deepStrictEqual(
+      paused.errors.map((error) => error.projectId),
+      ["p1"],
+    );
+    // Who is signed in is not what a pause holds back. It is asked once per host per ten minutes
+    // and it stands in front of everything else here, so refusing it would report a host that is
+    // merely backing off as one nobody is signed in to.
+    assert.strictEqual(paused.viewers["github.com"], "bilal");
   }),
 );
 
@@ -5225,6 +5235,71 @@ it.effect("keeps one reader's marks on a host that names nobody", () =>
     assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
       { path: "src/a.ts", state: "viewed" },
     ]);
+  }),
+);
+
+it.effect("puts a listing and a press for one host on a single viewer lookup", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.gen(function* () {
+              viewerLookups += 1;
+              // Suspends before answering, as a subprocess would, so both callers are in flight
+              // at once rather than the second finding the first has already answered.
+              yield* Effect.yieldNow;
+              return "bilal";
+            }),
+        },
+      ],
+    });
+
+    // What a cold page load does: read the listing and the reader's own marks at the same time.
+    // Nothing about which of them asked is in the lookup's key, so they wait on one CLI between
+    // them rather than starting one each.
+    yield* Effect.all([service.list({ state: "open" }), service.filesViewed(GITLAB_REFERENCE)], {
+      concurrency: 2,
+    });
+
+    assert.strictEqual(viewerLookups, 1);
+  }),
+);
+
+it.effect("carries a bounded number of its own marks and says it held more", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const paths = Array.from(
+      { length: PullRequestFilesViewed.MAX_FILES_VIEWED_ROWS + 40 },
+      (_, at) => `src/f${String(at).padStart(4, "0")}.ts`,
+    );
+    const service = yield* environmentViewedService(
+      new Map(paths.map((path) => [path, "blob"] as const)),
+      asked,
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: paths.map((path) => ({ path, viewed: true })),
+    });
+    const read = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    // Every mark read is a path held in a set and a map for as long as the caller holds the read,
+    // per scope it is holding, so the rows are bounded rather than however many a reader has ever
+    // ticked. The reader is told the count is short rather than shown a quietly clipped list.
+    assert.lengthOf(read.files, PullRequestFilesViewed.MAX_FILES_VIEWED_ROWS);
+    assert.strictEqual(read.truncated, true);
   }),
 );
 

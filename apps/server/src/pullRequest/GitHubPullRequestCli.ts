@@ -377,6 +377,13 @@ const DIFF_FILES_PAGE_SIZE = 100;
 const FILES_VIEWED_MAX_PAGES = 5;
 
 /**
+ * How many pull requests' node ids are remembered at once. A long-lived server sees far more of
+ * them than a reader ever has open, and least recently used rather than first in: a listing
+ * walking cold pull requests must not evict the review being ticked through.
+ */
+export const NODE_ID_CACHE_CAPACITY = 128;
+
+/**
  * Pages of review threads to follow before the conversation is reported as truncated. GitHub
  * serves a hundred threads a page, so this is a thousand threads — past anything a pull request
  * a person is reading has, and short of walking a repository-sized conversation forever.
@@ -1036,10 +1043,8 @@ export const make = Effect.gen(function* () {
    * addressed by: a reaction on its description, or a rewrite of its words.
    *
    * A pull request keeps its node id for life, so it is remembered rather than re-read: a reader
-   * ticking files viewed would otherwise pay a GraphQL round trip per press. Bounded, since a
-   * long-lived server sees far more pull requests than a reader ever has open.
+   * ticking files viewed would otherwise pay a GraphQL round trip per press.
    */
-  const NODE_ID_CACHE_CAPACITY = 128;
   const nodeIds = new Map<string, string>();
 
   const pullRequestNodeId = (input: {
@@ -1052,7 +1057,14 @@ export const make = Effect.gen(function* () {
     const { owner, name } = parseRepositorySelector(input.repository);
     const key = `${input.host} ${owner}/${name} ${input.number}`;
     const held = nodeIds.get(key);
-    if (held !== undefined) return Effect.succeed(held);
+    if (held !== undefined) {
+      // Put back at the end on every hit, so what falls out is the pull request nobody has looked
+      // at rather than the one being ticked through: a run of cold reads would otherwise evict the
+      // open review and make it pay a round trip per press.
+      nodeIds.delete(key);
+      nodeIds.set(key, held);
+      return Effect.succeed(held);
+    }
     return graphqlRead({
       cwd: input.cwd,
       host: input.host,

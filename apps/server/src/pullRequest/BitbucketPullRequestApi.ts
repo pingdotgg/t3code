@@ -578,11 +578,23 @@ export const make = Effect.gen(function* () {
             ),
         );
 
-  /** The pull request's whole patch, shared by the version reads that come one tick at a time. */
+  /**
+   * What the version reads that come one tick at a time actually want out of the pull request's
+   * whole patch, shared between them. The patch itself is not what is held: at this capacity that
+   * would be sixteen bodies of up to the byte ceiling each resident, and V8 stores a body with a
+   * single non-Latin-1 character anywhere in it two bytes to the character. This is the same
+   * answer some thousands of times smaller, and it saves walking a patch of a hundred thousand
+   * lines again on every tick.
+   */
   const revisionPatches = yield* Cache.makeWith(
     (key: string) => {
       const [repository, number] = JSON.parse(key) as [string, number];
-      return pullRequestDiff({ repository, number });
+      return pullRequestDiff({ repository, number }).pipe(
+        Effect.map((diff) => ({
+          revisions: parseDiffFileRevisions(diff.patch),
+          truncated: diff.truncated,
+        })),
+      );
     },
     {
       capacity: REVISION_PATCH_CAPACITY,
@@ -670,12 +682,11 @@ export const make = Effect.gen(function* () {
         ? Effect.succeed(new Map())
         : Cache.get(revisionPatches, JSON.stringify([input.repository, input.number])).pipe(
             Effect.map((diff) => {
-              const all = parseDiffFileRevisions(diff.patch);
               // A patch cut short at the byte ceiling says nothing about the files past the cut,
               // so those paths are left out rather than reported as removed.
               const asked = new Map<string, string>();
               for (const path of input.paths) {
-                const revision = all.get(path);
+                const revision = diff.revisions.get(path);
                 if (revision !== undefined) asked.set(path, revision);
                 else if (!diff.truncated) asked.set(path, "");
               }

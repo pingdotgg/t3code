@@ -310,6 +310,25 @@ describe("azureDevOpsFilePatch", () => {
     expect(patch.edits).toBe(0);
   });
 
+  it("lists a file whose hunks outweigh its sides without them", () => {
+    // A handful of very long lines is a few edits and nowhere near the edit ceiling, and the
+    // patch carries both sides in full with three lines of context around each hunk, so the
+    // section comes out heavier than either side was. What one file weighs is what a slice's
+    // budget is spent in, so the edit ceiling alone does not bound this.
+    const line = `${"a".repeat(400 * 1024)}\n`;
+    const patch = azureDevOpsFilePatch({
+      change: change({ path: "min.js", oldPath: "min.js" }),
+      texts: texts(line, `${"b".repeat(400 * 1024)}\n`),
+    });
+
+    expect(patch.edits).toBeLessThan(MAX_FILE_DIFF_EDITS);
+    expect(patch.truncated).toBe(true);
+    expect(patch.section).toBe(
+      ["diff --git a/min.js b/min.js", "--- a/min.js", "+++ b/min.js", ""].join("\n"),
+    );
+    expect(byteLength(patch.section)).toBeLessThan(byteLength(line));
+  });
+
   it("marks a file that does not end in a newline, as git does", () => {
     const patch = azureDevOpsFilePatch({
       change: change(),

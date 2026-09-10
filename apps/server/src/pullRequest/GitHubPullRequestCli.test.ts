@@ -3684,4 +3684,41 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(idSentAt(2)).toEqual("PR_25");
     }),
   );
+  it.effect("keeps the pull request being ticked through, not the one looked up first", () =>
+    Effect.gen(function* () {
+      // Ordered by insertion alone, a hit does not renew its entry, so the review the reader is
+      // working down is the first thing evicted once a listing has walked a cache's worth of cold
+      // pull requests, and every press after that pays a round trip again.
+      // This block shares one cache, so these numbers are its own and it runs last.
+      const HOT = 9_000;
+      const lookupsOf = new Map<number, number>();
+      mockedExecute.mockImplementation((input) => {
+        const asked = input.args.find((arg) => arg.startsWith("number="));
+        if (asked === undefined) return Effect.succeed(output("{}"));
+        const number = Number(asked.slice("number=".length));
+        lookupsOf.set(number, (lookupsOf.get(number) ?? 0) + 1);
+        return Effect.succeed(
+          output(encodeJson({ data: { repository: { pullRequest: { id: `PR_${number}` } } } })),
+        );
+      });
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const tick = (number: number) =>
+        cli.setPullRequestFilesViewed({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number,
+          files: [{ path: "src/a.ts", viewed: true }],
+        });
+
+      yield* tick(HOT);
+      // A cache's worth of cold pull requests, with the open one pressed in between each of them.
+      for (let filled = 0; filled < GitHubPullRequestCli.NODE_ID_CACHE_CAPACITY; filled += 1) {
+        yield* tick(HOT + 1 + filled);
+        yield* tick(HOT);
+      }
+
+      assert.strictEqual(lookupsOf.get(HOT), 1);
+    }),
+  );
 });

@@ -57,6 +57,20 @@ export interface SetPullRequestFilesViewedInput extends PullRequestFilesViewedSc
 }
 
 /**
+ * How many marks one read of this store carries. Every one of them is a path held in a set and a
+ * map for as long as the caller holds the read, so an unbounded read of a change request with
+ * thousands of marks in it is paid for again per scope the caller is holding. Matched to what the
+ * GitHub reader walks in one go, past what anyone reviews in a sitting.
+ */
+export const MAX_FILES_VIEWED_ROWS = 500;
+
+/** The marks for one scope, and whether the store had more of them than it carried. */
+export interface PullRequestFilesViewedPage {
+  readonly files: ReadonlyArray<PullRequestFileViewedMark>;
+  readonly truncated: boolean;
+}
+
+/**
  * The marks this environment keeps for hosts that keep none of their own.
  *
  * Only cleared files are rows. Unticking deletes rather than writing a "not viewed" row, so the
@@ -67,10 +81,7 @@ export class PullRequestFilesViewedRepository extends Context.Service<
   {
     readonly list: (
       input: PullRequestFilesViewedScope,
-    ) => Effect.Effect<
-      ReadonlyArray<PullRequestFileViewedMark>,
-      PullRequestFilesViewedRepositoryError
-    >;
+    ) => Effect.Effect<PullRequestFilesViewedPage, PullRequestFilesViewedRepositoryError>;
     readonly set: (
       input: SetPullRequestFilesViewedInput,
     ) => Effect.Effect<void, PullRequestFilesViewedRepositoryError>;
@@ -101,12 +112,21 @@ const make = Effect.gen(function* () {
           AND repository = ${repository}
           AND number = ${number}
           AND viewer = ${viewer}
+        ORDER BY path
+        LIMIT ${MAX_FILES_VIEWED_ROWS + 1}
       `,
   });
 
   return PullRequestFilesViewedRepository.of({
+    // Ordered by path and read one row past the ceiling, so the same marks come back on every
+    // read rather than a window that shuffles, and having more than were carried is known rather
+    // than guessed at from a full page.
     list: (input) =>
       listRows(input).pipe(
+        Effect.map((rows) => ({
+          files: rows.slice(0, MAX_FILES_VIEWED_ROWS),
+          truncated: rows.length > MAX_FILES_VIEWED_ROWS,
+        })),
         Effect.mapError(toSqlOrDecodeError("listPullRequestFilesViewed", "PullRequestFileViewed")),
       ),
 

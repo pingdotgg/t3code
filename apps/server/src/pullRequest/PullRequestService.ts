@@ -443,13 +443,6 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
-  options: {
-    /**
-     * Whether this provider's viewer lookup stands in front of something the reader is waiting
-     * on, rather than in front of a listing that can wait for the host to recover.
-     */
-    readonly interactiveViewer?: boolean;
-  } = {},
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
   const protect = <A>(
@@ -500,11 +493,12 @@ function withRateLimitBackoff(
   const wrapped = {
     kind: api.kind,
     capabilities: api.capabilities,
-    // A lookup that stands in front of an interactive operation is let through a pause for the
-    // same reason the operation itself is: refusing the reader their own name while the host backs
-    // off turns a press they made into a failure, and the lookup's answer is then held for the
-    // ten minutes that signing in moves on, so a paused host is asked at most once for it.
-    getViewer: wrap("getViewer", api.getViewer, options.interactiveViewer === true),
+    // Let through a pause, whoever asked. This lookup stands in front of everything else here,
+    // so refusing it turns a paused host into one that reads as signed out, and refusing it for a
+    // press the reader made turns that press into a failure. Its answer is then held for the ten
+    // minutes that signing in moves on, so a paused host is asked at most once for it either way,
+    // which is not the burst a pause exists to stop.
+    getViewer: interactive("getViewer", api.getViewer),
     listChangeRequests: wrap("listChangeRequests", api.listChangeRequests),
     ...(api.listChangeRequestsAcross === undefined
       ? {}
@@ -847,19 +841,16 @@ export const make = Effect.gen(function* () {
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots, interactive] = JSON.parse(key) as [
+      const [host, kind, roots] = JSON.parse(key) as [
         string,
         SourceControlProviderKind,
         ReadonlyArray<string>,
-        boolean,
       ];
       const registered = registry.get(kind);
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
-      const api = withRateLimitBackoff(registered, host, rateLimits, {
-        interactiveViewer: interactive,
-      });
+      const api = withRateLimitBackoff(registered, host, rateLimits);
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd }))).pipe(
         Effect.map((viewer) => ({
           host,
@@ -892,8 +883,6 @@ export const make = Effect.gen(function* () {
   const resolveViewers = (
     projects: ReadonlyArray<SupportedProject>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
-    /** Whether the reader is waiting on what this lookup stands in front of. */
-    interactive = false,
   ) =>
     Effect.forEach(
       [...new Set(projects.map(({ host }) => host))],
@@ -909,7 +898,10 @@ export const make = Effect.gen(function* () {
           // unreadable worktree would otherwise report the whole host as signed out.
           const roots =
             viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort(), interactive]);
+          // Nothing about the caller is in the key. A listing and a press for the same host and
+          // roots are the same lookup, and putting them on separate flights would spawn two of
+          // this host's CLIs on a cold page load, which is the coalescing this exists for.
+          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
           return Cache.get(viewerFlights, key);
         }),
       { concurrency: REPOSITORY_CONCURRENCY },
@@ -1599,7 +1591,7 @@ export const make = Effect.gen(function* () {
     project: SupportedProject,
     operation: string,
   ): Effect.Effect<string | null, PullRequestError> =>
-    resolveViewers([project], new Map(), true).pipe(
+    resolveViewers([project], new Map()).pipe(
       Effect.flatMap(([resolved]) => {
         const error = resolved?.error ?? null;
         return error === null

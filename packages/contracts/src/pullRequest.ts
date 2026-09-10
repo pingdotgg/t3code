@@ -943,7 +943,13 @@ export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileConten
 // Not trimmed: a leading or trailing space is a legal part of a file's name, and both the patch
 // and the environment's own record of what a reader cleared are keyed by the name the host gave.
 // Trimming it here files the mark under a name nothing else uses, so the tick never comes back.
-const FilePath = Schema.String.check(Schema.isNonEmpty());
+/**
+ * Bounded because a path arrives from a client rather than from the host: unbounded, one element
+ * of a write batch could carry a megabyte into a SQL statement or a GraphQL field. Far past any
+ * real path, and short of anything worth holding.
+ */
+const MAX_FILE_PATH_LENGTH = 4096;
+const FilePath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(MAX_FILE_PATH_LENGTH));
 
 /**
  * Where one file of a change request stands with the person reading it.
@@ -980,6 +986,14 @@ export type PullRequestFilesViewedResult = typeof PullRequestFilesViewedResult.T
  * Files to clear, or to put back. Several at once because a reader working down a diff ticks
  * boxes far faster than a host answers, so a burst is gathered into one request.
  */
+/**
+ * How many presses one write carries. A burst is what a reader ticked in the last few hundred
+ * milliseconds, and every element of it is a statement of its own inside one transaction here, or
+ * a field of its own in one GraphQL document on GitHub. Matched to what a read of the marks
+ * carries, so a client cannot write more of them than it can ever read back.
+ */
+const MAX_FILES_VIEWED_PRESSES = 500;
+
 export const PullRequestSetFilesViewedInput = Schema.Struct({
   ...PullRequestRef.fields,
   files: Schema.Array(
@@ -987,7 +1001,7 @@ export const PullRequestSetFilesViewedInput = Schema.Struct({
       path: FilePath,
       viewed: Schema.Boolean,
     }),
-  ),
+  ).check(Schema.isMaxLength(MAX_FILES_VIEWED_PRESSES)),
 });
 export type PullRequestSetFilesViewedInput = typeof PullRequestSetFilesViewedInput.Type;
 

@@ -295,4 +295,31 @@ describe("naming the file a tick belongs to", () => {
       }),
     ).toThrow();
   });
+
+  it("refuses a batch larger than a reader can press", () => {
+    // Every element of a batch is a statement of its own inside one transaction on an
+    // environment-kept host, or a field of its own in one GraphQL document on GitHub, so what a
+    // client may send has to be bounded rather than trusted to be a burst of presses.
+    const press = (path: string) => ({ path, viewed: true });
+    const batch = (count: number) => ({
+      projectId: "p1",
+      repository: "group/project",
+      number: 7,
+      files: Array.from({ length: count }, (_, at) => press(`src/f${at}.ts`)),
+    });
+
+    expect(() => decodeSetFilesViewed(batch(500))).not.toThrow();
+    expect(() => decodeSetFilesViewed(batch(501))).toThrow();
+  });
+
+  it("refuses a path far longer than any real one", () => {
+    expect(() =>
+      decodeSetFilesViewed({
+        projectId: "p1",
+        repository: "group/project",
+        number: 7,
+        files: [{ path: `src/${"a".repeat(4096)}.ts`, viewed: true }],
+      }),
+    ).toThrow();
+  });
 });

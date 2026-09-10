@@ -88,18 +88,23 @@ const PATCH_CONTEXT_LINES = 3;
  * client with it, while it works out a patch of tens of thousands of lines nobody reads. Bounded in
  * edits rather than in milliseconds so a change slices the same way on every machine.
  *
- * Measured at up to about 175ms for a pair at the size ceiling that shares no line at all, and at
- * about 800ms for the same pair on a slower machine, which is the longest this can hold the thread
- * for one file.
+ * Measured over nine runs on a pair at the size ceiling that shares no line at all: 359ms at
+ * best, 438ms typical, 1223ms at worst. The dearest input this ceiling still admits, at 1998
+ * edits, was seen once at 2251ms on a loaded machine, and that is the longest one file can hold
+ * the thread for.
  */
 export const MAX_FILE_DIFF_EDITS = 2_000;
 
 /**
- * A backstop for a machine slower than any the edit ceiling was measured on. It sits several times
- * above what that ceiling costs, because a timeout within reach of it would decide the shape of a
- * patch by how fast the machine is: the same change would slice one way here and another on a
+ * A backstop for a machine slower than any the edit ceiling was measured on, and the reason the
+ * ceiling rather than this is what decides a patch's shape: a timeout that fires decides that
+ * shape by how fast the machine is, so the same change would slice one way here and another on a
  * busier host, and a file the ceiling admits would lose its hunks on the slower of the two.
- * Nothing within the ceiling comes near this, so it changes no patch.
+ *
+ * Headroom over the ceiling is about twice its typical cost rather than the several times it
+ * would take to put this out of reach, and the dearest input the ceiling admits has been seen
+ * past this value under load. It holds in practice: thirty runs of that input lost no hunks here,
+ * against nineteen of thirty at 500ms.
  */
 const MAX_FILE_DIFF_MILLIS = 2_000;
 
@@ -115,6 +120,15 @@ export const MAX_DIFF_SLICE_EDITS = 6_000;
  * hundred one-line changes are cheaper to finish than three long ones.
  */
 export const MAX_DIFF_SLICE_BYTES = 256 * 1024;
+
+/**
+ * How many files one slice carries however little each one weighs. A binary, oversize, purely
+ * renamed or unreadable entry is a header and nothing else, a couple of hundred bytes with no
+ * edits at all, so neither budget above stops a run of them until well over a thousand have piled
+ * up and the request has spent two reads on each. A change of vendored or generated assets is
+ * exactly that shape, and a listing may hold ten thousand entries of it.
+ */
+export const MAX_DIFF_SLICE_FILES = 300;
 
 /** Git's own note for a side whose last line has no newline after it. */
 const NO_NEWLINE_MARKER = "\\ No newline at end of file";
@@ -266,12 +280,17 @@ export function azureDevOpsFilePatch(input: {
   });
   // A pure rename has no hunks to give. It is still listed, because dropping it would take the
   // file out of the change altogether.
-  return {
-    section: hunks.length === 0 ? `${header}\n` : `${header}\n${hunks.join("\n")}\n`,
-    truncated: false,
-    abandoned: false,
-    edits,
-  };
+  const section = hunks.length === 0 ? `${header}\n` : `${header}\n${hunks.join("\n")}\n`;
+  // The edit ceiling bounds how far apart the two sides are, not what the hunks around them
+  // weigh: a pair of very long lines is a handful of edits and carries both sides in full, and
+  // three lines of context on each side of every hunk pull in more again. So a file well inside
+  // the ceiling can still come out heavier than either side was, and what one file weighs is what
+  // a slice's budget is spent in. Bounded here the same way the wholly-replaced path above is,
+  // and listed without its hunks rather than dropped.
+  if (byteLength(section) > MAX_FILE_BYTES) {
+    return { section: `${header}\n`, truncated: true, abandoned: false, edits };
+  }
+  return { section, truncated: false, abandoned: false, edits };
 }
 
 /**

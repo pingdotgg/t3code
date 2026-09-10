@@ -4,7 +4,13 @@ import * as Layer from "effect/Layer";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import { make, MAX_DIFF_SPAWNS } from "./AzureDevOpsPullRequestProvider.ts";
-import { MAX_DIFF_SLICE_BYTES, MAX_FILE_DIFF_EDITS } from "./azureDevOpsDiff.ts";
+import {
+  byteLength,
+  MAX_DIFF_SLICE_BYTES,
+  MAX_DIFF_SLICE_FILES,
+  MAX_FILE_DIFF_EDITS,
+  parseAzureDevOpsDiffCursor,
+} from "./azureDevOpsDiff.ts";
 import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
 
 const ITERATION = { id: 3, headCommit: "head", mergeBaseCommit: "base" };
@@ -162,6 +168,26 @@ describe("getDiff reads", () => {
       yield* Effect.all([readDiff(7), readDiff(8)], { concurrency: 2 });
 
       expect(peakInFlight).toBeLessThanOrEqual(MAX_DIFF_SPAWNS);
+    }),
+  );
+
+  it.effect("leaves a run of files it could not diff at all for the next slice", () =>
+    Effect.gen(function* () {
+      // A binary, oversize, purely renamed or unreadable entry is a header apiece, a couple of
+      // hundred bytes with no edits in it, so a change made of them spends neither budget: the
+      // byte one would take well over a thousand of them, and the edit one never fills at all.
+      // A listing holds up to ten thousand entries and each still costs its two reads, which is
+      // what a file count is here to bound.
+      const paths = Array.from({ length: MAX_DIFF_SLICE_FILES + 20 }, (_, at) => `gen/a${at}.bin`);
+      const read = yield* readSlice({ paths, lines: 2, width: 4, refused: paths });
+
+      expect(patchedPaths(read.slice.patch)).toHaveLength(MAX_DIFF_SLICE_FILES);
+      // Well inside the byte budget, so the file count is what stopped it rather than either of
+      // the budgets that were already there.
+      expect(byteLength(read.slice.patch)).toBeLessThan(MAX_DIFF_SLICE_BYTES);
+      expect(parseAzureDevOpsDiffCursor(read.slice.nextCursor)?.fileIndex).toBe(
+        MAX_DIFF_SLICE_FILES,
+      );
     }),
   );
 
