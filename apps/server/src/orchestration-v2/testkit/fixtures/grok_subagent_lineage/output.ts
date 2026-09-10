@@ -16,12 +16,14 @@ const EXPECTED_CHILDREN = [
     sessionId: "019f0220-e192-7c41-9e9d-b406bc3459c8",
     first: "I'll audit `apps/server` by mapping its layout first",
     second: "# `apps/server` Audit Summary",
+    result: "Server audit complete.",
   },
   {
     title: "Explore web client architecture",
     sessionId: "019f0220-e197-7833-a8e4-ad38f2bd5b4c",
     first: "Auditing `apps/web`: mapping package structure",
     second: "# `apps/web` Audit Summary",
+    result: "Web audit complete.",
   },
 ] as const;
 
@@ -50,8 +52,7 @@ export function assertGrokSubagentLineageOutput(
     assert.equal(subagent.driver, "grok");
     assert.isNotNull(subagent.childThreadId);
     assert.isNotNull(subagent.providerThreadId);
-    assert.include(subagent.result ?? "", expected.first);
-    assert.include(subagent.result ?? "", expected.second);
+    assert.equal(subagent.result, expected.result);
     if (subagent.childThreadId === null || subagent.providerThreadId === null) {
       throw new Error(`Grok subagent ${expected.title} is missing lineage`);
     }
@@ -81,6 +82,8 @@ export function assertGrokSubagentLineageOutput(
     assertTurnItemTypes(child, ["user_message", "assistant_message"]);
     const assistant = child.messages.find((message) => message.role === "assistant");
     assert.isDefined(assistant);
+    assert.include(assistant.text, expected.first);
+    assert.include(assistant.text, expected.second);
     assert.isBelow(assistant.text.indexOf(expected.first), assistant.text.indexOf(expected.second));
     for (const other of EXPECTED_CHILDREN) {
       if (other.sessionId !== expected.sessionId) {
