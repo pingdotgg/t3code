@@ -59,6 +59,7 @@ function stripMarkup(input: string): string {
     input
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<li\b[^>]*>/gi, "\n- ")
+      .replace(/<h([1-6])\b[^>]*>/gi, (_, level: string) => `\n${"#".repeat(Number(level))} `)
       .replace(/<\/(?:p|div|li|h[1-6]|ul|ol|blockquote)>/gi, "\n")
       .replace(/<[^>]*>/g, "")
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
@@ -71,43 +72,60 @@ function truncateReleaseNoteItem(item: string): string {
   return `${item.slice(0, MAX_RELEASE_NOTE_ITEM_LENGTH - 3).trimEnd()}...`;
 }
 
-function isIgnoredReleaseNoteLine(line: string): boolean {
-  const normalized = line
+function normalizeReleaseNoteLine(line: string): string {
+  return line
     .toLowerCase()
     .replace(/[*_`#]/g, "")
     .trim();
+}
+
+function isIgnoredReleaseNoteLine(line: string): boolean {
+  const normalized = normalizeReleaseNoteLine(line);
   return (
     normalized === "" ||
     normalized === "what's changed" ||
     normalized === "whats changed" ||
-    normalized === "full changelog" ||
-    normalized === "new contributors" ||
     normalized.startsWith("compare: ") ||
     normalized.includes("/compare/")
   );
 }
 
-function extractReleaseNoteItems(note: string | null | undefined): ReadonlyArray<string> {
-  if (!note) return [];
+interface ExtractedReleaseNoteItems {
+  readonly items: ReadonlyArray<string>;
+  readonly totalItems: number;
+}
+
+function extractReleaseNoteItems(note: string | null | undefined): ExtractedReleaseNoteItems {
+  if (!note) return { items: [], totalItems: 0 };
 
   const items: string[] = [];
+  let totalItems = 0;
   for (const rawLine of stripMarkup(note).split("\n")) {
     const item = rawLine
       .trim()
       .replace(/^[-*]\s+/, "")
       .replace(/^\d+[.)]\s+/, "")
       .replace(/\s+/g, " ");
+    const normalized = normalizeReleaseNoteLine(item);
+    if (normalized === "new contributors" || normalized === "full changelog") break;
+    if (/^#{1,6}\s+/.test(item)) continue;
     if (isIgnoredReleaseNoteLine(item)) continue;
+    totalItems += 1;
     items.push(truncateReleaseNoteItem(item));
-    if (items.length >= MAX_RELEASE_NOTE_ITEMS_PER_GROUP) break;
+    if (items.length > MAX_RELEASE_NOTE_ITEMS_PER_GROUP) items.shift();
   }
-  return items;
+  return { items: items.toReversed(), totalItems };
+}
+
+interface NormalizedDesktopUpdateReleaseNotes {
+  readonly releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
+  readonly omittedReleaseCount: number;
 }
 
 export function normalizeDesktopUpdateReleaseNotes(
   releaseNotes: unknown,
   fallbackVersion: string,
-): ReadonlyArray<DesktopUpdateReleaseNote> {
+): NormalizedDesktopUpdateReleaseNotes {
   const rawNotes =
     typeof releaseNotes === "string"
       ? [{ version: fallbackVersion, note: releaseNotes }]
@@ -115,11 +133,20 @@ export function normalizeDesktopUpdateReleaseNotes(
         ? releaseNotes.filter(isElectronReleaseNoteInfo)
         : [];
 
-  return rawNotes
-    .map((entry) => ({
-      version: entry.version,
-      items: extractReleaseNoteItems(entry.note),
-    }))
-    .filter((entry) => entry.items.length > 0)
-    .slice(0, MAX_RELEASE_NOTE_GROUPS);
+  const normalizedNotes = rawNotes.flatMap((entry) => {
+    const { items, totalItems } = extractReleaseNoteItems(entry.note);
+    if (totalItems === 0) return [];
+    return [
+      {
+        version: entry.version,
+        items,
+        totalItems,
+      },
+    ];
+  });
+
+  return {
+    releaseNotes: normalizedNotes.slice(0, MAX_RELEASE_NOTE_GROUPS),
+    omittedReleaseCount: Math.max(0, normalizedNotes.length - MAX_RELEASE_NOTE_GROUPS),
+  };
 }

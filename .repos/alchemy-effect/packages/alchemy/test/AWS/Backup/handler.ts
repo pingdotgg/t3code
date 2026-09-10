@@ -28,7 +28,7 @@ export class BackupTestFunction extends Lambda.Function<Lambda.Function>()(
 export default BackupTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const vault = yield* Backup.BackupVault("BindingsVault", {

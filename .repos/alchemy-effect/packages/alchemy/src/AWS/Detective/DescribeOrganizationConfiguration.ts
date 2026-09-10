@@ -12,9 +12,8 @@ import type { Graph } from "./Graph.ts";
  * {@link Graph}.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.DescribeOrganizationConfigurationHttp)`.
- * @binding
- * @section Organization Administration
- * @example Check Auto-Enable
+ * ### Organization Administration
+ * **Example:** Check Auto-Enable
  * ```typescript
  * // init
  * const describeOrganizationConfiguration =
@@ -23,6 +22,8 @@ import type { Graph } from "./Graph.ts";
  * // runtime
  * const { AutoEnable } = yield* describeOrganizationConfiguration();
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrganizationConfiguration extends Binding.Service<
   DescribeOrganizationConfiguration,

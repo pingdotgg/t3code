@@ -1,22 +1,31 @@
 import { DarkTheme, DefaultTheme, type Theme } from "@react-navigation/native";
 import { useMemo } from "react";
 
-import type { MobileThemeAppearance } from "./mobileTheme";
-import { useThemeColor } from "./useThemeColor";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useUniwindTheme } from "./useUniwindTheme";
 
-export function useMobileNavigationTheme(appearance: MobileThemeAppearance): Theme {
-  const primary = String(useThemeColor("--color-primary"));
-  const background = String(useThemeColor("--color-screen"));
-  const card = String(useThemeColor("--color-sheet-solid"));
-  const text = String(useThemeColor("--color-foreground"));
-  const border = String(useThemeColor("--color-header-border"));
-  const notification = String(useThemeColor("--color-danger-foreground"));
-
+/**
+ * React Navigation requires a JS theme object. Derive it from the same palette
+ * source as Uniwind instead of subscribing the app root to CSS variables. The
+ * preferences provider applies the registered Uniwind theme first, then
+ * publishes this matching navigation palette through React.
+ */
+export function useMobileNavigationTheme(): Theme {
+  const { themeAppearance: appearance } = useAppearancePreferences();
+  const variables = useUniwindTheme();
   return useMemo(() => {
     const base = appearance === "dark" ? DarkTheme : DefaultTheme;
     return {
       ...base,
-      colors: { ...base.colors, primary, background, card, text, border, notification },
+      colors: {
+        ...base.colors,
+        primary: variables["--color-primary"],
+        background: variables["--color-screen"],
+        card: variables["--color-sheet-solid"],
+        text: variables["--color-foreground"],
+        border: variables["--color-header-border"],
+        notification: variables["--color-danger-foreground"],
+      },
     };
-  }, [appearance, background, border, card, notification, primary, text]);
+  }, [appearance, variables]);
 }

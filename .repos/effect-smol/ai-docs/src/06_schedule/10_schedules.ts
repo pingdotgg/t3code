@@ -61,7 +61,7 @@ export const loadUserWithInferredInput = fetchUserProfile("user-123").pipe(
   Effect.orDie
 )
 
-export class HttpError extends Schema.TaggedErrorClass<HttpError>()("HttpError", {
+export class HttpError extends Schema.TaggedError<HttpError>()("HttpError", {
   message: Schema.String,
   status: Schema.Int,
   retryable: Schema.Boolean

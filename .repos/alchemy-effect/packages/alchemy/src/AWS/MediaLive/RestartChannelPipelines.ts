@@ -12,9 +12,8 @@ import type { Channel } from "./Channel.ts";
  * automated-recovery Lambda applies when a channel alert fires. The
  * channel id is injected from the binding. Provide the implementation
  * with `Effect.provide(AWS.MediaLive.RestartChannelPipelinesHttp)`.
- * @binding
- * @section Controlling Channels
- * @example Restart a Wedged Pipeline
+ * ### Controlling Channels
+ * **Example:** Restart a Wedged Pipeline
  * ```typescript
  * // init — bind the operation to the channel
  * const restartPipelines = yield* AWS.MediaLive.RestartChannelPipelines(channel);
@@ -22,6 +21,8 @@ import type { Channel } from "./Channel.ts";
  * // runtime
  * yield* restartPipelines({ PipelineIds: ["PIPELINE_0"] });
  * ```
+ *
+ * @binding
  */
 export interface RestartChannelPipelines extends Binding.Service<
   RestartChannelPipelines,

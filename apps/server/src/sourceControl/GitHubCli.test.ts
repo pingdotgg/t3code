@@ -31,40 +31,43 @@ afterEach(() => {
 });
 
 describe("GitHubCli.layer", () => {
-  it.effect("creates GitHub pull requests as drafts", () =>
-    Effect.gen(function* () {
-      mockRun.mockReturnValueOnce(
-        Effect.succeed(processOutput("https://github.com/acme/repo/pull/42")),
-      );
-      const gh = yield* GitHubCli.GitHubCli;
-      yield* gh.createPullRequest({
-        cwd: "/repo",
-        baseBranch: "main",
-        headSelector: "feature/draft-first",
-        title: "Draft-first workflow",
-        bodyFile: "/tmp/pr-body.md",
-      });
-      expect(mockRun).toHaveBeenCalledWith({
-        operation: "GitHubCli.execute",
-        command: "gh",
-        args: [
-          "pr",
-          "create",
-          "--draft",
-          "--base",
-          "main",
-          "--head",
-          "feature/draft-first",
-          "--title",
-          "Draft-first workflow",
-          "--body-file",
-          "/tmp/pr-body.md",
-        ],
-        cwd: "/repo",
-        timeoutMs: 30_000,
-      });
-    }).pipe(Effect.provide(layer)),
-  );
+  for (const draft of [false, true]) {
+    it.effect(`creates GitHub pull requests with draft=${draft}`, () =>
+      Effect.gen(function* () {
+        mockRun.mockReturnValueOnce(
+          Effect.succeed(processOutput("https://github.com/acme/repo/pull/42")),
+        );
+        const gh = yield* GitHubCli.GitHubCli;
+        yield* gh.createPullRequest({
+          cwd: "/repo",
+          baseBranch: "main",
+          headSelector: "feature/draft-first",
+          title: "Draft-first workflow",
+          bodyFile: "/tmp/pr-body.md",
+          draft,
+        });
+        expect(mockRun).toHaveBeenCalledWith({
+          operation: "GitHubCli.execute",
+          command: "gh",
+          args: [
+            "pr",
+            "create",
+            ...(draft ? ["--draft"] : []),
+            "--base",
+            "main",
+            "--head",
+            "feature/draft-first",
+            "--title",
+            "Draft-first workflow",
+            "--body-file",
+            "/tmp/pr-body.md",
+          ],
+          cwd: "/repo",
+          timeoutMs: 30_000,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+  }
 
   it("does not classify a missing cwd as an unavailable gh executable", () => {
     const context = { command: "gh", cwd: "/repo" } as const;
@@ -100,7 +103,9 @@ describe("GitHubCli.layer", () => {
               baseRefName: "main",
               headRefName: "feature/pr-threads",
               state: "OPEN",
+              isDraft: true,
               mergedAt: null,
+              updatedAt: "2026-08-24T12:34:56Z",
               isCrossRepository: true,
               headRepository: {
                 nameWithOwner: "octocat/codething-mvp",
@@ -126,6 +131,10 @@ describe("GitHubCli.layer", () => {
         baseRefName: "main",
         headRefName: "feature/pr-threads",
         state: "open",
+        closedAt: null,
+        mergedAt: null,
+        isDraft: true,
+        updatedAt: "2026-08-24T12:34:56.000Z",
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/codething-mvp",
         headRepositoryOwnerLogin: "octocat",
@@ -138,7 +147,7 @@ describe("GitHubCli.layer", () => {
           "view",
           "#42",
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
@@ -185,6 +194,8 @@ describe("GitHubCli.layer", () => {
         baseRefName: "main",
         headRefName: "feature/pr-threads",
         state: "open",
+        closedAt: null,
+        mergedAt: null,
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/codething-mvp",
         headRepositoryOwnerLogin: "octocat",
@@ -238,6 +249,8 @@ describe("GitHubCli.layer", () => {
           baseRefName: "main",
           headRefName: "feature/pr-list",
           state: "open",
+          closedAt: null,
+          mergedAt: null,
         },
       ]);
     }).pipe(Effect.provide(layer)),
@@ -290,6 +303,8 @@ describe("GitHubCli.layer", () => {
           baseRefName: "main",
           headRefName: "t3code/codex-turn-mapping",
           state: "open",
+          closedAt: null,
+          mergedAt: null,
           isCrossRepository: false,
           headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
           headRepositoryOwnerLogin: "pingdotgg",

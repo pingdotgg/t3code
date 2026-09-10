@@ -1,28 +1,111 @@
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import {
+  collectAssistantCitations,
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
-  shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
-describe("shouldSubmitComposerOnEnter", () => {
+const citation: AssistantCitation = {
+  version: 1,
+  environmentId: EnvironmentId.make("environment-1"),
+  threadId: ThreadId.make("thread-1"),
+  messageId: MessageId.make("message-1"),
+  text: "Keep Unicode 👋 and punctuation (here).",
+  start: 3,
+  end: 40,
+  prefix: "前: ",
+  suffix: " 後",
+};
+const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+describe("formatAssistantCitationForComposer", () => {
+  it.each([undefined, "", " \n\t "])(
+    "keeps citation-only insertion for a blank comment %j",
+    (comment) => {
+      expect(formatAssistantCitationForComposer(citation, comment)).toBe(
+        `${serializeAssistantCitation(citation)} `,
+      );
+    },
+  );
+
+  it("binds a multiline comment to its citation without adding standalone prompt text", () => {
+    const comment = 'What does "keep" mean? 👋\n  Please show an example.';
+    const text = formatAssistantCitationForComposer(citation, `  ${comment}\n`);
+    const boundCitation = { ...citation, comment };
+    expect(text).toBe(`${serializeAssistantCitation(boundCitation)} `);
+    expect(collectAssistantCitations(text).map((entry) => entry.citation)).toEqual([boundCitation]);
+    expect(expandAssistantCitationsForProvider(text)).toMatch(/^\[assistant-quote-1\] \n\n/);
+  });
+});
+
+describe("composerSubmissionIntentForEnter", () => {
   it("submits plain Enter on desktop", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: false })).toBe(true);
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBe("foreground");
   });
 
   it("inserts a newline for plain Enter on mobile", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: true, shiftKey: false })).toBe(false);
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: true,
+        shiftKey: false,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBeNull();
   });
 
   it("inserts a newline for Shift+Enter", () => {
-    expect(shouldSubmitComposerOnEnter({ isMobileViewport: false, shiftKey: true })).toBe(false);
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: true,
+        modifierKey: false,
+        isDraftThread: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("submits a new thread in the background with Mod+Enter", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: true,
+        isDraftThread: true,
+      }),
+    ).toBe("background");
+  });
+
+  it("keeps Mod+Enter in the foreground for an active thread", () => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey: true,
+        isDraftThread: false,
+      }),
+    ).toBe("foreground");
   });
 });
 
@@ -285,6 +368,62 @@ describe("clampCollapsedComposerCursor", () => {
     expect(clampCollapsedComposerCursor(text, Number.POSITIVE_INFINITY)).toBe(
       "open ".length + 1 + " then ".length,
     );
+  });
+});
+
+describe("assistant citation cursor offsets", () => {
+  it("roundtrips every collapsed offset across citations, mentions, skills, and Unicode", () => {
+    const prefix = "👋(";
+    const between = "),雪";
+    const after = " @AGENTS.md $review ";
+    const text = `${prefix}${citationSource}${between}${citationSource}${after}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER}!`;
+    const collapsedLength = `${prefix}□${between}□ □ □ □!`.length;
+    const boundaries = [
+      [prefix.length, prefix.length],
+      [prefix.length + 1, prefix.length + citationSource.length],
+      [prefix.length + 1 + between.length, prefix.length + citationSource.length + between.length],
+      [
+        prefix.length + 2 + between.length,
+        prefix.length + citationSource.length * 2 + between.length,
+      ],
+      [collapsedLength, text.length],
+    ] as const;
+
+    for (const [collapsed, expanded] of boundaries) {
+      expect(expandCollapsedComposerCursor(text, collapsed)).toBe(expanded);
+      expect(collapseExpandedComposerCursor(text, expanded)).toBe(collapsed);
+    }
+    for (let cursor = 0; cursor <= collapsedLength; cursor += 1) {
+      expect(
+        collapseExpandedComposerCursor(text, expandCollapsedComposerCursor(text, cursor)),
+      ).toBe(cursor);
+    }
+    expect(clampCollapsedComposerCursor(text, Number.POSITIVE_INFINITY)).toBe(collapsedLength);
+  });
+
+  it("snaps serialized offsets inside a citation to the end of its chip", () => {
+    const prefix = "前👋";
+    const text = `${prefix}${citationSource}.`;
+
+    for (const offset of [1, citationSource.length - 1, citationSource.length]) {
+      expect(collapseExpandedComposerCursor(text, prefix.length + offset)).toBe(prefix.length + 1);
+    }
+    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length, "right")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 1, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, prefix.length + 2, "left")).toBe(false);
+  });
+
+  it("deletes one collapsed citation without changing its neighbor or surrounding punctuation", () => {
+    const text = `(${citationSource}),${citationSource}!`;
+    const result = replaceTextRange(
+      text,
+      expandCollapsedComposerCursor(text, 1),
+      expandCollapsedComposerCursor(text, 2),
+      "",
+    );
+
+    expect(result).toEqual({ text: `(),${citationSource}!`, cursor: 1 });
+    expect(collapseExpandedComposerCursor(result.text, result.text.length)).toBe("(),□!".length);
   });
 });
 

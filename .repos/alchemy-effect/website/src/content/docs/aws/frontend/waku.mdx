@@ -1,0 +1,182 @@
+---
+title: Waku
+description: Deploy a Waku app to AWS with AWS.Website.Waku — RSC server on a streaming Lambda Function URL, SSG pages and assets on S3 + CloudFront, and Waku's own dev server under alchemy dev.
+sidebar:
+  order: 13
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`AWS.Website.Waku` deploys a [Waku](https://waku.gg) app (React
+Server Components) to AWS. It builds the project programmatically:
+the RSC server runs on a Lambda Function URL with response streaming,
+and the client output — including SSG-prerendered pages — is served
+from a private S3 bucket through CloudFront. No `waku.config.ts`
+edits are required — if you have one it loads natively — and there is
+no adapter to configure and no build command to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/waku`
+and `/waku/aws` exports from your project at deploy time. It is only
+used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Waku
+
+No framework config is required — a fresh Waku project deploys
+as-is. If your project has a `waku.config.ts`, Alchemy loads it
+natively (exactly as Waku's own CLI does) and uses it as the base
+config — including Vite plugins under its `vite` field:
+
+```typescript
+// waku.config.ts
+import { defineConfig } from "waku/config";
+import tsconfigPaths from "vite-tsconfig-paths";
+
+export default defineConfig({
+  basePath: "/",
+  vite: {
+    plugins: [tsconfigPaths()],
+  },
+});
+```
+
+`waku.config.*` is the home for static configuration. For deploy-time
+values — anything that varies by stage — the `waku` prop merges
+overrides over the file, per key:
+
+```typescript
+export const Website = AWS.Website.Waku("Website", {
+  waku: {
+    basePath: "/docs/",
+  },
+});
+```
+
+The one key Alchemy owns is `unstable_adapter` — setting it fails the
+build with an actionable error.
+
+:::note
+Vite configuration must live in `waku.config.ts`'s `vite` field —
+a standalone `vite.config.ts` is not loaded, same as Waku's own CLI.
+:::
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.Waku("Website");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyWakuSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages rendered as `"static"` are generated at build time, uploaded
+to S3, and served from the edge; dynamic pages and API routes stream
+from the Lambda.
+
+See
+[examples/aws-website-waku](https://github.com/alchemy-run/alchemy/tree/main/examples/aws-website-waku)
+for the checked-in example.
+
+## Add environment variables
+
+The server function's environment is configured under `env` — plain
+values, or outputs from other resources in the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Waku("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: api.url,
++  },
+});
+```
+
+The values are set on the Lambda at deploy time and injected into the
+dev server's process environment under `alchemy dev`, so server code
+reads the same values in both modes.
+
+## Read the environment in server code
+
+Server components and API routes read the environment through waku's
+`getEnv` — on AWS it is backed by the Lambda's `process.env` at
+request time, and it keeps page modules portable across deploy
+targets:
+
+```typescript
+// src/pages/index.tsx
+import { getEnv } from "waku";
+
+export default async function HomePage() {
+  const greeting = getEnv("GREETING") ?? "hello";
+  return <h1>{greeting}</h1>;
+}
+
+export const getConfig = async () => ({ render: "dynamic" }) as const;
+```
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Waku's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no AWS resources are
+created. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* AWS.Website.Waku("Web", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The hosted zone is inferred from the hostname. Pass `hostedZoneId` to
+pin it when several zones could match.

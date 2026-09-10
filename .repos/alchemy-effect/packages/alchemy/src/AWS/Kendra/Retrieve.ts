@@ -21,9 +21,8 @@ export interface RetrieveRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.Kendra.RetrieveHttp)`.
  *
- * @binding
- * @section Querying an Index
- * @example Retrieve Passages for RAG
+ * ### Querying an Index
+ * **Example:** Retrieve Passages for RAG
  * ```typescript
  * const retrieve = yield* AWS.Kendra.Retrieve(index);
  *
@@ -32,6 +31,8 @@ export interface RetrieveRequest extends Omit<
  *   .map((item) => item.Content)
  *   .join("\n");
  * ```
+ *
+ * @binding
  */
 export interface Retrieve extends Binding.Service<
   Retrieve,

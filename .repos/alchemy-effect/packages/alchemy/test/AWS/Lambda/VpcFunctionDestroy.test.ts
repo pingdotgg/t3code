@@ -50,7 +50,7 @@ test.provider.skipIf(!!process.env.FAST)(
           main: handlerPath,
           handler: "handler",
           isExternal: true,
-          url: false,
+          functionUrl: false,
           vpc: {
             subnetIds: network.privateSubnetIds,
             securityGroupIds: [sg.groupId],

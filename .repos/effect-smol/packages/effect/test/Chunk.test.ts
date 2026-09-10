@@ -388,6 +388,12 @@ describe("Chunk", () => {
   })
 
   describe("take", () => {
+    it("produces valid chunks for fractional counts", () => {
+      const chunk = Chunk.make(1, 2, 3)
+      deepStrictEqual(Chunk.toArray(Chunk.take(chunk, 1.5)), [1])
+      deepStrictEqual(Chunk.toArray(Chunk.drop(chunk, 1.5)), [2, 3])
+    })
+
     describe("Given a Chunk with more elements than the amount taken", () => {
       it("should return the subset", () => {
         assertEquals(pipe(Chunk.fromArrayUnsafe([1, 2, 3]), Chunk.take(2)), Chunk.fromArrayUnsafe([1, 2]))

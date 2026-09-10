@@ -12,11 +12,33 @@ type SlashSearchItem = Extract<
   { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
+/**
+ * A provider expands a slash command only when it opens the whole message;
+ * anywhere else it reaches the agent as literal text, so it is not offered
+ * there. Built-ins apply locally on selection and skills insert a `$` mention
+ * the server dispatches from any position, so both stay available.
+ */
+export function slashCommandItemsForPromptPosition(
+  items: ReadonlyArray<SlashSearchItem>,
+  isAtPromptStart: boolean,
+): SlashSearchItem[] {
+  if (isAtPromptStart) {
+    return [...items];
+  }
+  return items.filter((item) => item.type !== "provider-slash-command");
+}
+
 function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | null {
   if (item.type === "skill") {
-    const skillQuery =
-      query === "skill" ? "" : query.startsWith("skill:") ? query.slice("skill:".length) : query;
-    return skillQuery ? scoreProviderSkill(item.skill, skillQuery) : 0;
+    if (query === "skill") {
+      return 0;
+    }
+    const skillQuery = query.startsWith("skill:") ? query.slice("skill:".length) : query;
+    const skillScore = skillQuery ? scoreProviderSkill(item.skill, skillQuery) : 0;
+    if (skillScore !== null) {
+      return skillScore;
+    }
+    return "skill".startsWith(query) ? Number.MAX_SAFE_INTEGER : null;
   }
 
   const primaryValue =

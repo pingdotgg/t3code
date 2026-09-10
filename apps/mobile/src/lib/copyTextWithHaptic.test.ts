@@ -18,11 +18,7 @@ vi.mock("expo-haptics", () => ({
   selectionAsync: mocks.selectionAsync,
 }));
 
-import {
-  CopyTextClipboardWriteError,
-  CopyTextHapticFeedbackError,
-  copyTextWithHaptic,
-} from "./copyTextWithHaptic";
+import { copyTextWithHaptic, tryCopyTextWithHaptic } from "./copyTextWithHaptic";
 
 describe("copyTextWithHaptic", () => {
   beforeEach(() => {
@@ -54,37 +50,43 @@ describe("copyTextWithHaptic", () => {
     expect(mocks.impactAsync).not.toHaveBeenCalled();
   });
 
+  it("reports whether the clipboard write succeeded", async () => {
+    mocks.setStringAsync.mockResolvedValueOnce(undefined);
+
+    await expect(tryCopyTextWithHaptic("thread-123")).resolves.toBe(true);
+  });
+
+  it("returns false when the clipboard write fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.setStringAsync.mockRejectedValueOnce(new Error("native clipboard failure"));
+
+    await expect(tryCopyTextWithHaptic("thread-123")).resolves.toBe(false);
+  });
+
   it("reports structured failures without including clipboard contents", async () => {
-    const clipboardCause = new Error("native clipboard failure");
-    const hapticCause = new Error("native haptic failure");
+    const content = "https://accounts.google.com/auth?state=private-state&code=private-code";
+    const clipboardCause = new Error(`Cannot copy ${content}`);
+    const hapticCause = new Error(`Native failure for ${content}`);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.setStringAsync.mockRejectedValueOnce(clipboardCause);
     mocks.impactAsync.mockRejectedValueOnce(hapticCause);
 
-    copyTextWithHaptic("secret clipboard contents", { target: "connection-trace-id" });
+    await tryCopyTextWithHaptic(content, { target: "provider-sign-in-link" });
 
-    await vi.waitFor(() => {
-      expect(consoleError).toHaveBeenCalledTimes(2);
-    });
-
-    const failures = consoleError.mock.calls.map(([failure]) => failure);
-    const clipboardError = failures.find(
-      (failure) => failure instanceof CopyTextClipboardWriteError,
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to copy provider-sign-in-link to the clipboard.",
+      expect.objectContaining({
+        _tag: "CopyTextClipboardWriteError",
+        target: "provider-sign-in-link",
+      }),
     );
-    expect(clipboardError).toBeInstanceOf(CopyTextClipboardWriteError);
-    expect(clipboardError).toMatchObject({
-      target: "connection-trace-id",
-      cause: clipboardCause,
-    });
-    expect((clipboardError as Error).message).not.toContain("secret clipboard contents");
-
-    const hapticError = failures.find((failure) => failure instanceof CopyTextHapticFeedbackError);
-    expect(hapticError).toBeInstanceOf(CopyTextHapticFeedbackError);
-    expect(hapticError).toMatchObject({
-      target: "connection-trace-id",
-      feedback: "light-impact",
-      cause: hapticCause,
-    });
-    expect((hapticError as Error).message).not.toContain("secret clipboard contents");
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to trigger light-impact haptic feedback after copying provider-sign-in-link.",
+      expect.objectContaining({ _tag: "CopyTextHapticFeedbackError", feedback: "light-impact" }),
+    );
+    const diagnostics = JSON.stringify(consoleError.mock.calls);
+    expect(diagnostics).not.toContain("private-state");
+    expect(diagnostics).not.toContain("private-code");
+    expect(diagnostics).not.toContain("cause");
   });
 });

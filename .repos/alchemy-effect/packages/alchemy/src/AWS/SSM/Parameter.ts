@@ -114,9 +114,8 @@ export interface Parameter extends Resource<
  * stage, and logical ID unless you provide one explicitly. Standard-tier
  * parameters are free, making them ideal for configuration values, feature
  * flags, and small secrets.
- * @resource
- * @section Creating Parameters
- * @example String Parameter
+ * ### Creating Parameters
+ * **Example:** String Parameter
  * ```typescript
  * import * as SSM from "alchemy/AWS/SSM";
  *
@@ -125,7 +124,7 @@ export interface Parameter extends Resource<
  * });
  * ```
  *
- * @example StringList Parameter
+ * **Example:** StringList Parameter
  * ```typescript
  * const subnets = yield* SSM.Parameter("AllowedOrigins", {
  *   type: "StringList",
@@ -133,7 +132,7 @@ export interface Parameter extends Resource<
  * });
  * ```
  *
- * @example Parameter with a Hierarchical Name
+ * **Example:** Parameter with a Hierarchical Name
  * ```typescript
  * const param = yield* SSM.Parameter("DbUrl", {
  *   name: "/my-app/prod/db-url",
@@ -141,8 +140,8 @@ export interface Parameter extends Resource<
  * });
  * ```
  *
- * @section SecureString Parameters
- * @example Encrypted with the AWS-managed key
+ * ### SecureString Parameters
+ * **Example:** Encrypted with the AWS-managed key
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -152,7 +151,7 @@ export interface Parameter extends Resource<
  * });
  * ```
  *
- * @example Encrypted with a customer-managed KMS key
+ * **Example:** Encrypted with a customer-managed KMS key
  * ```typescript
  * const key = yield* KMS.Key("SecretsKey");
  * const apiKey = yield* SSM.Parameter("ApiKey", {
@@ -162,8 +161,8 @@ export interface Parameter extends Resource<
  * });
  * ```
  *
- * @section Validation
- * @example Constrain values with an allowed pattern
+ * ### Validation
+ * **Example:** Constrain values with an allowed pattern
  * ```typescript
  * const port = yield* SSM.Parameter("Port", {
  *   value: "5432",
@@ -171,10 +170,10 @@ export interface Parameter extends Resource<
  * });
  * ```
  *
- * @section Reading Parameters at Runtime
+ * ### Reading Parameters at Runtime
  * Bind read operations in the init phase and use them in runtime handlers.
  *
- * @example Read a parameter from a handler
+ * **Example:** Read a parameter from a handler
  * ```typescript
  * // init
  * const getParameter = yield* SSM.GetParameter(config);
@@ -187,6 +186,8 @@ export interface Parameter extends Resource<
  *   }),
  * };
  * ```
+ *
+ * @resource
  */
 export const Parameter = Resource<Parameter>("AWS.SSM.Parameter");
 

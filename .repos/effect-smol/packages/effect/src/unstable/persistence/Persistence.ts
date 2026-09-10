@@ -15,8 +15,10 @@ import * as Duration from "../../Duration.ts"
 import * as Effect from "../../Effect.ts"
 import * as Exit from "../../Exit.ts"
 import { identity } from "../../Function.ts"
+import { sqlCleanupBatchSize } from "../../internal/persistence.ts"
 import * as Layer from "../../Layer.ts"
 import * as PrimaryKey from "../../PrimaryKey.ts"
+import * as Schedule from "../../Schedule.ts"
 import * as Schema from "../../Schema.ts"
 import type * as Scope from "../../Scope.ts"
 import * as SqlClient from "../sql/SqlClient.ts"
@@ -33,7 +35,7 @@ const ErrorTypeId = "~effect/persistence/Persistence/PersistenceError" as const
  * @category errors
  * @since 4.0.0
  */
-export class PersistenceError extends Schema.ErrorClass<PersistenceError>(ErrorTypeId)({
+export class PersistenceError extends Schema.Error<PersistenceError>(ErrorTypeId)({
   _tag: Schema.tag("PersistenceError"),
   message: Schema.String,
   cause: Schema.optional(Schema.Defect())
@@ -50,7 +52,7 @@ export class PersistenceError extends Schema.ErrorClass<PersistenceError>(ErrorT
  * Service for creating scoped stores of persisted `Persistable` request
  * results.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class Persistence extends Context.Service<Persistence, {
@@ -97,7 +99,7 @@ export interface PersistenceStore {
 /**
  * Service for creating raw backing stores for persistence store ids.
  *
- * @category BackingPersistence
+ * @category services
  * @since 4.0.0
  */
 export class BackingPersistence extends Context.Service<BackingPersistence, {
@@ -108,7 +110,7 @@ export class BackingPersistence extends Context.Service<BackingPersistence, {
  * Raw persistence backing store for JSON-compatible objects with optional
  * TTLs.
  *
- * @category BackingPersistence
+ * @category services
  * @since 4.0.0
  */
 export interface BackingPersistenceStore {
@@ -302,7 +304,8 @@ export const layerBackingSqlMultiTable: Layer.Layer<
   return BackingPersistence.of({
     make: Effect.fnUntraced(function*(storeId) {
       const clock = yield* Clock.Clock
-      const table = sql(`effect_persistence_${storeId}`)
+      const tableName = `effect_persistence_${storeId}`
+      const table = sql(tableName)
       yield* sql.onDialectOrElse({
         mysql: () =>
           sql`
@@ -322,7 +325,7 @@ export const layerBackingSqlMultiTable: Layer.Layer<
           `,
         mssql: () =>
           sql`
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name=${table} AND xtype='U')
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name=${tableName} AND xtype='U')
             CREATE TABLE ${table} (
               id NVARCHAR(450) PRIMARY KEY,
               value NVARCHAR(MAX) NOT NULL,
@@ -360,6 +363,20 @@ export const layerBackingSqlMultiTable: Layer.Layer<
             INSERT INTO ${table} ${sql.insert(entries)}
             ON DUPLICATE KEY UPDATE value=VALUES(value), expires=VALUES(expires)
           `.unprepared,
+        mssql: (): UpsertFn => (entries) =>
+          Effect.forEach(
+            entries,
+            (entry) =>
+              sql`
+                MERGE ${table} AS target
+                USING (SELECT ${entry.id} AS id, ${entry.value} AS value, ${entry.expires} AS expires) AS source
+                ON target.id = source.id
+                WHEN MATCHED THEN UPDATE SET value = source.value, expires = source.expires
+                WHEN NOT MATCHED THEN INSERT (id, value, expires)
+                VALUES (source.id, source.value, source.expires);
+              `,
+            { discard: true }
+          ),
         // sqlite
         orElse: (): UpsertFn => (entries) =>
           sql`
@@ -412,18 +429,16 @@ export const layerBackingSqlMultiTable: Layer.Layer<
               })
             ),
             Effect.flatMap((rows) => {
-              const out = new Array<object | undefined>(keys.length)
+              const values = new Map<string, object>()
               for (let i = 0; i < rows.length; i++) {
                 const row = rows[i]
-                const index = keys.indexOf(row.id)
-                if (index === -1) continue
                 try {
-                  out[index] = JSON.parse(row.value)
+                  values.set(row.id, JSON.parse(row.value))
                 } catch {
                   // ignore
                 }
               }
-              return Effect.succeed(out as Arr.NonEmptyArray<object | undefined>)
+              return Effect.succeed(keys.map((key) => values.get(key)) as Arr.NonEmptyArray<object | undefined>)
             })
           ),
         set: (key, value, ttl) =>
@@ -538,7 +553,7 @@ export const layerBackingSql: Layer.Layer<
       `,
     mssql: () =>
       sql`
-        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name=${table} AND xtype='U')
+        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name=${"effect_persistence"} AND xtype='U')
         CREATE TABLE ${table} (
           store_id NVARCHAR(191) NOT NULL,
           id NVARCHAR(191) NOT NULL,
@@ -559,6 +574,120 @@ export const layerBackingSql: Layer.Layer<
         )
       `
   }).pipe(Effect.orDie)
+
+  yield* sql.onDialectOrElse({
+    pg: () =>
+      sql`CREATE INDEX IF NOT EXISTS effect_persistence_expires_idx ON ${table} (expires) WHERE expires IS NOT NULL`
+        .pipe(Effect.orDie, Effect.asVoid),
+    mysql: () =>
+      Effect.gen(function*() {
+        const indexExists = sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM information_schema.statistics
+          WHERE table_schema = DATABASE()
+            AND table_name = 'effect_persistence'
+            AND index_name = 'effect_persistence_expires_idx'
+        `.pipe(
+          Effect.map((rows) => Number(rows[0].count) > 0)
+        )
+
+        yield* sql`CREATE INDEX effect_persistence_expires_idx ON ${table} (expires)`.pipe(
+          Effect.catch((error) => Effect.flatMap(indexExists, (exists) => exists ? Effect.void : Effect.fail(error)))
+        )
+      }).pipe(Effect.orDie),
+    mssql: () =>
+      Effect.gen(function*() {
+        const indexExists = sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count FROM sys.indexes
+          WHERE name = N'effect_persistence_expires_idx'
+            AND object_id = OBJECT_ID(N'effect_persistence')
+        `.pipe(
+          Effect.map((rows) => Number(rows[0].count) > 0)
+        )
+
+        yield* sql`CREATE INDEX effect_persistence_expires_idx ON ${table} (expires) WHERE expires IS NOT NULL`.pipe(
+          Effect.catch((error) => Effect.flatMap(indexExists, (exists) => exists ? Effect.void : Effect.fail(error)))
+        )
+      }).pipe(Effect.orDie),
+    // sqlite
+    orElse: () =>
+      sql`CREATE INDEX IF NOT EXISTS effect_persistence_expires_idx ON ${table} (expires) WHERE expires IS NOT NULL`
+        .pipe(Effect.orDie, Effect.asVoid)
+  })
+
+  const cleanupBatchDelay = Duration.millis(10)
+  const cleanupInterval = Duration.minutes(5)
+
+  const deleteExpiredBatch = sql.onDialectOrElse({
+    pg: () => (expiresAtOrBefore: number) =>
+      sql<{ readonly count: number }>`
+        WITH deleted_entries AS (
+          DELETE FROM ${table}
+          WHERE ctid IN (
+            SELECT ctid FROM ${table}
+            WHERE expires IS NOT NULL AND expires <= ${expiresAtOrBefore}
+            LIMIT ${sql.literal(String(sqlCleanupBatchSize))}
+          )
+          RETURNING 1
+        )
+        SELECT COUNT(*)::INT AS count FROM deleted_entries
+      `.pipe(Effect.map((rows) => rows[0].count)),
+    mysql: () =>
+      Effect.fnUntraced(
+        function*(expiresAtOrBefore: number) {
+          const connection = yield* sql.reserve
+          const [statement, parameters] = sql`
+            DELETE FROM ${table}
+            WHERE expires IS NOT NULL AND expires <= ${expiresAtOrBefore}
+            LIMIT ${sql.literal(String(sqlCleanupBatchSize))}
+          `.compile()
+          yield* connection.execute(statement, parameters, undefined)
+          const rows = yield* connection.executeValues("SELECT ROW_COUNT()", [])
+          return Number(rows[0][0])
+        },
+        Effect.scoped
+      ),
+    mssql: () => (expiresAtOrBefore: number) =>
+      sql<{ readonly store_id: string }>`
+        WITH expired_entries AS (
+          SELECT TOP ${sql.literal(String(sqlCleanupBatchSize))} store_id, id FROM ${table}
+          WITH (UPDLOCK, READPAST, READCOMMITTEDLOCK)
+          WHERE expires IS NOT NULL AND expires <= ${expiresAtOrBefore}
+        )
+        DELETE persistence
+        OUTPUT DELETED.store_id
+        FROM ${table} AS persistence
+        INNER JOIN expired_entries
+          ON persistence.store_id = expired_entries.store_id
+          AND persistence.id = expired_entries.id
+      `.pipe(Effect.map((deletedEntries) => deletedEntries.length)),
+    // Some sqlite clients do not support interactive transactions, so use one bounded statement.
+    orElse: () => (expiresAtOrBefore: number) =>
+      sql<{ readonly deleted: number }>`
+        DELETE FROM ${table}
+        WHERE rowid IN (
+          SELECT rowid FROM ${table}
+          WHERE expires IS NOT NULL AND expires <= ${expiresAtOrBefore}
+          LIMIT ${sql.literal(String(sqlCleanupBatchSize))}
+        )
+        RETURNING 1 AS deleted
+      `.pipe(Effect.map((deletedEntries) => deletedEntries.length))
+  })
+
+  const deleteExpired = Effect.gen(function*() {
+    const expiresAtOrBefore = yield* Clock.currentTimeMillis
+    return yield* deleteExpiredBatch(expiresAtOrBefore).pipe(
+      Effect.repeat({
+        while: (deletedCount) => deletedCount === sqlCleanupBatchSize,
+        schedule: Schedule.spaced(cleanupBatchDelay)
+      })
+    )
+  })
+
+  yield* deleteExpired.pipe(
+    Effect.catch((cause) => Effect.logWarning("Failed to clean up expired persistence entries", cause)),
+    Effect.repeat(Schedule.spaced(cleanupInterval)),
+    Effect.forkScoped
+  )
 
   type UpsertFn = (
     entries: Array<{ store_id: string; id: string; value: string; expires: number | null }>
@@ -606,11 +735,6 @@ export const layerBackingSql: Layer.Layer<
     make: Effect.fnUntraced(function*(storeId) {
       const clock = yield* Clock.Clock
 
-      // Cleanup expired entries on startup
-      yield* Effect.ignore(
-        sql`DELETE FROM ${table} WHERE store_id = ${storeId} AND expires IS NOT NULL AND expires <= ${clock.currentTimeMillisUnsafe()}`
-      )
-
       return identity<BackingPersistenceStore>({
         get: (key) =>
           sql<
@@ -650,18 +774,16 @@ export const layerBackingSql: Layer.Layer<
               })
             ),
             Effect.flatMap((rows) => {
-              const out = new Array<object | undefined>(keys.length)
+              const values = new Map<string, object>()
               for (let i = 0; i < rows.length; i++) {
                 const row = rows[i]
-                const index = keys.indexOf(row.id)
-                if (index === -1) continue
                 try {
-                  out[index] = JSON.parse(row.value)
+                  values.set(row.id, JSON.parse(row.value))
                 } catch {
                   // ignore
                 }
               }
-              return Effect.succeed(out as Arr.NonEmptyArray<object | undefined>)
+              return Effect.succeed(keys.map((key) => values.get(key)) as Arr.NonEmptyArray<object | undefined>)
             })
           ),
         set: (key, value, ttl) =>
@@ -821,7 +943,13 @@ export const layerBackingRedis: Layer.Layer<
             Effect.mapError(
               ttl === undefined
                 ? redis.send("SET", prefixed(key), JSON.stringify(value))
-                : redis.send("SET", prefixed(key), JSON.stringify(value), "PX", String(Duration.toMillis(ttl))),
+                : redis.send(
+                  "SET",
+                  prefixed(key),
+                  JSON.stringify(value),
+                  "PX",
+                  String(Math.ceil(Duration.toMillis(ttl)))
+                ),
               ({ cause }) =>
                 new PersistenceError({
                   message: `Failed to set key ${key} in Redis`,
@@ -836,7 +964,7 @@ export const layerBackingRedis: Layer.Layer<
                 const pkey = prefixed(key)
                 sets.set(pkey, JSON.stringify(value))
                 if (ttl) {
-                  expires.set(pkey, Duration.toMillis(ttl))
+                  expires.set(pkey, Math.ceil(Duration.toMillis(ttl)))
                 }
               }
               return Effect.mapError(
@@ -854,7 +982,7 @@ export const layerBackingRedis: Layer.Layer<
               ({ cause }) => new PersistenceError({ message: `Failed to remove key ${key} from Redis`, cause })
             ),
           clear: redis.send<Array<string>>("KEYS", `${prefix}:*`).pipe(
-            Effect.flatMap((keys) => redis.send("DEL", ...keys)),
+            Effect.flatMap((keys) => keys.length === 0 ? Effect.void : redis.send("DEL", ...keys)),
             Effect.mapError(({ cause }) =>
               new PersistenceError({
                 message: `Failed to clear keys from Redis`,
@@ -983,7 +1111,6 @@ export const layerBackingKvs: Layer.Layer<
           setMany: (entries) =>
             Effect.forEach(entries, ([key, value, ttl]) => {
               const expires = unsafeTtlToExpires(clock, ttl)
-              if (expires === null) return Effect.void
               const encoded = JSON.stringify([value, expires])
               return store.set(key, encoded)
             }, { concurrency: "unbounded", discard: true }).pipe(

@@ -60,6 +60,8 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
       baseRefName: "main",
       headRefName: "feature/source-control",
       state: "open",
+      closedAt: null,
+      mergedAt: null,
       updatedAt: Option.none(),
       isCrossRepository: true,
       headRepositoryNameWithOwner: "fork/t3code",
@@ -125,6 +127,7 @@ it.effect("uses gh json listing for non-open change request state queries", () =
                 baseRefName: "main",
                 headRefName: "feature/merged",
                 state: "merged",
+                mergedAt: "2026-01-01T00:00:00Z",
                 updatedAt: "2026-01-02T00:00:00.000Z",
               },
             ]),
@@ -150,10 +153,11 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "--limit",
       "10",
       "--json",
-      "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+      "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
+    assert.strictEqual(changeRequests[0]?.mergedAt, "2026-01-01T00:00:00Z");
     assert.deepStrictEqual(
       changeRequests[0]?.updatedAt,
       Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00.000Z")),
@@ -178,34 +182,38 @@ it.effect("treats empty non-open change request listing output as no results", (
   }),
 );
 
-it.effect("creates GitHub PRs through provider-neutral input names", () =>
-  Effect.gen(function* () {
-    let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
-      null;
-    const provider = yield* makeProvider({
-      createPullRequest: (input) => {
-        createInput = input;
-        return Effect.void;
-      },
-    });
+for (const draft of [undefined, false, true]) {
+  it.effect(`creates GitHub PRs with draft=${draft}`, () =>
+    Effect.gen(function* () {
+      let createInput: Parameters<GitHubCli.GitHubCli["Service"]["createPullRequest"]>[0] | null =
+        null;
+      const provider = yield* makeProvider({
+        createPullRequest: (input) => {
+          createInput = input;
+          return Effect.void;
+        },
+      });
 
-    yield* provider.createChangeRequest({
-      cwd: "/repo",
-      baseRefName: "main",
-      headSelector: "owner:feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "owner:feature/provider",
+        title: "Provider PR",
+        bodyFile: "/tmp/body.md",
+        ...(draft === undefined ? {} : { draft }),
+      });
 
-    assert.deepStrictEqual(createInput, {
-      cwd: "/repo",
-      baseBranch: "main",
-      headSelector: "owner:feature/provider",
-      title: "Provider PR",
-      bodyFile: "/tmp/body.md",
-    });
-  }),
-);
+      assert.deepStrictEqual(createInput, {
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "owner:feature/provider",
+        title: "Provider PR",
+        bodyFile: "/tmp/body.md",
+        draft: draft ?? false,
+      });
+    }),
+  );
+}
 
 it("accepts active authenticated GitHub accounts when another account fails", () => {
   const auth = GitHubSourceControlProvider.discovery.parseAuth(
