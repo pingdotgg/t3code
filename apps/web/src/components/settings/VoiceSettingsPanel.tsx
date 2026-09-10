@@ -175,7 +175,16 @@ export function VoiceSettingsPanel() {
   }, [refreshModels]);
   useEffect(() => {
     if (!operation) return;
-    const timer = window.setInterval(() => void refreshModels().catch(() => undefined), 350);
+    let refreshInFlight = false;
+    const timer = window.setInterval(() => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
+      void refreshModels()
+        .catch(() => undefined)
+        .finally(() => {
+          refreshInFlight = false;
+        });
+    }, 350);
     return () => window.clearInterval(timer);
   }, [operation, refreshModels]);
 
