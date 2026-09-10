@@ -525,7 +525,7 @@ export class RunExecutionServiceV2 extends Context.Service<
   RunExecutionServiceV2Shape
 >()("t3/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
 
-export function shouldDeliverProviderEvent(
+function shouldDeliverProviderEvent(
   event: ProviderAdapterV2Event,
   assistantStreamingEnabled: boolean,
 ): boolean {

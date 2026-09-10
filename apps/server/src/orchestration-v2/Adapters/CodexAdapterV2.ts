@@ -861,7 +861,7 @@ export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRo
   },
 );
 
-export function parseCodexRetryProgress(
+function parseCodexRetryProgress(
   message: string,
 ): Pick<OrchestrationV2ProviderRetry, "attempt" | "maxAttempts"> | null {
   const match = /\b(\d+)\s*\/\s*(\d+)\b/u.exec(message);
@@ -1235,7 +1235,7 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   });
 });
 
-export const makeCodexAppServerClientFactoryCommandLayer = (
+const makeCodexAppServerClientFactoryCommandLayer = (
   options: CodexClient.CodexAppServerClientOptions & {
     readonly command: string;
     readonly args?: ReadonlyArray<string>;
@@ -1304,7 +1304,7 @@ export function makeCodexAppServerProtocolLogger(input: {
   };
 }
 
-export function redactCodexProtocolValue(value: unknown): unknown {
+function redactCodexProtocolValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(redactCodexProtocolValue);
   }
@@ -1465,7 +1465,7 @@ export const CodexAdapterV2Driver: ProviderAdapterDriver<CodexSettings, CodexAda
   create: createCodexAdapterV2,
 };
 
-export const layer: Layer.Layer<
+const layer: Layer.Layer<
   ProviderAdapterV2,
   never,
   CodexAppServerClientFactory | FileSystem.FileSystem | IdAllocatorV2 | ServerConfig

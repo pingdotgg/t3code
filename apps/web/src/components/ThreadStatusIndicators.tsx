@@ -848,9 +848,6 @@ export function ThreadRowLeadingStatus({
     pr === null && supportsMultiplePullRequests
       ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
       : null;
-  if (!prStatus && !threadStatus && !pendingLink) {
-    return null;
-  }
 
   return (
     <span

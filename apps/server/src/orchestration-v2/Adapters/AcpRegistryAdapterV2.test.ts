@@ -16,7 +16,7 @@ import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
 import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAdapterDrivers.ts";
 import {
-  ACP_REGISTRY_DRIVER_KIND,
+  ACP_REGISTRY_PROVIDER,
   AcpRegistryAdapterV2Driver,
   makeAcpRegistryAdapterV2,
 } from "./AcpRegistryAdapterV2.ts";
@@ -75,8 +75,8 @@ const testLayer = Layer.mergeAll(
 
 describe("AcpRegistryAdapterV2", () => {
   it("is registered as a generic provider driver with schema defaults", () => {
-    assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_DRIVER_KIND));
-    assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_DRIVER_KIND);
+    assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
+    assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
     assert.deepEqual(AcpRegistryAdapterV2Driver.defaultConfig(), {
       enabled: true,
       agentId: "",
