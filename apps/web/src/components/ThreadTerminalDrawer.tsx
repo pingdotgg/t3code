@@ -298,7 +298,11 @@ export function terminalContextMenuItems(options: {
     {
       id: "paste",
       label: "Paste",
-      accelerator: isMacPlatform(platform) ? "Command+V" : "Ctrl+Shift+V",
+      accelerator: isMacPlatform(platform)
+        ? "Command+V"
+        : isWindowsPlatform(platform)
+          ? "Ctrl+V"
+          : "Ctrl+Shift+V",
     },
   ];
 }

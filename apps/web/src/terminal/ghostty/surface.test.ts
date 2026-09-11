@@ -66,6 +66,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       private readonly captures = new Set<number>();
 
       setAttribute() {}
+      select() {}
       append(...children: TerminalTestElement[]) {
         for (const child of children) child.parentElement = this;
       }
@@ -96,6 +97,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     }
 
     const canvas = new TerminalTestElement();
+    const input = new TerminalTestElement();
     const mount = new TerminalTestElement();
     const context = {
       canvas,
@@ -116,7 +118,8 @@ describe("GhosttyTerminalSurface visibility", () => {
       }),
     };
     vi.stubGlobal("document", {
-      createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
+      createElement: (tag: string) =>
+        tag === "canvas" ? canvas : tag === "textarea" ? input : new TerminalTestElement(),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
     });
     vi.stubGlobal(
@@ -149,6 +152,7 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     return {
       mount,
+      input,
       frames,
       paint,
       requestFrame,
@@ -279,6 +283,52 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(surface.getSelectionPosition()).toBeNull();
     expect(harness.renderedSnapshot.rowData[0]?.cells.some((cell) => cell.selected)).toBe(false);
   });
+
+  it.each(["unavailable", "denied"])(
+    "lets Windows Ctrl+C interrupt after native copy when the Clipboard API is %s",
+    async (clipboardState) => {
+      const harness = createHarness();
+      const writeText = vi.fn(async () => {
+        throw new Error("Clipboard access denied");
+      });
+      vi.stubGlobal("navigator", {
+        platform: "Win32",
+        ...(clipboardState === "denied" ? { clipboard: { writeText } } : {}),
+      });
+      const surface = await harness.create({ beforeKey: () => true });
+      surface.write("hello world");
+      harness.flushFrame();
+      harness.pointer("pointerdown", 5, 1);
+      harness.pointer("pointermove", 37, 1);
+      harness.pointer("pointerup", 37, 0);
+      const pressCopy = () =>
+        harness.input.dispatchEvent(
+          Object.assign(new Event("keydown", { cancelable: true }), {
+            key: "c",
+            code: "KeyC",
+            ctrlKey: true,
+            shiftKey: false,
+            altKey: false,
+            metaKey: false,
+            getModifierState: () => false,
+          }),
+        );
+
+      pressCopy();
+      const copyEvent = Object.assign(new Event("copy", { cancelable: true }), {
+        clipboardData: null,
+      });
+      harness.input.dispatchEvent(copyEvent);
+      expect(copyEvent.defaultPrevented).toBe(false);
+      // The native default action reads this value before the microtask clears it.
+      expect(harness.input.value).toBe("hello");
+      await Promise.resolve();
+      expect(surface.hasSelection()).toBe(false);
+      harness.onData.mockClear();
+      pressCopy();
+      expect(harness.onData).toHaveBeenCalledWith("\u0003");
+    },
+  );
 
   it("pastes the terminal selection, and only that, on a Linux middle click", async () => {
     const harness = createHarness();
@@ -772,6 +822,11 @@ describe("isTerminalPasteShortcut", () => {
     expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
     );
+  });
+
+  it("accepts Ctrl+V and Ctrl+Shift+V on Windows", () => {
+    expect(isTerminalPasteShortcut(event({ ctrlKey: true }), "Win32")).toBe(true);
+    expect(isTerminalPasteShortcut(event({ ctrlKey: true, shiftKey: true }), "Win32")).toBe(true);
   });
 
   it("supports the conventional Shift+Insert paste shortcut", () => {

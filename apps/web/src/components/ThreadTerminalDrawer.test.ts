@@ -188,5 +188,10 @@ describe("terminal selection actions", () => {
       label: "Copy",
       accelerator: "Ctrl+C",
     });
+    expect(terminalContextMenuItems({ hasSelection: true, platform: "Win32" })).toContainEqual({
+      id: "paste",
+      label: "Paste",
+      accelerator: "Ctrl+V",
+    });
   });
 });

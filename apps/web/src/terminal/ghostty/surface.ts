@@ -393,7 +393,9 @@ export function isTerminalPasteShortcut(
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
   if (key !== "v") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  return isMacPlatform(platform)
+    ? event.metaKey
+    : event.ctrlKey && (event.shiftKey || isWindowsPlatform(platform));
 }
 
 /**
@@ -1217,6 +1219,17 @@ export class GhosttyTerminalSurface {
         this.clearSelectionAfterCopy = false;
         this.clearSelection();
       }
+    } else if (!event.clipboardData && this.clearSelectionAfterCopy) {
+      // The native action must read the primed textarea before we clear it.
+      // It can complete even when the Clipboard API is unavailable or denied.
+      const token = this.copyShortcutToken;
+      void Promise.resolve().then(() => {
+        if (this.disposed || this.copyShortcutToken !== token || !this.clearSelectionAfterCopy) {
+          return;
+        }
+        this.clearSelectionAfterCopy = false;
+        this.clearSelection();
+      });
     }
   };
 
