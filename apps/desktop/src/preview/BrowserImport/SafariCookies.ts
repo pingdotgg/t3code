@@ -225,6 +225,16 @@ export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: strin
   );
 });
 
+/** A missing or unreadable jar is never evidence that access was granted. */
+export const safariAccessGranted = Effect.fnUntraced(function* (cookiePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+    Effect.scoped,
+  );
+});
+
 export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(function* (
   cookiePath: string,
 ) {

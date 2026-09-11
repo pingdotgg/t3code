@@ -1,3 +1,4 @@
+import * as MacPermissions from "../permissions/MacPermissions.ts";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_CLIENT_SETTINGS,
@@ -488,41 +489,45 @@ const testLayer = (
     DesktopClientSettings.DesktopClientSettingsReadError
   > = Effect.succeed(initialSettings),
 ) =>
-  Layer.mergeAll(
-    Layer.succeed(
-      DesktopEnvironment.DesktopEnvironment,
-      DesktopEnvironment.DesktopEnvironment.of({
-        platform,
-        stateDir: "/state",
-        linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
-        appRoot: "/repo",
-        linuxApplicationsDir: "/test-data/applications",
-      } as DesktopEnvironment.DesktopEnvironment["Service"]),
-    ),
-    Layer.succeed(
-      DesktopClientSettings.DesktopClientSettings,
-      DesktopClientSettings.DesktopClientSettings.of({
-        get: settingsGet,
-        set: () => Effect.void,
-      }),
-    ),
-    Layer.succeed(
-      DesktopWindow.DesktopWindow,
-      DesktopWindow.DesktopWindow.of({
-        activate: Effect.void,
-        prepareCaptureReveal: Effect.sync(prepareCaptureRevealMock),
-        dispatchMenuAction: () => Effect.void,
-        dispatchSnapShotEvent: () => Effect.void,
-      } as unknown as DesktopWindow.DesktopWindow["Service"]),
-    ),
-    FileSystem.layerNoop(fileSystemOverrides),
-    Path.layer,
-    Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size),
-        digest: (_algorithm, data) => Effect.succeed(data),
-      }),
+  MacPermissions.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        Layer.succeed(
+          DesktopEnvironment.DesktopEnvironment,
+          DesktopEnvironment.DesktopEnvironment.of({
+            platform,
+            stateDir: "/state",
+            linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
+            appRoot: "/repo",
+            linuxApplicationsDir: "/test-data/applications",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.succeed(
+          DesktopClientSettings.DesktopClientSettings,
+          DesktopClientSettings.DesktopClientSettings.of({
+            get: settingsGet,
+            set: () => Effect.void,
+          }),
+        ),
+        Layer.succeed(
+          DesktopWindow.DesktopWindow,
+          DesktopWindow.DesktopWindow.of({
+            activate: Effect.void,
+            prepareCaptureReveal: Effect.sync(prepareCaptureRevealMock),
+            dispatchMenuAction: () => Effect.void,
+            dispatchSnapShotEvent: () => Effect.void,
+          } as unknown as DesktopWindow.DesktopWindow["Service"]),
+        ),
+        FileSystem.layerNoop(fileSystemOverrides),
+        Path.layer,
+        Layer.succeed(
+          Crypto.Crypto,
+          Crypto.make({
+            randomBytes: (size) => new Uint8Array(size),
+            digest: (_algorithm, data) => Effect.succeed(data),
+          }),
+        ),
+      ),
     ),
   );
 

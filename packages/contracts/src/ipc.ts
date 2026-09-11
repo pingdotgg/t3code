@@ -1301,6 +1301,7 @@ export interface DesktopBridge {
    * lack it, and callers no-op when it is missing.
    */
   openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
+  checkSystemPermission?: (pane: SystemSettingsPane) => Promise<boolean>;
   /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
