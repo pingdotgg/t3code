@@ -732,6 +732,92 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("drops stale Devin variant rows missing from a successful refresh", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("devin"),
+          driver: ProviderDriverKind.make("devin"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-11T00:00:00.000Z",
+          version: "3000.10.21",
+          models: [
+            {
+              slug: "swe-2-high",
+              name: "SWE-2 High",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "swe-2-medium",
+              name: "SWE-2 Medium",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          checkedAt: "2026-09-11T00:01:00.000Z",
+          models: [
+            {
+              slug: "swe-2",
+              name: "SWE-2",
+              isCustom: false,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("effort", "Reasoning", [
+                    { id: "medium", label: "Medium" },
+                    { id: "high", label: "High" },
+                  ]),
+                ],
+              }),
+            },
+          ],
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...refreshedProvider.models,
+        ]);
+      });
+
+      it("retains Devin models when model discovery degrades to a warning", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("devin"),
+          driver: ProviderDriverKind.make("devin"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-11T00:00:00.000Z",
+          version: "3000.10.21",
+          models: [
+            {
+              slug: "swe-2",
+              name: "SWE-2",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const refreshedProvider = {
+          ...previousProvider,
+          status: "warning",
+          checkedAt: "2026-09-11T00:01:00.000Z",
+          models: [],
+          message: "Devin model discovery failed.",
+        } satisfies ServerProvider;
+
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
+          ...previousProvider.models,
+        ]);
+      });
+
       it("retains stale OpenCode models when a refresh fails", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("opencode"),
@@ -2615,6 +2701,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "claudeAgent",
                 "codex",
                 "cursor",
+                "devin",
                 "grok",
                 "opencode",
               ]);
