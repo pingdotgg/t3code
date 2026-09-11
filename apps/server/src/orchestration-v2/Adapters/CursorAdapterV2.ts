@@ -7,6 +7,7 @@ import type {
   SDKUserMessage,
   ToolCall,
 } from "@cursor/sdk";
+import * as NodePath from "node:path";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import {
   CursorSettings,
@@ -433,7 +434,21 @@ function cursorToolSearchPattern(toolCall: ToolCall): string | undefined {
   }
 }
 
-function cursorToolSearchResults(toolCall: ToolCall): ReadonlyArray<{
+type CursorLsDirectoryNode = Extract<
+  Extract<ToolCall, { readonly type: "ls" }>["result"],
+  { readonly status: "success" }
+>["value"]["directoryTreeRoot"];
+
+function cursorLsSearchResults(
+  node: CursorLsDirectoryNode,
+): ReadonlyArray<{ readonly fileName: string }> {
+  return [
+    ...node.childrenFiles.map((file) => ({ fileName: NodePath.join(node.absPath, file.name) })),
+    ...node.childrenDirs.flatMap(cursorLsSearchResults),
+  ];
+}
+
+export function cursorToolSearchResults(toolCall: ToolCall): ReadonlyArray<{
   readonly fileName: string;
   readonly line?: number;
   readonly preview?: string;
@@ -468,6 +483,21 @@ function cursorToolSearchResults(toolCall: ToolCall): ReadonlyArray<{
           preview: entry.line,
         }));
       });
+    case "ls":
+      return cursorLsSearchResults(toolCall.result.value.directoryTreeRoot);
+    case "readLints":
+      return toolCall.result.value.fileDiagnostics.flatMap((file) =>
+        file.diagnostics.map((diagnostic) => {
+          const line = diagnostic.range?.start?.line;
+          return {
+            fileName: file.path,
+            ...(typeof line === "number" && Number.isInteger(line) && line >= 0
+              ? { line: line + 1 }
+              : {}),
+            preview: diagnostic.message,
+          };
+        }),
+      );
     case "semSearch":
       return [
         {

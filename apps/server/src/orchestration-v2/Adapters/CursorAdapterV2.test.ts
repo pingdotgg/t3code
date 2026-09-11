@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as NodePath from "node:path";
 
 import { ServerConfig, layerTest as serverConfigLayerTest } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
@@ -30,6 +31,7 @@ import {
   cursorMcpServers,
   cursorRuntimeAgentPolicy,
   cursorSdkModelSelection,
+  cursorToolSearchResults,
   makeCursorAgentOptions,
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
@@ -467,6 +469,148 @@ describe("CursorAdapterV2", () => {
     );
     assert.isFalse(isCursorCancellationError(new Error("request failed")));
     assert.isFalse(isCursorCancellationError(null));
+  });
+
+  it("flattens successful Cursor ls directory trees into file_search results", () => {
+    const emptyNode = {
+      childrenDirs: [],
+      childrenFiles: [],
+      childrenWereProcessed: true,
+      fullSubtreeExtensionCounts: {},
+      numFiles: 0,
+    };
+    assert.deepEqual(
+      cursorToolSearchResults({
+        type: "ls",
+        args: { path: "/workspace" },
+        result: {
+          status: "success",
+          value: {
+            directoryTreeRoot: {
+              ...emptyNode,
+              absPath: "/workspace",
+              childrenFiles: [{ name: "README.md" }],
+              childrenDirs: [
+                {
+                  ...emptyNode,
+                  absPath: "/workspace/src",
+                  childrenFiles: [{ name: "index.ts" }],
+                  childrenDirs: [
+                    {
+                      ...emptyNode,
+                      absPath: "/workspace/src/nested",
+                      childrenFiles: [{ name: "util.ts" }],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      }),
+      [
+        { fileName: NodePath.join("/workspace", "README.md") },
+        { fileName: NodePath.join("/workspace/src", "index.ts") },
+        { fileName: NodePath.join("/workspace/src/nested", "util.ts") },
+      ],
+    );
+    assert.deepEqual(
+      cursorToolSearchResults({
+        type: "ls",
+        args: { path: "/empty" },
+        result: {
+          status: "success",
+          value: { directoryTreeRoot: { ...emptyNode, absPath: "/empty" } },
+        },
+      }),
+      [],
+    );
+    assert.deepEqual(
+      cursorToolSearchResults({
+        type: "ls",
+        args: { path: "/missing" },
+        result: { status: "error", error: "ENOENT" },
+      }),
+      [],
+    );
+  });
+
+  it("maps successful Cursor readLints diagnostics into file_search results", () => {
+    assert.deepEqual(
+      cursorToolSearchResults({
+        type: "readLints",
+        args: { paths: ["src/a.ts", "src/b.ts"] },
+        result: {
+          status: "success",
+          value: {
+            totalFiles: 2,
+            totalDiagnostics: 3,
+            fileDiagnostics: [
+              {
+                path: "src/a.ts",
+                diagnosticsCount: 2,
+                diagnostics: [
+                  {
+                    message: "Unused variable",
+                    code: "TS6133",
+                    source: "ts",
+                    severity: "warning",
+                    range: { start: { line: 0, character: 0 } },
+                  },
+                  {
+                    message: "Cannot find name",
+                    code: "TS2304",
+                    source: "ts",
+                    severity: "error",
+                    range: { start: { line: 11 } },
+                  },
+                ],
+              },
+              {
+                path: "src/b.ts",
+                diagnosticsCount: 1,
+                diagnostics: [
+                  {
+                    message: "File-level diagnostic",
+                    code: "TS0",
+                    source: "ts",
+                    severity: "information",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      [
+        { fileName: "src/a.ts", line: 1, preview: "Unused variable" },
+        { fileName: "src/a.ts", line: 12, preview: "Cannot find name" },
+        { fileName: "src/b.ts", preview: "File-level diagnostic" },
+      ],
+    );
+    assert.deepEqual(
+      cursorToolSearchResults({
+        type: "readLints",
+        args: { paths: ["src/clean.ts"] },
+        result: {
+          status: "success",
+          value: {
+            totalFiles: 1,
+            totalDiagnostics: 0,
+            fileDiagnostics: [{ path: "src/clean.ts", diagnosticsCount: 0, diagnostics: [] }],
+          },
+        },
+      }),
+      [],
+    );
+    assert.deepEqual(
+      cursorToolSearchResults({
+        type: "readLints",
+        args: { paths: ["src/a.ts"] },
+        result: { status: "error", error: "lint failed" },
+      }),
+      [],
+    );
   });
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
