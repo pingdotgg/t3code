@@ -5,7 +5,9 @@ import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
@@ -50,6 +52,91 @@ const captureProcessResult = (
   );
 
 describe("VcsProcess.run", () => {
+  it.effect.each([
+    {
+      name: "Windows index lock",
+      stderr: "fatal: Unable to create 'C:\\private\\repo\\.git\\index.lock': File exists.\n",
+      locked: true,
+    },
+    {
+      name: "index permission error",
+      stderr: "fatal: Unable to create '/private/repo/.git/index.lock': Permission denied\n",
+      locked: false,
+    },
+    {
+      name: "a different Git lock",
+      stderr: "fatal: Unable to create '/private/repo/.git/config.lock': File exists.\n",
+      locked: false,
+    },
+  ])("distinguishes $name without retaining raw stderr", ({ stderr, locked }) =>
+    Effect.gen(function* () {
+      const error = yield* captureProcessResult(
+        Effect.succeed({
+          code: ChildProcessSpawner.ExitCode(128),
+          stdout: "",
+          stderr,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+          timedOut: false,
+        }),
+      );
+      expect(error).toMatchObject({
+        failureKind: "command-failed",
+        detail: locked
+          ? "Git's index is locked. Wait for other Git operations to finish, then try again."
+          : "Process exited with a non-zero status.",
+      });
+      expect(error.message).not.toContain("private");
+      expect(error).not.toHaveProperty("stderr");
+    }),
+  );
+
+  it.effect("explains a locked Git index and allows restore after the lock is released", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-index-lock-" });
+      const git = (args: readonly string[]) =>
+        run({ operation: "test.checkpoint.restore", command: "git", cwd, args });
+      yield* git(["init"]);
+      const file = path.join(cwd, "README.md");
+      yield* fs.writeFileString(file, "before\n");
+      yield* git(["add", "README.md"]);
+      yield* git([
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-m",
+        "initial",
+      ]);
+      yield* fs.writeFileString(file, "after\n");
+      const lock = path.join(cwd, ".git", "index.lock");
+      yield* fs.writeFileString(lock, "");
+      const restore = ["restore", "--source=HEAD", "--worktree", "--staged", "--", "README.md"];
+
+      const error = yield* Effect.flip(git(restore));
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        exitCode: 128,
+        failureKind: "command-failed",
+        detail: "Git's index is locked. Wait for other Git operations to finish, then try again.",
+      });
+      expect(error.message).not.toContain("index.lock");
+      expect(error.message).toContain("Git's index is locked.");
+      expect(error).not.toHaveProperty("stderr");
+      expect(yield* fs.readFileString(file)).toBe("after\n");
+      expect(yield* fs.exists(lock)).toBe(true);
+
+      yield* fs.remove(lock);
+      yield* git(restore);
+      expect(yield* fs.readFileString(file)).toBe("before\n");
+    }).pipe(provideLive, Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("bounds a synthetic burst of GitHub API processes", () =>
     Effect.gen(function* () {
       const gate = yield* Deferred.make<void>();
