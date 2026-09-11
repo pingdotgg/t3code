@@ -419,12 +419,14 @@ resolve_installed_t3_cli() {
     command -v t3
     return 0
   fi
-  for T3_USER_CLI in "$HOME/.local/bin/t3" "$HOME/bin/t3"; do
-    if [ -x "$T3_USER_CLI" ]; then
-      printf '%s\n' "$T3_USER_CLI"
-      return 0
-    fi
-  done
+  if [ -n "\${HOME:-}" ]; then
+    for T3_USER_CLI in "$HOME/.local/bin/t3" "$HOME/bin/t3"; do
+      if [ -x "$T3_USER_CLI" ]; then
+        printf '%s\n' "$T3_USER_CLI"
+        return 0
+      fi
+    done
+  fi
   return 1
 }
 if T3_CLI_PATH="$(resolve_installed_t3_cli)"; then
