@@ -7,7 +7,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { GitCommandError } from "@t3tools/contracts";
+import { GitCommandError, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -107,6 +107,71 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
                 stderrTruncated: false,
               };
             }),
+        }),
+      ),
+    ),
+  );
+});
+
+const missingGitSpawnError = (cwd: string, operation: string) =>
+  new VcsProcessSpawnError({
+    operation,
+    command: "git",
+    cwd,
+    argumentCount: 4,
+    cause: PlatformError.systemError({
+      _tag: "NotFound",
+      module: "ChildProcess",
+      method: "spawn",
+      pathOrDescriptor: "git",
+    }),
+  });
+
+it.effect("treats a missing git executable as outside a work tree", () => {
+  const cwd = "/repo";
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    assert.equal(yield* driver.isInsideWorkTree(cwd), false);
+    assert.equal(yield* driver.detectRepository(cwd), null);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) => Effect.fail(missingGitSpawnError(input.cwd, input.operation)),
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("does not treat a missing working directory as a missing git executable", () => {
+  const cwd = "/missing/repo";
+  const cause = new VcsProcessSpawnError({
+    operation: "GitVcsDriver.isInsideWorkTree",
+    command: "git",
+    cwd,
+    argumentCount: 4,
+    cause: PlatformError.systemError({
+      _tag: "NotFound",
+      module: "FileSystem",
+      method: "access",
+      pathOrDescriptor: cwd,
+    }),
+  });
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const error = yield* driver.isInsideWorkTree(cwd).pipe(Effect.flip);
+
+    assert.strictEqual(error, cause);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () => Effect.fail(cause),
         }),
       ),
     ),

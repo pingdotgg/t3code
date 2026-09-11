@@ -2,7 +2,9 @@ import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
@@ -135,6 +137,43 @@ describe("VcsDriverRegistry", () => {
       assert.equal(yield* registry.detect({ cwd: "/repo" }), null);
       assert.equal((yield* registry.detect({ cwd: "/repo" }))?.repository.rootPath, "/repo");
       assert.equal(insideWorkTreeChecks, 2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("treats a missing git executable as no repository", () => {
+    const cwd = "/repo";
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.fail(
+              new VcsProcessSpawnError({
+                operation: input.operation,
+                command: "git",
+                cwd,
+                argumentCount: input.args.length,
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                  pathOrDescriptor: "git",
+                }),
+              }),
+            ),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+
+      assert.equal(yield* registry.detect({ cwd }), null);
     }).pipe(Effect.provide(layer));
   });
 });
