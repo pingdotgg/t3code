@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import * as Electron from "electron";
 import { MacPermissionHelper, macAppBundlePath } from "./MacPermissionHelper.ts";
+import type { SettingsWindow } from "./MacSettingsWindow.ts";
 import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 const mocks = vi.hoisted(() => ({
@@ -10,12 +11,17 @@ const mocks = vi.hoisted(() => ({
   showItemInFolder: vi.fn(),
   send: vi.fn(),
   loadURL: vi.fn(),
+  stopTracking: vi.fn(),
+  settingsChanged: undefined as ((state: SettingsWindow) => void) | undefined,
 }));
 const windows = vi.hoisted(
   () =>
     [] as Array<{
       destroyed: boolean;
       webContents: { mainFrame: object };
+      setBounds: ReturnType<typeof vi.fn>;
+      hide: ReturnType<typeof vi.fn>;
+      showInactive: ReturnType<typeof vi.fn>;
     }>,
 );
 vi.mock("electron", async () => {
@@ -44,6 +50,10 @@ vi.mock("electron", async () => {
     }
     loadURL = mocks.loadURL;
     showInactive = vi.fn();
+    hide = vi.fn();
+    setBounds = vi.fn();
+    isVisible = () => false;
+    isFocused = () => false;
     show = vi.fn();
     focus = vi.fn();
     getBounds = () => ({ x: 0, y: 0, width: 800, height: 600 });
@@ -65,6 +75,16 @@ vi.mock("electron", async () => {
       isTrustedAccessibilityClient: () => mocks.granted,
     },
     shell: { showItemInFolder: mocks.showItemInFolder },
+  };
+});
+vi.mock("./MacSettingsWindow.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./MacSettingsWindow.ts")>();
+  return {
+    ...actual,
+    watchMacSettingsWindow: (onChange: (state: SettingsWindow) => void) => {
+      mocks.settingsChanged = onChange;
+      return mocks.stopTracking;
+    },
   };
 });
 let helper: MacPermissionHelper;
@@ -188,4 +208,27 @@ it("uses the packaged PNG when an earlier resource candidate is absent", async (
   send("drag");
   expect(mocks.startDrag).toHaveBeenCalled();
   expect(mocks.createFromPath).toHaveBeenLastCalledWith(iconPaths[0]);
+});
+
+it("docks inside Settings and hides when it is covered or closed", async () => {
+  await open();
+  const window = windows[0]!;
+  const settings = { x: 367, y: 100, width: 723, height: 719, frontmost: true };
+  mocks.settingsChanged!(settings);
+  expect(window.setBounds).toHaveBeenLastCalledWith(
+    { x: 599, y: 663, width: 475, height: 140 },
+    false,
+  );
+  expect(window.showInactive).toHaveBeenCalledOnce();
+  mocks.settingsChanged!({ ...settings, x: -800, y: 200 });
+  expect(window.setBounds).toHaveBeenLastCalledWith(
+    { x: -568, y: 763, width: 475, height: 140 },
+    false,
+  );
+  mocks.settingsChanged!({ ...settings, frontmost: false });
+  expect(window.hide).toHaveBeenCalledOnce();
+  mocks.settingsChanged!(null);
+  expect(window.destroyed).toBe(true);
+  helper.close();
+  expect(mocks.stopTracking).toHaveBeenCalledOnce();
 });

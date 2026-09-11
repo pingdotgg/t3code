@@ -2,6 +2,12 @@
 import * as Electron from "electron";
 import { SNAP_SHOT_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
+import {
+  settingsHelperBounds,
+  watchMacSettingsWindow,
+  type SettingsWindow,
+} from "./MacSettingsWindow.ts";
+
 type Permission = "screen-recording" | "accessibility";
 
 const permissionGranted = (permission: Permission) =>
@@ -34,24 +40,26 @@ function helperHtml(permission: Permission, icon: string) {
   const title = permission === "screen-recording" ? "Screen Recording" : "Accessibility";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
-<title>Set up snapshots</title><style>
+<title>Set up ${title}</title><style>
 :root { color-scheme: light dark; --base: #fff; --row: #e7e7e7; --text: #292929; --line: #e3e3e3; }
 @media (prefers-color-scheme: dark) { :root { --base: #242424; --row: #383838; --text: #f5f5f5; --line: #484848; } }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 20px; height: 136px; border: 1px solid var(--line); border-radius: 24px; background: var(--base); color: var(--text); font: 15px/22px -apple-system, BlinkMacSystemFont, sans-serif; user-select: none; }
-header { -webkit-app-region: drag; font-weight: 600; white-space: nowrap; }
+html { background: transparent; }
+body { margin: 0; background: transparent; color: var(--text); font: 15px/22px -apple-system, BlinkMacSystemFont, sans-serif; user-select: none; }
+#panel { position: relative; margin: 2px; padding: 20px; height: 136px; border: 1px solid var(--line); border-radius: 24px; background: var(--base); }
+header { font-weight: 600; white-space: nowrap; }
 button { font: inherit; color: inherit; }
 button:focus-visible { outline: 2px solid #007aff; outline-offset: 3px; }
 #close { position: absolute; right: 8px; top: 6px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: var(--base); font-size: 18px; cursor: pointer; opacity: 0; }
-body:hover #close, #close:focus-visible { opacity: 1; }
+#panel:hover #close, #close:focus-visible { opacity: 1; }
 #app { display: flex; align-items: center; gap: 12px; width: 100%; height: 52px; margin-top: 20px; padding: 8px 12px; border: 0; border-radius: 10px; background: var(--row); cursor: grab; text-align: left; font-size: 16px; font-weight: 600; }
 #app:active { cursor: grabbing; }
 img { width: 32px; height: 32px; pointer-events: none; }
-</style></head><body>
+</style></head><body><main id="panel">
 <button id="close" aria-label="Close permission helper">×</button>
-<header>↑ Drag T3 Code into the ${title} list above</header>
+<header>↑ Drag T3 Code into the list above</header>
 <button id="app" draggable="true" aria-label="Drag T3 Code to System Settings, or click to reveal in Finder"><img src="${escapeHtml(icon)}" alt="" draggable="false">T3 Code</button>
-</body></html>`;
+</main></body></html>`;
 }
 
 /** Owns one temporary panel and its IPC listener. Closing it releases all resources. */
@@ -81,20 +89,13 @@ export class MacPermissionHelper {
       .find((image) => !image.isEmpty());
     if (!appIcon) throw new Error("The packaged T3 Code icon is missing.");
     const icon = appIcon.resize({ width: 64, height: 64 });
-    const display = owner
-      ? Electron.screen.getDisplayMatching(owner.getBounds())
-      : Electron.screen.getDisplayNearestPoint(Electron.screen.getCursorScreenPoint());
-    const area = display.workArea;
-    const width = Math.min(560, area.width);
-    const height = 136;
     const window = new Electron.BrowserWindow({
-      width,
-      height,
-      x: Math.round(area.x + (area.width - width) / 2),
-      y: Math.max(area.y, area.y + area.height - height - 28),
+      width: 560,
+      height: 140,
       show: false,
       frame: false,
       transparent: true,
+      roundedCorners: false,
       backgroundColor: "#00000000",
       hasShadow: false,
       resizable: false,
@@ -136,12 +137,39 @@ export class MacPermissionHelper {
         finish();
       }
     };
+    let settingsWindow: SettingsWindow = null;
+    let foundSettings = false;
+    const syncPosition = () => {
+      if (window.isDestroyed()) return;
+      if (!settingsWindow && foundSettings) {
+        window.close();
+        return;
+      }
+      if (!settingsWindow || (!settingsWindow.frontmost && !window.isFocused())) {
+        window.hide();
+        return;
+      }
+      const bounds = settingsHelperBounds(settingsWindow);
+      const current = window.getBounds();
+      if (
+        current.x !== bounds.x ||
+        current.y !== bounds.y ||
+        current.width !== bounds.width ||
+        current.height !== bounds.height
+      ) {
+        window.setBounds(bounds, false);
+      }
+      if (!window.isVisible()) window.showInactive();
+    };
+    let stopTracking = () => {};
+    window.on("blur", syncPosition);
     const onOwnerClosed = () => window.destroy();
     Electron.ipcMain.on(SNAP_SHOT_PERMISSION_HELPER_CHANNEL, onMessage);
     const timer = setInterval(check, 1_000);
     owner?.once("closed", onOwnerClosed);
     window.once("closed", () => {
       clearInterval(timer);
+      stopTracking();
       Electron.ipcMain.removeListener(SNAP_SHOT_PERMISSION_HELPER_CHANNEL, onMessage);
       owner?.removeListener("closed", onOwnerClosed);
       if (this.window === window) this.window = undefined;
@@ -152,7 +180,13 @@ export class MacPermissionHelper {
       await window.loadURL(
         `data:text/html;charset=utf-8,${encodeURIComponent(helperHtml(permission, icon.toDataURL()))}`,
       );
-      if (!window.isDestroyed()) window.showInactive();
+      if (!window.isDestroyed()) {
+        stopTracking = watchMacSettingsWindow((current) => {
+          settingsWindow = current;
+          if (current) foundSettings = true;
+          syncPosition();
+        });
+      }
     } catch (error) {
       if (!window.isDestroyed()) window.destroy();
       throw error;
