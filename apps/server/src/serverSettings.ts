@@ -357,6 +357,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "providerHealthRefreshInterval",
   "sourceControlWriterModelSelection",
   "textGenerationModelSelection",
+  "pullRequestMergeMethod",
 ]);
 
 // Preserve both enabled states because provider history cannot recover a new opt-in.

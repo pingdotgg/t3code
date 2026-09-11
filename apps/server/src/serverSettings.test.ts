@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ModelSelection,
   ProjectId,
+  ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -1289,7 +1291,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       const legacyProject = ProjectId.make("project-legacy");
       const scriptedProject = ProjectId.make("project-scripted");
-      const script = {
+      const script: ProjectScript = {
         id: "check",
         name: "Check",
         command: "npm test",
@@ -1297,9 +1299,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         runOnWorktreeCreate: false,
       };
       const model = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.5");
-      for (const [projectId, modelJson, envMode, autoPull, scripts] of [
-        [legacyProject, JSON.stringify(model), "worktree", 1, "[]"],
-        [scriptedProject, null, null, 0, JSON.stringify([script])],
+      const modelJson = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelection))(model);
+      const scriptsJson = yield* Schema.encodeEffect(
+        Schema.fromJsonString(Schema.Array(ProjectScript)),
+      )([script]);
+      for (const [projectId, modelColumn, envMode, autoPull, scripts] of [
+        [legacyProject, modelJson, "worktree", 1, "[]"],
+        [scriptedProject, null, null, 0, scriptsJson],
       ] as const) {
         yield* sql`
           INSERT INTO projection_projects (
@@ -1307,7 +1313,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             default_thread_env_mode, auto_pull, scripts_json, created_at, updated_at
           )
           VALUES (
-            ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${modelJson},
+            ${projectId}, ${"Project"}, ${`/tmp/${projectId}`}, ${modelColumn},
             ${envMode}, ${autoPull}, ${scripts},
             ${"2026-08-25T00:00:00.000Z"}, ${"2026-08-25T00:00:00.000Z"}
           )
@@ -1315,30 +1321,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }
       yield* fileSystem.writeFileString(
         serverConfig.settingsPath,
-        JSON.stringify({
-          projectAgentBrowserAccessOverrides: { [legacyProject]: false },
-          projectAutoPullOverrides: { [scriptedProject]: true },
-          projectScriptOverrides: { [legacyProject]: null },
-        }),
+        `{"projectAgentBrowserAccessOverrides":{"${legacyProject}":false},"projectAutoPullOverrides":{"${scriptedProject}":true},"projectScriptOverrides":{"${legacyProject}":null}}`,
       );
 
       const settings = yield* serverSettings.getSettings;
       assert.isTrue(settings.projectSettingsFolded);
-      assert.deepEqual(settings.projectSettingsOverrides, {
-        [legacyProject]: {
-          enableAgentBrowserAccess: false,
-          defaultModelSelection: model,
-          defaultThreadEnvMode: "worktree",
-          defaultAutoPull: true,
+      assert.deepEqual<ServerSettings["projectSettingsOverrides"]>(
+        settings.projectSettingsOverrides,
+        {
+          [legacyProject]: {
+            enableAgentBrowserAccess: false,
+            defaultModelSelection: model,
+            defaultThreadEnvMode: "worktree",
+            defaultAutoPull: true,
+          },
+          [scriptedProject]: { defaultAutoPull: true, defaultProjectScripts: [script] },
         },
-        [scriptedProject]: { defaultAutoPull: true, defaultProjectScripts: [script] },
-      });
+      );
       // Derived legacy views keep older clients reading the same values.
-      assert.deepEqual(settings.projectAutoPullOverrides, {
-        [legacyProject]: true,
-        [scriptedProject]: true,
+      assert.deepEqual<ServerSettings["projectAutoPullOverrides"]>(
+        settings.projectAutoPullOverrides,
+        {
+          [legacyProject]: true,
+          [scriptedProject]: true,
+        },
+      );
+      assert.deepEqual<ServerSettings["projectScriptOverrides"]>(settings.projectScriptOverrides, {
+        [scriptedProject]: [script],
       });
-      assert.deepEqual(settings.projectScriptOverrides, { [scriptedProject]: [script] });
 
       // A reset survives the next load: the fold does not run again.
       yield* serverSettings.updateSettings({
