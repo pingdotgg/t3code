@@ -339,6 +339,52 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("reports ACP context usage and replaces it with zero on a later turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-context-usage");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_EMIT_USAGE: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const events: ProviderRuntimeEvent[] = [];
+      const completed = yield* Deferred.make<void>();
+      let completedTurns = 0;
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "turn.completed" && ++completedTurns === 2) {
+            yield* Deferred.succeed(completed, undefined);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "first", attachments: [] });
+      yield* adapter.sendTurn({ threadId, input: "second", attachments: [] });
+      yield* Deferred.await(completed);
+
+      const usageEvents = events.filter((event) => event.type === "thread.token-usage.updated");
+      assert.deepStrictEqual(
+        usageEvents.map((event) => event.payload.usage),
+        [
+          { usedTokens: 42_000, maxTokens: 128_000 },
+          { usedTokens: 0, maxTokens: 256_000 },
+        ],
+      );
+      const turns = events.filter((event) => event.type === "turn.started");
+      assert.lengthOf(turns, 2);
+      assert.deepStrictEqual(
+        usageEvents.map((event) => ({ threadId: event.threadId, turnId: event.turnId })),
+        turns.map((event) => ({ threadId, turnId: event.turnId })),
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect.skipIf(windowsHost)("closes the ACP child process when a session stops", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-stop-session-close");

@@ -1321,6 +1321,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 if (
                   event._tag === "PlanUpdated" ||
                   event._tag === "ToolCallUpdated" ||
+                  event._tag === "UsageUpdated" ||
                   event._tag === "ContentDelta"
                 ) {
                   yield* logNative(ctx.threadId, "session/update", event.rawPayload);
@@ -1331,6 +1332,23 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 }
 
                 const notificationTurnId = resolveNotificationTurnId(ctx);
+                // Context usage belongs to the session, including updates outside a turn.
+                if (event._tag === "UsageUpdated") {
+                  yield* offerRuntimeEvent({
+                    type: "thread.token-usage.updated",
+                    ...(yield* makeEventStamp()),
+                    provider: PROVIDER,
+                    threadId: ctx.threadId,
+                    turnId: notificationTurnId,
+                    payload: { usage: event.usage },
+                    raw: {
+                      source: "acp.jsonrpc",
+                      method: "session/update",
+                      payload: event.rawPayload,
+                    },
+                  });
+                  return;
+                }
                 if (
                   notificationTurnId === undefined ||
                   ctx.interruptedTurnIds.has(notificationTurnId)

@@ -618,6 +618,17 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
 
+      if (process.env.T3_ACP_EMIT_USAGE === "1") {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: promptCount === 1 ? 42_000 : 0,
+            size: promptCount === 1 ? 128_000 : 256_000,
+          },
+        });
+      }
+
       if (completeFirstPromptOnCancel && promptCount === 1) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
