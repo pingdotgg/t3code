@@ -24,8 +24,11 @@ Expo and React Native. That is conservative and can include build tooling that i
 the final JavaScript bundle, but it avoids dropping a notice when platform bundling changes.
 
 The build fails when a collected package has no distributable license identifier or contains no
-license or notice file. This turns missing attribution into a build error instead of an empty row
-in a release.
+license or notice text. Generated notices use license templates from the pinned SPDX License List.
+Strict web and EAS builds download a missing template into the gitignored `.generated/` cache;
+`pnpm licenses:sync` can warm that cache explicitly. Local web and Metro development do not make a
+network request and omit generated rows until the cache exists. This keeps dev startup optional
+while preventing incomplete release artifacts.
 
 ## Custom notices and package overrides
 
@@ -37,18 +40,24 @@ another asset that did not come from an npm package:
 {
   "name": "asset-name",
   "license": "CC-BY-4.0",
-  "noticeFile": "licenses/asset-name.txt",
+  "generatedNotices": [
+    {
+      "licenseId": "CC-BY-4.0",
+      "preamble": ["Asset by Example Author. Changes: converted to MP3."]
+    }
+  ],
   "sourceUrl": "https://example.com/source",
   "bundles": ["assets", "web"]
 }
 ```
 
-Paths in `noticeFile` are relative to the config file. Use `noticeFiles` when one row needs to join
-several notices, such as a tool that vendors separately licensed code. The files should contain the
-complete copyright, attribution, and license text required for redistribution. `bundles` controls
-which generated manifests include the entry and supplies the label shown to users. Use
-`includeInBundles` when those differ, such as an optional server tool that should appear in both
-client manifests but is not bundled into either client.
+Each `generatedNotices` item names an SPDX license template and can add `copyrights` or a short
+`preamble` for attribution and provenance. Multiple items are joined into one row for software
+that vendors separately licensed code. Keep `noticeFile` or `noticeFiles` only when a vendored
+source tree already carries an intrinsic license file that should remain beside it. Paths are
+relative to the config file. `bundles` controls which generated manifests include the entry and
+supplies the label shown to users. Use `includeInBundles` when those differ, such as an optional
+server tool that should appear in both client manifests but is not bundled into either client.
 
 Use `packageOverrides` only when an installed npm archive omits its notice or has incorrect
 metadata:
@@ -57,7 +66,10 @@ metadata:
 {
   "name": "package-name",
   "version": "1.2.3",
-  "noticeFile": "licenses/package-name-1.2.3.txt",
+  "generatedNotice": {
+    "licenseId": "MIT",
+    "copyrights": ["Copyright (c) 2026 Example Author"]
+  },
   "license": "MIT",
   "sourceUrl": "https://example.com/package-name"
 }
@@ -70,7 +82,9 @@ several packages from one monorepo share the same notice:
 ```json
 {
   "repositoryUrl": "https://github.com/example/project",
-  "noticeFile": "licenses/project.txt"
+  "generatedNotice": {
+    "licenseId": "Apache-2.0"
+  }
 }
 ```
 
@@ -82,6 +96,6 @@ The `@react-grab/cli` override uses the root React Grab repository's MIT license
 npm archive omits both its license field and license file. Keep the override until the published
 CLI package carries that metadata itself.
 
-Generated mobile files live under `apps/mobile/.generated/` and are ignored. Do not commit or edit
-them; updating dependencies, configuration, or a notice file is enough for the next Metro startup
-to refresh the manifest.
+Generated mobile files live under `apps/mobile/.generated/`, while fetched SPDX templates live
+under the repository `.generated/` directory. Both are ignored. Do not commit or edit them;
+updating dependencies or configuration is enough for the next strict build to refresh the output.

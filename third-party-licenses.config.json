@@ -4,41 +4,67 @@
       "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
       "name": "Folder_Whoosh.wav by BaggoNotes",
-      "noticeFiles": ["apps/web/licenses/folder-whoosh.txt", "apps/web/licenses/cc0-1.0.txt"],
-      "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/"
+      "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/",
+      "generatedNotices": [
+        {
+          "licenseId": "CC0-1.0",
+          "preamble": [
+            "The bundled snap-shot-whoosh.mp3 is derived from Folder_Whoosh.wav by BaggoNotes:\nhttps://freesound.org/people/BaggoNotes/sounds/704258/\n\nThe original sound is dedicated to the public domain under CC0 1.0 Universal."
+          ]
+        }
+      ]
     },
     {
       "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
       "name": "Contarex camera shutter.wav by Tonik1105",
-      "noticeFiles": [
-        "apps/web/licenses/contarex-camera-shutter.txt",
-        "apps/web/licenses/cc0-1.0.txt"
-      ],
-      "sourceUrl": "https://freesound.org/people/Tonik1105/sounds/520684/"
+      "sourceUrl": "https://freesound.org/people/Tonik1105/sounds/520684/",
+      "generatedNotices": [
+        {
+          "licenseId": "CC0-1.0",
+          "preamble": [
+            "The bundled snap-shot-click.mp3 is derived from Contarex camera shutter.wav by Tonik1105:\nhttps://freesound.org/people/Tonik1105/sounds/520684/\n\nThe original sound is dedicated to the public domain under CC0 1.0 Universal."
+          ]
+        }
+      ]
     },
     {
       "bundles": ["device-tools"],
       "includeInBundles": ["mobile", "web"],
       "license": "MIT",
       "name": "agent-device",
-      "noticeFile": "apps/web/licenses/agent-device.txt",
       "sourceUrl": "https://github.com/callstack/agent-device",
-      "version": "0.20.10"
+      "version": "0.20.10",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2026 Callstack"]
+        }
+      ]
     },
     {
       "bundles": ["device-tools"],
       "includeInBundles": ["mobile", "web"],
       "license": "MIT AND Apache-2.0 AND BSD-3-Clause",
       "name": "expo-device-hub",
-      "noticeFiles": [
-        "apps/web/licenses/expo-device-hub.txt",
-        "apps/web/licenses/kubernetes-types.txt",
-        "apps/web/licenses/expo-device-hub-serve-sim-notice.txt",
-        "apps/web/licenses/expo-device-hub-webrtc.txt"
-      ],
       "sourceUrl": "https://github.com/expo/expo-device-hub",
-      "version": "0.9.0"
+      "version": "0.9.0",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2015-present 650 Industries, Inc. (aka Expo)"]
+        },
+        {
+          "licenseId": "Apache-2.0",
+          "preamble": [
+            "This distribution includes software from the original serve-sim project, created and open-sourced by Evan Bacon:\nhttps://github.com/EvanBacon/serve-sim\n\nOriginal work copyright 2026 Evan Bacon. This fork contains modifications by Expo and other contributors."
+          ]
+        },
+        {
+          "licenseId": "BSD-3-Clause",
+          "copyrights": ["Copyright (c) 2011, The WebRTC project authors. All rights reserved."]
+        }
+      ]
     },
     {
       "bundles": ["android", "assets", "mobile", "web"],
@@ -58,15 +84,28 @@
       "bundles": ["ios", "mobile"],
       "license": "MIT",
       "name": "GhosttyKit",
-      "noticeFile": "apps/mobile/licenses/ghostty-kit.txt",
-      "sourceUrl": "https://github.com/Yash-Singh1/ghostty/tree/custom-io"
+      "sourceUrl": "https://github.com/Yash-Singh1/ghostty/tree/custom-io",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors"],
+          "preamble": [
+            "GhosttyKit\n\nThe iOS terminal renderer vendors GhosttyKit.xcframework, a libghostty build produced from T3's iOS 16 support fork. That fork was created from VVTerm's custom-I/O Ghostty fork.\n\nUpstream project: https://github.com/ghostty-org/ghostty\nCustom-I/O base fork: https://github.com/wiedymi/ghostty/tree/custom-io\nVendored source fork: https://github.com/Yash-Singh1/ghostty/tree/custom-io\nVendored revision: d36c3b8dffd0d756dd5e5f4933962f774a0e6753\nReference integration: https://github.com/vivy-company/vvterm"
+          ]
+        }
+      ]
     },
     {
       "bundles": ["android", "assets", "mobile"],
       "license": "Apache-2.0",
       "name": "MesloLGS NF",
-      "noticeFile": "apps/mobile/licenses/meslo-lgs-nf.txt",
-      "sourceUrl": "https://github.com/romkatv/powerlevel10k-media"
+      "sourceUrl": "https://github.com/romkatv/powerlevel10k-media",
+      "generatedNotices": [
+        {
+          "licenseId": "Apache-2.0",
+          "copyrights": ["Copyright 2009, 2010, 2013 André Berg"]
+        }
+      ]
     },
     {
       "bundles": ["mobile"],
@@ -88,58 +127,98 @@
     {
       "license": "MIT",
       "name": "@react-grab/cli",
-      "noticeFile": "apps/web/licenses/react-grab-cli.txt",
-      "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli"
+      "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Aiden Bai"]
+      }
     },
     {
       "name": "glob-to-regexp",
-      "noticeFile": "apps/web/licenses/glob-to-regexp.txt"
+      "generatedNotice": {
+        "licenseId": "BSD-2-Clause",
+        "copyrights": ["Copyright (c) 2013, Nick Fitzgerald"]
+      }
     },
     {
       "name": "kubernetes-types",
-      "noticeFile": "apps/web/licenses/kubernetes-types.txt"
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
     },
     {
       "name": "@msgpackr-extract/msgpackr-extract-linux-x64",
-      "noticeFile": "apps/web/licenses/msgpackr-extract-linux-x64.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2020 Kris Zyp"]
+      }
     },
     {
       "name": "isarray",
-      "noticeFile": "apps/web/licenses/isarray.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2013 Julian Gruber <julian@juliangruber.com>"]
+      }
     },
     {
       "name": "keyv",
-      "noticeFile": "apps/web/licenses/keyv.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2017-2021 Luke Childs", "Copyright (c) 2021-2022 Jared Wray"]
+      }
     },
     {
       "license": "MIT",
       "name": "type-fest",
-      "noticeFile": "apps/web/licenses/type-fest.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": [
+          "Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)"
+        ]
+      }
     },
     {
       "name": "lazy-val",
-      "noticeFile": "apps/web/licenses/lazy-val.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Vladimir Krivosheev"]
+      }
     },
     {
       "name": "@pierre/theming",
-      "noticeFile": "apps/web/licenses/pierre-theming.txt"
+      "generatedNotice": {
+        "licenseId": "Apache-2.0",
+        "copyrights": ["Copyright 2025 Pierre Computer Company"]
+      }
     },
     {
       "name": "lru_map",
-      "noticeFile": "apps/web/licenses/lru-map.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2010-2016 Rasmus Andersson <https://rsms.me/>"]
+      }
     },
     {
       "name": "@electron-internal/extract-zip",
-      "noticeFile": "apps/web/licenses/electron-internal-extract-zip.txt"
+      "generatedNotice": {
+        "licenseId": "BSD-2-Clause",
+        "copyrights": ["Copyright (c) 2026 Samuel Attard and Electron contributors"]
+      }
     },
     {
-      "noticeFile": "apps/web/licenses/xa11y.txt",
-      "repositoryUrl": "https://github.com/xa11y/xa11y"
+      "repositoryUrl": "https://github.com/xa11y/xa11y",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Stephen Crowe"]
+      }
     },
     {
       "license": "MIT",
       "name": "map-stream",
-      "noticeFile": "apps/web/licenses/map-stream.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2011 Dominic Tarr"]
+      }
     },
     {
       "license": "Apache-2.0",
@@ -147,68 +226,119 @@
     },
     {
       "name": "@yuuang/ffi-rs-android-arm64",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-darwin-arm64",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-darwin-x64",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-linux-arm-gnueabihf",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-linux-arm64-gnu",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-linux-arm64-musl",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-linux-x64-gnu",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-linux-x64-musl",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-win32-arm64-msvc",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-win32-ia32-msvc",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
       "name": "@yuuang/ffi-rs-win32-x64-msvc",
-      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019 zhangyuang"]
+      }
     },
     {
-      "noticeFile": "apps/mobile/licenses/metro.txt",
-      "repositoryUrl": "https://github.com/facebook/metro"
+      "repositoryUrl": "https://github.com/facebook/metro",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
+      }
     },
     {
-      "noticeFile": "apps/mobile/licenses/metro.txt",
-      "repositoryUrl": "https://github.com/react/metro"
+      "repositoryUrl": "https://github.com/react/metro",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
+      }
     },
     {
       "name": "@react-native-ai/apple",
-      "noticeFile": "apps/mobile/licenses/react-native-ai.txt",
-      "sourceUrl": "https://github.com/callstackincubator/ai"
+      "sourceUrl": "https://github.com/callstackincubator/ai",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": [
+          "Copyright (c) 2024-2025 Szymon Rybczak",
+          "Copyright (c) 2025-present Callstack"
+        ]
+      }
     },
     {
       "name": "react-remove-scroll-bar",
-      "noticeFile": "apps/mobile/licenses/react-remove-scroll-bar.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Anton Korzunov <thekashey@gmail.com>"]
+      }
     },
     {
       "name": "standard-navigation",
-      "noticeFile": "apps/mobile/licenses/standard-navigation.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2026 React Navigation Contributors"]
+      }
     },
     {
       "name": "@expo/sdk-runtime-versions",
@@ -220,61 +350,101 @@
     },
     {
       "name": "stream-buffers",
-      "noticeFile": "apps/mobile/licenses/stream-buffers.txt"
+      "generatedNotice": {
+        "licenseId": "Unlicense"
+      }
     },
     {
       "name": "bplist-parser",
-      "noticeFile": "apps/mobile/licenses/bplist-parser.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2012 Near Infinity Corporation"]
+      }
     },
     {
       "name": "@expo/devcert",
-      "noticeFile": "apps/mobile/licenses/expo-devcert.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Dave Wasmer"]
+      }
     },
     {
       "name": "jimp-compact",
-      "noticeFile": "apps/mobile/licenses/jimp-compact.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2018 Oliver Moran"]
+      }
     },
     {
       "name": "fb-watchman",
-      "noticeFile": "apps/web/licenses/kubernetes-types.txt"
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
     },
     {
       "name": "bser",
-      "noticeFile": "apps/web/licenses/kubernetes-types.txt"
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
     },
     {
       "name": "@expo/xcpretty",
-      "noticeFile": "apps/mobile/licenses/expo-xcpretty.txt"
+      "generatedNotice": {
+        "licenseId": "BSD-3-Clause",
+        "copyrights": ["Copyright (c) 2016-present, 650 Industries, Inc. (Expo)"]
+      }
     },
     {
       "license": "MIT",
       "name": "fb-dotslash",
-      "noticeFile": "apps/mobile/licenses/fb-dotslash.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
+      }
     },
     {
       "name": "structured-headers",
-      "noticeFile": "apps/mobile/licenses/structured-headers.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2018 Evert Pot"]
+      }
     },
     {
       "name": "badgin",
-      "noticeFile": "apps/mobile/licenses/badgin.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) Julian Hundeloh and Tinycon contributors"],
+        "preamble": ["badgin is a refactored fork of Tinycon."]
+      }
     },
     {
       "name": "react-native-nitro-modules",
-      "noticeFile": "apps/mobile/licenses/react-native-nitro-modules.txt"
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2024 Marc Rousavy"]
+      }
     },
     {
       "name": "boolbase",
-      "noticeFile": "apps/mobile/licenses/boolbase.txt"
+      "generatedNotice": {
+        "licenseId": "ISC",
+        "copyrights": ["Copyright (c) 2014-2015, Felix Boehm <me@feedic.com>"]
+      }
     },
     {
-      "noticeFile": "apps/web/licenses/fff.txt",
-      "repositoryUrl": "https://github.com/dmtrKovalenko/fff"
+      "repositoryUrl": "https://github.com/dmtrKovalenko/fff",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Dmitriy Kovalenko"]
+      }
     },
     {
       "name": "@opencode-ai/sdk",
-      "noticeFile": "apps/web/licenses/opencode.txt",
-      "sourceUrl": "https://github.com/anomalyco/opencode/tree/dev/packages/sdk/js"
+      "sourceUrl": "https://github.com/anomalyco/opencode/tree/dev/packages/sdk/js",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 opencode"]
+      }
     }
   ]
 }

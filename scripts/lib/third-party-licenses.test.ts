@@ -104,6 +104,66 @@ describe("third-party license generation", () => {
     });
   });
 
+  it("renders generated notices from the ignored SPDX cache", async () => {
+    const fixture = await createFixture();
+    await writeJson(
+      NodePath.join(fixture.root, ".generated/third-party-licenses/spdx/v3.28.0/MIT.json"),
+      {
+        licenseId: "MIT",
+        licenseText: "MIT License\n\nCopyright (c) <year> <copyright holders>\n\nPermission text",
+      },
+    );
+    await writeJson(fixture.configFile, {
+      customNotices: [
+        {
+          name: "generated-asset",
+          license: "MIT",
+          generatedNotices: [
+            {
+              licenseId: "MIT",
+              copyrights: ["Copyright (c) 2026 Example Author"],
+              preamble: ["Adapted for T3 Code."],
+            },
+          ],
+          bundles: ["assets", "web"],
+        },
+      ],
+      packageOverrides: [],
+    });
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    expect(manifest.entries.find((entry) => entry.name === "generated-asset")?.noticeText).toBe(
+      "Adapted for T3 Code.\n\nMIT License\n\nCopyright (c) 2026 Example Author\n\nPermission text",
+    );
+  });
+
+  it("omits generated rows without a cache during optional development", async () => {
+    const fixture = await createFixture();
+    await writeJson(fixture.configFile, {
+      customNotices: [
+        {
+          name: "generated-asset",
+          license: "MIT",
+          generatedNotices: [{ licenseId: "MIT" }],
+          bundles: ["assets", "web"],
+        },
+      ],
+      packageOverrides: [],
+    });
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+      allowMissingGeneratedNotices: true,
+    });
+
+    expect(manifest.entries.some((entry) => entry.name === "generated-asset")).toBe(false);
+  });
+
   it("finds packages whose exports hide both their manifest and entry point", async () => {
     const fixture = await createFixture();
     await writeJson(NodePath.join(fixture.dependencyRoot, "package.json"), {

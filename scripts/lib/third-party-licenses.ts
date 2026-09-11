@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Vite's build plugin runs before an Effect runtime exists.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - Vite's build plugin runs before an Effect runtime exists.
 
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -8,6 +8,9 @@ import * as NodeModule from "node:module";
 import type { Plugin } from "vite-plus";
 
 export const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
+const SPDX_LICENSE_LIST_VERSION = "v3.28.0";
+const SPDX_LICENSE_LIST_REVISION = "c4a7237ec8f4654e867546f9f409749300f1bf4c";
+const GENERATED_NOTICE_CACHE_DIRECTORY = ".generated/third-party-licenses/spdx";
 
 export interface ThirdPartyLicenseEntry {
   readonly bundles: ReadonlyArray<string>;
@@ -35,6 +38,12 @@ export interface ThirdPartyLicensesPluginOptions {
   readonly bundleName: string;
 }
 
+interface GeneratedNoticeConfigEntry {
+  readonly copyrights?: ReadonlyArray<string>;
+  readonly licenseId: string;
+  readonly preamble?: ReadonlyArray<string>;
+}
+
 interface PackageJson {
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly homepage?: unknown;
@@ -51,12 +60,14 @@ interface CustomNoticeConfigEntry {
   readonly includeInBundles?: ReadonlyArray<string>;
   readonly license: string;
   readonly name: string;
-  readonly noticeFiles: ReadonlyArray<string>;
+  readonly generatedNotices?: ReadonlyArray<GeneratedNoticeConfigEntry>;
+  readonly noticeFiles?: ReadonlyArray<string>;
   readonly sourceUrl?: string;
   readonly version?: string;
 }
 
 interface PackageNoticeOverrideConfigEntry {
+  readonly generatedNotice?: GeneratedNoticeConfigEntry;
   readonly license?: string;
   readonly name?: string;
   readonly noticeFile?: string;
@@ -68,6 +79,11 @@ interface PackageNoticeOverrideConfigEntry {
 interface ThirdPartyLicensesConfig {
   readonly customNotices: ReadonlyArray<CustomNoticeConfigEntry>;
   readonly packageOverrides: ReadonlyArray<PackageNoticeOverrideConfigEntry>;
+}
+
+interface SpdxLicenseDetails {
+  readonly licenseId: string;
+  readonly licenseText: string;
 }
 
 interface CollectedPackage {
@@ -134,6 +150,30 @@ function readOptionalStringArray(
   return field.map((entry) => (entry as string).trim());
 }
 
+function decodeGeneratedNotice(value: unknown, context: string): GeneratedNoticeConfigEntry {
+  if (!isRecord(value)) throw new Error(`${context} must be an object.`);
+  const copyrights = readOptionalStringArray(value, "copyrights", context);
+  const preamble = readOptionalStringArray(value, "preamble", context);
+  return {
+    licenseId: readRequiredString(value, "licenseId", context),
+    ...(copyrights !== undefined ? { copyrights } : {}),
+    ...(preamble !== undefined ? { preamble } : {}),
+  };
+}
+
+function decodeGeneratedNotices(
+  value: unknown,
+  context: string,
+): ReadonlyArray<GeneratedNoticeConfigEntry> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${context} must define "generatedNotices" as a non-empty array.`);
+  }
+  return value.map((entry, index) =>
+    decodeGeneratedNotice(entry, `${context} generated notice at index ${String(index)}`),
+  );
+}
+
 function decodeCustomNotices(value: unknown): ReadonlyArray<CustomNoticeConfigEntry> {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -148,13 +188,22 @@ function decodeCustomNotices(value: unknown): ReadonlyArray<CustomNoticeConfigEn
     const includeInBundles = readOptionalStringArray(entry, "includeInBundles", context);
     const noticeFile = readOptionalString(entry, "noticeFile", context);
     const noticeFiles = readOptionalStringArray(entry, "noticeFiles", context);
-    if ((noticeFile === undefined) === (noticeFiles === undefined)) {
-      throw new Error(`${context} must define exactly one of "noticeFile" or "noticeFiles".`);
+    const generatedNotices = decodeGeneratedNotices(entry.generatedNotices, context);
+    const noticeSourceCount =
+      Number(noticeFile !== undefined) +
+      Number(noticeFiles !== undefined) +
+      Number(generatedNotices !== undefined);
+    if (noticeSourceCount !== 1) {
+      throw new Error(
+        `${context} must define exactly one of "noticeFile", "noticeFiles", or "generatedNotices".`,
+      );
     }
     return {
       name: readRequiredString(entry, "name", context),
       license: readRequiredString(entry, "license", context),
-      noticeFiles: noticeFile === undefined ? noticeFiles! : [noticeFile],
+      ...(noticeFile !== undefined ? { noticeFiles: [noticeFile] } : {}),
+      ...(noticeFiles !== undefined ? { noticeFiles } : {}),
+      ...(generatedNotices !== undefined ? { generatedNotices } : {}),
       ...(version !== undefined ? { version } : {}),
       ...(sourceUrl !== undefined ? { sourceUrl } : {}),
       ...(bundles !== undefined ? { bundles } : {}),
@@ -179,6 +228,13 @@ function decodePackageOverrides(value: unknown): ReadonlyArray<PackageNoticeOver
     const version = readOptionalString(entry, "version", context);
     const license = readOptionalString(entry, "license", context);
     const noticeFile = readOptionalString(entry, "noticeFile", context);
+    const generatedNotice =
+      entry.generatedNotice === undefined
+        ? undefined
+        : decodeGeneratedNotice(entry.generatedNotice, `${context} generated notice`);
+    if (noticeFile !== undefined && generatedNotice !== undefined) {
+      throw new Error(`${context} cannot define both "noticeFile" and "generatedNotice".`);
+    }
     const sourceUrl = readOptionalString(entry, "sourceUrl", context);
     return {
       ...(name !== undefined ? { name } : {}),
@@ -186,6 +242,7 @@ function decodePackageOverrides(value: unknown): ReadonlyArray<PackageNoticeOver
       ...(version !== undefined ? { version } : {}),
       ...(license !== undefined ? { license } : {}),
       ...(noticeFile !== undefined ? { noticeFile } : {}),
+      ...(generatedNotice !== undefined ? { generatedNotice } : {}),
       ...(sourceUrl !== undefined ? { sourceUrl } : {}),
     };
   });
@@ -209,6 +266,130 @@ async function readConfig(configFile: string | URL | undefined): Promise<{
     },
     directory: NodePath.dirname(configPath),
   };
+}
+
+function spdxLicenseCachePath(configDirectory: string, licenseId: string): string {
+  return NodePath.join(
+    configDirectory,
+    GENERATED_NOTICE_CACHE_DIRECTORY,
+    SPDX_LICENSE_LIST_VERSION,
+    `${licenseId}.json`,
+  );
+}
+
+function decodeSpdxLicenseDetails(value: unknown, expectedLicenseId: string): SpdxLicenseDetails {
+  if (
+    !isRecord(value) ||
+    value.licenseId !== expectedLicenseId ||
+    typeof value.licenseText !== "string" ||
+    value.licenseText.trim().length === 0
+  ) {
+    throw new Error(`SPDX returned invalid license details for ${expectedLicenseId}.`);
+  }
+  return { licenseId: expectedLicenseId, licenseText: value.licenseText.trim() };
+}
+
+async function readCachedSpdxLicense(
+  configDirectory: string,
+  licenseId: string,
+): Promise<SpdxLicenseDetails | null> {
+  try {
+    const source = await NodeFSP.readFile(spdxLicenseCachePath(configDirectory, licenseId), "utf8");
+    return decodeSpdxLicenseDetails(JSON.parse(source) as unknown, licenseId);
+  } catch (error) {
+    const code = isRecord(error) && typeof error.code === "string" ? error.code : null;
+    if (code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function downloadSpdxLicense(
+  configDirectory: string,
+  licenseId: string,
+): Promise<SpdxLicenseDetails> {
+  const url = `https://raw.githubusercontent.com/spdx/license-list-data/${SPDX_LICENSE_LIST_REVISION}/json/details/${encodeURIComponent(licenseId)}.json`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `Could not download SPDX license ${licenseId}: HTTP ${String(response.status)}.`,
+    );
+  }
+  const details = decodeSpdxLicenseDetails((await response.json()) as unknown, licenseId);
+  const cachePath = spdxLicenseCachePath(configDirectory, licenseId);
+  await NodeFSP.mkdir(NodePath.dirname(cachePath), { recursive: true });
+  await NodeFSP.writeFile(cachePath, `${JSON.stringify(details)}\n`, "utf8");
+  return details;
+}
+
+async function resolveSpdxLicense(
+  configDirectory: string,
+  licenseId: string,
+  allowMissing: boolean,
+): Promise<SpdxLicenseDetails | null> {
+  const cached = await readCachedSpdxLicense(configDirectory, licenseId);
+  if (cached || allowMissing) return cached;
+  return downloadSpdxLicense(configDirectory, licenseId);
+}
+
+function renderGeneratedNotice(config: GeneratedNoticeConfigEntry, licenseText: string): string {
+  const copyrights = config.copyrights ?? [];
+  let renderedLicense = licenseText;
+  if (copyrights.length > 0) {
+    const placeholderPattern = /^Copyright[^\n]*(?:<year>|<copyright holders>|<owner>)[^\n]*$/m;
+    if (placeholderPattern.test(renderedLicense)) {
+      renderedLicense = renderedLicense.replace(placeholderPattern, copyrights.join("\n"));
+    } else if (config.licenseId === "ISC") {
+      renderedLicense = renderedLicense.replace(
+        /^(?:Copyright[^\n]*\n)+/m,
+        `${copyrights.join("\n")}\n`,
+      );
+    } else {
+      renderedLicense = `${copyrights.join("\n")}\n\n${renderedLicense}`;
+    }
+  }
+  return [...(config.preamble ?? []), renderedLicense].join("\n\n").trim();
+}
+
+async function generatedNoticeText(
+  configs: ReadonlyArray<GeneratedNoticeConfigEntry>,
+  configDirectory: string,
+  allowMissing: boolean,
+): Promise<string | null> {
+  const sections = await Promise.all(
+    configs.map(async (config) => {
+      const details = await resolveSpdxLicense(configDirectory, config.licenseId, allowMissing);
+      return details ? renderGeneratedNotice(config, details.licenseText) : null;
+    }),
+  );
+  return sections.some((section) => section === null)
+    ? null
+    : (sections as ReadonlyArray<string>).join("\n\n---\n\n");
+}
+
+function configuredGeneratedNotices(
+  config: ThirdPartyLicensesConfig,
+): ReadonlyArray<GeneratedNoticeConfigEntry> {
+  return [
+    ...config.customNotices.flatMap((notice) => notice.generatedNotices ?? []),
+    ...config.packageOverrides.flatMap((override) =>
+      override.generatedNotice ? [override.generatedNotice] : [],
+    ),
+  ];
+}
+
+async function syncConfiguredGeneratedNotices(
+  config: ThirdPartyLicensesConfig,
+  directory: string,
+): Promise<void> {
+  const licenseIds = [
+    ...new Set(configuredGeneratedNotices(config).map((notice) => notice.licenseId)),
+  ].sort((left, right) => left.localeCompare(right));
+  await Promise.all(licenseIds.map((licenseId) => resolveSpdxLicense(directory, licenseId, false)));
+}
+
+export async function syncThirdPartyLicenseNotices(configFile: string | URL): Promise<void> {
+  const { config, directory } = await readConfig(configFile);
+  await syncConfiguredGeneratedNotices(config, directory);
 }
 
 async function readPackageJson(packageJsonPath: string): Promise<PackageJson> {
@@ -554,7 +735,8 @@ async function packageEntry(
   configDirectory: string,
   packageNotices: Map<string, Promise<string | null>>,
   repositoryNotices: ReadonlyMap<string, string>,
-): Promise<ThirdPartyLicenseEntry> {
+  allowMissingGeneratedNotices: boolean,
+): Promise<ThirdPartyLicenseEntry | null> {
   const name =
     typeof collected.packageJson.name === "string"
       ? collected.packageJson.name
@@ -575,15 +757,22 @@ async function packageEntry(
   }
 
   const repositoryKey = repositoryNoticeKey(collected.packageJson, license);
-  const noticeText = override?.noticeFile
-    ? (
-        await NodeFSP.readFile(NodePath.resolve(configDirectory, override.noticeFile), "utf8")
-      ).trim()
-    : ((await packageNoticeText(collected.packageRoot, packageNotices)) ??
-      (repositoryKey ? repositoryNotices.get(repositoryKey) : undefined));
+  const noticeText = override?.generatedNotice
+    ? await generatedNoticeText(
+        [override.generatedNotice],
+        configDirectory,
+        allowMissingGeneratedNotices,
+      )
+    : override?.noticeFile
+      ? (
+          await NodeFSP.readFile(NodePath.resolve(configDirectory, override.noticeFile), "utf8")
+        ).trim()
+      : ((await packageNoticeText(collected.packageRoot, packageNotices)) ??
+        (repositoryKey ? repositoryNotices.get(repositoryKey) : undefined));
   if (!noticeText) {
+    if (override?.generatedNotice && allowMissingGeneratedNotices) return null;
     throw new Error(
-      `${name}@${version} does not include a license or notice file. Add a package override with "noticeFile" in the third-party license config.`,
+      `${name}@${version} does not include a license or notice file. Add a package override with "noticeFile" or "generatedNotice" in the third-party license config.`,
     );
   }
 
@@ -602,8 +791,9 @@ async function customEntries(
   config: ThirdPartyLicensesConfig,
   configDirectory: string,
   includedBundles: ReadonlySet<string>,
+  allowMissingGeneratedNotices: boolean,
 ): Promise<ReadonlyArray<ThirdPartyLicenseEntry>> {
-  return Promise.all(
+  const entries = await Promise.all(
     config.customNotices
       .filter(
         (notice) =>
@@ -613,18 +803,29 @@ async function customEntries(
           ),
       )
       .map(async (notice) => {
-        const noticeSections = await Promise.all(
-          notice.noticeFiles.map(async (noticeFile) => {
-            const contents = (
-              await NodeFSP.readFile(NodePath.resolve(configDirectory, noticeFile), "utf8")
-            ).trim();
-            if (contents.length === 0) {
-              throw new Error(`Custom third-party notice "${notice.name}" is empty.`);
-            }
-            return contents;
-          }),
-        );
-        const noticeText = noticeSections.join("\n\n---\n\n");
+        const noticeText = notice.generatedNotices
+          ? await generatedNoticeText(
+              notice.generatedNotices,
+              configDirectory,
+              allowMissingGeneratedNotices,
+            )
+          : (
+              await Promise.all(
+                notice.noticeFiles!.map(async (noticeFile) => {
+                  const contents = (
+                    await NodeFSP.readFile(NodePath.resolve(configDirectory, noticeFile), "utf8")
+                  ).trim();
+                  if (contents.length === 0) {
+                    throw new Error(`Custom third-party notice "${notice.name}" is empty.`);
+                  }
+                  return contents;
+                }),
+              )
+            ).join("\n\n---\n\n");
+        if (noticeText === null) {
+          if (allowMissingGeneratedNotices) return null;
+          throw new Error(`Could not generate custom third-party notice "${notice.name}".`);
+        }
         if (noticeText.length === 0) {
           throw new Error(`Custom third-party notice "${notice.name}" is empty.`);
         }
@@ -641,6 +842,7 @@ async function customEntries(
         };
       }),
   );
+  return entries.flatMap((entry) => (entry ? [entry] : []));
 }
 
 function entrySort(left: ThirdPartyLicenseEntry, right: ThirdPartyLicenseEntry): number {
@@ -656,11 +858,15 @@ export async function generateThirdPartyLicenseManifest(input: {
   readonly packageManifests: ReadonlyArray<ThirdPartyLicensePackageManifest>;
   readonly bundledModuleIds?: ReadonlyArray<string>;
   readonly bundleName?: string;
+  readonly allowMissingGeneratedNotices?: boolean;
 }): Promise<ThirdPartyLicenseManifest> {
   const [{ config, directory }, collection] = await Promise.all([
     readConfig(input.configFile),
     collectProductionDependencyPackages(input.packageManifests),
   ]);
+  if (!(input.allowMissingGeneratedNotices ?? false)) {
+    await syncConfiguredGeneratedNotices(config, directory);
+  }
   if (input.bundledModuleIds && input.bundleName) {
     await addBundledModulePackages(collection, input.bundledModuleIds, input.bundleName);
   }
@@ -670,7 +876,14 @@ export async function generateThirdPartyLicenseManifest(input: {
 
   const packageEntryResults = await Promise.allSettled(
     [...collection.byIdentity.values()].map((collected) =>
-      packageEntry(collected, config, directory, packageNotices, repositoryNotices),
+      packageEntry(
+        collected,
+        config,
+        directory,
+        packageNotices,
+        repositoryNotices,
+        input.allowMissingGeneratedNotices ?? false,
+      ),
     ),
   );
   const failures = packageEntryResults.flatMap((result) =>
@@ -684,11 +897,16 @@ export async function generateThirdPartyLicenseManifest(input: {
     );
   }
   const packageEntries = packageEntryResults.flatMap((result) =>
-    result.status === "fulfilled" ? [result.value] : [],
+    result.status === "fulfilled" && result.value ? [result.value] : [],
   );
   const includedBundles = new Set(input.packageManifests.map((manifest) => manifest.bundle));
   if (input.bundleName) includedBundles.add(input.bundleName);
-  const manualEntries = await customEntries(config, directory, includedBundles);
+  const manualEntries = await customEntries(
+    config,
+    directory,
+    includedBundles,
+    input.allowMissingGeneratedNotices ?? false,
+  );
   return {
     schemaVersion: 1,
     entries: [...packageEntries, ...manualEntries].sort(entrySort),
@@ -722,6 +940,7 @@ export function thirdPartyLicensesPlugin(options: ThirdPartyLicensesPluginOption
         manifestPromise ??= generateThirdPartyLicenseManifest({
           packageManifests: options.packageManifests,
           bundleName: options.bundleName,
+          allowMissingGeneratedNotices: true,
           ...(options.configFile !== undefined ? { configFile: options.configFile } : {}),
         }).catch((error: unknown) => {
           manifestPromise = null;
