@@ -7,6 +7,8 @@ import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
+
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
@@ -101,13 +103,22 @@ export function truncateProcessOutputTail(text: string): string | undefined {
   return text.slice(text.length - PINNED_RUNTIME_OUTPUT_TAIL_CHARS);
 }
 
-function installOutputTail(result: {
+/** Prefer stderr at the end so a bounded tail keeps the npm failure reason. */
+export function installOutputTail(result: {
   readonly stdout: string;
   readonly stderr: string;
 }): string | undefined {
-  const combined = [result.stderr.trim(), result.stdout.trim()].filter((part) => part.length > 0);
+  const combined = [result.stdout.trim(), result.stderr.trim()].filter((part) => part.length > 0);
   return truncateProcessOutputTail(combined.join("\n"));
 }
+
+const StagingManifestJson = fromJsonStringPretty(
+  Schema.Struct({
+    dependencies: Schema.Struct({ t3: Schema.String }),
+    overrides: Schema.Record(Schema.String, Schema.String),
+  }),
+);
+const encodeStagingManifest = Schema.encodeEffect(StagingManifestJson);
 
 /**
  * Installs `t3@<version>` into the pinned runtime directory unless a complete
@@ -263,15 +274,19 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       version: input.version,
       runner,
     });
-    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed npm install manifest.
-    const stagingManifest = `${JSON.stringify(
-      {
-        dependencies: { t3: input.version },
-        overrides,
-      },
-      null,
-      2,
-    )}\n`;
+    const stagingManifest = yield* encodeStagingManifest({
+      dependencies: { t3: input.version },
+      overrides,
+    }).pipe(
+      Effect.map((json) => `${json}\n`),
+      Effect.mapError(
+        (cause) =>
+          new PinnedRuntimeInstallError({
+            step: "encoding the pinned runtime install manifest",
+            cause,
+          }),
+      ),
+    );
     yield* fs.writeFileString(input.path.join(stagingDir, "package.json"), stagingManifest).pipe(
       Effect.mapError(
         (cause) =>

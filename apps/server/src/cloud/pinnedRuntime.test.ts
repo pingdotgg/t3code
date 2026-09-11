@@ -11,6 +11,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  installOutputTail,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
   selectEffectOverrides,
@@ -97,6 +98,15 @@ it("truncateProcessOutputTail keeps a bounded suffix", () => {
   const tail = truncateProcessOutputTail(long);
   assert.equal(tail?.length, 2048);
   assert.equal(tail, long.slice(long.length - 2048));
+});
+
+it("installOutputTail keeps stderr when stdout alone exceeds the bound", () => {
+  const stdout = `${"x".repeat(3000)}\n`;
+  const stderr = "npm error code ERESOLVE\nnpm error Could not resolve dependency\n";
+  const tail = installOutputTail({ stdout, stderr });
+  assert.isTrue(tail !== undefined && tail.includes("npm error code ERESOLVE"));
+  assert.isTrue(tail !== undefined && tail.endsWith(stderr.trim()));
+  assert.isTrue(tail !== undefined && tail.length <= 2048);
 });
 
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
