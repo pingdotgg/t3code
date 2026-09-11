@@ -1303,6 +1303,18 @@ html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigg
   color: var(--contrast-toolbar-foreground);
 }
 
+html[data-theme-id] [data-panel-layout-controls] [data-slot="toggle"]:disabled,
+html[data-theme-id] [data-panel-layout-controls] [data-slot="tooltip-trigger"]:disabled,
+html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="toggle"]:disabled,
+html[data-theme-id] [data-workspace-titlebar-controls] [data-slot="tooltip-trigger"]:disabled {
+  --control-icon-color: color-mix(
+    in oklab,
+    var(--contrast-toolbar-foreground) 55%,
+    var(--toolbar-background)
+  );
+  color: color-mix(in oklab, var(--contrast-toolbar-foreground) 55%, var(--toolbar-background));
+}
+
 html[data-theme-id] [data-chat-header] [data-slot="button"]:hover,
 html[data-theme-id] [data-chat-header] [data-slot="button"][data-pressed],
 html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"]:hover,
