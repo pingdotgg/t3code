@@ -1183,11 +1183,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   accessibilityLabel={
                     panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"
                   }
-                  icon={
-                    panes.primarySidebarVisible
-                      ? "arrow.up.left.and.arrow.down.right"
-                      : "sidebar.left"
-                  }
+                  icon="sidebar.left"
                   onPress={togglePrimarySidebar}
                 />
               ) : null}

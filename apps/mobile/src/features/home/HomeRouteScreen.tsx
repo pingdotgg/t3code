@@ -27,7 +27,7 @@ import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle
 
 export function HomeRouteScreen() {
   const { width: windowWidth } = useWindowDimensions();
-  const { layout } = useAdaptiveWorkspaceLayout();
+  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
@@ -126,6 +126,7 @@ export function HomeRouteScreen() {
           }
         />
         <WorkspaceEmptyDetail
+          onShowSidebar={panes.primarySidebarVisible ? undefined : togglePrimarySidebar}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
         />
       </>
