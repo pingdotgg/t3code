@@ -64,21 +64,30 @@ function collectMarkdownCodeRanges(text: string): Array<{ start: number; end: nu
   const ranges = [...fences];
   let offset = 0;
   for (const fence of [...fences, { start: text.length, end: text.length }]) {
-    const runs = [...text.slice(offset, fence.start).matchAll(/`+/g)];
+    const runs = [...text.slice(offset, fence.start).matchAll(/`+/g)].map((run) => {
+      const start = offset + run.index;
+      let backslashes = 0;
+      for (let cursor = start - 1; cursor >= offset && text[cursor] === "\\"; cursor--) {
+        backslashes++;
+      }
+      return { start, length: run[0].length, escaped: backslashes % 2 };
+    });
     const nextByLength = new Map<number, number>();
     const closing = new Map<number, number>();
     for (let index = runs.length - 1; index >= 0; index--) {
-      const length = runs[index]![0].length;
-      const next = nextByLength.get(length);
+      const run = runs[index]!;
+      // Outside a span, an escape consumes only the first backtick in a run.
+      // Inside a span, backslashes are literal, so closing runs keep their full length.
+      const next = nextByLength.get(run.length - run.escaped);
       if (next !== undefined) closing.set(index, next);
-      nextByLength.set(length, index);
+      nextByLength.set(run.length, index);
     }
     for (let index = 0; index < runs.length; index++) {
       const end = closing.get(index);
       if (end === undefined) continue;
       ranges.push({
-        start: offset + runs[index]!.index,
-        end: offset + runs[end]!.index + runs[end]![0].length,
+        start: runs[index]!.start + runs[index]!.escaped,
+        end: runs[end]!.start + runs[end]!.length,
       });
       index = end;
     }

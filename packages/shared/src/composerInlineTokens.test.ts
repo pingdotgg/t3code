@@ -24,6 +24,20 @@ describe("explicit skill references", () => {
     expect(collectSkillReferences(text)).toEqual([]);
   });
 
+  it.each([
+    ["\\` REF \\`", true],
+    ["\\` REF `", true],
+    ["\\\\` REF `", false],
+    ["` REF \\`", false],
+    ["\\`` REF `", false],
+    ["\\`` REF ``", true],
+  ])("handles escaped backticks outside, but not inside, code spans: %s", (text, detected) => {
+    const skill = { name: "review", path: "/personal/review/SKILL.md" };
+    expect(collectSkillReferences(text.replace("REF", serializeSkillReference(skill)))).toEqual(
+      detected ? [skill] : [],
+    );
+  });
+
   it("collects references after matching fences and unmatched inline delimiters", () => {
     const ref = "[$review](/personal/review/SKILL.md)";
     expect(collectSkillReferences("````md\nignored\n`````\n" + ref)).toEqual([
