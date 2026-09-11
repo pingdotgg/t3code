@@ -155,6 +155,19 @@ export function summarizeThreadCost(
   };
 }
 
+/**
+ * Tokens with no priced cost mean the rates are missing, not that the thread
+ * was free. Clients must not present that total as a real dollar figure.
+ */
+export function isThreadCostUnknown(cost: ThreadCostSnapshot): boolean {
+  const tokens =
+    cost.uncachedInputTokens +
+    cost.cachedInputTokens +
+    cost.cacheCreationTokens +
+    cost.outputTokens;
+  return tokens > 0 && cost.costUsd <= 0;
+}
+
 export function useThreadCost(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;

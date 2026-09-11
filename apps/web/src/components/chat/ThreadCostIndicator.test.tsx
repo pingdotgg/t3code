@@ -52,4 +52,15 @@ describe("ThreadCostIndicator", () => {
     expect(markup).toContain("Unavailable");
     expect(markup).toContain("Provider-reported remainder");
   });
+
+  it("flags tokens without known rates instead of showing a free thread", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadCostIndicator
+        cost={{ ...cost, costUsd: 0, cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Thread API cost Unpriced"');
+    expect(markup).not.toContain("$0.00");
+  });
 });

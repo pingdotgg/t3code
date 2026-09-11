@@ -1,7 +1,11 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
-import { type ThreadCostSnapshot, useThreadCost } from "../../state/threadCost";
+import {
+  isThreadCostUnknown,
+  type ThreadCostSnapshot,
+  useThreadCost,
+} from "../../state/threadCost";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
@@ -45,7 +49,8 @@ function CostRow(props: {
 }
 
 export function ThreadCostIndicator({ cost }: { readonly cost: ThreadCostSnapshot }) {
-  const formattedTotal = formatThreadCostUsd(cost.costUsd);
+  const unknown = isThreadCostUnknown(cost);
+  const formattedTotal = unknown ? "Unpriced" : formatThreadCostUsd(cost.costUsd);
   const freshTokens = cost.uncachedInputTokens + cost.outputTokens;
   return (
     <Popover>
@@ -83,14 +88,18 @@ export function ThreadCostIndicator({ cost }: { readonly cost: ThreadCostSnapsho
           <CostRow
             label="Cache writes, estimated"
             tokens={cost.cacheCreationTokens}
-            costUsd={cost.cacheWriteUsd}
+            costUsd={unknown ? null : cost.cacheWriteUsd}
           />
           <CostRow
             label="Cache reads"
             tokens={cost.cachedInputTokens}
-            costUsd={cost.cacheReadUsd}
+            costUsd={unknown ? null : cost.cacheReadUsd}
           />
-          <CostRow label="Fresh input + output" tokens={freshTokens} costUsd={cost.freshUsd} />
+          <CostRow
+            label="Fresh input + output"
+            tokens={freshTokens}
+            costUsd={unknown ? null : cost.freshUsd}
+          />
           {cost.providerReportedUsd > 0.000_001 ? (
             <CostRow label="Provider-reported remainder" costUsd={cost.providerReportedUsd} />
           ) : null}
