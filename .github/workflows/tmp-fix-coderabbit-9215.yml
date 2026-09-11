@@ -1,0 +1,174 @@
+name: Temporary PR 9215 CodeRabbit fix
+
+on:
+  push:
+    branches:
+      - fix/review-diff-preview-budget
+    paths:
+      - .github/workflows/tmp-fix-coderabbit-9215.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/review-diff-preview-budget
+          fetch-depth: 0
+
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Apply fallback aggregate cap and regression coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          core_path = Path("apps/server/src/vcs/GitVcsDriverCore.ts")
+          core = core_path.read_text()
+
+          helper_anchor = '''export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {'''
+          helper = '''const boundReviewDiffOutput = (
+            diff: string,
+            maxOutputBytes: number,
+          ): { readonly diff: string; readonly truncated: boolean } => {
+            const encoder = new TextEncoder();
+            const encoded = encoder.encode(diff);
+            if (encoded.byteLength <= maxOutputBytes) {
+              return { diff, truncated: false };
+            }
+
+            const markerBytes = encoder.encode(OUTPUT_TRUNCATED_MARKER).byteLength;
+            const contentBudget = Math.max(0, maxOutputBytes - markerBytes);
+            const decoder = new TextDecoder();
+            const boundedDiff = decoder.decode(encoded.subarray(0, contentBudget), { stream: true });
+            return {
+              diff: `${boundedDiff}${OUTPUT_TRUNCATED_MARKER}`,
+              truncated: true,
+            };
+          };
+
+          '''
+          if "const boundReviewDiffOutput = (" not in core:
+              if helper_anchor not in core:
+                  raise SystemExit("makeGitVcsDriverCore anchor not found")
+              core = core.replace(helper_anchor, helper + helper_anchor, 1)
+
+          old = '''          Effect.map(([tracked, untracked]) => ({
+            diff: [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
+              .filter((diff) => diff.length > 0)
+              .join("\\n"),
+            truncated: tracked.truncated || untracked.truncated,
+          })),'''
+          new = '''          Effect.map(([tracked, untracked]) => {
+            const combinedDiff = [tracked.diff.trimEnd(), untracked.diff.trimEnd()]
+              .filter((diff) => diff.length > 0)
+              .join("\\n");
+            const bounded = boundReviewDiffOutput(combinedDiff, REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES);
+            return {
+              diff: bounded.diff,
+              truncated: tracked.truncated || untracked.truncated || bounded.truncated,
+            };
+          }),'''
+          if old in core:
+              core = core.replace(old, new, 1)
+          elif new not in core:
+              raise SystemExit("fallback join block not found")
+          core_path.write_text(core)
+
+          test_path = Path("apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts")
+          test = test_path.read_text()
+          sentinel = 'it.effect("bounds the fallback working-tree review preview to one MiB"'
+          if sentinel not in test:
+              test += '''
+
+          it.effect("bounds the fallback working-tree review preview to one MiB", () =>
+            Effect.gen(function* () {
+              const cwd = yield* makeTmpDir();
+              yield* initRepoWithCommit(cwd);
+              const pathService = yield* Path.Path;
+              const trackedLineCount = 30_000;
+              const original = Array.from(
+                { length: trackedLineCount },
+                (_, index) => `before-${index.toString().padStart(5, "0")}\\n`,
+              ).join("");
+              const updated = Array.from(
+                { length: trackedLineCount },
+                (_, index) => `after-${index.toString().padStart(5, "0")}\\n`,
+              ).join("");
+              const untracked = Array.from(
+                { length: 30_000 },
+                (_, index) => `untracked-${index.toString().padStart(5, "0")}\\n`,
+              ).join("");
+
+              yield* writeTextFile(cwd, "large-tracked.txt", original);
+              yield* git(cwd, ["add", "large-tracked.txt"]);
+              yield* git(cwd, ["commit", "-m", "add fallback fixture"]);
+              yield* writeTextFile(cwd, "large-tracked.txt", updated);
+              yield* writeTextFile(cwd, "large-untracked.txt", untracked);
+
+              // Force temporary-index creation to fail so getReviewDiffPreview exercises the
+              // tracked + untracked fallback assembly rather than the unified diff path.
+              const blockerPath = pathService.join(cwd, "tmp-blocker");
+              yield* writeTextFile(cwd, "tmp-blocker", "not a directory\\n");
+              const driver = yield* GitVcsDriver.GitVcsDriver;
+              const preview = yield* Effect.acquireUseRelease(
+                Effect.sync(() => {
+                  const previous = process.env.TMPDIR;
+                  process.env.TMPDIR = blockerPath;
+                  return previous;
+                }),
+                () => driver.getReviewDiffPreview({ cwd }),
+                (previous) =>
+                  Effect.sync(() => {
+                    if (previous === undefined) {
+                      delete process.env.TMPDIR;
+                    } else {
+                      process.env.TMPDIR = previous;
+                    }
+                  }),
+              );
+              const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+
+              assert.isDefined(source);
+              assert.isTrue(source.truncated);
+              assert.include(source.diff, "large-tracked.txt");
+              assert.include(source.diff, "large-untracked.txt");
+              assert.notInclude(source.diff, "\\uFFFD");
+              assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
+            }).pipe(Effect.provide(TestLayer)),
+          );
+          '''.replace("          ", "")
+              test_path.write_text(test)
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          vp test run apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          vp fmt --check apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          vp lint --report-unused-disable-directives apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          vp run --filter t3 typecheck
+          git diff --check
+
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          git commit -m "fix(server): cap fallback review diff preview"
+          git rm .github/workflows/tmp-fix-coderabbit-9215.yml
+          git commit -m "chore: remove temporary PR 9215 fix workflow"
+          git push origin HEAD:fix/review-diff-preview-budget
