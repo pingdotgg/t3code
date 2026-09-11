@@ -1,18 +1,21 @@
 {
   "customNotices": [
     {
-      "bundles": ["assets", "mobile", "web"],
-      "license": "MIT",
-      "name": "vscode-icons",
-      "noticeFile": "apps/web/THIRD_PARTY_NOTICES.md",
-      "sourceUrl": "https://github.com/vscode-icons/vscode-icons"
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0",
+      "name": "Folder_Whoosh.wav by BaggoNotes",
+      "noticeFiles": ["apps/web/licenses/folder-whoosh.txt", "apps/web/licenses/cc0-1.0.txt"],
+      "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/"
     },
     {
       "bundles": ["assets", "desktop", "web"],
-      "license": "MIT",
-      "name": "T3 Code SnapShot sound effects",
-      "noticeFile": "LICENSE",
-      "sourceUrl": "https://github.com/pingdotgg/t3code"
+      "license": "CC0-1.0",
+      "name": "Contarex camera shutter.wav by Tonik1105",
+      "noticeFiles": [
+        "apps/web/licenses/contarex-camera-shutter.txt",
+        "apps/web/licenses/cc0-1.0.txt"
+      ],
+      "sourceUrl": "https://freesound.org/people/Tonik1105/sounds/520684/"
     },
     {
       "bundles": ["device-tools"],
