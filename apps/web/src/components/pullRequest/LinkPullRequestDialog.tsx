@@ -26,11 +26,6 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 
-/**
- * Which thread has the link dialog open, set by whichever entry point asked (command palette,
- * pull-requests surface, detail panel) and rendered once by the chat view so the dialog outlives
- * a palette that closes the moment its command runs.
- */
 const linkPullRequestDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("pull-requests:link-dialog-thread"),
@@ -48,7 +43,6 @@ interface LinkPullRequestDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Mounted once per chat view; shows the dialog for whichever thread asked for it. */
 export function LinkPullRequestDialogHost() {
   const threadRef = useAtomValue(linkPullRequestDialogThreadAtom);
   const thread = useThreadShell(threadRef);
@@ -56,6 +50,7 @@ export function LinkPullRequestDialogHost() {
   if (threadRef === null || linking.mode === "unsupported") return null;
   return (
     <LinkPullRequestDialog
+      key={`${threadRef.environmentId}:${threadRef.threadId}`}
       open
       threadRef={threadRef}
       projectId={thread?.projectId ?? null}
@@ -152,9 +147,6 @@ function LinkPullRequestDialog({
 
   useEffect(() => {
     if (!open) return;
-    setReference("");
-    setDirty(false);
-    setSubmitError(null);
     const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
@@ -170,6 +162,7 @@ function LinkPullRequestDialog({
   );
 
   const submit = useCallback(async () => {
+    if (pending) return;
     setDirty(true);
     if (resolved === null || "error" in resolved) return;
     setSubmitError(null);
@@ -183,7 +176,7 @@ function LinkPullRequestDialog({
       setPending(false);
     }
     onOpenChange(false);
-  }, [linking, onOpenChange, resolved, threadRef]);
+  }, [linking, onOpenChange, pending, resolved, threadRef]);
 
   const validation = !dirty
     ? null
@@ -201,8 +194,7 @@ function LinkPullRequestDialog({
         <DialogHeader>
           <DialogTitle>Link pull request</DialogTitle>
           <DialogDescription>
-            Attach a pull request to this thread. A full URL can point at any repository on a host
-            this environment has a project for.
+            Enter a PR number from this project, or paste a pull request URL.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3">
@@ -210,6 +202,7 @@ function LinkPullRequestDialog({
             ref={inputRef}
             placeholder="Pull request URL or #42"
             value={reference}
+            disabled={pending}
             onChange={(event) => {
               setDirty(true);
               setReference(event.target.value);

@@ -97,10 +97,18 @@ The server finds the PR for each unsettled thread's saved branch, even when your
 apps are closed. Settled threads keep their saved links. Update the server if
 automatic branch links do not appear.
 
-On web and desktop, right-click a pull request link in a thread and choose
-**Link to thread** to select a different PR. Use **Unlink from thread** on the
-same link to return to the branch PR, if one exists.
-The linked pull request participates in automatic settlement.
+On web and desktop, the link button beside a PR lists the branch PR and PR URLs
+mentioned in this thread for the same project. Select a PR to link it. Each click
+adds only that PR, and the menu stays available after linking. Use **Look for
+older PRs** to check earlier messages.
+
+The **+N** badge includes PRs found in the loaded thread, even before you link
+them. Select it to choose which PR to link. Once all are linked, it opens the
+existing **Linked pull requests** panel.
+
+Right-click the thread and choose **Link PR** to add a PR by number or URL.
+Existing links stay in place. **Unlink from thread** removes only that review. See
+[Linked pull requests](./source-control.md#linked-pull-requests) for automatic settlement rules.
 
 ## Find and reference work
 

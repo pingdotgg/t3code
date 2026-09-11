@@ -51,6 +51,11 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "line", attrs: { x1: "10", x2: "8", y1: "3", y2: "21" } },
     { tag: "line", attrs: { x1: "16", x2: "14", y1: "3", y2: "21" } },
   ],
+  link: [
+    { tag: "path", attrs: { d: "M9 17H7A5 5 0 0 1 7 7h2" } },
+    { tag: "path", attrs: { d: "M15 7h2a5 5 0 1 1 0 10h-2" } },
+    { tag: "line", attrs: { x1: "8", x2: "16", y1: "12", y2: "12" } },
+  ],
   "mail-open": [
     {
       tag: "path",

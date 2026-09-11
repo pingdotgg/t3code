@@ -16,6 +16,7 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "link-pr"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -40,6 +41,7 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+    readonly pullRequestLinking: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -105,6 +107,9 @@ export function buildThreadActionMenuItems(
             disabled: state.isRegeneratingTitle,
           },
         ]
+      : []),
+    ...(state.supports.pullRequestLinking
+      ? [{ id: "link-pr" as const, label: "Link PR", icon: "link" }]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
     {

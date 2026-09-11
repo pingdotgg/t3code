@@ -21,6 +21,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
+import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -256,6 +257,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         </Sidebar>
         {children}
         <SidebarControl />
+        <LinkPullRequestDialogHost />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

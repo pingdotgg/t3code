@@ -1,3 +1,5 @@
+import { openLinkPullRequestDialog } from "../components/pullRequest/LinkPullRequestDialog";
+import { useSupportsMultiplePullRequests } from "./useSupportsMultiplePullRequests";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -68,6 +70,9 @@ export function useThreadActionMenu(input: {
 }) {
   const { threadRef, projectCwd, onStartRename } = input;
   const router = useRouter();
+  const supportsMultiplePullRequests = useSupportsMultiplePullRequests(
+    threadRef?.environmentId ?? null,
+  );
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -134,6 +139,7 @@ export function useThreadActionMenu(input: {
           snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
           pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
+          pullRequestLinking: supportsMultiplePullRequests,
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
@@ -238,6 +244,9 @@ export function useThreadActionMenu(input: {
             await reportFailure("Failed to unpin thread", () => confirmAndUnpinThread(threadRef));
             return;
           }
+          case "link-pr":
+            openLinkPullRequestDialog(threadRef);
+            return;
           case "rename":
             onStartRename();
             return;
@@ -349,6 +358,7 @@ export function useThreadActionMenu(input: {
       settleThread,
       snoozeThread,
       threadRef,
+      supportsMultiplePullRequests,
       timestampFormat,
       unsettleThread,
       unsnoozeThread,

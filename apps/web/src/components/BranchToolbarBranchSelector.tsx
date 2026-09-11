@@ -1,3 +1,4 @@
+import { ThreadPullRequestControls } from "./pullRequest/ThreadPullRequestControls";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -51,7 +52,6 @@ import {
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import {
-  ThreadPullRequestBadgeControl,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
   useLinkedThreadPullRequest,
@@ -753,13 +753,15 @@ export function BranchToolbarBranchSelector({
         className={cn("flex min-w-0 items-center gap-1", className)}
         data-composer-context-control
       >
-        <ThreadPullRequestBadgeControl
+        <ThreadPullRequestControls
+          threadRef={threadRef}
+          active
           variant="ghost"
           badge={prBadge}
           number={prNumber}
           url={prUrl}
           status={displayedPrStatus}
-          onOpenStack={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
+          onOpenPullRequests={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
           onOpenPullRequest={(event) => {
             if (prUrl) openPrLink(event, prUrl);
           }}

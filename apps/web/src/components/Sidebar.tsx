@@ -1,4 +1,6 @@
+import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { ThreadPullRequestControls } from "./pullRequest/ThreadPullRequestControls";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
@@ -188,7 +190,6 @@ import {
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
-  ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
   ThreadWorktreeIndicator,
   prStatusIndicator,
@@ -1491,18 +1492,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isActive) onThreadActivate(threadRef);
   }, [onThreadActivate, props.isActive, threadRef]);
-  const prBadge =
-    prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
-      <ThreadPullRequestBadgeControl
-        variant="underline"
-        badge={prBadgeShape}
-        number={pr?.number ?? currentLinkedPr?.number}
-        url={pr?.url ?? currentLinkedPr?.url}
-        status={prStatus}
-        onOpenStack={handlePrStackClick}
-        onOpenPullRequest={handlePrClick}
-      />
-    ) : null;
+  const prBadge = (
+    <ThreadPullRequestControls
+      threadRef={threadRef}
+      active={props.isActive}
+      variant="underline"
+      badge={prBadgeShape}
+      number={pr?.number ?? currentLinkedPr?.number}
+      url={pr?.url ?? currentLinkedPr?.url}
+      status={prStatus}
+      onOpenPullRequests={handlePrStackClick}
+      onOpenPullRequest={handlePrClick}
+    />
+  );
   const terminalStatusIcon = terminalStatus ? (
     <span
       role="img"
@@ -3998,6 +4000,9 @@ export default function Sidebar() {
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
+                pullRequestLinking:
+                  serverConfigs.get(thread.environmentId)?.environment.capabilities
+                    .threadPullRequests === true,
               },
               snoozePresets,
             }),
@@ -4061,6 +4066,9 @@ export default function Sidebar() {
             return;
           case "unpin":
             attemptUnpin(threadRef);
+            return;
+          case "link-pr":
+            openLinkPullRequestDialog(threadRef);
             return;
           case "rename":
             startThreadRename(threadRef, thread.title);

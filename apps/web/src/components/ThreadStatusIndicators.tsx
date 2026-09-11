@@ -142,7 +142,8 @@ export function ThreadPullRequestBadgeControl({
   number,
   url,
   status,
-  onOpenStack,
+  unlinkedCount = 0,
+  onOpenPullRequests,
   onOpenPullRequest,
 }: {
   variant: "underline" | "ghost";
@@ -150,19 +151,20 @@ export function ThreadPullRequestBadgeControl({
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
-  onOpenStack: () => void;
+  unlinkedCount?: number;
+  onOpenPullRequests: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const isStack = badge?.kind === "stack";
   const linkedCount = badge?.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
-  if (!isStack && (number === undefined || url === undefined)) return null;
+  if (!isStack && linkedCount === null && (number === undefined || url === undefined)) return null;
   const label = isStack
     ? `Stack of ${badge.layers} pull requests, ${badge.state}`
-    : `${status?.tooltip ?? `PR #${number}, status pending`}${
-        badge?.kind === "pull-request" && badge.others > 0
-          ? `, and ${badge.others} more linked; overall ${badge.state}`
-          : ""
-      }`;
+    : linkedCount !== null && badge !== null
+      ? unlinkedCount > 0
+        ? `Show all ${linkedCount} pull requests, ${unlinkedCount} not linked`
+        : `Show all ${linkedCount} linked pull requests; overall ${badge.state}`
+      : (status?.tooltip ?? `PR #${number}, status pending`);
   const className = cn(
     variant === "ghost"
       ? buttonVariants({ variant: "ghost", size: "xs" })
@@ -184,15 +186,16 @@ export function ThreadPullRequestBadgeControl({
     <Tooltip>
       <TooltipTrigger
         render={
-          isStack ? (
+          isStack || linkedCount !== null ? (
             <InlineButton
               className={className}
               aria-label={label}
+              onKeyDown={(event) => event.stopPropagation()}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                onOpenStack();
+                onOpenPullRequests();
               }}
             />
           ) : (
@@ -364,7 +367,7 @@ export function ChangeRequestStatusIcon({
   return <presentation.Icon className={className} />;
 }
 
-export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
   return (
     <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
       <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>

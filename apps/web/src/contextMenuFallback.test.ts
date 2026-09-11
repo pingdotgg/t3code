@@ -157,6 +157,10 @@ class FakeDocument {
     return new FakeElement(tagName);
   }
 
+  createElementNS(_namespace: string, tagName: string) {
+    return new FakeElement(tagName);
+  }
+
   addEventListener(type: string, listener: FakeListener) {
     const existing = this.listeners.get(type) ?? [];
     existing.push(listener);
@@ -219,6 +223,16 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("shows the link icon and selects Link PR", async () => {
+    const selection = showContextMenuFallback([{ id: "link-pr", label: "Link PR", icon: "link" }]);
+    const button = findButton("Link PR");
+
+    expect(button?.querySelectorAll("svg")).toHaveLength(1);
+    expect(button?.querySelectorAll("path").length).toBeGreaterThan(0);
+    button?.dispatchEvent(new FakeDomEvent("click"));
+    await expect(selection).resolves.toBe("link-pr");
+  });
+
   it("renders one separator between menu sections", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },
