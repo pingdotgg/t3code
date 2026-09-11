@@ -9,6 +9,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { pendingProviderTurnSummary } from "@t3tools/shared/pendingProviderTurn";
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -79,6 +80,7 @@ function threadDetailToShell(
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
     session: thread.session,
+    pendingProviderTurn: pendingProviderTurnSummary(thread.pendingProviderTurn),
     latestUserMessageAt: latestUserMessageAt(thread),
     hasPendingApprovals: false,
     hasPendingUserInput: false,

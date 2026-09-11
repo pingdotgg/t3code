@@ -12,6 +12,7 @@ import {
   TurnId,
   ProviderInstanceId,
   OrchestrationMessageContext,
+  PendingProviderTurn,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -482,6 +483,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          pendingProviderTurn: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           activeOrderKey: "hq",
@@ -607,6 +609,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           unsettledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          pendingProviderTurn: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
           activeOrderKey: "hq",
@@ -1063,6 +1066,114 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`UPDATE projection_threads SET deleted_at = '2026-04-06T00:00:08.000Z' WHERE thread_id = 'thread-active'`;
       assert.equal(
         (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
+        "None",
+      );
+    }),
+  );
+
+  it.effect("exposes a pending-wait summary on shells and the full turn on the narrow query", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-wait");
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+
+      yield* sql`
+          INSERT INTO projection_projects (
+            project_id,
+            title,
+            workspace_root,
+            scripts_json,
+            created_at,
+            updated_at,
+            deleted_at
+          )
+          VALUES (
+            'project-wait',
+            'Wait Test',
+            '/tmp/wait-test',
+            '[]',
+            '2026-04-07T00:00:00.000Z',
+            '2026-04-07T00:00:01.000Z',
+            NULL
+          )
+        `;
+
+      const pendingTurn = {
+        message: {
+          messageId: MessageId.make("message-wait"),
+          role: "user" as const,
+          text: "Saved until capacity returns",
+          attachments: [
+            {
+              type: "image" as const,
+              id: "att-1",
+              name: "shot.png",
+              mimeType: "image/png",
+              sizeBytes: 4,
+            },
+          ],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+        },
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        createdAt: "2026-04-07T00:00:02.000Z",
+      };
+      const pendingJson = yield* Schema.encodeEffect(Schema.fromJsonString(PendingProviderTurn))(
+        pendingTurn,
+      );
+
+      yield* sql`
+          INSERT INTO projection_threads (
+            thread_id,
+            project_id,
+            title,
+            model_selection_json,
+            runtime_mode,
+            interaction_mode,
+            pending_provider_turn_json,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            'thread-wait',
+            'project-wait',
+            'Queued Thread',
+            '{"provider":"codex","model":"gpt-5"}',
+            'full-access',
+            'default',
+            ${pendingJson},
+            '2026-04-07T00:00:00.000Z',
+            '2026-04-07T00:00:01.000Z'
+          )
+        `;
+
+      const shell = Option.getOrThrow(yield* snapshotQuery.getThreadShellById(threadId));
+      assert.deepEqual(shell.pendingProviderTurn, {
+        messageId: pendingTurn.message.messageId,
+        createdAt: pendingTurn.createdAt,
+      });
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.deepEqual(shellSnapshot.threads[0]?.pendingProviderTurn, {
+        messageId: pendingTurn.message.messageId,
+        createdAt: pendingTurn.createdAt,
+      });
+
+      const narrow = yield* snapshotQuery.getPendingProviderTurn(threadId);
+      assert.deepEqual(Option.getOrThrow(Option.getOrThrow(narrow)), pendingTurn);
+      const detail = Option.getOrThrow(
+        yield* snapshotQuery.getThreadDetailById(threadId, { activityKinds: [] }),
+      );
+      assert.deepEqual(detail.pendingProviderTurn, pendingTurn);
+
+      assert.equal(
+        (yield* snapshotQuery.getPendingProviderTurn(ThreadId.make("missing")))._tag,
         "None",
       );
     }),

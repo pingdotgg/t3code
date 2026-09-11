@@ -1,8 +1,8 @@
+import { pendingProviderTurnUpdate } from "@t3tools/shared/pendingProviderTurn";
 import type {
   OrchestrationEvent,
   OrchestrationProject,
   OrchestrationReadModel,
-  ThreadId,
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
   ThreadPullRequestLink,
@@ -13,6 +13,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  ThreadId,
 } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -318,6 +319,15 @@ export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
+  const pendingUpdate = pendingProviderTurnUpdate(event);
+  if (pendingUpdate !== undefined && event.aggregateKind === "thread") {
+    model = {
+      ...model,
+      threads: updateThread(model.threads, ThreadId.make(event.aggregateId), {
+        pendingProviderTurn: pendingUpdate,
+      }),
+    };
+  }
   const nextBase: OrchestrationReadModel = {
     ...model,
     snapshotSequence: event.sequence,

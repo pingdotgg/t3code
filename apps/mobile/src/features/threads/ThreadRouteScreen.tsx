@@ -517,6 +517,25 @@ function ThreadRouteContent(
     });
   }, [interruptThreadTurn, selectedThread]);
 
+  const cancelProviderWaitInFlightRef = useRef<string | null>(null);
+  const handleCancelProviderWait = useCallback(() => {
+    const pendingMessageId = selectedThread?.pendingProviderTurn?.messageId;
+    if (
+      !selectedThread ||
+      pendingMessageId === undefined ||
+      cancelProviderWaitInFlightRef.current === pendingMessageId
+    ) {
+      return;
+    }
+    cancelProviderWaitInFlightRef.current = pendingMessageId;
+    return interruptThreadTurn({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id, pendingMessageId },
+    }).finally(() => {
+      cancelProviderWaitInFlightRef.current = null;
+    });
+  }, [interruptThreadTurn, selectedThread]);
+
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
       terminalDebugLog("terminal-menu:open-existing", {
@@ -895,6 +914,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={handleStopThread}
           onSendMessage={composer.onSendMessage}
+          onCancelProviderWait={handleCancelProviderWait}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

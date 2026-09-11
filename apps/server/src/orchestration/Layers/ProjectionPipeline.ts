@@ -1,3 +1,4 @@
+import { pendingProviderTurnUpdate } from "@t3tools/shared/pendingProviderTurn";
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
@@ -338,7 +339,7 @@ const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttac
 
 function collectThreadAttachmentRelativePaths(
   threadId: string,
-  messages: ReadonlyArray<ProjectionThreadMessage>,
+  messages: ReadonlyArray<Pick<ProjectionThreadMessage, "attachments">>,
 ): Set<string> {
   const threadSegment = toSafeThreadAttachmentSegment(threadId);
   if (!threadSegment) {
@@ -604,6 +605,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
+      const pendingUpdate = pendingProviderTurnUpdate(event);
+      if (pendingUpdate !== undefined && event.aggregateKind === "thread") {
+        const row = yield* projectionThreadRepository.getById({
+          threadId: ThreadId.make(event.aggregateId),
+        });
+        if (Option.isSome(row)) {
+          if (pendingUpdate === null && row.value.pendingProviderTurn != null) {
+            attachmentSideEffects.prunedThreadRelativePaths.set(event.aggregateId, new Set());
+          }
+          yield* projectionThreadRepository.upsert({
+            ...row.value,
+            pendingProviderTurn: pendingUpdate,
+          });
+        }
+      }
       switch (event.type) {
         case "thread.created":
           // A draft retry can re-create this id; links belong to the old incarnation.
@@ -1978,7 +1994,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const messages = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });
-          const retainedPaths = collectThreadAttachmentRelativePaths(threadId, messages);
+          const thread = yield* projectionThreadRepository.getById({
+            threadId: ThreadId.make(threadId),
+          });
+          const pending = Option.isSome(thread) ? thread.value.pendingProviderTurn : null;
+          const retainedPaths = collectThreadAttachmentRelativePaths(
+            threadId,
+            pending == null ? messages : [...messages, pending.message],
+          );
           const activities = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });

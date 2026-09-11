@@ -24,6 +24,7 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
+  PendingProviderTurn,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -208,6 +209,16 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadShellById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
+
+  /**
+   * Read only the durable pending provider turn for a thread. The full prompt
+   * stays out of shell payloads; server code that releases or requeues a wait
+   * fetches it here. Outer `Option` reports a missing thread, the inner one a
+   * thread without a queued wait.
+   */
+  readonly getPendingProviderTurn: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<Option.Option<PendingProviderTurn>>, ProjectionRepositoryError>;
 
   /** Read the active thread and session facts used to ingest provider events. */
   readonly getThreadRuntimeContext: (

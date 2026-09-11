@@ -1,4 +1,5 @@
 import {
+  MessageId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -207,6 +208,18 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Cached thread",
+      pendingProviderTurn: {
+        message: {
+          messageId: MessageId.make("queued-message"),
+          role: "user",
+          text: "Saved prompt",
+          attachments: [],
+        },
+        modelSelection: THREAD_SHELL.modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: THREAD_SHELL.createdAt,
+      },
       branch: "stale-branch",
       worktreePath: "/repo/stale-worktree",
       activeOrderKey: "t",
@@ -221,6 +234,7 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Current thread",
+      pendingProviderTurn: null,
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
@@ -237,6 +251,27 @@ describe("environment entity projections", () => {
       unsettledAt: "2026-03-09T12:00:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
+    expect(merged?.pendingProviderTurn).toBeNull();
+    expect(
+      mergeEnvironmentThread(detail, {
+        ...shell,
+        pendingProviderTurn: {
+          messageId: detail.pendingProviderTurn.message.messageId,
+          createdAt: detail.pendingProviderTurn.createdAt,
+        },
+      })?.pendingProviderTurn,
+    ).toBe(detail.pendingProviderTurn);
+    // A shell summary naming a different message means the detail turn is
+    // stale (cancelled and replaced); surfacing it would cancel by a dead id.
+    expect(
+      mergeEnvironmentThread(detail, {
+        ...shell,
+        pendingProviderTurn: {
+          messageId: MessageId.make("replacement-message"),
+          createdAt: detail.pendingProviderTurn.createdAt,
+        },
+      })?.pendingProviderTurn,
+    ).toBeNull();
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {

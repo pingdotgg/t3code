@@ -62,6 +62,17 @@ export function mergeEnvironmentThread(
     activeOrderKey: shell.activeOrderKey,
     snoozedUntil: shell.snoozedUntil,
     snoozedAt: shell.snoozedAt,
+    // The shell carries only a wait summary; the detail stream owns the full
+    // queued prompt. A null summary clears it; a live summary keeps whatever
+    // the detail subscription last reported, but only when its messageId still
+    // matches — a lagging detail can hold a cancelled wait while the shell
+    // already points at a replacement, and cancelling by the stale id would be
+    // rejected by the server.
+    pendingProviderTurn:
+      shell.pendingProviderTurn == null ||
+      detail.pendingProviderTurn?.message.messageId !== shell.pendingProviderTurn.messageId
+        ? null
+        : detail.pendingProviderTurn,
     pinnedAt: shell.pinnedAt,
     pinOrderKey: shell.pinOrderKey,
     session: shell.session,

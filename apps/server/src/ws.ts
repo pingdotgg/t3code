@@ -327,6 +327,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.proposed-plan-upserted"
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
+      | "thread.turn-queued"
       | "thread.reverted"
       | "thread.session-set";
   }
@@ -336,6 +337,7 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     event.type === "thread.proposed-plan-upserted" ||
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
+    event.type === "thread.turn-queued" ||
     event.type === "thread.reverted" ||
     event.type === "thread.session-set"
   );

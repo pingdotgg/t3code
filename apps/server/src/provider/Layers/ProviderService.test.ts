@@ -4957,6 +4957,7 @@ describe("agent browser access", () => {
               }),
             );
           }).pipe(Effect.orDie),
+        getPendingProviderTurn: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.die("unused"),
