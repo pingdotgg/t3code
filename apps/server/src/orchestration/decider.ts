@@ -1005,6 +1005,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           worktreeGuardFailed)
           ? thread.branch
           : command.branch;
+      const guardedNoop =
+        worktreeGuardFailed &&
+        command.title === undefined &&
+        command.regenerateTitle !== true &&
+        command.modelSelection === undefined &&
+        command.worktreePath === undefined &&
+        command.linkedPullRequest === undefined;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1051,7 +1058,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
-          updatedAt: occurredAt,
+          updatedAt: guardedNoop ? thread.updatedAt : occurredAt,
         },
       };
     }
