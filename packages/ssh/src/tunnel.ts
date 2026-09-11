@@ -58,12 +58,15 @@ const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
 // A cold archive launch also downloads and unpacks a ~70 MB release archive
-// and may wait on another installer's lock. The budgets nest: one download
-// is bounded, a waiter outlasts a full download plus extraction so it can
-// reuse the result, and the SSH command outlasts the waiter plus readiness.
+// and may wait on another installer's lock. The budgets nest: the checksum
+// file is tiny and the archive download is bounded; a waiter outlasts both
+// downloads plus extraction so it can reuse the result; and the SSH command
+// outlasts an install (own or waited-for) plus readiness, with slack for
+// verification and extraction, which have no timeout of their own.
+const REMOTE_ARCHIVE_CHECKSUMS_SECONDS = 30;
 const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
-const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 300;
-const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 600_000;
+const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
+const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
@@ -433,30 +436,41 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
   if ! t3_runtime_ready; then
     mkdir -p "$HOME/.t3/runtime/versions"
     # Concurrent launches (two clients, a retry racing a slow first run) must
-    # not both install: mkdir is the atomic lock, a stale lock older than
-    # ten minutes is reclaimed, and the ready check repeats under the lock.
+    # not both install: mkdir is the atomic lock and the ready check repeats
+    # under it.
     T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
-    # The lock is a directory renamed into place with its owner pid already
-    # inside, so it never exists without an owner. A lock whose owner is gone
-    # is stale regardless of age; a live owner is never reclaimed no matter
-    # how slow its download is, so two installers can never run at once.
-    T3_LOCK_CANDIDATE="$(mktemp -d "$HOME/.t3/runtime/versions/.lock-XXXXXX")"
-    printf '%s\\n' "$$" > "$T3_LOCK_CANDIDATE/pid"
+    # mkdir is the only portable atomic exclusive create (mv would silently
+    # nest a candidate inside an existing lock). The owner publishes its pid
+    # right after, so a lock with a live owner is never reclaimed however
+    # slow its download is, and a lock whose owner is dead is reclaimed at
+    # once. A lock with no pid at all is a crash between mkdir and the pid
+    # write; it is reclaimed after a short grace so a live owner has time to
+    # publish.
     T3_LOCK_WAITED=0
-    while ! mv "$T3_LOCK_CANDIDATE" "$T3_LOCK" 2>/dev/null || [ -d "$T3_LOCK_CANDIDATE" ]; do
+    T3_LOCK_UNOWNED=0
+    while ! mkdir "$T3_LOCK" 2>/dev/null; do
       T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
-      if [ -z "$T3_LOCK_OWNER" ] || ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
-        rm -rf "$T3_LOCK"
-        continue
+      if [ -n "$T3_LOCK_OWNER" ]; then
+        T3_LOCK_UNOWNED=0
+        if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
+          rm -rf "$T3_LOCK"
+          continue
+        fi
+      else
+        T3_LOCK_UNOWNED=$((T3_LOCK_UNOWNED + 1))
+        if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then
+          rm -rf "$T3_LOCK"
+          continue
+        fi
       fi
       if [ "$T3_LOCK_WAITED" -ge @@T3_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
-        rm -rf "$T3_LOCK_CANDIDATE"
         printf 'Another t3 %s installation has held %s for too long.\\n' "$T3_ARCHIVE_VERSION" "$T3_LOCK" >&2
         exit 1
       fi
       sleep 1
       T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
     done
+    printf '%s\\n' "$$" > "$T3_LOCK/pid.tmp" && mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"
     trap 'rm -rf "$T3_LOCK"' EXIT
   fi
   if ! t3_runtime_ready; then
@@ -474,13 +488,13 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
     T3_STAGING="$(mktemp -d "$HOME/.t3/runtime/versions/.staging-XXXXXX")"
     trap 'rm -rf "$T3_STAGING" "$T3_LOCK"' EXIT
     t3_fetch() {
-      if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time @@T3_ARCHIVE_DOWNLOAD_SECONDS@@ "$1" -o "$2"
+      if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
       elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
       else printf 'Remote host needs curl or wget to download %s.\\n' "$T3_ARCHIVE" >&2; exit 1
       fi
     }
-    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS"
-    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE"
+    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/SHA256SUMS" "$T3_STAGING/SHA256SUMS" @@T3_ARCHIVE_CHECKSUMS_SECONDS@@
+    t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@
     T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
     if command -v sha256sum >/dev/null 2>&1; then
       T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
@@ -810,6 +824,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
       T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
       T3_ARCHIVE_DOWNLOAD_SECONDS: String(REMOTE_ARCHIVE_DOWNLOAD_SECONDS),
+      T3_ARCHIVE_CHECKSUMS_SECONDS: String(REMOTE_ARCHIVE_CHECKSUMS_SECONDS),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );
@@ -939,6 +954,9 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemotePairingScript(target, runner),
+    // Pairing may be the first command on a cold remote, so it can install
+    // the archive on the way.
+    ...(runner?.archiveVersion?.trim() ? { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS } : {}),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
