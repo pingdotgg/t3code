@@ -194,14 +194,17 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   url: string,
   step: string,
 ) {
-  const response = yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
+  // The install lock is held for the whole transaction, so a stalled download
+  // must fail rather than block every other caller.
+  return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap((response) => response.arrayBuffer),
+    Effect.map((buffer) => new Uint8Array(buffer)),
     Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })),
-  );
-  return new Uint8Array(
-    yield* response.arrayBuffer.pipe(
-      Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })),
-    ),
+    Effect.timeoutOrElse({
+      duration: PINNED_RUNTIME_INSTALL_TIMEOUT,
+      orElse: () => Effect.fail(new PinnedRuntimeInstallError({ step: `${step} (timed out)` })),
+    }),
   );
 });
 

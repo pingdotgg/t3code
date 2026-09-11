@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs the T3 Code CLI from a GitHub Release archive. Needs only sh, tar,
-# and curl or wget; no Node, npm, or compiler.
+# sha256sum or shasum, and curl or wget; no Node, npm, or compiler.
 #
 #   curl -fsSL https://raw.githubusercontent.com/pingdotgg/t3code/main/scripts/install.sh | sh
 #
@@ -46,6 +46,13 @@ case "$(uname -m)" in
   *) fail "unsupported architecture $(uname -m)" ;;
 esac
 command -v tar >/dev/null 2>&1 || fail "tar is required"
+if command -v sha256sum >/dev/null 2>&1; then
+  checksum() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  checksum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  fail "sha256sum or shasum is required"
+fi
 
 version="${T3CODE_VERSION:-}"
 if [ -z "$version" ]; then
@@ -75,11 +82,7 @@ else
 
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
   [ -n "$expected" ] || fail "${archive} is not listed in SHA256SUMS"
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "${staging}/${archive}" | cut -d' ' -f1)"
-  else
-    actual="$(shasum -a 256 "${staging}/${archive}" | cut -d' ' -f1)"
-  fi
+  actual="$(checksum "${staging}/${archive}")"
   [ "$actual" = "$expected" ] || fail "checksum mismatch for ${archive}"
 
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
