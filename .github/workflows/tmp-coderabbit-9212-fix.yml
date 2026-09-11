@@ -1,0 +1,60 @@
+name: Temporary CodeRabbit 9212 fix
+
+on:
+  push:
+    branches:
+      - fix/unknown-provider-pr-polling
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/unknown-provider-pr-polling
+
+      - name: Patch GitManager test fixture
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("apps/server/src/git/GitManager.test.ts")
+          text = path.read_text()
+          old = '''    GitHubSourceControlProvider.make.pipe(
+              Effect.map((provider) => {
+                const sourceControlProvider = () => ({
+                  ...provider,
+                  kind:
+                    typeof input?.sourceControlProviderKind === "function"
+                      ? input.sourceControlProviderKind()
+                      : (input?.sourceControlProviderKind ?? provider.kind),
+                });'''
+          new = '''    GitHubSourceControlProvider.make.pipe(
+              Effect.map((provider) => {
+                const baseProvider = input?.sourceControlProvider ?? provider;
+                const sourceControlProvider = () => ({
+                  ...baseProvider,
+                  kind:
+                    typeof input?.sourceControlProviderKind === "function"
+                      ? input.sourceControlProviderKind()
+                      : (input?.sourceControlProviderKind ?? baseProvider.kind),
+                });'''
+          if old not in text:
+              raise SystemExit("target makeManager provider block not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Commit targeted fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/server/src/git/GitManager.test.ts
+          git rm .github/workflows/tmp-coderabbit-9212-fix.yml
+          git commit -m "test(server): preserve injected source-control provider"
+          git push origin HEAD:fix/unknown-provider-pr-polling
