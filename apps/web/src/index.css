@@ -540,6 +540,36 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   margin-left: var(--live-activity-focus-width);
 }
 
+@keyframes title-regenerating {
+  from {
+    -webkit-mask-position: 100% 0;
+    mask-position: 100% 0;
+  }
+}
+
+/* Dims a regenerating title and sweeps one bright band across it when the
+   request starts. The mask covers the whole title, so text shaping, kerning,
+   and the truncation ellipsis stay exactly as they are when idle. Both ends of
+   the oversized gradient are uniformly 55%, which is the resting state. */
+@utility title-regenerating {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    rgb(0 0 0 / 55%) 40%,
+    black 50%,
+    rgb(0 0 0 / 55%) 60%
+  );
+  -webkit-mask-size: 300% 100%;
+  -webkit-mask-position: 0 0;
+  mask-image: linear-gradient(to right, rgb(0 0 0 / 55%) 40%, black 50%, rgb(0 0 0 / 55%) 60%);
+  mask-size: 300% 100%;
+  mask-position: 0 0;
+  animation: title-regenerating 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
 @property --assistant-citation-highlight-opacity {
   syntax: "<number>";
   inherits: true;
