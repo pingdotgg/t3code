@@ -5,6 +5,11 @@ import {
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
+  deriveTimelineMinimapItems,
+  resolveTimelineMinimapPreview,
+  type TimelineMinimapItem,
+} from "./timelineMinimapItems";
+import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
@@ -918,64 +923,12 @@ function getItemType(item: MessagesTimelineRow) {
   return item.kind === "message" ? `message:${item.message.role}` : item.kind;
 }
 
-interface TimelineMinimapItem {
-  readonly id: string;
-  readonly rowIndex: number;
-  readonly userText: string | null;
-  readonly assistantText: string | null;
-}
-
 interface TimelinePositionState {
   readonly contentLength?: number;
   readonly scroll?: number;
   readonly scrollLength?: number;
   readonly positionAtIndex?: (index: number) => number | undefined;
   readonly sizeAtIndex?: (index: number) => number | undefined;
-}
-
-function deriveTimelineMinimapItems(
-  rows: ReadonlyArray<MessagesTimelineRow>,
-): TimelineMinimapItem[] {
-  const items: TimelineMinimapItem[] = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "message" || row.message.role !== "user") {
-      continue;
-    }
-
-    items.push({
-      id: row.id,
-      rowIndex: index,
-      userText: compactMinimapPreview(row.message.text),
-      assistantText: compactMinimapPreview(resolveFinalAssistantTextForTurn(rows, index)),
-    });
-  }
-  return items;
-}
-
-function resolveFinalAssistantTextForTurn(
-  rows: ReadonlyArray<MessagesTimelineRow>,
-  userRowIndex: number,
-) {
-  let finalAssistantText: string | null = null;
-  for (let index = userRowIndex + 1; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "message") {
-      continue;
-    }
-    if (row.message.role === "user") {
-      break;
-    }
-    if (row.message.role === "assistant") {
-      finalAssistantText = row.message.text ?? null;
-    }
-  }
-  return finalAssistantText;
-}
-
-function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
-  return compact.length > 0 ? compact : null;
 }
 
 function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
@@ -1011,7 +964,13 @@ function TimelineMinimap({
 
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
-  const activeItem = resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null);
+  const activeItem = useMemo(
+    () =>
+      resolveTimelineMinimapPreview(
+        resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null),
+      ),
+    [items, resolvedActiveIndex],
+  );
   const activeTopPercent =
     resolvedActiveIndex === null
       ? 0
