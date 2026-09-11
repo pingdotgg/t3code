@@ -14,6 +14,13 @@ import * as Effect from "effect/Effect";
 import { decideOrchestrationCommand } from "./decider.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
+const checkoutDirectories = {
+  target: "/shared",
+  byThread: new Map([
+    [ThreadId.make("thread-1"), "/shared"],
+    [ThreadId.make("sibling"), "/shared"],
+  ]),
+};
 
 function makeReadModel(): OrchestrationReadModel {
   return {
@@ -72,6 +79,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
             ...thread,
             id: ThreadId.make("sibling"),
             branch: "sibling-branch",
+            worktreePath: "/shared-alias",
             session: {
               threadId: ThreadId.make("sibling"),
               status,
@@ -83,6 +91,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
             },
           };
           const event = yield* decideOrchestrationCommand({
+            checkoutDirectories,
             command,
             readModel: { ...base, threads: [thread, sibling] },
           });
@@ -93,6 +102,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
           });
 
           const idleEvent = yield* decideOrchestrationCommand({
+            checkoutDirectories,
             command,
             readModel: { ...base, threads: [thread, { ...sibling, session: null }] },
           });
@@ -117,6 +127,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
           const sibling = {
             ...thread,
             id: ThreadId.make("sibling"),
+            worktreePath: "/shared/.",
             messages: [
               {
                 id: MessageId.make("queued-message"),
@@ -130,6 +141,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
             ],
           };
           const event = yield* decideOrchestrationCommand({
+            checkoutDirectories,
             command: {
               type: "thread.meta.update",
               commandId: CommandId.make("queued-drift"),
@@ -154,6 +166,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
       const base = makeReadModel();
       const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/new-checkout" };
       const event = yield* decideOrchestrationCommand({
+        checkoutDirectories,
         command: {
           type: "thread.meta.update",
           commandId: CommandId.make("drift-moved"),
