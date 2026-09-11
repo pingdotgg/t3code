@@ -2105,17 +2105,29 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         lastAppliedSequence: cleanupStart,
         updatedAt: cleanupState?.updatedAt ?? "1970-01-01T00:00:00.000Z",
       });
+      // Nothing appends until the engine starts its worker, so the head captured here
+      // is what the projectors replay through. Capturing it first keeps the cleanup
+      // cursor at or behind every projector cursor.
+      const head = yield* eventStore.getHead();
       yield* Effect.forEach(projectors, bootstrapProjector, { concurrency: 1, discard: true });
+      if (Option.isNone(head)) {
+        return;
+      }
 
       // Cleanup has its own cursor so retries never have to replay committed text.
       // All message and activity references are current before any files are removed.
+      // Only deletions and reverts matter here, and they are filtered in SQL: a full
+      // replay would decode every historical payload, and one page of oversized
+      // records is enough to exhaust the heap before the cursor can move.
       const pendingCleanup = new Map<string, OrchestrationEvent>();
-      let lastEvent: OrchestrationEvent | undefined;
       yield* Stream.runForEach(
-        eventStore.readFromSequence(cleanupStart, Number.MAX_SAFE_INTEGER),
+        eventStore.readEventsOfTypes({
+          types: ["thread.reverted", "thread.deleted"],
+          fromSequenceExclusive: cleanupStart,
+          toSequenceInclusive: head.value.sequence,
+        }),
         (event) =>
           Effect.sync(() => {
-            lastEvent = event;
             if (event.type === "thread.reverted" || event.type === "thread.deleted") {
               pendingCleanup.set(`${event.type}:${event.payload.threadId}`, event);
             }
@@ -2133,13 +2145,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         // Leave the cleanup cursor behind this event so the next bootstrap retries it.
         if (!cleaned) return;
       }
-      if (lastEvent) {
-        yield* projectionStateRepository.upsert({
-          projector: cleanupProjector,
-          lastAppliedSequence: lastEvent.sequence,
-          updatedAt: lastEvent.occurredAt,
-        });
-      }
+      yield* projectionStateRepository.upsert({
+        projector: cleanupProjector,
+        lastAppliedSequence: head.value.sequence,
+        updatedAt: head.value.occurredAt,
+      });
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

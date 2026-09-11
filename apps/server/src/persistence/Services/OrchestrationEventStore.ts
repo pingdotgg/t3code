@@ -12,6 +12,7 @@
 import { OrchestrationEvent } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import type * as Stream from "effect/Stream";
 
 import type { OrchestrationEventStoreError } from "../Errors.ts";
@@ -28,6 +29,11 @@ export interface OrchestrationAggregateReplayStats {
   readonly payloadBytes: number;
   /** A creation in this range does not prove that the aggregate still exists. */
   readonly hasCreateEvent: boolean;
+}
+
+export interface OrchestrationEventHead {
+  readonly sequence: number;
+  readonly occurredAt: string;
 }
 
 /**
@@ -59,6 +65,23 @@ export interface OrchestrationEventStoreShape {
     sequenceExclusive: number,
     limit?: number,
   ) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
+  /**
+   * Replay only the listed event types after a sequence, through a captured
+   * head. Rows of other types are filtered in SQL and never decoded, so a
+   * history full of oversized payloads costs nothing here.
+   */
+  readonly readEventsOfTypes: (input: {
+    readonly types: ReadonlyArray<OrchestrationEvent["type"]>;
+    readonly fromSequenceExclusive: number;
+    readonly toSequenceInclusive: number;
+  }) => Stream.Stream<OrchestrationEvent, OrchestrationEventStoreError>;
+
+  /** The newest event's sequence and time, without decoding its payload. */
+  readonly getHead: () => Effect.Effect<
+    Option.Option<OrchestrationEventHead>,
+    OrchestrationEventStoreError
+  >;
 
   /** Read one aggregate through a captured global head, without decoding other streams. */
   readonly readAggregateRange: (

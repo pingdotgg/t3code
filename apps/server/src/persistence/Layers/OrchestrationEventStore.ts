@@ -72,6 +72,16 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
   sequenceExclusive: NonNegativeInt,
   limit: Schema.Number,
 });
+const ReadEventsOfTypesRequestSchema = Schema.Struct({
+  types: Schema.Array(OrchestrationEventType),
+  fromSequenceExclusive: NonNegativeInt,
+  toSequenceInclusive: NonNegativeInt,
+  limit: Schema.Number,
+});
+const EventHeadRowSchema = Schema.Struct({
+  sequence: NonNegativeInt,
+  occurredAt: IsoDateTime,
+});
 const AggregateReplayRequestSchema = Schema.Struct({
   aggregateKind: OrchestrationAggregateKind,
   aggregateId: Schema.String,
@@ -228,6 +238,44 @@ const makeEventStore = Effect.gen(function* () {
       `,
   });
 
+  const readEventRowsOfTypes = SqlSchema.findAll({
+    Request: ReadEventsOfTypesRequestSchema,
+    Result: OrchestrationEventPersistedRowSchema,
+    execute: (request) =>
+      sql`
+        SELECT
+          sequence,
+          event_id AS "eventId",
+          event_type AS "type",
+          aggregate_kind AS "aggregateKind",
+          stream_id AS "aggregateId",
+          occurred_at AS "occurredAt",
+          command_id AS "commandId",
+          causation_event_id AS "causationEventId",
+          correlation_id AS "correlationId",
+          payload_json AS "payload",
+          metadata_json AS "metadata"
+        FROM orchestration_events
+        WHERE sequence > ${request.fromSequenceExclusive}
+          AND sequence <= ${request.toSequenceInclusive}
+          AND ${sql.in("event_type", request.types)}
+        ORDER BY sequence ASC
+        LIMIT ${request.limit}
+      `,
+  });
+
+  const readEventHeadRow = SqlSchema.findOneOption({
+    Request: Schema.Void,
+    Result: EventHeadRowSchema,
+    execute: () =>
+      sql`
+        SELECT sequence, occurred_at AS "occurredAt"
+        FROM orchestration_events
+        ORDER BY sequence DESC
+        LIMIT 1
+      `,
+  });
+
   const readAggregateReplayStats = SqlSchema.findOne({
     Request: AggregateReplayRequestSchema,
     Result: AggregateReplayStatsRowSchema,
@@ -323,6 +371,55 @@ const makeEventStore = Effect.gen(function* () {
     );
   };
 
+  const readEventsOfTypes: OrchestrationEventStoreShape["readEventsOfTypes"] = (input) => {
+    if (input.types.length === 0 || input.fromSequenceExclusive >= input.toSequenceInclusive) {
+      return Stream.empty;
+    }
+    return Stream.paginate(input.fromSequenceExclusive, (cursor) =>
+      readEventRowsOfTypes({
+        types: input.types,
+        fromSequenceExclusive: cursor,
+        toSequenceInclusive: input.toSequenceInclusive,
+        limit: READ_PAGE_SIZE,
+      }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "OrchestrationEventStore.readEventsOfTypes:query",
+            "OrchestrationEventStore.readEventsOfTypes:decodeRows",
+          ),
+        ),
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            decodeEvent(row).pipe(
+              Effect.mapError(
+                toPersistenceDecodeError("OrchestrationEventStore.readEventsOfTypes:rowToEvent"),
+              ),
+            ),
+          ),
+        ),
+        Effect.map((events) => {
+          const last = events.at(-1);
+          return [
+            events,
+            last === undefined || events.length < READ_PAGE_SIZE
+              ? Option.none()
+              : Option.some(last.sequence),
+          ] as const;
+        }),
+      ),
+    );
+  };
+
+  const getHead: OrchestrationEventStoreShape["getHead"] = () =>
+    readEventHeadRow().pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.getHead:query",
+          "OrchestrationEventStore.getHead:decodeRow",
+        ),
+      ),
+    );
+
   const findEventAfter = SqlSchema.findOneOption({
     Request: HasEventAfterRequestSchema,
     Result: Schema.Struct({ sequence: Schema.Number }),
@@ -414,6 +511,8 @@ const makeEventStore = Effect.gen(function* () {
   return {
     append,
     readFromSequence,
+    readEventsOfTypes,
+    getHead,
     readAggregateRange,
     getAggregateReplayStats,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
