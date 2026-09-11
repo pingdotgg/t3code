@@ -276,7 +276,9 @@ function makeFakeCodexAdapter(
     capabilities: {
       sessionModelSwitch: "in-session",
       ...(supportsConversationRollback !== undefined ? { supportsConversationRollback } : {}),
-      ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
+      ...(provider === CODEX_DRIVER
+        ? { promptlessTurnContinuation: true, nativeSkillInput: true }
+        : {}),
     },
     startSession,
     sendTurn,
@@ -1012,14 +1014,28 @@ for (const driver of ["codex", "claudeAgent", "cursor", "grok", "opencode", "ant
           runtimeMode: "full-access",
           cwd: directory,
         });
+        // Native invocation delegates source loading to the provider, not this server fallback.
+        if (driver === "codex") NodeFS.unlinkSync(skillPath);
         yield* provider.sendTurn({
           threadId,
           input: `Use ${serializeSkillReference({ name: "code-review", path: skillPath })} now.`,
         });
         const sent = fake.sendTurn.mock.calls.at(-1)?.[0].input ?? "";
-        assert.include(sent, "MATT_STANDARDS_AND_SPEC");
-        assert.include(sent, encodeJson(skillPath));
-        assert.include(sent, encodeJson(directory));
+        if (driver === "codex") {
+          assert.equal(
+            sent,
+            `Use ${serializeSkillReference({ name: "code-review", path: skillPath })} now.`,
+          );
+          assert.deepEqual(fake.sendTurn.mock.calls.at(-1)?.[0].skills, [
+            { name: "code-review", path: skillPath },
+          ]);
+          assert.notInclude(sent, "MATT_STANDARDS_AND_SPEC");
+        } else {
+          assert.include(sent, "MATT_STANDARDS_AND_SPEC");
+          assert.include(sent, encodeJson(skillPath));
+          assert.include(sent, encodeJson(directory));
+          assert.isUndefined(fake.sendTurn.mock.calls.at(-1)?.[0].skills);
+        }
       }),
     );
   });

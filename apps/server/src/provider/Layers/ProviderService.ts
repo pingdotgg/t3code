@@ -34,6 +34,7 @@ import {
   type ProviderSession,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { collectSkillReferences } from "@t3tools/shared/composerInlineTokens";
 import { expandSkillReferencesForProvider } from "../skillReferences.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -1546,18 +1547,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
     const inputTextWithCitations =
       parsed.input === undefined ? undefined : expandAssistantCitationsForProvider(parsed.input);
-    const inputTextWithSkills =
-      inputTextWithCitations === undefined
-        ? undefined
-        : yield* expandSkillReferencesForProvider(inputTextWithCitations).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.provideService(Path.Path, pathService),
-          );
-    if (inputTextWithSkills !== parsed.input) {
+    if (inputTextWithCitations !== parsed.input) {
       yield* decodeInputOrValidationError({
         operation: "ProviderService.sendTurn",
         schema: ProviderSendTurnInput.fields.input,
-        payload: inputTextWithSkills,
+        payload: inputTextWithCitations,
       });
     }
 
@@ -1567,7 +1561,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     // sends generic files as file parts, the others send images only and rely
     // on the path line for everything else. Unresolvable ids are skipped here
     // and surface as adapter errors when the file is read.
-    let inputTextWithAttachmentContext = inputTextWithSkills;
+    let inputTextWithAttachmentContext = inputTextWithCitations;
     const appendAttachmentContext = (context: string | undefined) => {
       if (context === undefined) return;
       const candidate = inputTextWithAttachmentContext
@@ -1662,6 +1656,27 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           allowRecovery: true,
         });
       }
+      const skills = collectSkillReferences(parsed.input ?? "");
+      const providerPrompt =
+        input.input === undefined || routed.adapter.capabilities.nativeSkillInput === true
+          ? input.input
+          : yield* expandSkillReferencesForProvider(input.input, skills).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, pathService),
+            );
+      yield* decodeInputOrValidationError({
+        operation: "ProviderService.sendTurn",
+        schema: ProviderSendTurnInput.fields.input,
+        payload: providerPrompt,
+      });
+      const { skills: _ignoredSkills, ...baseInput } = input;
+      const providerInput = {
+        ...baseInput,
+        ...(providerPrompt !== undefined ? { input: providerPrompt } : {}),
+        ...(routed.adapter.capabilities.nativeSkillInput === true && skills.length > 0
+          ? { skills }
+          : {}),
+      };
       metricProvider = routed.adapter.provider;
       metricModel = input.modelSelection?.model;
       yield* Effect.annotateCurrentSpan({
@@ -1687,7 +1702,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
         (turnMetadata) =>
           Effect.gen(function* () {
-            const turn = yield* routed.adapter.sendTurn(input);
+            const turn = yield* routed.adapter.sendTurn(providerInput);
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
               threadId: input.threadId,

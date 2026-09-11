@@ -47,6 +47,8 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  /** Accepts native skill invocation bound to an exact file path. */
+  readonly nativeSkillInput?: boolean;
   /** Starts a resumed turn with no synthetic user prompt. Omitted means the
       adapter needs an explicit continuation instruction. */
   readonly promptlessTurnContinuation?: boolean;

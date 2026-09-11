@@ -8,10 +8,9 @@ import { ProviderValidationError } from "./Errors.ts";
 
 const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
-/** Bind explicit picks before provider routing, including providers without native skill inputs. */
+/** Exact-file fallback for providers without native path-bound skill inputs. */
 export const expandSkillReferencesForProvider = Effect.fn("expandSkillReferencesForProvider")(
-  function* (prompt: string) {
-    const references = collectSkillReferences(prompt);
+  function* (prompt: string, references = collectSkillReferences(prompt)) {
     if (references.length === 0) return prompt;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
