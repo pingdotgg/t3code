@@ -496,4 +496,10 @@ describe("otlpHeadersTransportIssue", () => {
       otlpHeadersTransportIssue(undefined, ["http://collector.internal:4318/v1/traces"]),
     ).toBeUndefined();
   });
+
+  it("refuses a DNS name that merely starts with 127.", () => {
+    expect(
+      otlpHeadersTransportIssue(headers, ["http://127.attacker.example:4318/v1/traces"]),
+    ).toContain("http://127.attacker.example:4318");
+  });
 });

@@ -1,3 +1,4 @@
+import * as NodeNet from "node:net";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
@@ -685,7 +686,12 @@ function parseBigInt(input: string): bigint {
 }
 
 const isLoopbackHost = (hostname: string) => {
-  return hostname === "localhost" || hostname.startsWith("127.") || hostname === "[::1]";
+  if (hostname === "localhost" || hostname === "[::1]") {
+    return true;
+  }
+
+  // match only 127.0.0.0/8, not any host that starts with 127.
+  return NodeNet.isIPv4(hostname) && hostname.startsWith("127.");
 };
 
 export const otlpHeadersTransportIssue = (
