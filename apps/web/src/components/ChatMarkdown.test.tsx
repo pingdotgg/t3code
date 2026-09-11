@@ -5,6 +5,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { useRemoteOpenResolution } from "../remoteOpen";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
@@ -45,8 +46,13 @@ vi.mock("../state/entities", () => ({
   useProjects: () => [],
   useServerConfigs: () => new Map(),
 }));
-vi.mock("../remoteOpen", () => ({
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+vi.mock("../remoteOpen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../remoteOpen")>()),
+  useRemoteOpenResolution: vi.fn(() => ({
+    state: { mode: "local-exec" },
+    isResolved: true,
+    environmentLabel: "sol",
+  })),
 }));
 vi.mock("../editorPreferences", () => ({
   useOpenInPreferredEditor: () => vi.fn(),
@@ -527,6 +533,26 @@ describe("ChatMarkdown file option chips", () => {
 
     expect(html).toContain("index.ts · project/src");
     expect(html).toContain("index.ts · project/test");
+  });
+
+  it("marks chip paths with the hosting environment when viewing remotely", () => {
+    vi.mocked(useRemoteOpenResolution).mockReturnValue({
+      state: { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } },
+      isResolved: true,
+      environmentLabel: "sol",
+    });
+    try {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="/home/saphid/project"
+          text={"[Document](/home/saphid/theos-rules-receipts.md)"}
+        />,
+      );
+
+      expect(html).toContain('data-host-environment="sol"');
+    } finally {
+      vi.mocked(useRemoteOpenResolution).mockReset();
+    }
   });
 
   it("preserves rejected citations created by over-indented list recovery", () => {
