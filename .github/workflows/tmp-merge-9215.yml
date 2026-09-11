@@ -1,0 +1,290 @@
+name: Temporary PR 9215 main merge
+
+on:
+  push:
+    branches:
+      - fix/review-diff-preview-budget
+
+permissions:
+  contents: write
+
+jobs:
+  merge-and-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/review-diff-preview-budget
+          fetch-depth: 0
+
+      - name: Merge current upstream main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/pingdotgg/t3code.git 2>/dev/null || git remote set-url upstream https://github.com/pingdotgg/t3code.git
+          git fetch upstream main
+          set +e
+          git merge --no-commit --no-ff upstream/main
+          merge_status=$?
+          set -e
+
+          conflicts="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$conflicts" ]; then
+            unexpected=0
+            while IFS= read -r file; do
+              case "$file" in
+                apps/server/src/vcs/GitVcsDriverCore.ts|apps/server/src/vcs/GitVcsDriverCore.test.ts) ;;
+                *) echo "Unexpected merge conflict: $file"; unexpected=1 ;;
+              esac
+            done <<< "$conflicts"
+            test "$unexpected" -eq 0
+
+            for file in apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.test.ts; do
+              if git ls-files -u -- "$file" | grep -q .; then
+                git checkout --theirs -- "$file"
+                git add "$file"
+              fi
+            done
+          elif [ "$merge_status" -ne 0 ]; then
+            echo "Merge failed without conflict entries"
+            exit "$merge_status"
+          fi
+
+          if git diff --name-only --diff-filter=U | grep -q .; then
+            echo "Unresolved merge conflicts remain"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+
+      - name: Reapply review preview budget fix on the new architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          core = Path("apps/server/src/vcs/GitVcsDriverCore.ts")
+          text = core.read_text()
+
+          old_import = 'import * as Arr from "effect/Array";\n'
+          if old_import in text:
+              text = text.replace(old_import, "", 1)
+
+          old_constants = '''const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
+          const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
+          const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;'''.replace("          ", "")
+          new_constants = '''const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+          // Review previews share the existing 1 MiB expansion budget. The primary working-tree
+          // path is capped as one combined patch; the fallback keeps the same per-file cap plus
+          // a separate aggregate cap so many untracked files cannot create unbounded output.
+          const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+          const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+          const REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES = REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES;
+          const REVIEW_UNTRACKED_DIFF_BATCH_SIZE = 4;'''.replace("          ", "")
+          if old_constants not in text:
+              raise SystemExit("review diff constant block not found on upstream main")
+          text = text.replace(old_constants, new_constants, 1)
+
+          old_decode = '    const decoded = decoder.decode(chunkToDecode, { stream: !truncated });'
+          new_decode = '    const decoded = decoder.decode(chunkToDecode, { stream: true });'
+          if text.count(old_decode) != 1:
+              raise SystemExit(f"expected one truncating decoder call, found {text.count(old_decode)}")
+          text = text.replace(old_decode, new_decode, 1)
+
+          start_marker = '  const readUntrackedReviewDiffs = Effect.fn("readUntrackedReviewDiffs")(function* (cwd: string) {'
+          end_marker = '  const readTrackedReviewDiff = Effect.fn("readTrackedReviewDiff")(function* ('
+          start = text.find(start_marker)
+          end = text.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit("readUntrackedReviewDiffs block boundaries not found")
+
+          replacement = '''  const readUntrackedReviewDiffs = Effect.fn("readUntrackedReviewDiffs")(function* (cwd: string) {
+            const untrackedResult = yield* executeGit(
+              "GitVcsDriver.readUntrackedReviewDiffs.list",
+              cwd,
+              ["ls-files", "--others", "--exclude-standard", "-z"],
+              {
+                maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+                appendTruncationMarker: true,
+              },
+            );
+            const untrackedPaths = splitNullSeparatedGitStdoutPaths(untrackedResult);
+            if (untrackedPaths.length === 0) {
+              return { diff: "", truncated: untrackedResult.stdoutTruncated };
+            }
+
+            const readUntrackedDiff = (relativePath: string) =>
+              executeGit(
+                "GitVcsDriver.readUntrackedReviewDiffs.diff",
+                cwd,
+                [
+                  "diff",
+                  "--no-index",
+                  "--patch",
+                  "--no-color",
+                  "--no-ext-diff",
+                  "--no-textconv",
+                  "--minimal",
+                  ...PATCH_RENDER_PREFIX_ARGS,
+                  "--",
+                  "/dev/null",
+                  relativePath,
+                ],
+                {
+                  allowNonZeroExit: true,
+                  maxOutputBytes: REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES,
+                  appendTruncationMarker: true,
+                },
+              );
+            const encoder = new TextEncoder();
+            let diff = "";
+            let totalBytes = 0;
+            let truncated = untrackedResult.stdoutTruncated;
+            let aggregateLimitReached = false;
+
+            for (
+              let offset = 0;
+              offset < untrackedPaths.length && !aggregateLimitReached;
+              offset += REVIEW_UNTRACKED_DIFF_BATCH_SIZE
+            ) {
+              const batchResults = yield* Effect.forEach(
+                untrackedPaths.slice(offset, offset + REVIEW_UNTRACKED_DIFF_BATCH_SIZE),
+                readUntrackedDiff,
+                { concurrency: REVIEW_UNTRACKED_DIFF_BATCH_SIZE },
+              );
+
+              for (const result of batchResults) {
+                if (result.stdout.trim().length === 0) {
+                  truncated ||= result.stdoutTruncated;
+                  continue;
+                }
+
+                const separator = diff.length > 0 ? "\\n" : "";
+                const next = `${separator}${result.stdout}`;
+                const nextBytes = encoder.encode(next).byteLength;
+                if (totalBytes + nextBytes > REVIEW_UNTRACKED_DIFF_TOTAL_MAX_OUTPUT_BYTES) {
+                  truncated = true;
+                  aggregateLimitReached = true;
+                  break;
+                }
+
+                diff += next;
+                totalBytes += nextBytes;
+                truncated ||= result.stdoutTruncated;
+              }
+            }
+
+            if (truncated) {
+              diff += OUTPUT_TRUNCATED_MARKER;
+            }
+
+            return { diff, truncated };
+          });
+
+          '''.replace("          ", "")
+          text = text[:start] + replacement + text[end:]
+          core.write_text(text)
+
+          test = Path("apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts")
+          test_text = test.read_text()
+          old_assert = '''    const truncatedMarker = "\\n\\n[truncated]";
+              assert.isTrue(source.diff.endsWith(truncatedMarker));
+              assert.isAtMost(
+                new TextEncoder().encode(source.diff.slice(0, -truncatedMarker.length)).byteLength,
+                1024 * 1024,
+              );'''.replace("              ", "")
+          new_assert = '''    assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);'''.replace("              ", "")
+          if old_assert not in test_text:
+              raise SystemExit("UTF-8 budget assertion block not found")
+          test_text = test_text.replace(old_assert, new_assert, 1)
+
+          sentinel = 'it.effect("keeps large tracked and untracked review diffs complete below one MiB"'
+          if sentinel not in test_text:
+              test_text += r'''
+
+          it.effect("keeps large tracked and untracked review diffs complete below one MiB", () =>
+            Effect.gen(function* () {
+              const cwd = yield* makeTmpDir();
+              yield* initRepoWithCommit(cwd);
+              const baseRef = yield* git(cwd, ["branch", "--show-current"]);
+              const driver = yield* GitVcsDriver.GitVcsDriver;
+              const lineCount = 16_000;
+              const original = Array.from({ length: lineCount }, (_, index) => `before-${index}\n`).join("");
+              const updated = Array.from({ length: lineCount }, (_, index) => `after-${index}\n`).join("");
+              const sourceBefore = 'export const source = "before";\n';
+              const sourceAfter = 'export const source = "after";\n';
+
+              yield* writeTextFile(cwd, "01-large-review-file.txt", original);
+              yield* writeTextFile(cwd, "02-source-file.ts", sourceBefore);
+              yield* git(cwd, ["add", "01-large-review-file.txt", "02-source-file.ts"]);
+              yield* git(cwd, ["commit", "-m", "add large review file"]);
+              yield* git(cwd, ["checkout", "-b", "feature/review-diff-budget"]);
+              yield* writeTextFile(cwd, "01-large-review-file.txt", updated);
+              yield* writeTextFile(cwd, "02-source-file.ts", sourceAfter);
+              yield* git(cwd, ["add", "01-large-review-file.txt", "02-source-file.ts"]);
+              yield* git(cwd, ["commit", "-m", "update large review file"]);
+
+              const untrackedLineCount = 12_000;
+              const untracked = Array.from(
+                { length: untrackedLineCount },
+                (_, index) => `untracked-${index}\n`,
+              ).join("");
+              yield* writeTextFile(cwd, "large-untracked-file.txt", untracked);
+
+              const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef });
+              const branchSource = preview.sources.find((source) => source.kind === "branch-range");
+              const workingTreeSource = preview.sources.find((source) => source.kind === "working-tree");
+
+              assert.isDefined(branchSource);
+              assert.isFalse(branchSource.truncated);
+              assert.isAbove(branchSource.diff.length, 120_000);
+              assert.include(branchSource.diff, `+after-${lineCount - 1}`);
+              assert.include(branchSource.diff, `+${sourceAfter.trimEnd()}`);
+
+              assert.isDefined(workingTreeSource);
+              assert.isFalse(workingTreeSource.truncated);
+              assert.isAbove(workingTreeSource.diff.length, 80_000);
+              assert.include(workingTreeSource.diff, `+untracked-${untrackedLineCount - 1}`);
+            }).pipe(Effect.provide(TestLayer)),
+          );
+
+          it.effect("bounds the combined working-tree review preview to one MiB", () =>
+            Effect.gen(function* () {
+              const cwd = yield* makeTmpDir();
+              yield* initRepoWithCommit(cwd);
+              const makeContents = (prefix: string) =>
+                Array.from(
+                  { length: 45_000 },
+                  (_, index) => `${prefix}-${index.toString().padStart(5, "0")}\n`,
+                ).join("");
+
+              yield* writeTextFile(cwd, "01-large-untracked.txt", makeContents("first"));
+              yield* writeTextFile(cwd, "02-later-source.ts", makeContents("second"));
+
+              const driver = yield* GitVcsDriver.GitVcsDriver;
+              const preview = yield* driver.getReviewDiffPreview({ cwd });
+              const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+
+              assert.isDefined(source);
+              assert.isTrue(source.truncated);
+              assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
+            }).pipe(Effect.provide(TestLayer)),
+          );
+          '''
+          test.write_text(test_text)
+          PY
+
+          git add apps/server/src/vcs/GitVcsDriverCore.ts apps/server/src/vcs/GitVcsDriverCore.utf8.test.ts
+          git diff --check --cached
+
+      - name: Commit and push resolved branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/tmp-merge-9215.yml
+          git add apps/server/src/vcs/GitVcsDriverCore.test.ts
+          git commit -m "merge main and preserve review diff preview limits"
+          git push origin HEAD:fix/review-diff-preview-budget
