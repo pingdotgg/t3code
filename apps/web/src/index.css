@@ -1582,6 +1582,20 @@ code {
   font-family: var(--font-mono);
 }
 
+/* Scope text tokens to conversation content; spacing and app chrome keep using rem. */
+.conversation-font-scope {
+  --conversation-text-unit: var(--font-size-conversation, 1rem);
+  --conversation-font-scale: var(--font-scale-conversation, 1);
+  --text-xs: calc(var(--conversation-text-unit) * 0.75);
+  --text-sm: calc(var(--conversation-text-unit) * 0.875);
+  --text-base: var(--conversation-text-unit);
+  --text-lg: calc(var(--conversation-text-unit) * 1.125);
+  --text-xl: calc(var(--conversation-text-unit) * 1.25);
+  --text-2xl: calc(var(--conversation-text-unit) * 1.5);
+  --text-3xl: calc(var(--conversation-text-unit) * 1.875);
+  font-size: var(--conversation-text-unit);
+}
+
 /* Code blocks in chat carry the size preference. Scoped to chat markdown
    rather than every pre: a global rule would beat text-size utilities and
    inherited sizes on unrelated pre surfaces (terminal previews, approvals).
@@ -1675,21 +1689,21 @@ code {
 }
 
 .chat-markdown h1 {
-  font-size: 1.25rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 1.25);
 }
 
 .chat-markdown h2 {
-  font-size: 1.125rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 1.125);
 }
 
 .chat-markdown h3 {
-  font-size: 1rem;
+  font-size: var(--conversation-text-unit, 1rem);
 }
 
 .chat-markdown h4,
 .chat-markdown h5,
 .chat-markdown h6 {
-  font-size: 0.875rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 0.875);
 }
 
 .chat-markdown h6 {
@@ -1780,7 +1794,7 @@ code {
   border-top: 1px solid var(--contrast-border);
   padding-top: 0.75rem;
   color: var(--contrast-muted-foreground);
-  font-size: 0.75rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 0.75);
 }
 
 .chat-markdown section[data-footnotes] ol {
@@ -1799,7 +1813,7 @@ code {
   justify-content: center;
   border-radius: 0.25rem;
   text-decoration: none;
-  font-size: 0.6875rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 0.6875);
   font-weight: 600;
 }
 
@@ -1809,7 +1823,7 @@ code {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--contrast-foreground);
-  font-size: 0.75rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 0.75);
 }
 
 .chat-markdown .chat-markdown-file-link,
@@ -1890,7 +1904,7 @@ code {
   border-collapse: collapse;
   overflow-wrap: normal;
   word-break: normal;
-  font-size: 0.75rem;
+  font-size: calc(var(--conversation-text-unit, 1rem) * 0.75);
 }
 
 .chat-markdown th,

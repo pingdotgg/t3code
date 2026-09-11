@@ -25,6 +25,7 @@ import {
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
+  MAX_CONVERSATION_FONT_SIZE,
   MAX_GLASS_OPACITY,
   MAX_INTERFACE_FONT_SIZE,
   MAX_PANEL_ANIMATION_DURATION_MS,
@@ -32,6 +33,7 @@ import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_CONVERSATION_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
   MIN_GLASS_OPACITY,
   MIN_INTERFACE_FONT_SIZE,
@@ -620,6 +622,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontFamilySans,
       settings.fontFamilyTerminal,
       settings.fontSizeCode,
+      settings.fontSizeConversation,
       settings.fontSizeInterface,
       settings.fontSizePrompt,
       settings.fontSizeTerminal,
@@ -741,6 +744,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
       fontFamilyTerminal: DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal,
       fontSizeInterface: DEFAULT_UNIFIED_SETTINGS.fontSizeInterface,
+      fontSizeConversation: DEFAULT_UNIFIED_SETTINGS.fontSizeConversation,
       fontSizePrompt: DEFAULT_UNIFIED_SETTINGS.fontSizePrompt,
       fontSizeCode: DEFAULT_UNIFIED_SETTINGS.fontSizeCode,
       fontSizeTerminal: DEFAULT_UNIFIED_SETTINGS.fontSizeTerminal,
@@ -1434,6 +1438,70 @@ function PromptFontRow() {
   );
 }
 
+function ConversationFontRow() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const value = settings.fontSizeConversation ?? settings.fontSizeInterface;
+  return (
+    <SettingsRow
+      {...searchableSetting("conversation-font")}
+      title="Conversation font size"
+      description="Messages, transcript labels, tools, and agent questions."
+      resetAction={
+        settings.fontSizeConversation !== DEFAULT_UNIFIED_SETTINGS.fontSizeConversation ? (
+          <SettingResetButton
+            label="conversation font size"
+            onClick={() =>
+              updateSettings({
+                fontSizeConversation: DEFAULT_UNIFIED_SETTINGS.fontSizeConversation,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Select
+          value={settings.fontSizeConversation === null ? "interface" : String(value)}
+          onValueChange={(next) => {
+            if (typeof next !== "string") return;
+            if (next === "interface") {
+              updateSettings({ fontSizeConversation: null });
+              return;
+            }
+            const parsed = Number(next);
+            if (
+              Number.isInteger(parsed) &&
+              parsed >= MIN_CONVERSATION_FONT_SIZE &&
+              parsed <= MAX_CONVERSATION_FONT_SIZE
+            ) {
+              updateSettings({ fontSizeConversation: parsed });
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="w-32" aria-label="Conversation font size">
+            <SelectValue>
+              {settings.fontSizeConversation === null ? "Interface" : `${value} px`}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="interface">
+              Use interface size
+            </SelectItem>
+            {Array.from(
+              { length: MAX_CONVERSATION_FONT_SIZE - MIN_CONVERSATION_FONT_SIZE + 1 },
+              (_, index) => MIN_CONVERSATION_FONT_SIZE + index,
+            ).map((px) => (
+              <SelectItem hideIndicator key={px} value={String(px)}>
+                {px} px
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
+  );
+}
+
 function CodeFontRow({
   title,
   description = "Code blocks, diffs, and file previews.",
@@ -1575,6 +1643,7 @@ function FontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
+      <ConversationFontRow />
       <PromptFontRow />
       <CodeFontRow />
       <TerminalFontRow />
@@ -1593,6 +1662,7 @@ function SimpleFontRows() {
   return (
     <>
       <InterfaceFontRow preview={<PromptFontPreview />} />
+      <ConversationFontRow />
       <CodeFontRow
         title="Monospace font"
         description="Code blocks, diffs, file previews, and the terminal."

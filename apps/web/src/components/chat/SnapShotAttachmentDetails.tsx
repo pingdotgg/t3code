@@ -209,19 +209,19 @@ export function SnapShotAttachmentDetails({
       {source.appIconDataUrl ? (
         <img src={source.appIconDataUrl} alt="" className="size-7 shrink-0 rounded-md" />
       ) : (
-        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-[10px] font-medium text-white uppercase">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-[length:calc(10px*var(--conversation-font-scale,1))] font-medium text-white uppercase">
           {source.appName.slice(0, 1)}
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium leading-3.5 text-white">
+        <div className="flex min-w-0 items-center gap-1.5 text-[length:calc(11px*var(--conversation-font-scale,1))] font-medium leading-[calc(var(--conversation-text-unit,1rem)*0.875)] text-white">
           <span className="truncate">{source.appName}</span>
           <SnapShotContentsButton
             source={source}
             className="pointer-events-auto text-white/60 hover:bg-white/10 hover:text-white focus-visible:ring-white/70"
           />
         </div>
-        <div className="truncate text-[9px] leading-3.5 text-white/70">
+        <div className="truncate text-[length:calc(9px*var(--conversation-font-scale,1))] leading-[calc(var(--conversation-text-unit,1rem)*0.875)] text-white/70">
           {source.windowTitle || "Captured window"}
         </div>
       </div>

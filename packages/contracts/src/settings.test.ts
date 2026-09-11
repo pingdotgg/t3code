@@ -322,6 +322,27 @@ describe("ClientSettings browser recording frame rate", () => {
   });
 });
 
+describe("ClientSettings conversation font size", () => {
+  it("defaults to following the interface size", () => {
+    expect(decodeClientSettings({}).fontSizeConversation).toBeNull();
+  });
+
+  it.each([12, 16, 20])("accepts a conversation size: %s", (value) => {
+    expect(decodeClientSettings({ fontSizeConversation: value }).fontSizeConversation).toBe(value);
+    expect(decodeClientSettingsPatch({ fontSizeConversation: value })).toEqual({
+      fontSizeConversation: value,
+    });
+  });
+
+  it("accepts reset to the interface size and rejects values outside the range", () => {
+    expect(decodeClientSettingsPatch({ fontSizeConversation: null })).toEqual({
+      fontSizeConversation: null,
+    });
+    expect(() => decodeClientSettingsPatch({ fontSizeConversation: 11 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ fontSizeConversation: 21 })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

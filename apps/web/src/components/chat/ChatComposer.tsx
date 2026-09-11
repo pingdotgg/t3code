@@ -4998,6 +4998,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerBanner.Attachment>
               <ComposerBanner.Root
                 data-chat-composer-top-drawer="true"
+                className="conversation-font-scope"
                 variant={activePendingApproval ? "warning" : "info"}
               >
                 {activePendingApproval ? (

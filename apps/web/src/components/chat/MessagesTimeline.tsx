@@ -857,7 +857,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <TimelineRowActivityCtx value={activityState}>
         <div
           ref={setTimelineViewportElement}
-          className="relative h-full min-h-0"
+          className="conversation-font-scope relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
           {onCiteAssistantText && citationThreadRef ? (
@@ -1165,12 +1165,12 @@ function TimelineMinimap({
                 }}
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
-                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-[calc(var(--conversation-text-unit,1rem)*1.25)]">
                     {activeItem.userText ?? "User message"}
                   </span>
                   {activeItem.assistantText ? (
                     <span
-                      className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                      className="mt-1 max-h-[calc(var(--conversation-text-unit,1rem)*3.75)] overflow-hidden text-muted-foreground text-sm leading-[calc(var(--conversation-text-unit,1rem)*1.25)]"
                       style={{
                         display: "-webkit-box",
                         WebkitBoxOrient: "vertical",
@@ -1343,7 +1343,7 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
 
   if (asset === null && src === null) {
     return (
-      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-border/80 bg-black px-2 py-3 text-center text-[11px] text-white/70">
+      <div className="flex aspect-[4/3] w-full items-center justify-center rounded-lg border border-border/80 bg-black px-2 py-3 text-center text-[length:calc(11px*var(--conversation-font-scale,1))] text-white/70">
         {file.name}
       </div>
     );
@@ -1444,7 +1444,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     />
                   </button>
                 ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[11px]">
+                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-secondary-label text-[length:calc(11px*var(--conversation-font-scale,1))]">
                     {image.name}
                   </div>
                 )}
@@ -2426,7 +2426,7 @@ function UserMessagePreviewAnnotationCard(props: {
         ) : null}
         <div
           className={cn(
-            "flex items-center gap-2 text-secondary-label text-[10px]",
+            "flex items-center gap-2 text-secondary-label text-[length:calc(10px*var(--conversation-font-scale,1))]",
             props.annotation.comment && "mt-1",
           )}
         >
@@ -2713,7 +2713,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         <div className="text-message-foreground text-xs font-medium">
           {formatWorkspaceRelativePath(comment.filePath, ctx.workspaceRoot)}
         </div>
-        <div className="text-secondary-label text-[11px]">
+        <div className="text-secondary-label text-[length:calc(11px*var(--conversation-font-scale,1))]">
           {comment.sectionTitle} · {comment.rangeLabel}
         </div>
       </div>
@@ -3257,7 +3257,7 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
     <button
       type="button"
       onClick={onOpenAgents}
-      className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[.8125rem] transition hover:bg-accent/50"
+      className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-[length:calc(var(--conversation-text-unit,1rem)*.8125)] transition hover:bg-accent/50"
     >
       <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClass)} />
       <WorkEntryIcon name="bot" className="size-3.5 shrink-0 text-muted-foreground" />
@@ -3265,7 +3265,7 @@ const AgentSpawnCtaRow = memo(function AgentSpawnCtaRow(props: { workEntry: Time
         <span className="font-medium">{lead}</span>
         {workflowName ? <span className="text-muted-foreground"> · {workflowName}</span> : null}
       </span>
-      <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[.7rem] text-muted-foreground">
+      <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[length:calc(var(--conversation-text-unit,1rem)*.7)] text-muted-foreground">
         <span>{status}</span>
         {totalTokens > 0 ? (
           <span className="tabular-nums">Σ {formatSubagentTokenCount(totalTokens)}</span>
