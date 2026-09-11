@@ -37,6 +37,7 @@ const BUILT_IN_DRIVER_ORDER: ReadonlyArray<string> = [
   "codex",
   "claudeAgent",
   "cursor",
+  "devin",
   "grok",
   "opencode",
   "antigravity",

@@ -37,6 +37,19 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "devin") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          fill={mono}
+          d="M4 4h7.2c4.75 0 8.8 3.58 8.8 8s-4.05 8-8.8 8H4V4Zm4.2 4.4v7.2h3a3.6 3.6 0 0 0 0-7.2h-3Z"
+        />
+      </Svg>
+    );
+  }
+
   if (props.provider === "grok") {
     const fill = isDarkMode ? "#F5F5F5" : "#0F0F0F";
     return (
