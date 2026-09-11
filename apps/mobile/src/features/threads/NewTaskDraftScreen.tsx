@@ -82,7 +82,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import {
-  isModelSelectionUnavailable,
+  getModelSelectionUnavailableReason,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
@@ -966,14 +966,12 @@ export function NewTaskDraftScreen(props: {
     ) {
       return;
     }
-    if (
-      environmentConnected &&
-      isModelSelectionUnavailable(selectedEnvironmentServerConfig, modelSelection)
-    ) {
-      Alert.alert(
-        "Antigravity model unavailable",
-        "Set up Antigravity on web or desktop, or choose another model.",
-      );
+    const modelUnavailableReason = getModelSelectionUnavailableReason(
+      selectedEnvironmentServerConfig,
+      modelSelection,
+    );
+    if (environmentConnected && modelUnavailableReason !== null) {
+      Alert.alert("Model unavailable", modelUnavailableReason);
       return;
     }
     // T3's own limits command is answered by the thread composer; a new task would

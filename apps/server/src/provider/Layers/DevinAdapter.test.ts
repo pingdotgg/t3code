@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import {
@@ -12,10 +13,14 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as AcpErrors from "effect-acp/errors";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeDevinAdapter } from "./DevinAdapter.ts";
+import * as DevinAcpSupport from "../acp/DevinAcpSupport.ts";
+import type { AcpSessionRuntimeEvent } from "../acp/AcpSessionRuntime.ts";
 import {
   makeDevinCli,
   devinTestLayer as layer,
@@ -66,6 +71,12 @@ it.effect("streams a turn and loads the saved ACP session ID without authenticat
       resumeCursor: session.resumeCursor,
     });
     const requests = yield* h.requests;
+    const config = yield* ServerConfig;
+    for (const method of ["session/new", "session/load"]) {
+      expect(
+        requests.find((request) => request.method === method)?.params?.additionalDirectories,
+      ).toEqual([config.attachmentsDir]);
+    }
     expect(requests.some((request) => request.method === "authenticate")).toBe(false);
     expect(
       requests.some(
@@ -89,6 +100,7 @@ it.effect("connects T3 tools with isolated credentials and restores tool roots o
   Effect.gen(function* () {
     const h = yield* makeHarness();
     const fs = yield* FileSystem.FileSystem;
+    const config = yield* ServerConfig;
     yield* Effect.acquireRelease(
       Effect.sync(() =>
         McpProviderSession.setMcpProviderSession({
@@ -106,7 +118,7 @@ it.effect("connects T3 tools with isolated credentials and restores tool roots o
     );
     const session = yield* h.start();
     const firstDirectory = (yield* h.requests).find((request) => request.method === "session/new")
-      ?.params?.additionalDirectories?.[0];
+      ?.params?.additionalDirectories?.[1];
     if (!firstDirectory) throw new Error("Devin must receive its MCP configuration root.");
     yield* h.adapter.stopSession(threadId);
     expect(yield* fs.exists(firstDirectory)).toBe(false);
@@ -120,17 +132,18 @@ it.effect("connects T3 tools with isolated credentials and restores tool roots o
     for (const method of ["session/new", "session/load"]) {
       const request = requests.find((request) => request.method === method);
       expect(request?.params?.cwd).toBe(h.root);
-      expect(request?.params?.additionalDirectories).toHaveLength(1);
+      expect(request?.params?.additionalDirectories).toHaveLength(2);
+      expect(request?.params?.additionalDirectories?.[0]).toBe(config.attachmentsDir);
       expect(
         requests.some(
           (entry) =>
             entry.method === "_cognition.ai/mcp/connectServer" &&
-            entry.params?.workspaceDirs?.[0] === request?.params?.additionalDirectories?.[0],
+            entry.params?.workspaceDirs?.[0] === request?.params?.additionalDirectories?.[1],
         ),
       ).toBe(true);
     }
     const directory = requests.find((request) => request.method === "session/load")?.params
-      ?.additionalDirectories?.[0];
+      ?.additionalDirectories?.[1];
     if (!directory) throw new Error("Resumed Devin sessions must receive fresh MCP configuration.");
     expect(directory).not.toBe(firstDirectory);
     const path = yield* Path.Path;
@@ -238,11 +251,60 @@ it.effect("cleans up MCP credentials when the tool server cannot connect", () =>
     expect(error.message).toContain("Devin could not connect to T3 Code tools.");
     expect(yield* h.adapter.hasSession(threadId)).toBe(false);
     const directory = (yield* h.requests).find((request) => request.method === "session/new")
-      ?.params?.additionalDirectories?.[0];
+      ?.params?.additionalDirectories?.[1];
     if (!directory) throw new Error("The failed session must have attempted MCP setup.");
     expect(yield* fs.exists(directory)).toBe(false);
   }).pipe(Effect.provide(layer)),
 );
+
+for (const operation of ["startSession", "sendTurn"] as const) {
+  it.effect(`rejects ${operation} when a disconnect is consumed before returning`, () =>
+    Effect.gen(function* () {
+      const makeRuntime = DevinAcpSupport.makeDevinAcpRuntime;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(DevinAcpSupport, "makeDevinAcpRuntime").mockImplementation((...args) =>
+            Effect.gen(function* () {
+              const runtime = yield* makeRuntime(...args);
+              const events = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
+              const closed = yield* Deferred.make<void>();
+              yield* Effect.addFinalizer(() => Deferred.succeed(closed, undefined));
+              let drains = 0;
+              return {
+                ...runtime,
+                getEvents: () => Stream.fromQueue(events),
+                drainEvents: Effect.gen(function* () {
+                  if (++drains === (operation === "startSession" ? 1 : 2)) {
+                    yield* Queue.offer(events, {
+                      _tag: "ConnectionTerminated",
+                      error: new AcpErrors.AcpTransportError({
+                        detail: "Devin process disconnected.",
+                        cause: undefined,
+                      }),
+                    });
+                  }
+                  const acknowledge = yield* Deferred.make<void>();
+                  yield* Queue.offer(events, { _tag: "EventStreamBarrier", acknowledge });
+                  yield* Effect.raceFirst(Deferred.await(acknowledge), Deferred.await(closed));
+                }),
+              };
+            }),
+          ),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const h = yield* makeHarness();
+      if (operation === "sendTurn") yield* h.start();
+      const result = yield* (
+        operation === "startSession"
+          ? h.start().pipe(Effect.asVoid)
+          : h.adapter.sendTurn({ threadId, input: "Hello" }).pipe(Effect.asVoid)
+      ).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+    }).pipe(Effect.provide(layer)),
+  );
+}
 
 it.effect("applies family thinking choices and enters and leaves plan mode", () =>
   Effect.gen(function* () {

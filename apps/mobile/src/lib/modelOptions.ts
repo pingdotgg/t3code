@@ -61,20 +61,20 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known account-model selection needs setup or a different model. */
-export function isModelSelectionUnavailable(
+/** Explain how to recover a known account-model selection that is unavailable. */
+export function getModelSelectionUnavailableReason(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
-): boolean {
+): string | null {
   if (!config || !selection) {
-    return false;
+    return null;
   }
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
-  return (
+  if (
     (driver === "antigravity" || driver === "devin") &&
     (!provider ||
       !provider.enabled ||
@@ -82,7 +82,18 @@ export function isModelSelectionUnavailable(
       provider.auth.status === "unauthenticated" ||
       provider.availability === "unavailable" ||
       !provider.models.some((model) => model.slug === selection.model))
-  );
+  ) {
+    const name = driver === "devin" ? "Devin" : "Antigravity";
+    return `${name} model unavailable. Set up ${name} on web or desktop, or choose another model.`;
+  }
+  return null;
+}
+
+export function isModelSelectionUnavailable(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null | undefined,
+): boolean {
+  return getModelSelectionUnavailableReason(config, selection) !== null;
 }
 
 /**

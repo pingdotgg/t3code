@@ -51,7 +51,7 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import { MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER, type ProviderInstance } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
@@ -77,8 +77,6 @@ const makeManualProviderMaintenanceCapabilities = (provider: ProviderDriverKind)
 
 const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
-
-const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 16;
 
 export function upsertProviderWorkspaceSnapshot(
   provider: ServerProvider,

@@ -5,6 +5,7 @@ import { ProviderInstanceId, type ModelSelection, type ServerConfig } from "@t3t
 import {
   buildModelOptions,
   groupByProvider,
+  getModelSelectionUnavailableReason,
   isModelSelectionUnavailable,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
@@ -317,6 +318,9 @@ describe("mobile model options", () => {
 
       expect(resolveDefaultableModelSelection(missingStatusConfig, selection)).toBe(selection);
       expect(isModelSelectionUnavailable(missingStatusConfig, selection)).toBe(true);
+      expect(getModelSelectionUnavailableReason(missingStatusConfig, selection)).toBe(
+        "Antigravity model unavailable. Set up Antigravity on web or desktop, or choose another model.",
+      );
       expect(buildModelOptions(missingStatusConfig, selection)).toMatchObject([
         {
           providerDriver: "antigravity",
@@ -332,6 +336,7 @@ describe("mobile model options", () => {
 
       expect(resolveDefaultableModelSelection(null, selection)).toBe(selection);
       expect(isModelSelectionUnavailable(null, selection)).toBe(false);
+      expect(getModelSelectionUnavailableReason(null, selection)).toBeNull();
       expect(buildModelOptions(null, selection)[0]?.selection).toBe(selection);
       expect(buildModelOptions(null, selection)[0]?.isUnavailable).not.toBe(true);
       expect(isModelSelectionUnavailable(unknownConfig, selection)).toBe(false);
@@ -429,6 +434,9 @@ describe("Devin account model selection", () => {
     expect(resolveSelectableModelSelection(config, selection)).toBe(selection);
     expect(resolveDefaultableModelSelection(config, selection)).toBe(selection);
     expect(isModelSelectionUnavailable(config, selection)).toBe(true);
+    expect(getModelSelectionUnavailableReason(config, selection)).toBe(
+      "Devin model unavailable. Set up Devin on web or desktop, or choose another model.",
+    );
     expect(
       buildModelOptions(config, selection).find(
         (option) => option.selection.model === selection.model,

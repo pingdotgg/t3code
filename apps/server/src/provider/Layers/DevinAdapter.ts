@@ -36,6 +36,7 @@ import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { prepareDevinSkillPrompt } from "../Drivers/DevinSkills.ts";
 import {
   ProviderAdapterRequestError,
+  ProviderAdapterSessionClosedError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
@@ -147,7 +148,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
   ) {
     return yield* context.stopLock.withPermit(
       Effect.gen(function* () {
-        if (context.stopped) return;
+        if (context.session.status === "closed") return;
         context.stopped = true;
         const turnId = context.session.activeTurnId;
         yield* cancelApprovals(context);
@@ -215,6 +216,7 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
         };
         return;
       case "ConnectionTerminated":
+        context.stopped = true;
         yield* stopContext(context, event.error.message).pipe(Effect.forkIn(ownerScope));
         return;
       case "AssistantItemStarted":
@@ -344,7 +346,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
           const runtime = yield* makeDevinAcpRuntime(settings, environment, {
             cwd,
             resumeSessionId,
-            ...(mcpConfig ? { additionalDirectories: [mcpConfig.directory] } : {}),
+            additionalDirectories: [
+              config.attachmentsDir,
+              ...(mcpConfig ? [mcpConfig.directory] : []),
+            ],
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...makeLoggers({
               nativeEventLogger: options.nativeEventLogger,
@@ -446,6 +451,12 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
             payload: { providerThreadId: result.sessionId },
           });
           yield* runtime.drainEvents;
+          if (context.stopped) {
+            return yield* new ProviderAdapterSessionClosedError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+            });
+          }
           return context.session;
         }).pipe(
           Effect.provideService(Scope.Scope, scope),
@@ -653,6 +664,12 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
         ),
       );
       yield* context.runtime.drainEvents;
+      if (context.stopped) {
+        return yield* new ProviderAdapterSessionClosedError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+        });
+      }
       if (context.generation === launch.generation) {
         const previousTurn = context.turns.findIndex((turn) => turn.id === launch.turnId);
         if (previousTurn === -1) context.turns.push({ id: launch.turnId, items: [result] });

@@ -1424,18 +1424,21 @@ describe("resolveComposerProviderSelection", () => {
     expect(getAntigravitySendBlockReason(provider, "gpt-model")).toBeNull();
   });
 
-  it("does not continue an existing Antigravity thread in another profile after deletion", () => {
-    const missingInstanceId = ProviderInstanceId.make("google_work");
-    const selection = resolveComposerProviderSelection({
-      entries: [entry("antigravity")],
-      candidateInstanceIds: [missingInstanceId],
-      lockedProvider: ProviderDriverKind.make("antigravity"),
-      lockedInstanceId: missingInstanceId,
-    });
+  it.each(["antigravity", "devin"])(
+    "keeps a missing %s instance pinned to its account",
+    (driver) => {
+      const missingInstanceId = ProviderInstanceId.make(`${driver}_work`);
+      const selection = resolveComposerProviderSelection({
+        entries: [entry(driver)],
+        candidateInstanceIds: [missingInstanceId],
+        lockedProvider: ProviderDriverKind.make(driver),
+        lockedInstanceId: missingInstanceId,
+      });
 
-    expect(selection.selectedProviderEntry).toBeUndefined();
-    expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
-  });
+      expect(selection.selectedProviderEntry).toBeUndefined();
+      expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
+    },
+  );
 
   it("does not treat the empty draft placeholder as a provider setup target", () => {
     const selection = resolveComposerProviderSelection({

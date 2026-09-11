@@ -38,6 +38,8 @@ import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 import type { ProviderAuthController } from "./Services/ProviderAuthService.ts";
 
+export const MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER = 16;
+
 /**
  * Static metadata advertised by a driver. Used for default presentation
  * and (later) settings UI. Doesn't need to be Effect-typed because nothing

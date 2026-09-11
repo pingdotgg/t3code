@@ -10,6 +10,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { mergeProviderSnapshot } from "../Layers/ProviderRegistry.ts";
 import { DevinDriver } from "./DevinDriver.ts";
+import { MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER } from "../ProviderDriver.ts";
 import {
   makeDevinCli as makeHarness,
   devinTestLayer as layer,
@@ -26,6 +27,50 @@ const driverLayer = layer.pipe(
     }),
   ),
   Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+);
+
+it.effect("bounds workspace metadata and evicts commands with the oldest skills", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ T3_DEVIN_AUTH_STATUS: "Logged in (via Devin)." });
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const instance = yield* DevinDriver.create({
+      instanceId,
+      displayName: "Devin test account",
+      enabled: true,
+      config: h.settings,
+      environment: [],
+    });
+    const snapshotForCwd = instance.snapshotForCwd;
+    if (!snapshotForCwd) throw new Error("Devin must expose workspace metadata.");
+    yield* instance.snapshot.refresh;
+    yield* instance.adapter.startSession({ threadId, cwd: h.root, runtimeMode: "full-access" });
+    expect(
+      (yield* snapshotForCwd(h.root)).slashCommands.some((entry) => entry.name === "plan"),
+    ).toBe(true);
+    yield* instance.adapter.stopSession(threadId);
+    const workspaces = Array.from({ length: MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER }, (_, index) =>
+      path.join(h.root, `workspace-${index}`),
+    );
+    for (const cwd of workspaces) {
+      yield* fs.makeDirectory(cwd);
+      yield* snapshotForCwd(cwd);
+    }
+    expect(
+      (yield* instance.snapshot.getSnapshot).workspaceSnapshots?.map((entry) => entry.cwd),
+    ).toEqual(workspaces);
+    const refreshed = yield* instance.snapshot.refresh;
+    expect(refreshed.workspaceSnapshots?.map((entry) => entry.cwd)).toEqual(workspaces);
+    const recent = workspaces[0]!;
+    yield* snapshotForCwd(recent);
+    const rediscovered = yield* snapshotForCwd(h.root);
+    expect(rediscovered.workspaceSnapshots?.map((entry) => entry.cwd)).toEqual([
+      ...workspaces.slice(2),
+      recent,
+      h.root,
+    ]);
+    expect(rediscovered.slashCommands.some((entry) => entry.name === "plan")).toBe(false);
+  }).pipe(Effect.provide(driverLayer)),
 );
 
 it.effect("keeps skills discoverable when ACP commands arrive before the workspace probe", () =>

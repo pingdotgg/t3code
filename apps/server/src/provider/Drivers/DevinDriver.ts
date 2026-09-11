@@ -26,6 +26,7 @@ import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   defaultProviderContinuationIdentity,
+  MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER,
   type ProviderDriver,
   type ProviderInstance,
 } from "../ProviderDriver.ts";
@@ -92,13 +93,25 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         PubSub.unbounded<void>(),
         PubSub.shutdown,
       );
-      const commandsByCwd = new Map<string, ReadonlyArray<ServerProviderSlashCommand>>();
-      const skillsByCwd = new Map<string, ReadonlyArray<ServerProviderSkill>>();
+      type WorkspaceMetadata = {
+        skills?: ReadonlyArray<ServerProviderSkill>;
+        slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
+      };
+      const metadataByCwd = new Map<string, WorkspaceMetadata>();
+      const updateWorkspaceMetadata = (cwd: string, update: WorkspaceMetadata) => {
+        const previous = metadataByCwd.get(cwd);
+        metadataByCwd.delete(cwd);
+        metadataByCwd.set(cwd, { ...previous, ...update });
+        if (metadataByCwd.size > MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER) {
+          const oldest = metadataByCwd.keys().next().value;
+          if (oldest !== undefined) metadataByCwd.delete(oldest);
+        }
+      };
       const probeSkills = (cwd: string) =>
         discoverDevinSkills(settings, processEnv, cwd).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(Path.Path, path),
-          Effect.tap((skills) => Effect.sync(() => skillsByCwd.set(cwd, skills))),
+          Effect.tap((skills) => Effect.sync(() => updateWorkspaceMetadata(cwd, { skills }))),
           Effect.mapError(
             (cause) =>
               new ProviderDriverError({
@@ -121,8 +134,9 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
               description: command.description,
               ...(command.input ? { input: command.input } : {}),
             }));
-            if (Equal.equals(commandsByCwd.get(cwd), next)) return;
-            commandsByCwd.set(cwd, next);
+            const unchanged = Equal.equals(metadataByCwd.get(cwd)?.slashCommands, next);
+            updateWorkspaceMetadata(cwd, { slashCommands: next });
+            if (unchanged) return;
             yield* PubSub.publish(metadataChanges, undefined);
           }),
       });
@@ -143,8 +157,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
                   ? snapshot.models.filter((model) => !model.isCustom)
                   : [];
               if (snapshot.auth.status !== "authenticated") {
-                commandsByCwd.clear();
-                skillsByCwd.clear();
+                metadataByCwd.clear();
               }
             }),
           ),
@@ -169,14 +182,20 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
         // A workspace snapshot marks discovery complete in ProviderRegistry.
         // ACP commands can arrive first; don't cache an unprobed empty skill list.
         workspaceSnapshots: (snapshot.auth.status === "authenticated"
-          ? [...skillsByCwd.keys()]
+          ? [...metadataByCwd]
           : []
-        ).map((cwd) => ({
-          cwd,
-          slashCommands: commandsByCwd.get(cwd) ?? snapshot.slashCommands,
-          skills: skillsByCwd.get(cwd) ?? [],
-          checkedAt: snapshot.checkedAt,
-        })),
+        ).flatMap(([cwd, metadata]) =>
+          metadata.skills === undefined
+            ? []
+            : [
+                {
+                  cwd,
+                  slashCommands: metadata.slashCommands ?? snapshot.slashCommands,
+                  skills: metadata.skills,
+                  checkedAt: snapshot.checkedAt,
+                },
+              ],
+        ),
       });
       const getSnapshot = managed.getSnapshot.pipe(Effect.map(withWorkspaceMetadata));
       return {
@@ -200,8 +219,8 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
             Effect.tap((snapshot) =>
               snapshot.auth.status === "authenticated"
                 ? Effect.forEach(
-                    [...skillsByCwd.keys()],
-                    (cwd) =>
+                    [...metadataByCwd].filter(([, metadata]) => metadata.skills !== undefined),
+                    ([cwd]) =>
                       probeSkills(cwd).pipe(
                         Effect.catch((cause) => Effect.logWarning(cause.message)),
                       ),
@@ -224,7 +243,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
             return {
               ...withWorkspaceMetadata(snapshot),
               skills,
-              slashCommands: commandsByCwd.get(cwd) ?? snapshot.slashCommands,
+              slashCommands: metadataByCwd.get(cwd)?.slashCommands ?? snapshot.slashCommands,
             };
           }),
       } satisfies ProviderInstance;
