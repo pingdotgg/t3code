@@ -527,11 +527,12 @@ describe("environment shell synchronization", () => {
           threads: [{ id: "created-after-http-snapshot" } as never],
         },
       });
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if ((yield* SubscriptionRef.get(shellState)).status === "live") break;
-        yield* Effect.yieldNow;
-      }
-      const live = yield* SubscriptionRef.get(shellState);
+      const live = Option.getOrThrow(
+        yield* SubscriptionRef.changes(shellState).pipe(
+          Stream.filter((state) => state.status === "live"),
+          Stream.runHead,
+        ),
+      );
       expect(yield* Queue.size(events)).toBe(0);
       expect(Option.getOrThrow(live.snapshot).snapshotSequence).toBe(11);
       expect(live.status).toBe("live");
