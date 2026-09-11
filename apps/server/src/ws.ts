@@ -131,6 +131,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
+import { makeProjectWorktreeRootResolver } from "./project/projectWorktreeRoot.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -495,6 +496,11 @@ const makeWsRpcLayer = (
               ),
               Effect.orElseSucceed(() => null),
             );
+
+      const resolveProjectWorktreeRoot = makeProjectWorktreeRootResolver({
+        projectionSnapshotQuery,
+        path: yield* Path.Path,
+      });
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -1165,12 +1171,16 @@ const makeWsRpcLayer = (
                   worktreeBaseRef = resolvedRemoteBase.commitSha;
                 }
               }
+              const worktreeRootDir = yield* resolveProjectWorktreeRoot(
+                bootstrap.prepareWorktree.projectCwd,
+              );
               const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
                 refName: worktreeBaseRef,
                 newRefName: bootstrap.prepareWorktree.branch,
                 baseRefName: bootstrap.prepareWorktree.baseBranch,
                 path: null,
+                ...(worktreeRootDir === undefined ? {} : { rootDir: worktreeRootDir }),
               });
               targetWorktreePath = worktree.worktree.path;
               yield* dispatchFromClient({
@@ -2620,7 +2630,15 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
-            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            // Mobile creates worktrees through this RPC, so the project's root
+            // is resolved here rather than in every client.
+            Effect.gen(function* () {
+              const rootDir = input.rootDir ?? (yield* resolveProjectWorktreeRoot(input.cwd));
+              return yield* gitWorkflow.createWorktree({
+                ...input,
+                ...(rootDir === undefined ? {} : { rootDir }),
+              });
+            }).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>

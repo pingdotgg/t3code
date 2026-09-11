@@ -373,6 +373,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           autoPull: false,
+          worktreeRoot: null,
           faviconPath: null,
           projectIcon: null,
           scripts: [
@@ -499,6 +500,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             model: "gpt-5-codex",
           },
           autoPull: false,
+          worktreeRoot: null,
           faviconPath: null,
           projectIcon: null,
           scripts: [
@@ -840,6 +842,74 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           assert.equal(context.value.hasOtherUserMessages, hasOtherUserMessages);
         }
       }
+    }),
+  );
+
+  it.effect("lists recorded worktree paths once, keeping archived and dropping deleted", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_threads`;
+
+      const insertThread = (
+        threadId: string,
+        worktreePath: string | null,
+        options: { readonly deletedAt?: string; readonly archivedAt?: string } = {},
+      ) => sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          worktree_path,
+          created_at,
+          updated_at,
+          deleted_at,
+          archived_at
+        )
+        VALUES (
+          ${threadId},
+          'project-1',
+          'Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          ${worktreePath},
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+          ${options.deletedAt ?? null},
+          ${options.archivedAt ?? null}
+        )
+      `;
+
+      // Two threads share a path, one has none, one is deleted: the guard that
+      // consumes this needs each live path exactly once and nothing else. The
+      // archived one stays in — its worktree is still on disk and still
+      // diffable, so dropping it would blank the diff panel it can reach.
+      yield* insertThread("thread-a", "/custom/worktrees/feature-a");
+      yield* insertThread("thread-b", "/custom/worktrees/feature-a");
+      yield* insertThread("thread-c", "/custom/worktrees/feature-c");
+      yield* insertThread("thread-d", null);
+      yield* insertThread("thread-e", "/custom/worktrees/deleted", {
+        deletedAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* insertThread("thread-f", "/custom/worktrees/archived", {
+        archivedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const paths = yield* snapshotQuery.listThreadWorktreePaths();
+
+      assert.deepStrictEqual(
+        [...paths].sort(),
+        [
+          "/custom/worktrees/archived",
+          "/custom/worktrees/feature-a",
+          "/custom/worktrees/feature-c",
+        ],
+      );
     }),
   );
 

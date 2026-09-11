@@ -392,6 +392,7 @@ function mapProjectShellRow(
     defaultModelSelection: row.defaultModelSelection,
     defaultThreadEnvMode: row.defaultThreadEnvMode,
     autoPull: row.autoPull === 1,
+    worktreeRoot: row.worktreeRoot,
     faviconPath: row.faviconPath ?? null,
     projectIcon: row.projectIcon ?? null,
     scripts: row.scripts,
@@ -529,6 +530,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
+          worktree_root AS "worktreeRoot",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
@@ -537,6 +539,20 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           deleted_at AS "deletedAt"
         FROM projection_projects
         ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
+  // Deliberately not filtered by archived_at: archiving leaves the worktree on
+  // disk and the thread readable, so its diffs have to keep working.
+  const listThreadWorktreePathRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ worktreePath: Schema.String }),
+    execute: () =>
+      sql`
+        SELECT DISTINCT worktree_path AS "worktreePath"
+        FROM projection_threads
+        WHERE deleted_at IS NULL
+          AND worktree_path IS NOT NULL
       `,
   });
 
@@ -1080,6 +1096,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
+          worktree_root AS "worktreeRoot",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
@@ -1106,6 +1123,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           default_model_selection_json AS "defaultModelSelection",
           default_thread_env_mode AS "defaultThreadEnvMode",
           auto_pull AS "autoPull",
+          worktree_root AS "worktreeRoot",
           favicon_path AS "faviconPath",
           project_icon_json AS "projectIcon",
           scripts_json AS "scripts",
@@ -2207,6 +2225,7 @@ pending_approval_requests AS (
                 defaultModelSelection: row.defaultModelSelection,
                 defaultThreadEnvMode: row.defaultThreadEnvMode,
                 autoPull: row.autoPull === 1,
+                worktreeRoot: row.worktreeRoot,
                 faviconPath: row.faviconPath ?? null,
                 projectIcon: row.projectIcon ?? null,
                 scripts: row.scripts,
@@ -2374,6 +2393,7 @@ pending_approval_requests AS (
                   defaultModelSelection: row.defaultModelSelection,
                   defaultThreadEnvMode: row.defaultThreadEnvMode,
                   autoPull: row.autoPull === 1,
+                  worktreeRoot: row.worktreeRoot,
                   faviconPath: row.faviconPath ?? null,
                   projectIcon: row.projectIcon ?? null,
                   scripts: row.scripts,
@@ -2925,6 +2945,7 @@ pending_approval_requests AS (
                     defaultModelSelection: option.value.defaultModelSelection,
                     defaultThreadEnvMode: option.value.defaultThreadEnvMode,
                     autoPull: option.value.autoPull === 1,
+                    worktreeRoot: option.value.worktreeRoot,
                     faviconPath: option.value.faviconPath ?? null,
                     projectIcon: option.value.projectIcon ?? null,
                     scripts: option.value.scripts,
@@ -2934,6 +2955,18 @@ pending_approval_requests AS (
                   } satisfies OrchestrationProject),
                 ),
               ),
+        ),
+      );
+
+  const listThreadWorktreePaths: ProjectionSnapshotQueryShape["listThreadWorktreePaths"] =
+    () =>
+      listThreadWorktreePathRows().pipe(
+        Effect.map((rows) => rows.map((row) => row.worktreePath)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listThreadWorktreePaths:query",
+            "ProjectionSnapshotQuery.listThreadWorktreePaths:decodeRows",
+          ),
         ),
       );
 
@@ -3643,6 +3676,7 @@ pending_approval_requests AS (
     getCounts,
     getEventReplayStats,
     getActiveProjectByWorkspaceRoot,
+    listThreadWorktreePaths,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getImportedAgentSessionSources,

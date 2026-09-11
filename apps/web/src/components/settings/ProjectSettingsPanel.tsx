@@ -718,6 +718,43 @@ function ProjectDetail({
     (member) => member.physicalProjectKey === selectedCheckoutKey,
   );
   const selectedCheckout = selectedCheckoutMatch ?? representative;
+  // Per checkout rather than per group: the root is a filesystem path, so it is
+  // only meaningful on the machine that owns this checkout.
+  const checkoutWorktreeRoot = selectedCheckout.worktreeRoot ?? null;
+  const setCheckoutWorktreeRoot = useCallback(
+    async (nextRoot: string) => {
+      const trimmed = nextRoot.trim();
+      if (trimmed === (checkoutWorktreeRoot ?? "")) return;
+      // Caught here so a relative path reports itself instead of failing the write.
+      if (trimmed !== "" && !/^(?:~(?:$|[/\\])|\/|\\\\|[A-Za-z]:[/\\])/.test(trimmed)) {
+        toastManager.add({
+          type: "warning",
+          title: "Worktree location must be an absolute path",
+          description:
+            "Start it with /, ~/, a drive letter, or \\\\ so it does not depend on where the server runs.",
+        });
+        return;
+      }
+      const result = mapAtomCommandResult(
+        await updateProject({
+          environmentId: selectedCheckout.environmentId,
+          input: { projectId: selectedCheckout.id, worktreeRoot: trimmed === "" ? null : trimmed },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        reportFailure("Failed to update worktree location", result);
+      }
+    },
+    [
+      checkoutWorktreeRoot,
+      reportFailure,
+      selectedCheckout.environmentId,
+      selectedCheckout.id,
+      updateProject,
+    ],
+  );
+
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -1268,6 +1305,33 @@ function ProjectDetail({
               }
             />
           ) : null}
+          <SettingsRow
+            title="Worktree location"
+            description="Directory new worktrees for this checkout are created in, one per branch. Leave empty to use T3 Code's own worktrees directory. Existing worktrees stay where they are."
+            resetAction={
+              checkoutWorktreeRoot !== null ? (
+                <SettingResetButton
+                  label="checkout worktree location"
+                  onClick={() => void setCheckoutWorktreeRoot("")}
+                />
+              ) : null
+            }
+            control={
+              <Input
+                key={`${selectedCheckout.physicalProjectKey}:worktree-root:${checkoutWorktreeRoot ?? ""}`}
+                size="sm"
+                className="w-full sm:w-72"
+                aria-label="Worktree location"
+                placeholder="~/code/myrepo.worktrees"
+                spellCheck={false}
+                defaultValue={checkoutWorktreeRoot ?? ""}
+                onBlur={(event) => void setCheckoutWorktreeRoot(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            }
+          />
           <SettingsRow
             title="Project grouping"
             description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."

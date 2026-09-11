@@ -176,6 +176,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.succeed({ matches: [] }),
+        listThreadWorktreePaths: () => Effect.succeed([]),
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -263,6 +264,7 @@ it.effect.each([
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.succeed({ matches: [] }),
+        listThreadWorktreePaths: () => Effect.succeed([]),
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -332,6 +334,7 @@ it.effect(
           getThreadDetailById: () => Effect.die("unused"),
           getThreadDetailSnapshot: () => Effect.die("unused"),
           searchThreads: () => Effect.succeed({ matches: [] }),
+          listThreadWorktreePaths: () => Effect.succeed([]),
         }),
         Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
           readEvents: () => Stream.empty,
@@ -394,6 +397,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.succeed({ matches: [] }),
+        listThreadWorktreePaths: () => Effect.succeed([]),
       }),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
