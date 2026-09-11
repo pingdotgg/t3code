@@ -14,15 +14,16 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
+/** Removes inline formatting and link targets from the collapsed question preview. */
 function MarkdownText({ children }: { children?: ReactNode }) {
   return <>{children}</>;
 }
 
+/** Preserves word boundaries when block Markdown is flattened into inline card text. */
 function MarkdownBlockText({ children }: { children?: ReactNode }) {
   return <>{children} </>;
 }
 
-// Flatten block boundaries without joining words or adding layout to the card.
 const inlineMarkdownComponents = {
   p: MarkdownBlockText,
   h1: MarkdownBlockText,
@@ -69,6 +70,7 @@ const inlineMarkdownElements = [
 ];
 const remarkPlugins = [remarkGfm];
 
+/** Restricts option copy to inline Markdown; previews also remove inline styling and links. */
 const PendingUserInputMarkdown = memo(function PendingUserInputMarkdown({
   text,
   plainText = false,

@@ -75,6 +75,7 @@ const prompt: PendingUserInput = {
   dismissible: true,
 };
 
+/** Renders a pending question without mounting client effects for Markdown output assertions. */
 function renderPanel(pendingUserInput: PendingUserInput = prompt, isResponding = false) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
@@ -89,6 +90,7 @@ function renderPanel(pendingUserInput: PendingUserInput = prompt, isResponding =
   );
 }
 
+/** Mounts the card inside act so selection and auto-advance tests observe committed effects. */
 async function renderInteractivePanel(
   pendingUserInput: PendingUserInput,
   onToggleOption: (questionId: string, optionValue: string) => void,
@@ -111,6 +113,7 @@ async function renderInteractivePanel(
   return renderer;
 }
 
+/** Reads rendered text across Markdown wrappers for readable-preview assertions. */
 function textContent(node: ReactTestInstance): string {
   return node.children
     .map((child) => (typeof child === "string" ? child : textContent(child)))
