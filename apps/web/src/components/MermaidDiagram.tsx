@@ -173,7 +173,7 @@ export function MermaidDiagramDialog({
       if (!root) return;
       const controls = Array.from(
         root.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]):not([tabindex="-1"]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
         ),
       );
       if (controls.length === 0) return;
@@ -206,6 +206,7 @@ export function MermaidDiagramDialog({
         type="button"
         className="absolute inset-0 z-0 cursor-zoom-out"
         aria-label="Close diagram preview"
+        tabIndex={-1}
         onClick={onClose}
       />
       <div className="relative isolate z-10 flex max-h-[92vh] max-w-[92vw] flex-col">
