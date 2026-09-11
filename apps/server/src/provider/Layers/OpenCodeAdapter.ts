@@ -25,6 +25,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -221,7 +222,6 @@ interface OpenCodePromptAdmission {
   idleObservedAfterMessage: boolean;
   messageObserved: boolean;
   busyObserved: boolean;
-  idleStatusConfirmations: number;
   accepted: boolean;
   cancelled: boolean;
   readonly acceptance: Deferred.Deferred<void>;
@@ -1391,6 +1391,18 @@ export function makeOpenCodeAdapter(
             }
           }
 
+          if (
+            promptAdmission.messageObserved &&
+            promptAdmission.idleDuringAdmission === undefined &&
+            promptAdmission.priorIdle === undefined
+          ) {
+            // A persisted prompt proves admission, not completion. OpenCode can
+            // still report idle before its session loop starts processing it.
+            context.promptAdmission = undefined;
+            context.awaitingBusyAfterInterruption = false;
+            return;
+          }
+
           const statusResponse = yield* runOpenCodeSdk("session.status", (signal) =>
             context.client.session.status(undefined, { signal }),
           ).pipe(Effect.timeout("1 second"), Effect.option);
@@ -1414,7 +1426,6 @@ export function makeOpenCodeAdapter(
           const isBusy = status?.type === "busy" || status?.type === "retry";
           if (isBusy) {
             promptAdmission.busyObserved = true;
-            promptAdmission.idleStatusConfirmations = 0;
             context.awaitingBusyAfterInterruption = false;
             context.promptAdmission = undefined;
             return;
@@ -1429,39 +1440,6 @@ export function makeOpenCodeAdapter(
             context.promptAdmission = undefined;
             context.awaitingBusyAfterInterruption = false;
             yield* scheduleIdleReconciliation(context, promptAdmission.turnId, idle.raw);
-            return;
-          }
-          if (isIdle && promptAdmission.messageObserved) {
-            promptAdmission.idleStatusConfirmations += 1;
-            if (promptAdmission.idleStatusConfirmations >= 2) {
-              context.promptAdmission = undefined;
-              context.awaitingBusyAfterInterruption = false;
-              yield* completeOpenCodeTurn(
-                context,
-                promptAdmission.turnId,
-                promptAdmission.generation,
-                {
-                  type: "session.status.recovered",
-                  status: statusData,
-                },
-              );
-              return;
-            }
-          } else if (!isIdle) {
-            promptAdmission.idleStatusConfirmations = 0;
-          }
-          if (
-            isIdle &&
-            promptAdmission.messageObserved &&
-            promptAdmission.recoveryRaw !== undefined
-          ) {
-            context.promptAdmission = undefined;
-            context.awaitingBusyAfterInterruption = false;
-            yield* scheduleIdleReconciliation(
-              context,
-              promptAdmission.turnId,
-              promptAdmission.recoveryRaw,
-            );
             return;
           }
 
@@ -2183,8 +2161,70 @@ export function makeOpenCodeAdapter(
           if (context.turnTokenUsage) {
             context.turnTokenUsage.complete = false;
           }
+          const admission = context.promptAdmission;
           yield* schedulePromptAdmissionRecovery(context, event);
-          if (context.activeTurnId !== undefined && context.promptAdmission === undefined) {
+          if (admission) {
+            const recoveryFiber = admission.recoveryFiber;
+            yield* Effect.gen(function* () {
+              if (recoveryFiber) {
+                yield* Fiber.await(recoveryFiber);
+              }
+              const isCurrentPrompt = () =>
+                context.activeTurnId === admission.turnId &&
+                context.promptGeneration === admission.generation &&
+                context.promptAdmission === undefined;
+              if (!isCurrentPrompt()) {
+                return;
+              }
+              let warned = false;
+              // A user message alone can precede the session loop. An assistant
+              // reply proves this prompt started, so idle can recover a missed completion.
+              const response = yield* Effect.gen(function* () {
+                if (!isCurrentPrompt()) {
+                  return yield* Effect.interrupt;
+                }
+                return yield* runOpenCodeSdk("session.messages", (signal) =>
+                  context.client.session.messages(
+                    { sessionID: context.openCodeSessionId, limit: 1 },
+                    { signal },
+                  ),
+                ).pipe(Effect.timeout("1 second"), Effect.retry({ times: 1 }));
+              }).pipe(
+                Effect.tapError((cause) =>
+                  Effect.gen(function* () {
+                    if (warned || !isCurrentPrompt()) return;
+                    warned = true;
+                    yield* emit({
+                      ...(yield* buildEventBase({
+                        threadId: context.session.threadId,
+                        turnId: admission.turnId,
+                      })),
+                      type: "runtime.warning",
+                      payload: {
+                        message: "OpenCode turn completion is waiting for message history.",
+                        detail: openCodeRuntimeErrorDetail(cause),
+                      },
+                    });
+                  }),
+                ),
+                Effect.retry({
+                  while: isCurrentPrompt,
+                  schedule: Schedule.min([
+                    Schedule.exponential("250 millis"),
+                    Schedule.spaced("5 seconds"),
+                  ]),
+                }),
+              );
+              const message = response.data?.at(-1)?.info;
+              if (
+                message?.role === "assistant" &&
+                message.parentID === admission.messageId &&
+                isCurrentPrompt()
+              ) {
+                yield* scheduleIdleReconciliation(context, admission.turnId, event);
+              }
+            }).pipe(Effect.ignore({ log: true }), Effect.forkIn(context.sessionScope));
+          } else if (context.activeTurnId !== undefined) {
             yield* scheduleIdleReconciliation(context, context.activeTurnId, event);
           }
         }
@@ -3156,7 +3196,6 @@ export function makeOpenCodeAdapter(
             idleObservedAfterMessage: false,
             messageObserved: false,
             busyObserved: false,
-            idleStatusConfirmations: 0,
             accepted: false,
             cancelled: false,
             acceptance: Deferred.makeUnsafe<void>(),
