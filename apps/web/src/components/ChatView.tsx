@@ -3359,18 +3359,21 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
-  if (
-    !threadDetailLoading &&
-    timelineEntries.length > 0 &&
-    !timelineHasEphemeralPreviewUrls(timelineEntries)
-  ) {
+  useLayoutEffect(() => {
+    if (
+      threadDetailLoading ||
+      timelineEntries.length === 0 ||
+      timelineHasEphemeralPreviewUrls(timelineEntries)
+    ) {
+      return;
+    }
     rememberReadyThreadTimeline({
       threadKey: activeThreadKey,
       entries: timelineEntries,
       markdownCwd: gitCwd,
       workspaceRoot: activeWorkspaceRoot ?? null,
     });
-  }
+  }, [activeThreadKey, activeWorkspaceRoot, gitCwd, threadDetailLoading, timelineEntries]);
   const heldPaintContext = paintOnlyDisplayedTimeline
     ? peekHeldThreadTimeline<typeof timelineEntries>()
     : null;
