@@ -7,6 +7,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -73,6 +74,8 @@ export class EventStoreV2 extends Context.Service<EventStoreV2, EventStoreV2Shap
   "t3/orchestration-v2/EventStore/EventStoreV2",
 ) {}
 
+const READ_BY_COMMAND_PAGE_SIZE = 1_000;
+
 const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore> = Layer.effect(
   EventStoreV2,
   Effect.gen(function* () {
@@ -114,9 +117,26 @@ const baseLayer: Layer.Layer<EventStoreV2, never, OrchestrationEventStore> = Lay
         ),
       read,
       readByCommandId: ({ commandId }) =>
-        applicationEvents
-          .readAgentEvents({ commandId })
-          .pipe(Stream.mapError((cause) => new EventStoreReadEventsError({ cause }))),
+        Stream.paginate(0, (afterSequence) =>
+          applicationEvents
+            .readAgentEvents({
+              commandId,
+              afterSequence,
+              limit: READ_BY_COMMAND_PAGE_SIZE,
+            })
+            .pipe(
+              Stream.runCollect,
+              Effect.map((events) => {
+                const last = events.at(-1);
+                return [
+                  events,
+                  last === undefined || events.length < READ_BY_COMMAND_PAGE_SIZE
+                    ? Option.none()
+                    : Option.some(last.sequence),
+                ] as const;
+              }),
+            ),
+        ).pipe(Stream.mapError((cause) => new EventStoreReadEventsError({ cause }))),
       latestSequence: (input) =>
         applicationEvents.latestAgentSequence(input?.threadId).pipe(
           Effect.mapError(

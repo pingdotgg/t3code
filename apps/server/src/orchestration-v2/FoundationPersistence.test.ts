@@ -345,6 +345,92 @@ it.effect("keeps other database work runnable while discovering compaction candi
   ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("replays every matching command event across persistence pages", () =>
+  Effect.gen(function* () {
+    const eventStore = yield* EventStoreV2;
+    const now = yield* DateTime.now;
+    const eventIds = (commandId: CommandId) =>
+      eventStore.readByCommandId({ commandId }).pipe(
+        Stream.runCollect,
+        Effect.map((events) => Array.from(events, (stored) => stored.event.id)),
+      );
+
+    assert.deepEqual(
+      yield* eventIds(CommandId.make("command:foundation-command-replay-empty")),
+      [],
+    );
+
+    const singleCommandId = CommandId.make("command:foundation-command-replay-single");
+    const singleThread = makeThread(ThreadId.make("thread:foundation-command-replay-single"), now);
+    yield* eventStore.append({
+      commandId: singleCommandId,
+      events: [
+        threadCreatedEvent({
+          id: "event:foundation-command-replay-single:0",
+          thread: singleThread,
+          now,
+        }),
+      ],
+    });
+    assert.deepEqual(yield* eventIds(singleCommandId), [
+      EventId.make("event:foundation-command-replay-single:0"),
+    ]);
+
+    const commandId = CommandId.make("command:foundation-command-replay");
+    const otherCommandId = CommandId.make("command:foundation-command-replay-other");
+    const threadId = ThreadId.make("thread:foundation-command-replay");
+    const thread = makeThread(threadId, now);
+    const otherThread = makeThread(ThreadId.make("thread:foundation-command-replay-other"), now);
+    const matchingCount = 1_001;
+    const matchingEvents = Array.from({ length: matchingCount }, (_, index) =>
+      index === 0
+        ? threadCreatedEvent({
+            id: `event:foundation-command-replay:${index}`,
+            thread,
+            now,
+          })
+        : {
+            id: EventId.make(`event:foundation-command-replay:${index}`),
+            type: "thread.metadata-updated" as const,
+            threadId,
+            occurredAt: now,
+            payload: { ...thread, title: `Command replay ${index}` },
+          },
+    );
+
+    yield* eventStore.append({ commandId, events: matchingEvents.slice(0, 500) });
+    yield* eventStore.append({
+      commandId: otherCommandId,
+      events: [
+        threadCreatedEvent({
+          id: "event:foundation-command-replay-other:0",
+          thread: otherThread,
+          now,
+        }),
+      ],
+    });
+    yield* eventStore.append({ commandId, events: matchingEvents.slice(500, 1_000) });
+    yield* eventStore.append({
+      commandId: otherCommandId,
+      events: [
+        {
+          id: EventId.make("event:foundation-command-replay-other:1"),
+          type: "thread.metadata-updated" as const,
+          threadId: otherThread.id,
+          occurredAt: now,
+          payload: { ...otherThread, title: "Other command" },
+        },
+      ],
+    });
+    yield* eventStore.append({ commandId, events: matchingEvents.slice(1_000) });
+
+    assert.deepEqual(
+      yield* eventIds(commandId),
+      matchingEvents.map((event) => event.id),
+    );
+  }).pipe(Effect.provide(eventStoreProvided)),
+);
+
 it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
   it.effect("projects oversized tool bodies before both replay and live RPC retention", () =>
     Effect.scoped(
