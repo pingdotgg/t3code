@@ -1,0 +1,57 @@
+name: Format PR 9212 repair
+
+on:
+  push:
+    branches:
+      - fix/unknown-provider-pr-polling
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: fix/unknown-provider-pr-polling
+
+      - name: Format and validate repaired files
+        shell: bash
+        run: |
+          set -euo pipefail
+          export VP_BIN_DIR="$HOME/.local/share/vite-plus/bin"
+          export VP_DATA_DIR="$HOME/.local/share/vite-plus"
+          export VP_CACHE_DIR="$HOME/.cache/vite-plus"
+          installer="$(mktemp)"
+          curl -fsSL https://vite.plus -o "$installer"
+          VP_NODE_MANAGER=no bash "$installer"
+          rm -f "$installer"
+          export PATH="$VP_BIN_DIR:$PATH"
+
+          vp fmt apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts
+
+          python3 <<'PY'
+          from pathlib import Path
+          text = Path("apps/server/src/git/GitManager.ts").read_text()
+          required = [
+              'cached.value.outcome._tag === "Complete"',
+              'cached.value.outcome.latest === null',
+              'Effect.andThen(resolveLookupHeadContext(cwd, details))',
+              'if (outcome._tag === "ProviderUnknown")',
+              'const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);',
+          ]
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f"missing required merged behavior: {missing}")
+          PY
+
+          rm -f .github/workflows/repair-pr-9212-format.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check -- apps/server/src/git/GitManager.ts apps/server/src/git/GitManager.test.ts
+          git commit -m "style(server): format PR lookup conflict resolution"
+          git push origin HEAD:fix/unknown-provider-pr-polling
