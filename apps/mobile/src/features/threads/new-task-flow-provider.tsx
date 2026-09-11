@@ -141,6 +141,7 @@ type NewTaskFlowContextValue = {
   readonly selectedProjectKey: string | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
+  readonly defaultWorkspaceModeSettled: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
@@ -1123,6 +1124,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProjectKey,
       selectedModelKey,
       workspaceMode,
+      defaultWorkspaceModeSettled,
       selectedBranchName,
       selectedWorktreePath,
       startFromOrigin,
@@ -1228,6 +1230,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       startFromOrigin,
       submitting,
       workspaceMode,
+      defaultWorkspaceModeSettled,
       appendAttachments,
       clearAttachments,
       removeAttachment,

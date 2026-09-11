@@ -91,6 +91,7 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { resolveNewTaskSendAction } from "./newTaskSendAction";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
@@ -961,8 +962,7 @@ export function NewTaskDraftScreen(props: {
       attachmentBlockReason !== null ||
       !modelSelection ||
       initialMessageText.length === 0 ||
-      flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      flow.submitting
     ) {
       return;
     }
@@ -990,6 +990,23 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
+    // Auto-use a resolvable base branch (an explicit picker choice, else the
+    // current/default ref the label already shows) so a worktree send never
+    // dead-ends. When nothing resolves, route the tap to the picker instead of
+    // sending — never silently fall back to local. This sits before the offline
+    // enqueue branch so an offline worktree without a branch prompts rather than
+    // queuing a task that could never drain.
+    const resolvedBranch = selectedBranchName ?? availableCurrentBranchName;
+    if (
+      resolveNewTaskSendAction({
+        workspaceMode,
+        resolvedBranch,
+        workspaceModeSettled: flow.defaultWorkspaceModeSettled,
+      }) === "pick-branch"
+    ) {
+      openContextPicker("NewTaskBranch");
+      return;
+    }
     // A failed-send restore can leave the draft over the cap on purpose (it
     // never drops the user's files); starting anyway would upload everything
     // and have the server reject the turn.
@@ -1002,6 +1019,18 @@ export function NewTaskDraftScreen(props: {
     }
 
     const editingPendingTask = flow.editingPendingTask;
+
+    // Commit the resolved base branch into the draft before building the queued
+    // message. resolveProjectThreadCreationBranch yields null for a worktree
+    // that has no explicit pick, so without this a worktree task would record no
+    // base branch and could never drain. The send-action routing above already
+    // guarantees resolvedBranch is non-null here for a worktree send.
+    if (workspaceMode === "worktree" && selectedBranchName !== resolvedBranch) {
+      const resolvedRef = flow.availableBranches.find((ref) => ref.name === resolvedBranch);
+      if (resolvedRef) {
+        flow.selectBranch(resolvedRef);
+      }
+    }
 
     // Every submission goes through the outbox: the drain uploads the
     // attachments and delivers the creation, retrying across reconnects.
@@ -1101,8 +1130,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    !voiceInput.blocksSubmission &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+    !voiceInput.blocksSubmission;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
