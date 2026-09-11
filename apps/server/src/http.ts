@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -84,6 +85,38 @@ export function downloadContentDisposition(fileName?: string): string {
   return `attachment; filename="${asciiFallback}"${
     needsExtended ? `; filename*=UTF-8''${extendedName}` : ""
   }`;
+}
+
+const AMZ_DATE_PATTERN = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+
+/** When a SigV4 query-signed URL stops working, in epoch milliseconds, or null if unreadable. */
+function signedUrlExpiry(location: string): number | null {
+  let params: URLSearchParams;
+  try {
+    params = new URL(location).searchParams;
+  } catch {
+    return null;
+  }
+  const date = AMZ_DATE_PATTERN.exec(params.get("X-Amz-Date") ?? "");
+  const expires = Number(params.get("X-Amz-Expires"));
+  if (date === null || !Number.isFinite(expires)) return null;
+  const [, year, month, day, hour, minute, second] = date.map(Number);
+  const signedAt = Date.UTC(year!, month! - 1, day!, hour!, minute!, second!);
+  return Number.isFinite(signedAt) ? signedAt + expires * 1000 : null;
+}
+
+/**
+ * A redirect to a signed download can be reused until shortly before the
+ * signature expires, so remounting a document does not refetch every image.
+ * The lifetime counts from the signing date, not from now. Targets without a
+ * readable expiry are never cached.
+ */
+export function assetRedirectHeaders(location: string, now: number): Record<string, string> {
+  const expiresAt = signedUrlExpiry(location);
+  const maxAge = expiresAt === null ? 0 : Math.floor((expiresAt - now) / 1000) - 60;
+  return {
+    "Cache-Control": maxAge > 0 ? `private, max-age=${maxAge}` : "private, no-store",
+  };
 }
 
 export function assetResponseHeaders(
@@ -387,6 +420,12 @@ export const assetRouteLayer = HttpRouter.add(
     );
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    if (asset.kind === "redirect") {
+      return HttpServerResponse.redirect(asset.location, {
+        status: 302,
+        headers: assetRedirectHeaders(asset.location, yield* Clock.currentTimeMillis),
+      });
     }
     return yield* assetFileResponse(
       asset,

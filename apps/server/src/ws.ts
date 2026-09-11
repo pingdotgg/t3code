@@ -2460,6 +2460,7 @@ const makeWsRpcLayer = (
               if (
                 input.resource._tag === "attachment" ||
                 input.resource._tag === "native-app-icon" ||
+                input.resource._tag === "github-attachment" ||
                 (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
               ) {
                 return yield* issueAssetUrl({ resource: input.resource });

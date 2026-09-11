@@ -48,6 +48,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
 import * as ServerConfig from "../config.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as GitHubAttachmentResolver from "./GitHubAttachmentResolver.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 
@@ -133,6 +134,12 @@ const AssetClaimsSchema = Schema.Union([
     app: ToolActivityNativeAppReference,
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("github-attachment"),
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -140,14 +147,17 @@ const AssetClaimsJson = Schema.fromJsonString(AssetClaimsSchema);
 const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
-export type ResolvedAsset = {
-  readonly kind: "file";
-  readonly path: string;
-  readonly download?: boolean;
-  readonly fileName?: string;
-  readonly mimeType?: string;
-  readonly file?: OpenMediaFile;
-};
+export type ResolvedAsset =
+  | {
+      readonly kind: "file";
+      readonly path: string;
+      readonly download?: boolean;
+      readonly fileName?: string;
+      readonly mimeType?: string;
+      readonly file?: OpenMediaFile;
+    }
+  // The bytes live elsewhere; the client is sent to a URL that is valid for a short time.
+  | { readonly kind: "redirect"; readonly location: string };
 
 function decodeClaims(encodedPayload: string): AssetClaims | null {
   try {
@@ -577,6 +587,16 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "github-attachment": {
+      claims = {
+        version: 1,
+        kind: "github-attachment",
+        url: input.resource.url,
+        expiresAt,
+      };
+      fileName = input.resource.url.slice(input.resource.url.lastIndexOf("/") + 1);
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -681,6 +701,12 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     const nativeAppIconResolver = yield* NativeAppIconResolver.NativeAppIconResolver;
     const iconPath = yield* nativeAppIconResolver.resolve(claims.app);
     return iconPath ? ({ kind: "file", path: iconPath } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "github-attachment") {
+    const attachmentResolver = yield* GitHubAttachmentResolver.GitHubAttachmentResolver;
+    const location = yield* attachmentResolver.resolve(claims.url);
+    return location ? ({ kind: "redirect", location } satisfies ResolvedAsset) : null;
   }
 
   const decodedPath = decodeRelativePath(relativePath);

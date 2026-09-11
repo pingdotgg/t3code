@@ -244,6 +244,32 @@ describe("ChatMarkdown workspace images", () => {
     expect(render(markdown)).not.toContain("aspect-video");
   });
 
+  it("loads a GitHub upload through the environment and keeps its authored id", () => {
+    const url = "https://github.com/user-attachments/assets/0b1f6f2e-3c4d-4e5f-8a9b-0c1d2e3f4a5b";
+    const html = render(`<img id="shot" src="${url}" alt="shot">`);
+
+    expect(testState.resources).toEqual([{ _tag: "github-attachment", url }]);
+    expect(html).toContain('id="user-content-shot"');
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("loads the authored GitHub link when the environment cannot mint a URL for it", () => {
+    const url = "https://github.com/user-attachments/assets/0b1f6f2e-3c4d-4e5f-8a9b-0c1d2e3f4a5b";
+    testState.assetState = "failure";
+    const html = render(`![shot](${url})`);
+
+    expect(html).toContain(`src="${url}"`);
+    expect(html).not.toContain("Image unavailable");
+  });
+
+  it("loads a GitHub upload directly when no environment is known", () => {
+    const url = "https://github.com/user-attachments/assets/0b1f6f2e-3c4d-4e5f-8a9b-0c1d2e3f4a5b";
+    const html = renderWithoutThread(`![shot](${url})`);
+
+    expect(testState.resources).toEqual([]);
+    expect(html).toContain(`src="${url}"`);
+  });
+
   it("keeps an authored id on a remote image so fragment links resolve", () => {
     const html = render('<img id="diagram" src="https://example.com/diagram.png" alt="diagram">');
 

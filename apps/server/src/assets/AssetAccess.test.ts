@@ -22,6 +22,7 @@ import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import * as GitHubAttachmentResolver from "./GitHubAttachmentResolver.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -43,10 +44,44 @@ const testLayer = Layer.mergeAll(
     Layer.provide(T3ProjectFileLoader.layer),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(configLayer)),
+  Layer.succeed(GitHubAttachmentResolver.GitHubAttachmentResolver, {
+    resolve: (url) =>
+      Effect.succeed(
+        url.endsWith("missing")
+          ? null
+          : `https://signed.example/download?for=${encodeURIComponent(url)}`,
+      ),
+  }),
   ServerSecretStore.layer.pipe(Layer.provide(configLayer)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
+function splitAssetUrl(relativeUrl: string): { token: string; name: string } {
+  const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+  const separator = suffix.indexOf("/");
+  return { token: suffix.slice(0, separator), name: suffix.slice(separator + 1) };
+}
+
 describe("AssetAccess", () => {
+  it.effect("redirects a GitHub attachment to the download its resolver found", () =>
+    Effect.gen(function* () {
+      const url = "https://github.com/user-attachments/assets/0b1f6f2e-3c4d-4e5f-8a9b-0c1d2e3f4a5b";
+      const issued = yield* issueAssetUrl({ resource: { _tag: "github-attachment", url } });
+      const { token, name } = splitAssetUrl(issued.relativeUrl);
+      expect(name).toBe("0b1f6f2e-3c4d-4e5f-8a9b-0c1d2e3f4a5b");
+      expect(yield* resolveAsset(token, name)).toEqual({
+        kind: "redirect",
+        location: `https://signed.example/download?for=${encodeURIComponent(url)}`,
+      });
+      expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+
+      const missing = yield* issueAssetUrl({
+        resource: { _tag: "github-attachment", url: `${url}-missing` },
+      });
+      const missingUrl = splitAssetUrl(missing.relativeUrl);
+      expect(yield* resolveAsset(missingUrl.token, missingUrl.name)).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -228,7 +263,7 @@ describe("AssetAccess", () => {
             suffix.slice(0, separator),
             suffix.slice(separator + 1),
           );
-          if (!asset) throw new Error("Expected a resolved media file");
+          if (asset?.kind !== "file") throw new Error("Expected a resolved media file");
 
           yield* fs.rename(filePath, savedPath);
           yield* fs.symlink(secretPath, filePath);
@@ -391,7 +426,7 @@ describe("AssetAccess", () => {
       const name = suffix.slice(separator + 1);
       yield* fs.writeFileString(filePath, "in-place edit");
       const edited = yield* resolveAsset(token, name);
-      if (!edited) throw new Error("Expected the edited media file");
+      if (edited?.kind !== "file") throw new Error("Expected the edited media file");
       const editedResponse = HttpServerResponse.toWeb(yield* assetFileResponse(edited));
       expect(yield* Effect.promise(() => editedResponse.text())).toBe("in-place edit");
 
@@ -407,7 +442,7 @@ describe("AssetAccess", () => {
         renewedSuffix.slice(0, renewedSeparator),
         renewedSuffix.slice(renewedSeparator + 1),
       );
-      if (!renewedAsset) throw new Error("Expected the replacement media file");
+      if (renewedAsset?.kind !== "file") throw new Error("Expected the replacement media file");
       const renewedResponse = HttpServerResponse.toWeb(yield* assetFileResponse(renewedAsset));
       expect(yield* Effect.promise(() => renewedResponse.text())).toBe("replacement");
       yield* fs.remove(filePath);

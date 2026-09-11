@@ -11,6 +11,17 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
+/**
+ * An upload dropped into a GitHub pull request or issue. GitHub serves it only
+ * to a signed-in reader when the repository is private, so a browser cannot
+ * load it from the bare link the markdown carries.
+ */
+const GITHUB_ATTACHMENT_URL_PATTERN = /^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu;
+
+export function isGitHubAttachmentUrl(url: string): boolean {
+  return GITHUB_ATTACHMENT_URL_PATTERN.test(url);
+}
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -43,6 +54,14 @@ export const AssetResource = Schema.Union([
   }),
   Schema.TaggedStruct("native-app-icon", {
     app: ToolActivityNativeAppReference,
+  }),
+  // Resolved with the environment's GitHub credentials; the signed URL redirects
+  // to GitHub's own time-limited download instead of proxying the bytes.
+  Schema.TaggedStruct("github-attachment", {
+    url: TrimmedNonEmptyString.check(
+      Schema.isMaxLength(ASSET_PATH_MAX_LENGTH),
+      Schema.isPattern(GITHUB_ATTACHMENT_URL_PATTERN),
+    ),
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
