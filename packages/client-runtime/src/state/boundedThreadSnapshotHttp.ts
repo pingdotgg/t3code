@@ -34,12 +34,13 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
+    group: "orchestration",
     method: "GET",
     url: (httpBaseUrl) =>
       environmentEndpointUrl(httpBaseUrl, `/api/orchestration/threads/${input.threadId}/bounded`),
     timeoutMs: input.timeoutMs ?? DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
-      client.orchestration.threadBoundedSnapshot({
+      client.threadBoundedSnapshot({
         params: { threadId: input.threadId },
         headers: withOrchestrationProtocolHeader(headers),
       }),

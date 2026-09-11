@@ -1,3 +1,4 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   type ChatAttachment,
   CommandId,
@@ -220,7 +221,10 @@ const make = Effect.gen(function* () {
         return { type: "complete" as const };
       }
 
-      const settings = yield* serverSettings.getSettings;
+      const settings = resolveProjectSettings(
+        yield* serverSettings.getSettings,
+        projection.thread.projectId,
+      ).settings;
       const result = yield* textGeneration.generateThreadTitle({
         cwd: projection.thread.worktreePath ?? project.value.workspaceRoot,
         message: context.message,

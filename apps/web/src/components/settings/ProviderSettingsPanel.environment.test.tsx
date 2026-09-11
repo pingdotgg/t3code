@@ -35,6 +35,7 @@ const settingsState = vi.hoisted(() => ({
   mutationEnvironmentIds: [] as EnvironmentId[],
   updateSettings: vi.fn(),
   mutateProviderInstance: vi.fn(),
+  updateClientSettings: vi.fn(),
 }));
 
 const settingsSearchState = vi.hoisted(() => ({
@@ -95,6 +96,7 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
+  useUpdateClientSettings: () => settingsState.updateClientSettings,
   useEnvironmentSettings: (environmentId: EnvironmentId) => {
     settingsState.readEnvironmentIds.push(environmentId);
     return settingsState.value;
@@ -200,6 +202,7 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.updateEnvironmentIds = [];
     settingsState.mutationEnvironmentIds = [];
     settingsState.updateSettings.mockReset();
+    settingsState.updateClientSettings.mockReset();
     settingsSearchState.targetId = null;
     settingsSearchState.effects = [];
     settingsState.mutateProviderInstance
@@ -259,6 +262,30 @@ describe("EnvironmentProviderSettings routing", () => {
     const panel = renderPanel({ targetInstanceId: customId });
     const editor = visitElements(panel, (element) => element.props.mode === "editor");
     expect(editor?.props.instanceId).toBe(customId);
+  });
+
+  it.each([
+    ["onFavoriteModelsChange", { favorites: [{ provider: codexId, model: "chosen" }] }],
+    [
+      "onHiddenModelsChange",
+      { providerModelPreferences: { [codexId]: { hiddenModels: ["chosen"], modelOrder: [] } } },
+    ],
+    [
+      "onModelOrderChange",
+      { providerModelPreferences: { [codexId]: { hiddenModels: [], modelOrder: ["chosen"] } } },
+    ],
+  ])("saves %s on this device without changing the selected server", (action, expected) => {
+    atoms.providers = [provider()];
+    const panel = renderPanel();
+    const editor = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    expect(editor).not.toBeNull();
+    if (!editor) throw new Error("Provider editor was not rendered");
+    (editor.props[action] as (models: string[]) => void)(["chosen"]);
+    expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("does not substitute another account when the requested instance was removed", () => {

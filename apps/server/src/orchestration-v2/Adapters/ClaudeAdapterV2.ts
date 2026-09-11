@@ -736,8 +736,11 @@ export function makeClaudeQueryOptions(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
-  const extraArgs =
-    input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  const {
+    "permission-mode": launchArgPermissionMode,
+    "dangerously-skip-permissions": launchArgSkipPermissions,
+    ...extraArgs
+  } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
@@ -762,7 +765,11 @@ export function makeClaudeQueryOptions(input: {
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
-    permissionMode: input.permissionMode ?? "default",
+    permissionMode:
+      (launchArgPermissionMode as PermissionMode | null | undefined) ??
+      (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
+        ? "bypassPermissions"
+        : (input.permissionMode ?? "default")),
     includePartialMessages: true,
     ...(compiledSelection.effort === undefined
       ? {}
