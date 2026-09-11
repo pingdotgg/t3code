@@ -35,7 +35,7 @@ export interface ResizableWidthHandlers {
 
 /**
  * Width state for a side-anchored panel resized via a drag handle on the
- * specified edge. Width is read from localStorage on mount and persisted on
+ * specified edge. Width is read on mount or storage-key changes and persisted on
  * drag-end (not on every rAF tick — would otherwise be ~60 writes/sec).
  *
  * The hook updates an internal `width` state during drag (so the panel
@@ -57,7 +57,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   );
 
   // No cross-tab subscription: panel width is per-window state.
-  const [width, setWidth] = useState<number>(() => {
+  const readWidth = () => {
     if (typeof window === "undefined") return defaultWidth;
     try {
       const stored = getLocalStorageItem(storageKey, WidthSchema);
@@ -66,9 +66,15 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       console.error("Could not read persisted panel width.", error);
       return defaultWidth;
     }
-  });
+  };
+  const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
+  // The panel stays mounted across threads. Load the new thread's width before
+  // committing its first render, without remounting its preview or terminal.
+  if (widthState.storageKey !== storageKey) {
+    setWidthState({ storageKey, width: readWidth() });
+  }
 
-  const clampedWidth = clamp(width);
+  const clampedWidth = clamp(widthState.width);
 
   const dragStateRef = useRef<{
     pointerId: number;
@@ -102,8 +108,8 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     const state = dragStateRef.current;
     if (!state) return;
     releasePointer(state.pointerId);
-    setWidth(state.startWidth);
-  }, [releasePointer]);
+    setWidthState({ storageKey, width: state.startWidth });
+  }, [releasePointer, storageKey]);
 
   useEffect(() => {
     window.addEventListener("blur", cancelDrag);
@@ -151,10 +157,10 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
         const active = dragStateRef.current;
         if (!active) return;
         active.rafId = null;
-        setWidth(active.pending);
+        setWidthState({ storageKey, width: active.pending });
       });
     },
-    [clamp, edge],
+    [clamp, edge, storageKey],
   );
 
   const onPointerUp = useCallback(
@@ -169,7 +175,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       } catch (error) {
         console.error("Could not persist panel width.", error);
       }
-      setWidth(finalWidth);
+      setWidthState({ storageKey, width: finalWidth });
     },
     [clamp, releasePointer, storageKey],
   );
