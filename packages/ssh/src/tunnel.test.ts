@@ -149,6 +149,7 @@ describe("ssh tunnel scripts", () => {
       'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
     assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
+    assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 180 ]; then');
     assert.equal(script.split("if ! t3_runtime_ready; then").length - 1, 2);
     assert.isBelow(
       script.indexOf('"$T3_STAGING/t3" --version'),
@@ -318,6 +319,33 @@ describe("ssh tunnel scripts", () => {
       const fiber = yield* Effect.forkChild(launchOrReuseRemoteServer(target));
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(75));
+
+      const result = yield* Fiber.join(fiber);
+      assert.equal(result.remotePort, 3774);
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("gives cold archive launches a larger budget than npm launches", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeDelayedSuccessfulProcess('{"remotePort":3774}\n', 200_000)),
+    );
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(
+        launchOrReuseRemoteServer(target, undefined, {
+          archiveVersion: "1.2.3-preview.20260911.4",
+        }),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(200));
 
       const result = yield* Fiber.join(fiber);
       assert.equal(result.remotePort, 3774);

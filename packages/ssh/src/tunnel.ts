@@ -57,6 +57,10 @@ const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+// A cold archive launch also downloads and unpacks a ~70 MB release archive
+// and may wait on another installer's lock, so it gets a larger budget.
+const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 300_000;
+const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 180;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 
 export interface RemoteT3RunnerOptions {
@@ -435,7 +439,7 @@ if [ -n "$T3_ARCHIVE_VERSION" ]; then
         rm -rf "$T3_LOCK"
         continue
       fi
-      if [ "$T3_LOCK_WAITED" -ge 600 ]; then
+      if [ "$T3_LOCK_WAITED" -ge @@T3_ARCHIVE_LOCK_WAIT_SECONDS@@ ]; then
         printf 'Another t3 %s installation has held %s for too long.\\n' "$T3_ARCHIVE_VERSION" "$T3_LOCK" >&2
         exit 1
       fi
@@ -775,6 +779,7 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
       T3_ARCHIVE_VERSION: shellSingleQuote(archiveVersion),
       T3_RELEASE_BASE_URL: shellSingleQuote(releaseBaseUrl),
+      T3_ARCHIVE_LOCK_WAIT_SECONDS: String(REMOTE_ARCHIVE_LOCK_WAIT_SECONDS),
       T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     }),
   );
@@ -844,7 +849,9 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-l", "-s", "--", remoteStateKey(target)],
       stdin: buildRemoteLaunchScript(runner),
-      timeoutMs: REMOTE_LAUNCH_TIMEOUT_MS,
+      timeoutMs: runner?.archiveVersion?.trim()
+        ? REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS
+        : REMOTE_LAUNCH_TIMEOUT_MS,
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
