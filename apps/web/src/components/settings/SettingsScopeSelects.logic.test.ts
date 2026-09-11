@@ -2,6 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  environmentAxisValue,
   projectAxisValue,
   selectEnvironmentAxis,
   selectProjectAxis,
@@ -75,5 +76,13 @@ describe("settings scope axes", () => {
       machine: "second",
     });
     expect(selectProjectAxis(checkout, "app")).toEqual({ project: "app", machine: "first" });
+  });
+});
+
+describe("environmentAxisValue", () => {
+  it("shows the checkout's environment for a legacy checkout link", () => {
+    expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
+    expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
+    expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
   });
 });

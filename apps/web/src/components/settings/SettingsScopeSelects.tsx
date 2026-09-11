@@ -45,10 +45,13 @@ export function SettingsScopeSelects({
   onChange: (next: SettingsScopeSearch) => void;
 }) {
   const resolved = resolveSettingsScope(value, groups, environments);
-  const environmentValue = environmentAxisValue(value);
+  const environmentValue = environmentAxisValue(
+    value,
+    resolved.kind === "checkout" ? resolved.environmentId : null,
+  );
   const projectValue = projectAxisValue(value);
   const selectedEnvironment = environments.find(
-    (environment) => environment.environmentId === value.machine,
+    (environment) => environment.environmentId === environmentValue,
   );
   const selectedGroup = groups.find((group) => group.projectKey === value.project);
 
@@ -75,7 +78,7 @@ export function SettingsScopeSelects({
               <span className="truncate">
                 {selectedEnvironment
                   ? settingsScopeEnvironmentLabel(selectedEnvironment, environments)
-                  : value.machine
+                  : environmentValue !== ALL_ENVIRONMENTS_VALUE
                     ? "Unavailable environment"
                     : "All environments"}
               </span>

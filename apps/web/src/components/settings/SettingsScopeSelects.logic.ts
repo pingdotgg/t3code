@@ -19,9 +19,15 @@ export function settingsScopeEnvironmentLabel(
 export const ALL_ENVIRONMENTS_VALUE = "all";
 export const ALL_PROJECTS_VALUE = "all";
 
-/** The environment axis: `all` or an environment id. */
-export function environmentAxisValue(search: SettingsScopeSearch): string {
-  return search.machine ?? ALL_ENVIRONMENTS_VALUE;
+/**
+ * The environment axis: `all` or an environment id. A legacy checkout link
+ * without `machine` still names one environment, which the resolver supplies.
+ */
+export function environmentAxisValue(
+  search: SettingsScopeSearch,
+  resolvedEnvironmentId?: string | null,
+): string {
+  return search.machine ?? resolvedEnvironmentId ?? ALL_ENVIRONMENTS_VALUE;
 }
 
 /** The project axis: `all` or a project key. */
