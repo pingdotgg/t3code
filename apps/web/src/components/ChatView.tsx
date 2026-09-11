@@ -7,6 +7,7 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
+import { usageLimitBannerItem as usageLimitBannerItemFor } from "./chat/ComposerUsageLimit";
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import {
   questionAttachmentDraftId,
@@ -1812,6 +1813,14 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
+  // A usage-limit failure is not a broken thread; the banner calms to a
+  // reached-your-limit notice with the window countdown instead of the raw
+  // provider error.
+  const usageLimitResetsAt =
+    activeServerThread?.session?.status === "error" &&
+    activeServerThread.session.lastErrorKind === "usage_limit"
+      ? (activeServerThread.session.lastErrorResetsAt ?? null)
+      : null;
   // Dismissals can only mask the shown error, never clear it: a server thread
   // keeps its error in session.lastError, so clearing the local shadow would
   // just fall through to the persisted one. Mask the current error until a
@@ -5853,6 +5862,65 @@ export default function ChatView(props: ChatViewProps) {
     isUnsnoozing,
     isUnsettling,
   ]);
+  // A usage-limit failure parks this thread; the card explains the window and
+  // owns the auto-resume toggle. `session.lastErrorKind === "usage_limit"`
+  // carries the failure class and `lastErrorResetsAt` the window end; the
+  // armed state lives in `usageLimitResumeAt` on the thread shell.
+  const armUsageResumeMutation = useAtomCommand(threadEnvironment.armUsageResume, {
+    reportFailure: false,
+  });
+  const disarmUsageResumeMutation = useAtomCommand(threadEnvironment.disarmUsageResume, {
+    reportFailure: false,
+  });
+  const usageLimitFailure = activeThread?.session ?? null;
+  const isUsageLimitFailed =
+    usageLimitFailure?.status === "error" &&
+    usageLimitFailure.lastErrorKind === "usage_limit" &&
+    typeof usageLimitFailure.lastErrorResetsAt === "string";
+  const usageLimitResumeArmed = activeThreadShell?.usageLimitResumeAt != null;
+  const handleToggleUsageResume = useCallback(() => {
+    if (!activeThreadRef || !isUsageLimitFailed) return;
+    const resetsAt = usageLimitFailure.lastErrorResetsAt;
+    if (typeof resetsAt !== "string") return;
+    void (usageLimitResumeArmed
+      ? disarmUsageResumeMutation({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId },
+        })
+      : armUsageResumeMutation({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId, resumeAt: resetsAt },
+        }));
+  }, [
+    activeThreadRef,
+    armUsageResumeMutation,
+    disarmUsageResumeMutation,
+    isUsageLimitFailed,
+    usageLimitFailure,
+    usageLimitResumeArmed,
+  ]);
+  const usageLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!isUsageLimitFailed || !activeThread) {
+      return null;
+    }
+    const resetsAt = usageLimitFailure?.lastErrorResetsAt;
+    if (typeof resetsAt !== "string") {
+      return null;
+    }
+    return usageLimitBannerItemFor({
+      threadId: activeThread.id,
+      resetsAt,
+      autoResumeArmed: usageLimitResumeArmed,
+      onArmAutoResume: handleToggleUsageResume,
+      onCancelAutoResume: handleToggleUsageResume,
+    });
+  }, [
+    activeThread,
+    handleToggleUsageResume,
+    isUsageLimitFailed,
+    usageLimitFailure,
+    usageLimitResumeArmed,
+  ]);
   // Session-scoped dismissals, one key per (thread, snapshot). A set rather
   // than a single slot so dismissing the banner on one thread does not
   // resurface it on another thread dismissed earlier.
@@ -5987,11 +6055,13 @@ export default function ChatView(props: ChatViewProps) {
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const usageLimitItems = usageLimitBannerItem === null ? [] : [usageLimitBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
+        ...usageLimitItems,
         ...usageLimitsItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
@@ -6002,6 +6072,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     return [
       ...feedbackBannerItems,
+      ...usageLimitItems,
       ...usageLimitsItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
@@ -6058,6 +6129,7 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
+    usageLimitBannerItem,
     usageLimitsBanner,
     wokeThreadBannerItem,
   ]);
@@ -8357,6 +8429,7 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={visibleThreadError}
+                usageLimitResetsAt={usageLimitResetsAt}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

@@ -1,8 +1,9 @@
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
-import { CircleAlertIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, HourglassIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageLimitCountdown } from "./UsageLimitCountdown";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -36,11 +37,39 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
+  usageLimitResetsAt,
 }: {
   error: string | null;
   onDismiss?: () => void;
+  /** Renders the calm reached-your-limit notice instead of the raw error. */
+  usageLimitResetsAt?: string | null;
 }) {
   if (!error) return null;
+  if (usageLimitResetsAt) {
+    return (
+      <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
+        <Alert variant="info" controlAlignment="first-line" className="alert-glass">
+          <HourglassIcon />
+          <AlertDescription>
+            Reached your plan's usage limit · tokens return{" "}
+            <UsageLimitCountdown resetsAt={usageLimitResetsAt} />
+          </AlertDescription>
+          {onDismiss && (
+            <AlertAction>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Dismiss usage limit notice"
+                onClick={onDismiss}
+              >
+                <XIcon />
+              </Button>
+            </AlertAction>
+          )}
+        </Alert>
+      </div>
+    );
+  }
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert

@@ -1605,6 +1605,30 @@ const make = Effect.gen(function* () {
               : status === "ready" || status === "interrupted"
                 ? null
                 : (thread.session?.lastError ?? null);
+        // A usage-limit failure keeps the failure classified until the next
+        // failure overwrites it or the session recovers to ready/interrupted.
+        const lastErrorKind =
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "failed" &&
+          event.payload.failureReason === "usage_limit"
+            ? ("usage_limit" as const)
+            : status === "ready" || status === "interrupted"
+              ? undefined
+              : (thread.session?.lastErrorKind ?? undefined);
+        const lastErrorResetsAt =
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "failed" &&
+          event.payload.failureReason === "usage_limit"
+            ? typeof event.payload.failureResetsAt === "number" &&
+              Number.isFinite(event.payload.failureResetsAt)
+              ? DateTime.make(event.payload.failureResetsAt).pipe(
+                  Option.match({
+                    onNone: () => null,
+                    onSome: (resetsAt) => DateTime.formatIso(resetsAt),
+                  }),
+                )
+              : null
+            : undefined;
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1641,10 +1665,24 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              ...(lastErrorKind !== undefined ? { lastErrorKind } : {}),
+              ...(lastErrorResetsAt !== undefined ? { lastErrorResetsAt } : {}),
               updatedAt: now,
             },
             createdAt: now,
           });
+
+          // Arming is the user's call (the composer card toggles it); the
+          // ingestion only drops a stale arm when the thread recovers to
+          // ready, so the sweep never resurrects a thread that got better.
+          if (status === "ready" && thread.usageLimitResumeAt != null) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.usage-resume.disarm",
+              commandId: yield* providerCommandId(event, "thread-usage-resume-disarm"),
+              threadId: thread.id,
+              createdAt: now,
+            });
+          }
         }
       }
 

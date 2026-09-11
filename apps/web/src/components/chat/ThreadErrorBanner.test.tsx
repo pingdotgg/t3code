@@ -69,6 +69,30 @@ describe("ThreadErrorBanner", () => {
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
   });
+
+  it("calms a usage-limit failure to a countdown notice instead of the raw error", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Your org has used all tokens under the current rate limit"
+        usageLimitResetsAt="2099-01-01T12:00:00.000Z"
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Reached your plan&#x27;s usage limit");
+    expect(markup).toContain("resets in");
+    expect(markup).not.toContain("rate limit exceeded");
+    expect(markup).not.toContain('aria-label="Dismiss error"');
+  });
+
+  it("shows the raw error again once the limit class clears", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner error="Provider crashed" usageLimitResetsAt={null} />,
+    );
+
+    expect(markup).toContain("Provider crashed");
+    expect(markup).not.toContain("usage limit");
+  });
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner

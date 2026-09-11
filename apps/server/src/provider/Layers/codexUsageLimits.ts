@@ -213,12 +213,14 @@ function codexUsageLimitNextStep(rateLimitReachedType: string | null | undefined
  * The message a usage-limit stop shows instead of the provider sentence, which
  * on a Business workspace blames credits for a window that simply ran out. The
  * window named is the exhausted one that has yet to reset, latest first; `atIso`
- * is the stopping event's timestamp, not the wall clock.
+ * is the stopping event's timestamp, not the wall clock. Returns the latest
+ * reset time (epoch ms) alongside the message so the failure can carry a
+ * machine-readable resume time.
  */
 export function codexUsageLimitMessage(
   snapshot: CodexRateLimitSnapshot | undefined,
   atIso: string,
-): string {
+): { message: string; resetsAtMs: number | undefined } {
   const atMs = Date.parse(atIso);
   const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
   let reset = "";
@@ -230,5 +232,11 @@ export function codexUsageLimitMessage(
     latestResetMs = resetMs;
     reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
   }
-  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+  const message = `Codex usage limit reached.${reset}${codexUsageLimitNextStep(
+    snapshot?.rateLimitReachedType,
+  )}`;
+  return {
+    message,
+    resetsAtMs: latestResetMs === Number.NEGATIVE_INFINITY ? undefined : latestResetMs,
+  };
 }

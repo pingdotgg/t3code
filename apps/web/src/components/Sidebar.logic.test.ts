@@ -797,6 +797,21 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("ready");
   });
 
+  it("reports a usage-limit failure as limit, not failed", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: {
+          ...session,
+          status: "error" as const,
+          lastError: "rate limit exceeded",
+          lastErrorKind: "usage_limit" as const,
+          lastErrorResetsAt: "2026-09-11T12:00:00.000Z",
+        },
+      }),
+    ).toBe("limit");
+  });
+
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
   });

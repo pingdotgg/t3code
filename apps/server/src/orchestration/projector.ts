@@ -52,6 +52,8 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadUsageResumeArmedPayload,
+  ThreadUsageResumeDisarmedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -861,6 +863,38 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.usage-resume-armed":
+      return decodeForEvent(
+        ThreadUsageResumeArmedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            usageLimitResumeAt: payload.resumeAt,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
+
+    case "thread.usage-resume-disarmed":
+      return decodeForEvent(
+        ThreadUsageResumeDisarmedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            usageLimitResumeAt: null,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {
