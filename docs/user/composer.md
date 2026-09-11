@@ -109,6 +109,14 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+## Background agents after a turn
+
+When background agents keep working after a turn ends, a banner above the composer counts them
+and offers **Stop**. Pressing Stop, or the provider session ending, interrupts every agent still
+shown as working. The banner then clears and the Agents panel stops counting those agents, even
+when the provider never reports them again. Restarting T3 Code does the same for threads whose
+provider session ended.
+
 ## Images and videos in messages
 
 Select an image or video attachment or link to preview it. Playback support depends

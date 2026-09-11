@@ -48,6 +48,8 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { settleThreadTasks } from "../ThreadTaskSettlement.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
 import {
@@ -57,6 +59,9 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+/** Bound on waiting for queued provider events before settling on Stop. */
+const INTERRUPT_INGESTION_DRAIN_TIMEOUT = Duration.seconds(5);
+
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
@@ -324,6 +329,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
+  const providerRuntimeIngestion = yield* ProviderRuntimeIngestionService;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1669,6 +1675,34 @@ const make = Effect.gen(function* () {
     yield* providerService
       .interruptTurn({ threadId: event.payload.threadId })
       .pipe(Effect.catchCause(recoverInterruptFailure));
+
+    // Settlement reads persisted rows, so every provider event that was
+    // already queued when Stop arrived has to land first. Otherwise a
+    // task.updated(running) from before the interrupt is written after the
+    // settlement row and re-arms both the registry and the client fold.
+    // The wait is bounded so a busy event stream cannot delay Stop past the
+    // timeout.
+    const drained = yield* providerRuntimeIngestion.drain.pipe(
+      Effect.timeoutOption(INTERRUPT_INGESTION_DRAIN_TIMEOUT),
+    );
+    if (Option.isNone(drained)) {
+      yield* Effect.logWarning(
+        "provider runtime ingestion did not drain before background task settlement",
+        { threadId: event.payload.threadId },
+      );
+    }
+
+    // The host guarantees Stop; the provider does not. Children the provider
+    // has already forgotten (compaction, a lost thread tree) never emit a
+    // terminal event of their own, so settle the persisted rows here. Covers
+    // both a successful interrupt and the stopSession fallback above; tasks
+    // the provider does still own emit their own terminal rows afterwards,
+    // which is harmless.
+    yield* settleThreadTasks({
+      threadId: event.payload.threadId,
+      status: "interrupted",
+      createdAt: event.payload.createdAt,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (

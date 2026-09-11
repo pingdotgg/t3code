@@ -279,8 +279,11 @@ const PlatformServicesLive = Layer.unwrap(
 
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
-  Layer.provideMerge(ProviderRuntimeIngestionLive),
+  // The command reactor drains runtime ingestion before settling background
+  // tasks on Stop, so ingestion must be provided to it. Nothing in ingestion
+  // depends on the command reactor, so there is no cycle.
   Layer.provideMerge(ProviderCommandReactorLive),
+  Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),

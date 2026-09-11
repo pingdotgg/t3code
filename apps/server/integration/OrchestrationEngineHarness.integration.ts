@@ -30,6 +30,7 @@ import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/La
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../src/persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../src/persistence/Layers/ProjectionThreadActivities.ts";
 import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import { ProjectionCheckpointRepository } from "../src/persistence/Services/ProjectionCheckpoints.ts";
@@ -314,6 +315,7 @@ export const makeOrchestrationIntegrationHarness = (
       orchestrationLayer.pipe(Layer.provide(projectionSnapshotQueryLayer)),
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
+      ProjectionThreadActivityRepositoryLive,
       checkpointStoreLayer,
       providerLayer,
       RuntimeReceiptBusTest,
@@ -343,6 +345,8 @@ export const makeOrchestrationIntegrationHarness = (
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
       ),
+      // Stop drains runtime ingestion before settling background tasks.
+      Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),

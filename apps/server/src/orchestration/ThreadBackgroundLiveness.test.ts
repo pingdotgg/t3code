@@ -226,4 +226,129 @@ describe("ThreadBackgroundLiveness", () => {
     a.clearThreadLiveness("t");
     expect(a.getThreadBackgroundLiveness("t")).toBeNull();
   });
+  it("only a host settlement blocks a late status-free start row", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-settled";
+    const arm = () =>
+      liveness.recordTaskLiveness({
+        threadId,
+        taskId: "child",
+        taskType: undefined,
+        status: undefined,
+        kind: "started",
+      });
+
+    arm();
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    // The host settles the task itself (Stop, session death, restart).
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "interrupted",
+      kind: "updated",
+      settledByHost: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // A start row the provider had already queued must not reopen it.
+    arm();
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // An explicit non-terminal status is a real reactivation, and clears the
+    // tombstone so ordinary lifecycle resumes.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    arm();
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
+  it("a provider's own idle does not block a later start row", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-provider-idle";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    // A resumable Codex child that starts a new turn is real work again.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: undefined,
+      kind: "started",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
+
+  it("a running row the provider stamped before a host settlement stays settled", () => {
+    // Stop bounds its wait on the ingestion drain, so the worker can still be
+    // holding a task.updated(running) the provider emitted BEFORE the Stop and
+    // deliver it after settlement. Persisted rows order it behind the
+    // settlement row by createdAt; the registry has to reach the same answer.
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-late-running";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "interrupted",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:10.000Z",
+      settledByHost: true,
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // The drained-too-late row. Stale, so it must not re-arm the thread.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:05.000Z",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+
+    // A row stamped after the settlement is the provider proving it still owns
+    // the task, which the persisted fold also honours.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "child",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+      occurredAt: "2026-01-01T00:00:11.000Z",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+  });
 });

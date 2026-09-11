@@ -49,6 +49,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import { settleThreadTasks } from "../ThreadTaskSettlement.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -2043,6 +2044,9 @@ const make = Effect.gen(function* () {
             taskType: payload.taskType,
             status: payload.status,
             agentId: payload.agentId,
+            // The adapter's stamp, not arrival time: this worker can be far
+            // behind, and a host settlement dates late rows against it.
+            occurredAt: event.createdAt,
             kind:
               event.type === "task.started"
                 ? "started"
@@ -2055,6 +2059,18 @@ const make = Effect.gen(function* () {
           break;
         }
         case "session.exited":
+          // Rows first, then the registry. Background work dies with its
+          // provider session, so any task still listed as running gets a
+          // persisted terminal row before the in-memory mirror is wiped.
+          // Otherwise a restart rehydrates "running" rows with an empty
+          // registry and the agent reads as working forever.
+          // This runs inside the ingestion worker, so every earlier provider
+          // event for this thread is already persisted and no drain is needed.
+          yield* settleThreadTasks({
+            threadId: thread.id,
+            status: "interrupted",
+            createdAt: now,
+          });
           threadBackgroundLiveness.clearThreadLiveness(thread.id);
           break;
         default:

@@ -37,6 +37,8 @@ import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layer
 import { ProviderCommandReactorLive } from "../orchestration/Layers/ProviderCommandReactor.ts";
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
+import * as ProjectionThreadActivities from "../persistence/Services/ProjectionThreadActivities.ts";
+import { ProviderRuntimeIngestionService } from "../orchestration/Services/ProviderRuntimeIngestion.ts";
 import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -932,6 +934,13 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
           Layer.provide(Layer.mock(TextGeneration)({})),
           Layer.provide(ServerSettingsService.layerTest()),
+          // Stop settles background tasks after draining runtime ingestion;
+          // neither path runs in this test, so inert stand-ins suffice.
+          Layer.provide(Layer.mock(ProviderRuntimeIngestionService)({})),
+          Layer.provide(
+            Layer.mock(ProjectionThreadActivities.ProjectionThreadActivityRepository)({}),
+          ),
+          Layer.provide(ThreadBackgroundLiveness.layer),
         );
 
         yield* engine.dispatch({

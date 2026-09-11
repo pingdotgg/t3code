@@ -27,7 +27,12 @@ export interface ProviderRuntimeIngestionShape {
 
   /**
    * Resolves when the internal processing queue is empty and idle.
-   * Intended for test use to replace timing-sensitive sleeps.
+   *
+   * Used to order work against in-flight provider events: the command reactor
+   * drains before settling a thread's background tasks so an event queued
+   * before Stop cannot land after the settlement row. Tests use it in place of
+   * timing-sensitive sleeps. It waits for the queue to reach zero outstanding
+   * items, so callers on a hot stream should bound it.
    */
   readonly drain: Effect.Effect<void>;
 }
