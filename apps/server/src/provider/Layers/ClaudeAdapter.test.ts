@@ -422,6 +422,29 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("lets a launch-arg permission flag win over the thread runtime mode", () => {
+    const harness = makeHarness({
+      claudeConfig: { launchArgs: "--dangerously-skip-permissions --verbose" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "auto-accept-edits",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.permissionMode, "bypassPermissions");
+      assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
+      // The honored flag is dropped from extraArgs so the CLI sees it once.
+      assert.deepEqual(createInput?.options.extraArgs, { verbose: null });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("loads Claude filesystem settings sources for SDK sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

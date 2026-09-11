@@ -348,12 +348,24 @@ describe("MessagesTimeline", () => {
         });
         const toggle = renderer!.root.findByProps({ "aria-expanded": false });
         await act(() => toggle.props.onClick());
+        const questionToggle = renderer!.root.find(
+          (node) =>
+            node.props["aria-label"]?.startsWith("Question answer submitted:") &&
+            node.props["aria-expanded"] === false,
+        );
+        expect(questionToggle.props["aria-label"]).toContain(
+          Object.values(answers)[0] ?? "spec.txt",
+        );
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
+        await act(() => questionToggle.props.onClick());
         const markup = JSON.stringify(renderer!.toJSON());
         expect(markup.match(/Provide a spec/g)).toHaveLength(1);
-        expect(markup.match(/spec\.txt/g)).toHaveLength(1);
+        expect(markup).toContain("spec.txt");
         expect(markup).toContain("Provide a screenshot");
         expect(markup).toContain("shot.png");
         for (const answer of Object.values(answers)) expect(markup).toContain(answer);
+        await act(() => questionToggle.props.onClick());
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
       } finally {
         await act(() => renderer?.unmount());
       }
@@ -1763,5 +1775,54 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
+  });
+
+  it("only withholds an expanded tool-call label click while text is selected", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "entry-standalone",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "work-standalone",
+                  createdAt: MESSAGE_CREATED_AT,
+                  toolCallId: "call-standalone",
+                  label: "Run lint",
+                  tone: "tool",
+                  itemType: "command_execution",
+                  command: "pnpm lint",
+                  toolLifecycleStatus: "completed",
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      const label = renderer!.root.findAll(
+        (node) => node.type === "span" && String(node.props.className).includes("select-text"),
+      )[0];
+      const stopPropagation = vi.fn();
+      // Only the click that ends a selection may be withheld from the row
+      // toggle; the plain click has to reach it so the label can collapse.
+      for (const isCollapsed of [false, true]) {
+        label!.props.onClick({
+          currentTarget: { ownerDocument: { getSelection: () => ({ isCollapsed }) } },
+          stopPropagation,
+        });
+      }
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
   });
 });

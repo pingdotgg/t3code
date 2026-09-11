@@ -1447,7 +1447,13 @@ export function PullRequestDetailPanel({
           onPickerOpenChange={setThreadPickerOpen}
         />
       ) : null}
-      <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
+      <div
+        className={cn(
+          "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
+          detail && "border-b border-border/60",
+          !detail && !onClose && "hidden",
+        )}
+      >
         <div className="ml-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div
             aria-hidden={condensed}
@@ -1648,7 +1654,7 @@ export function PullRequestDetailPanel({
                           render={
                             <Button
                               size="xs"
-                              variant="ghost"
+                              variant="outline"
                               aria-label={
                                 handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
                               }
@@ -1728,7 +1734,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
-                          variant="ghost"
+                          variant="destructive-outline"
                           disabled={handoff !== null}
                           onClick={startResolveConflicts}
                           aria-label={
@@ -1754,15 +1760,12 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
-                          variant="ghost"
+                          variant="default"
                           disabled={actionPending}
                           onClick={() => void perform("ready")}
                           aria-label="Ready for review"
                         >
-                          <GitPullRequestIcon
-                            aria-hidden
-                            className="hidden size-3.5 @max-[30rem]/pr-header:inline"
-                          />
+                          <GitPullRequestIcon aria-hidden className="size-3.5" />
                           <span className="@max-[30rem]/pr-header:hidden">Ready for review</span>
                         </Button>
                       </span>
@@ -1777,7 +1780,7 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
-                          variant="ghost"
+                          variant="default"
                           disabled={actionPending}
                           onClick={() =>
                             setConfirmation({ open: true, action: "enable-auto-merge" })
@@ -1829,17 +1832,14 @@ export function PullRequestDetailPanel({
                       <span className="inline-flex shrink-0">
                         <Button
                           size="xs"
-                          variant="ghost"
+                          variant="default"
                           disabled={actionPending}
                           onClick={() => setConfirmation({ open: true, action: "merge" })}
                           aria-label={
                             pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel
                           }
                         >
-                          <GitMergeIcon
-                            aria-hidden
-                            className="hidden size-3.5 @max-[30rem]/pr-header:inline"
-                          />
+                          <GitMergeIcon aria-hidden className="size-3.5" />
                           <span className="@max-[30rem]/pr-header:hidden">
                             {pendingAction === "merge" ? "Merging..." : selectedMergeMethodLabel}
                           </span>
@@ -2519,7 +2519,7 @@ export function PullRequestDetailPanel({
       </div>
 
       <div
-        className="relative min-h-0 flex-1 overflow-hidden"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         onScrollCapture={(event) => {
           const scroller = event.target as HTMLElement;
           scrollerRef.current = scroller;

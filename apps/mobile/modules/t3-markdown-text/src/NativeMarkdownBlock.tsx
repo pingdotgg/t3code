@@ -5,7 +5,7 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { nativeMarkdownDocumentRuns, nativeMarkdownListItemBlocks } from "./nativeMarkdownText";
-import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios";
+import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
 import type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
