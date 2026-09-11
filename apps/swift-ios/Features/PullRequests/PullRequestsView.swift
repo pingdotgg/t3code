@@ -398,7 +398,7 @@ public struct PullRequestsView: View {
             List {
                 if let errorMessage = model.errorMessage {
                     FeatureRefreshFailureRow(message: errorMessage) {
-                        Task { await model.load() }
+                        Task { await model.load(invalidate: true) }
                     }
                 }
 
