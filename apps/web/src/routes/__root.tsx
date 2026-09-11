@@ -8,6 +8,7 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useRouter,
 } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
@@ -332,7 +333,8 @@ function HostedStaticEnvironmentBootstrap() {
   return null;
 }
 
-function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
+function RootRouteErrorView({ error }: ErrorComponentProps) {
+  const router = useRouter();
   const message = errorMessage(error);
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -355,7 +357,7 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
 
         <div className="mt-5 flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => reset()}>
+          <Button size="sm" onClick={() => void router.invalidate()}>
             Try again
           </Button>
           <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
