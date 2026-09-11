@@ -17,6 +17,7 @@ import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
 import { SharedSettingsMismatchAlert } from "./SharedSettingsMismatchAlert";
@@ -61,6 +62,7 @@ import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -422,6 +424,38 @@ function GitFetchIntervalSettings() {
   );
 }
 
+function CreateDraftChangeRequestsSettings() {
+  const settings = usePrimarySettings();
+  const updateSettings = useUpdatePrimarySettings();
+  const createDraft = settings.createDraftChangeRequests;
+  const defaultCreateDraft = DEFAULT_UNIFIED_SETTINGS.createDraftChangeRequests;
+
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("create-draft-change-requests")}
+      description="New pull requests start as drafts until you mark them ready for review."
+      resetAction={
+        createDraft !== defaultCreateDraft ? (
+          <SettingResetButton
+            label="create change requests as drafts"
+            onClick={() => updateSettings({ createDraftChangeRequests: defaultCreateDraft })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={createDraft}
+          onCheckedChange={(checked) =>
+            updateSettings({ createDraftChangeRequests: Boolean(checked) })
+          }
+          aria-label="Create change requests as drafts"
+        />
+      }
+    />
+  );
+}
+
 function SourceControlSectionSkeleton({
   title,
   headerAction,
@@ -586,6 +620,10 @@ export function SourceControlSettingsPanel() {
           onScan={handleScan}
         />
       )}
+
+      <SettingsSection title="Change requests">
+        <CreateDraftChangeRequestsSettings />
+      </SettingsSection>
 
       {/* Its rows are serverScoped: without a primary they render inert with
           an explanation, which beats disappearing. */}
