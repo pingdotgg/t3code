@@ -15,14 +15,12 @@ struct MarkdownDocumentTests {
 
             Second paragraph.
 
-            ```swift
-            let answer = 42
-            ```
+            > A separate blockquote.
 
             Last paragraph.
             """)
         ))
-        #expect(MarkdownProseSelection.groups(in: document.blocks) == [0..<3, 3..<4, 4..<5])
+        #expect(MarkdownContinuousSelection.groups(in: document.blocks) == [0..<3, 3..<4, 4..<5])
     }
 
     @Test @MainActor
@@ -43,9 +41,9 @@ struct MarkdownDocumentTests {
             Final paragraph with **bold** and `code`.
             """)
         ))
-        let groups = MarkdownProseSelection.groups(in: document.blocks)
+        let groups = MarkdownContinuousSelection.groups(in: document.blocks)
         #expect(groups == [0..<document.blocks.count])
-        let text = MarkdownProseSelection.attributedText(blocks: document.blocks)
+        let text = MarkdownContinuousSelection.attributedText(blocks: document.blocks)
         #expect(text.string == "Checklist\nRead the docs.\n•\tFirst item\n•\tNested item\n•\tSecond item\n3.\tThird item\n4.\tFourth item\nFinal paragraph with bold and code.")
         let docsRange = (text.string as NSString).range(of: "docs")
         #expect((text.attribute(.link, at: docsRange.location, effectiveRange: nil) as? URL)?.absoluteString == "https://example.com")
