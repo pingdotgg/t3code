@@ -560,11 +560,25 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
 export const USAGE_LIMITS_COMMAND = {
   name: "usage-limits",
   description: "Show this provider's usage limits",
+  source: "t3",
 } satisfies ServerProviderSlashCommand;
 
 /** Handled by the client without sending a turn; anything with arguments stays an ordinary prompt. */
 export function isUsageLimitsCommand(prompt: string): boolean {
   return prompt.trim().toLowerCase() === "/usage-limits";
+}
+
+/** Cached catalogs retain ownership while source data replays. Older servers omit the source. */
+export function hasLocalUsageLimitsCommand(
+  provider: Pick<ServerProvider, "driver" | "slashCommands">,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): boolean {
+  return (
+    provider.slashCommands.some(
+      (command) => command.name === USAGE_LIMITS_COMMAND.name && command.source === "t3",
+    ) || hasProviderUsageLimits(provider.driver, providers, sources)
+  );
 }
 
 /**

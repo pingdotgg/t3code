@@ -29,6 +29,28 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("preserves local command ownership when decoding a saved provider catalog", () => {
+    const slashCommands = [
+      { name: "usage-limits", description: "Show limits", source: "t3" },
+      { name: "usage", description: "Provider command" },
+    ];
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      slashCommands,
+      workspaceSnapshots: [
+        {
+          cwd: "/tmp/project",
+          checkedAt: baseProviderSnapshot.checkedAt,
+          slashCommands,
+          skills: [],
+        },
+      ],
+    });
+
+    expect(parsed.slashCommands).toEqual(slashCommands);
+    expect(parsed.workspaceSnapshots?.[0]?.slashCommands).toEqual(slashCommands);
+  });
+
   it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
       instanceId: "codex",

@@ -45,7 +45,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { hasLocalUsageLimitsCommand, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -318,11 +318,11 @@ export function NewTaskDraftScreen(props: {
   const isComposerInteractionLocked = isIncomingShareTransferPending || flow.submitting;
   // Also guard while a submit is in flight: an Android back press or iOS
   // Cancel would otherwise abandon the screen while the task still starts.
-  // T3 owns /usage-limits only where Limits has data for the selected provider.
+  // A cached local command stays local while its limits data reconnects.
   const offersUsageLimits =
     flow.selectedProviderStatus !== null &&
-    hasProviderUsageLimits(
-      flow.selectedProviderStatus.driver,
+    hasLocalUsageLimitsCommand(
+      flow.selectedProviderStatus,
       selectedEnvironmentServerConfig?.providers ?? [],
       selectedEnvironmentServerConfig?.usageLimitSources ?? [],
     );
