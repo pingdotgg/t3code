@@ -18,7 +18,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import Animated, { Easing, FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -129,10 +129,17 @@ export function UsageRouteScreen() {
     }
     refreshingRef.current = true;
     setRefreshingUsage(true);
-    void refresh(nextWindow).finally(() => {
-      refreshingRef.current = false;
-      setRefreshingUsage(false);
-    });
+    void refresh(nextWindow)
+      .catch((error: unknown) => {
+        Alert.alert(
+          "Could not refresh usage",
+          error instanceof Error ? error.message : "Try again.",
+        );
+      })
+      .finally(() => {
+        refreshingRef.current = false;
+        setRefreshingUsage(false);
+      });
   };
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
