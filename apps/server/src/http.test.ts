@@ -1,23 +1,66 @@
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import {
   assetResponseHeaders,
   assetFileResponse,
   downloadContentDisposition,
+  httpCompressionLayer,
   isLoopbackHostname,
   resolveDevRedirectUrl,
 } from "./http.ts";
 
 const fileResponseLayer = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer);
+
+describe("asset compression", () => {
+  for (const [extension, contentType] of [
+    ["html", "text/html; charset=utf-8"],
+    ["css", "text/css"],
+    ["js", "text/javascript"],
+    ["svg", "image/svg+xml"],
+  ]) {
+    it.effect(`preserves ${extension} content type when clients accept compression`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-compression-" });
+        const contents = "<!-- asset -->".repeat(200);
+        const file = path.join(directory, `asset.${extension}`);
+        yield* fs.writeFileString(file, contents);
+        yield* Layer.build(
+          HttpRouter.serve(
+            HttpRouter.add("GET", `/${extension}`, assetFileResponse({ path: file })).pipe(
+              Layer.provide(httpCompressionLayer),
+            ),
+            { disableListenLog: true, disableLogger: true },
+          ),
+        );
+        for (const encoding of ["identity", "gzip, deflate, br, zstd"]) {
+          const response = yield* HttpClient.get(`/${extension}`, {
+            headers: { "Accept-Encoding": encoding },
+          });
+          expect(response.status).toBe(200);
+          expect(response.headers["content-type"]).toBe(contentType);
+          expect(response.headers["content-encoding"]).toBeUndefined();
+          expect(response.headers["x-content-type-options"]).toBe("nosniff");
+          if (extension === "html" || extension === "svg") {
+            expect(response.headers["content-security-policy"]).toContain("sandbox");
+          }
+          expect(yield* response.text).toBe(contents);
+        }
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+});
 
 describe("video asset byte ranges", () => {
   it.effect("uses current descriptor metadata after an in-place truncate or extension", () =>
@@ -136,7 +179,7 @@ describe("video asset byte ranges", () => {
         expect(response.status).toBe(status);
         expect(response.headers.get("accept-ranges")).toBe("bytes");
         expect(response.headers.get("content-range")).toBe(contentRange);
-        expect(response.headers.get("cache-control")).toBe("private, no-store");
+        expect(response.headers.get("cache-control")).toBe("private, no-store, no-transform");
         expect(response.headers.get("etag")).toBeNull();
         expect(response.headers.get("last-modified")).toBeNull();
         if (status !== 416)
@@ -308,7 +351,7 @@ describe("assetResponseHeaders", () => {
 
   it("does not apply document policy to raster images", () => {
     expect(assetResponseHeaders("/attachments/user-image.png")).toEqual({
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": "private, max-age=3600, no-transform",
       "X-Content-Type-Options": "nosniff",
     });
   });
@@ -319,7 +362,7 @@ describe("assetResponseHeaders", () => {
         mimeType: 'video/mp4; codecs="avc1.42E01E"',
       }),
     ).toEqual({
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": "private, max-age=3600, no-transform",
       "Content-Type": "video/mp4",
       "X-Content-Type-Options": "nosniff",
     });
