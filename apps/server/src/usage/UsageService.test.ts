@@ -170,18 +170,17 @@ describe("UsageService", () => {
         const firstScanStarted = yield* Deferred.make<void>();
         const secondScanStarted = yield* Deferred.make<void>();
         const releaseRates = yield* Deferred.make<void>();
-        let homeProbes = 0;
+        let homeResolutions = 0;
         const service = yield* UsageService.make.pipe(
           Effect.provideService(FileSystem.FileSystem, {
             ...fileSystem,
-            exists: (path) =>
-              fileSystem.exists(path).pipe(
+            realPath: (path) =>
+              fileSystem.realPath(path).pipe(
                 Effect.tap(() => {
-                  if (path !== NodePath.join(home, "claude", ".claude", "projects"))
-                    return Effect.void;
-                  homeProbes += 1;
+                  if (path !== NodePath.join(home, "claude", "projects")) return Effect.void;
+                  homeResolutions += 1;
                   return Deferred.succeed(
-                    homeProbes === 1 ? firstScanStarted : secondScanStarted,
+                    homeResolutions === 1 ? firstScanStarted : secondScanStarted,
                     undefined,
                   );
                 }),
@@ -217,6 +216,50 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  for (const source of ["explicit", "environment"] as const) {
+    it.live(`reads the configured ${source} Claude projects when a nested tree exists`, () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const configDir = NodePath.join(home, "claude");
+        const nestedDir = NodePath.join(configDir, ".claude", "projects", "proj");
+        yield* Effect.promise(() => NodeFSP.mkdir(nestedDir, { recursive: true }));
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(nestedDir, "session.jsonl"), claudeLine(2, 99)),
+        );
+        const configuredSettings = {
+          providers: settings.providers,
+          providerInstances: {
+            claudeAgent: {
+              driver: "claudeAgent" as const,
+              config: { homePath: source === "explicit" ? configDir : "" },
+              environment: [{ name: "CLAUDE_CONFIG_DIR", value: configDir }],
+            },
+          },
+        };
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: `usage-service-config-dir-${source}`,
+              home,
+              settings: configuredSettings,
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        const canonicalDir = yield* Effect.promise(() =>
+          NodeFSP.realpath(NodePath.join(configDir, "projects")),
+        );
+        assert.strictEqual(
+          summary.sources.find((source) => source.fingerprint.provider === "claude")?.fingerprint
+            .resolvedHomePath,
+          canonicalDir,
+        );
+      }).pipe(Effect.scoped),
+    );
+  }
 
   it.live("canonicalizes aliased homes and keeps missing homes visible", () =>
     Effect.gen(function* () {

@@ -218,19 +218,6 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("UsageService.refreshRates"),
   );
 
-  /**
-   * Claude's config dir is the home itself when overridden, but a default
-   * install nests transcripts under `~/.claude/projects`. Probe both.
-   */
-  const resolveClaudeTranscriptDir = (homePath: string) =>
-    Effect.gen(function* () {
-      const nested = path.join(homePath, ".claude", "projects");
-      const nestedExists = yield* fileSystem
-        .exists(nested)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      return nestedExists ? nested : path.join(homePath, "projects");
-    });
-
   // A settings failure must not silently discard custom rates or transcript homes.
   const readSettings = settingsService.getSettings.pipe(
     Effect.catchCause(
@@ -279,9 +266,7 @@ export const make = Effect.gen(function* () {
     });
 
     for (const home of homes.claudeHomePaths) {
-      // Distinct homes can probe to the same transcript dir (e.g. `~/x` with
-      // a nested `.claude` next to `~/x/.claude` itself), so dedupe post-probe.
-      yield* pushDir("claude", yield* resolveClaudeTranscriptDir(home));
+      yield* pushDir("claude", path.join(home, "projects"));
     }
     for (const dir of homes.codexSessionDirs) {
       yield* pushDir("codex", dir);

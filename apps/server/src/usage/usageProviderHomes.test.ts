@@ -41,7 +41,7 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
           path.resolve(NodeOS.homedir(), ".claude-max"),
           path.resolve(NodeOS.homedir(), ".claude-pro"),
           // Synthesized legacy `claudeAgent` instance: the default home.
-          path.resolve(NodeOS.homedir()),
+          path.resolve(NodeOS.homedir(), ".claude"),
         ]);
         expect(homes.codexSessionDirs).toEqual([
           path.join(path.resolve(NodeOS.homedir(), ".codex-work"), "sessions"),
@@ -65,7 +65,7 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
 
         // `claude_alias` and the synthesized legacy instance share the
         // default home; scanning it twice would double count every record.
-        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
+        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir(), ".claude")]);
       }),
     );
 
@@ -80,7 +80,7 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
 
         const homes = yield* resolveUsageProviderHomes(settings, {});
 
-        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
+        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir(), ".claude")]);
       }),
     );
 
@@ -110,7 +110,7 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
 
         expect(homes.claudeHomePaths).toEqual([
           path.join(NodeOS.homedir(), ".claude-tilde"),
-          path.resolve(NodeOS.homedir()),
+          path.resolve(NodeOS.homedir(), ".claude"),
         ]);
         expect(homes.codexSessionDirs).toEqual([
           path.join(NodeOS.homedir(), ".codex", "sessions"),
@@ -208,7 +208,7 @@ it.layer(NodeServices.layer)("usageProviderHomes", (it) => {
           CODEX_HOME: path.join(NodeOS.homedir(), ".codex-ambient"),
         });
 
-        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir())]);
+        expect(homes.claudeHomePaths).toEqual([path.resolve(NodeOS.homedir(), ".claude")]);
         expect(homes.codexSessionDirs).toEqual([path.join(NodeOS.homedir(), ".codex", "sessions")]);
       }),
     );

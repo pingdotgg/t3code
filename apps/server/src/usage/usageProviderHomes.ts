@@ -31,7 +31,7 @@ const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 
 export interface UsageProviderHomes {
-  /** One entry per distinct Claude home; transcripts nest under it. */
+  /** One entry per distinct Claude config directory; transcripts live in its projects child. */
   readonly claudeHomePaths: readonly string[];
   /** One entry per distinct Codex `sessions` directory. */
   readonly codexSessionDirs: readonly string[];
@@ -78,7 +78,7 @@ export const resolveUsageProviderHomes = Effect.fn("resolveUsageProviderHomes")(
       }
       const environment = mergeProviderInstanceEnvironment(envelope.environment, hostEnvironment);
       const configDir = environmentHomePath(environment["CLAUDE_CONFIG_DIR"]);
-      pushUnique(claudeHomePaths, configDir ?? (yield* resolveClaudeHomePath(config)));
+      pushUnique(claudeHomePaths, configDir ?? path.join(NodeOS.homedir(), ".claude"));
     } else if (envelope.driver === "codex") {
       const config = yield* decodeCodexSettings(envelope.config ?? {}).pipe(
         Effect.catchCause(() => Effect.succeed(null)),
