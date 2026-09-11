@@ -53,6 +53,14 @@ describe("T3ProjectFile", () => {
     ).toThrow();
   });
 
+  it("decodes developer script icons", () => {
+    const decoded = decode({
+      scripts: [{ name: "AI", command: "pnpm generate", icon: "brain" }],
+    });
+
+    expect(decoded.scripts?.[0]?.icon).toBe("brain");
+  });
+
   it("decodes defaultThreadEnvMode and rejects unknown modes", () => {
     expect(decode({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe("worktree");
     expect(decode({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe("local");
