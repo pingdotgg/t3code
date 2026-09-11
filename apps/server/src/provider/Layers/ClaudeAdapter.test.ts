@@ -7302,3 +7302,48 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 });
+
+for (const source of ["configured", "inherited"] as const) {
+  it.effect(`reads child history from the ${source} Claude home without starting a session`, () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-history-adapter-"));
+    const sessionId = "0945fcd9-8a8d-450a-b8cf-4ebd0ef17468";
+    const directory = NodePath.join(home, "projects", "-workspace", sessionId, "subagents");
+    NodeFS.mkdirSync(directory, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(directory, "agent-child.jsonl"),
+      JSON.stringify({
+        type: "user",
+        uuid: "9eb84969-819b-4d5b-854f-327474810b34",
+        parentUuid: null,
+        isSidechain: true,
+        sessionId,
+        agentId: "child",
+        message: { role: "user", content: "Saved task" },
+      }) + "\n",
+    );
+    const harness = makeHarness({
+      claudeConfig: { homePath: source === "configured" ? home : "" },
+      environment: {
+        ...process.env,
+        CLAUDE_CONFIG_DIR: source === "configured" ? "/unused-claude-home" : home,
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      assert.isDefined(adapter.getAgentHistory);
+      const result = yield* adapter.getAgentHistory!({
+        threadId: ThreadId.make("stopped-history-thread"),
+        agentId: "child",
+        offset: 0,
+        resumeCursor: { resume: sessionId },
+      });
+      assert.equal(result.status, "ready");
+      assert.equal(result.entries[0]?.detail, "Saved task");
+      assert.isUndefined(harness.getLastCreateQueryInput());
+      assert.deepStrictEqual(yield* adapter.listSessions(), []);
+    }).pipe(
+      Effect.provide(harness.layer),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+    );
+  });
+}

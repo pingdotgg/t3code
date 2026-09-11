@@ -68,6 +68,7 @@ type MessageEntry = {
 const runtimeMock = {
   state: {
     startCalls: [] as string[],
+    historyConnectCalls: [] as string[],
     sessionCreateUrls: [] as string[],
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
     createdSessionIds: [] as string[],
@@ -132,6 +133,7 @@ const runtimeMock = {
   },
   reset() {
     this.state.startCalls.length = 0;
+    this.state.historyConnectCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
     this.state.sessionCreateInputs.length = 0;
     this.state.createdSessionIds.length = 0;
@@ -211,6 +213,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   connectToOpenCodeServer: ({ serverUrl, serverPassword }) =>
     Effect.gen(function* () {
       const url = serverUrl ?? "http://127.0.0.1:4301";
+      runtimeMock.state.historyConnectCalls.push(url);
       // Always register a finalizer so the closeCalls/closeError probes fire;
       // production attaches none for external servers.
       yield* Effect.addFinalizer(() =>
@@ -612,6 +615,203 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
 });
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("links native Task tools to child history and keeps child text out of the parent", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const push = makeOpenCodeEventQueue();
+      const threadId = asThreadId("task-history");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const events = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "task.started" ||
+            event.type === "task.completed" ||
+            event.type === "content.delta",
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const part = {
+        id: "task-part",
+        messageID: "parent-message",
+        sessionID: "http://127.0.0.1:9999/session",
+        type: "tool",
+        callID: "task-call",
+        tool: "task",
+        state: {
+          status: "running",
+          input: { description: "Review changes" },
+          title: "Review changes",
+          metadata: { sessionId: "ses_child" },
+          time: { start: 1 },
+        },
+      };
+      push({ type: "message.part.updated", properties: { sessionID: part.sessionID, part } });
+      push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_child",
+          part: {
+            id: "child-text",
+            messageID: "child-message",
+            sessionID: "ses_child",
+            type: "text",
+            text: "Private child answer",
+          },
+        },
+      });
+      push({
+        type: "message.part.updated",
+        properties: {
+          sessionID: part.sessionID,
+          part: {
+            ...part,
+            state: {
+              ...part.state,
+              status: "completed",
+              output: "Review finished",
+              time: { start: 1, end: 2 },
+            },
+          },
+        },
+      });
+      const collected = yield* Fiber.join(events);
+      NodeAssert.deepEqual(
+        collected.map((event) => event.type),
+        ["task.started", "task.completed"],
+      );
+      NodeAssert.deepEqual(
+        collected.map((event) =>
+          event.type === "task.started"
+            ? [event.payload.taskId, "running"]
+            : event.type === "task.completed"
+              ? [event.payload.taskId, event.payload.status]
+              : null,
+        ),
+        [
+          ["ses_child", "running"],
+          ["ses_child", "completed"],
+        ],
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  for (const terminal of ["session.idle", "session.error", "session.deleted"] as const) {
+    it.effect(`settles background agents on ${terminal}, not the launch tool return`, () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const push = makeOpenCodeEventQueue();
+        const threadId = asThreadId("background-history");
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const events = yield* adapter.streamEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "task.started" || event.type === "task.completed",
+          ),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "launch",
+              messageID: "message",
+              sessionID: "http://127.0.0.1:9999/session",
+              type: "tool",
+              tool: "task",
+              callID: "launch",
+              state: {
+                status: "completed",
+                input: { description: "Watch changes" },
+                title: "Watch changes",
+                output: "Background launched",
+                metadata: { sessionId: "ses_background", background: true },
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        });
+        const nativeTerminal = {
+          type: terminal,
+          properties: {
+            sessionID: "ses_background",
+            info: { id: "ses_background" },
+            error: { name: "UnknownError", data: { message: "Failed" } },
+          },
+        };
+        push(nativeTerminal);
+        const collected = yield* Fiber.join(events);
+        NodeAssert.equal(collected[0]?.type, "task.started");
+        NodeAssert.equal(collected[1]?.type, "task.completed");
+        NodeAssert.deepEqual(collected[1]?.raw?.payload, nativeTerminal);
+        const completion = collected[1];
+        NodeAssert.equal(
+          completion?.type === "task.completed" ? completion.payload.status : null,
+          terminal === "session.error"
+            ? "failed"
+            : terminal === "session.deleted"
+              ? "stopped"
+              : "completed",
+        );
+        yield* adapter.stopSession(threadId);
+      }),
+    );
+  }
+
+  it.effect("reads saved child history without starting or mutating a session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      runtimeMock.state.sessionParentById.set("ses_child", "ses_parent");
+      runtimeMock.state.messages = [
+        {
+          info: { id: "message", role: "assistant" },
+          parts: [
+            {
+              id: "part",
+              type: "text",
+              sessionID: "ses_child",
+              messageID: "message",
+              text: "Saved answer",
+            },
+          ],
+        },
+      ];
+      const input = {
+        threadId: asThreadId("stopped"),
+        agentId: "ses_child",
+        offset: 0,
+        resumeCursor: { schemaVersion: 1, sessionId: "ses_parent" },
+        cwd: "/saved/workspace",
+      };
+      const result = yield* adapter.getAgentHistory!(input);
+      yield* adapter.getAgentHistory!(input);
+      NodeAssert.equal(result.status, "ready");
+      NodeAssert.equal(result.entries[0]?.detail, "Saved answer");
+      NodeAssert.deepEqual(runtimeMock.state.sessionGetIds, ["ses_child", "ses_child"]);
+      NodeAssert.deepEqual(runtimeMock.state.sessionCreateInputs, []);
+      NodeAssert.deepEqual(runtimeMock.state.sessionUpdateCalls, []);
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, []);
+      NodeAssert.deepEqual(runtimeMock.state.promptCalls, []);
+      NodeAssert.deepEqual(yield* adapter.listSessions(), []);
+      NodeAssert.deepEqual(runtimeMock.state.closeCalls, []);
+      NodeAssert.deepEqual(runtimeMock.state.historyConnectCalls, ["http://127.0.0.1:9999"]);
+      yield* TestClock.adjust("31 seconds");
+      NodeAssert.deepEqual(runtimeMock.state.closeCalls, ["http://127.0.0.1:9999"]);
+    }),
+  );
+
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

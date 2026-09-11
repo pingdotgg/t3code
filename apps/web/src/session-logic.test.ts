@@ -15,6 +15,7 @@ import {
   deriveActivePlanState,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
+  deriveAgentWorkEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -2373,5 +2374,105 @@ describe("session activity performance", () => {
       command: "git diff",
       toolLifecycleStatus: "completed",
     });
+  });
+});
+
+describe("deriveAgentWorkEntries", () => {
+  it("returns only the tool rows attributed to that agent, in order", () => {
+    const activities = [
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Read",
+        sequence: 1,
+        payload: {
+          itemType: "file_read",
+          toolCallId: "t1",
+          title: "Read a.ts",
+          agentId: "agent-1",
+        },
+      }),
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Read",
+        sequence: 2,
+        payload: {
+          itemType: "file_read",
+          toolCallId: "t2",
+          title: "Read b.ts",
+          agentId: "agent-2",
+        },
+      }),
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Read",
+        sequence: 3,
+        payload: { itemType: "file_read", toolCallId: "t3", title: "Read c.ts" },
+      }),
+      makeActivity({
+        kind: "tool.completed",
+        summary: "Grep",
+        sequence: 4,
+        payload: { itemType: "file_search", toolCallId: "t4", title: "Grep x", agentId: "agent-1" },
+      }),
+    ];
+
+    expect(deriveAgentWorkEntries(activities, "agent-1").map((entry) => entry.toolTitle)).toEqual([
+      "Read a.ts",
+      "Grep x",
+    ]);
+    expect(deriveAgentWorkEntries(activities, "agent-2").map((entry) => entry.toolTitle)).toEqual([
+      "Read b.ts",
+    ]);
+  });
+
+  it("collapses a tool's in-progress row into its completed row", () => {
+    const entries = deriveAgentWorkEntries(
+      [
+        makeActivity({
+          kind: "tool.updated",
+          summary: "Bash",
+          sequence: 1,
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "t1",
+            title: "vp test",
+            status: "in_progress",
+            agentId: "agent-1",
+          },
+        }),
+        makeActivity({
+          kind: "tool.completed",
+          summary: "Bash",
+          sequence: 2,
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "t1",
+            title: "vp test",
+            status: "completed",
+            agentId: "agent-1",
+          },
+        }),
+      ],
+      "agent-1",
+    );
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ toolCallId: "t1", toolLifecycleStatus: "completed" });
+  });
+
+  it("ignores an agent's own task rows: the roster already reports them", () => {
+    const entries = deriveAgentWorkEntries(
+      [
+        makeActivity({
+          kind: "task.progress",
+          summary: "Working",
+          sequence: 1,
+          payload: { taskId: "agent-1", description: "Working", agentKind: "agent" },
+        }),
+      ],
+      "agent-1",
+    );
+
+    expect(entries).toEqual([]);
   });
 });

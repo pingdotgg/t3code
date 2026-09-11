@@ -34,6 +34,7 @@ import {
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  getAgentHistory: "orchestration.getAgentHistory",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
@@ -2126,6 +2127,38 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
+/** Provider history is read on demand, independently of retained thread activities. */
+export const OrchestrationGetAgentHistoryInput = Schema.Struct({
+  threadId: ThreadId,
+  agentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  offset: NonNegativeInt,
+  view: Schema.optional(Schema.Literals(["recent-tools", "latest"])),
+});
+export type OrchestrationGetAgentHistoryInput = typeof OrchestrationGetAgentHistoryInput.Type;
+
+export const AgentHistoryEntry = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(["tool", "file-edit", "assistant", "user", "reasoning"]),
+  title: Schema.String.check(Schema.isMaxLength(500)),
+  detail: Schema.String.check(Schema.isMaxLength(8000)),
+  truncated: Schema.Boolean,
+});
+export type AgentHistoryEntry = typeof AgentHistoryEntry.Type;
+
+export const OrchestrationGetAgentHistoryResult = Schema.Struct({
+  status: Schema.Literals(["ready", "unavailable", "unsupported"]),
+  entries: Schema.Array(AgentHistoryEntry).check(Schema.isMaxLength(50)),
+  nextOffset: Schema.NullOr(NonNegativeInt),
+  startOffset: Schema.optional(NonNegativeInt),
+  message: Schema.NullOr(Schema.String),
+});
+export type OrchestrationGetAgentHistoryResult = typeof OrchestrationGetAgentHistoryResult.Type;
+
+export class OrchestrationGetAgentHistoryError extends Schema.TaggedError<OrchestrationGetAgentHistoryError>()(
+  "OrchestrationGetAgentHistoryError",
+  { message: Schema.String },
+) {}
+
 export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
   threadId: ThreadId,
   /** Absolute path from the workflow's runHandles.scriptPath. The server
@@ -2178,6 +2211,10 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  getAgentHistory: {
+    input: OrchestrationGetAgentHistoryInput,
+    output: OrchestrationGetAgentHistoryResult,
   },
   getWorkflowScript: {
     input: OrchestrationGetWorkflowScriptInput,

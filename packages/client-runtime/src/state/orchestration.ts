@@ -12,6 +12,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:turn-diff",
       tag: ORCHESTRATION_WS_METHODS.getTurnDiff,
     }),
+    agentHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:agent-history",
+      tag: ORCHESTRATION_WS_METHODS.getAgentHistory,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     workflowScript: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:workflow-script",
       tag: ORCHESTRATION_WS_METHODS.getWorkflowScript,

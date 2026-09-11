@@ -257,6 +257,14 @@ function makeFakeCodexAdapter(
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  const getAgentHistory = vi.fn(
+    (
+      _input: Parameters<
+        NonNullable<ProviderAdapterShape<ProviderAdapterError>["getAgentHistory"]>
+      >[0],
+    ) => Effect.succeed({ status: "ready" as const, entries: [], nextOffset: null, message: null }),
+  );
+
   const uploadFeedback = vi.fn(
     (
       input: ProviderUploadFeedbackInput,
@@ -295,6 +303,7 @@ function makeFakeCodexAdapter(
     readThread,
     rollbackThread,
     ...(provider === CODEX_DRIVER ? { uploadFeedback } : {}),
+    ...(provider === CODEX_DRIVER || provider === CLAUDE_AGENT_DRIVER ? { getAgentHistory } : {}),
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -332,6 +341,7 @@ function makeFakeCodexAdapter(
     readThread,
     rollbackThread,
     uploadFeedback,
+    getAgentHistory,
     stopAll,
   };
 }
@@ -1971,6 +1981,63 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
       yield* Fiber.join(retryFiber);
       yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("reads saved agent history without recovering a stopped session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-agent-history-stopped");
+      const cwd = fixtureCwd("agent-history");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd,
+        resumeCursor: { threadId: "native-parent" },
+        runtimeMode: "full-access",
+      });
+      yield* routing.codex.stopSession(threadId);
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+      routing.codex.getAgentHistory.mockClear();
+      const result = yield* provider.getAgentHistory({
+        threadId,
+        agentId: "native-child",
+        offset: 50,
+      });
+      assert.equal(result.status, "ready");
+      assert.equal(routing.codex.startSession.mock.calls.length, 0);
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 0);
+      assert.deepStrictEqual(routing.codex.getAgentHistory.mock.calls, [
+        [
+          {
+            threadId,
+            agentId: "native-child",
+            offset: 50,
+            cwd,
+            resumeCursor: { threadId: "native-parent" },
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("reports unsupported history without restarting the provider", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-agent-history-unsupported");
+      yield* provider.startSession(threadId, {
+        provider: CURSOR_DRIVER,
+        providerInstanceId: ProviderInstanceId.make("cursor"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* routing.cursor.stopSession(threadId);
+      routing.cursor.startSession.mockClear();
+      const result = yield* provider.getAgentHistory({ threadId, agentId: "child", offset: 0 });
+      assert.equal(result.status, "unsupported");
+      assert.equal(routing.cursor.startSession.mock.calls.length, 0);
     }),
   );
 

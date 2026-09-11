@@ -1,3 +1,4 @@
+import { makeAgentHistoryClient } from "./agentHistoryClient.ts";
 import {
   EventId,
   type OpenCodeSettings,
@@ -7,6 +8,7 @@ import {
   type ProviderSendTurnInput,
   type ProviderSession,
   RuntimeItemId,
+  RuntimeTaskId,
   RuntimeRequestId,
   ThreadId,
   type ToolLifecycleItemType,
@@ -59,6 +61,8 @@ import {
   type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
+
+import { readOpenCodeAgentHistory } from "./openCodeAgentHistory.ts";
 
 const PROVIDER = ProviderDriverKind.make("opencode");
 
@@ -340,6 +344,15 @@ interface OpenCodeSessionContext {
   readonly directory: string;
   readonly openCodeSessionId: string;
   readonly relatedSessionIds: Set<string>;
+  readonly agentTasks: Map<
+    string,
+    {
+      toolUseId: string;
+      description: string;
+      turnId: TurnId | undefined;
+      status: "running" | "completed" | "failed" | "stopped";
+    }
+  >;
   readonly resolvedRequestIds: Set<string>;
   readonly autoRepliedRequestIds: Set<string>;
   readonly emittedTerminalRequestIds: Set<string>;
@@ -960,6 +973,24 @@ export function makeOpenCodeAdapter(
       options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, OpenCodeSessionContext>();
+    const withHistoryClient = yield* makeAgentHistoryClient(
+      Effect.fn("OpenCode.historyClient")(function* (directory: string) {
+        const server = yield* openCodeRuntime.connectToOpenCodeServer({
+          binaryPath: openCodeSettings.binaryPath,
+          directory,
+          serverUrl: openCodeSettings.serverUrl,
+          ...(openCodeSettings.serverPassword
+            ? { serverPassword: openCodeSettings.serverPassword }
+            : {}),
+          ...(options?.environment ? { environment: options.environment } : {}),
+        });
+        return openCodeRuntime.createOpenCodeSdkClient({
+          baseUrl: server.url,
+          directory,
+          ...(server.serverPassword ? { serverPassword: server.serverPassword } : {}),
+        });
+      }),
+    );
     const deleteContextIfCurrent = (context: OpenCodeSessionContext) => {
       if (sessions.get(context.session.threadId) === context) {
         sessions.delete(context.session.threadId);
@@ -2210,6 +2241,45 @@ export function makeOpenCodeAdapter(
 
       const payloadSessionId = openCodeEventSessionId(event);
       const isParentEvent = payloadSessionId === context.openCodeSessionId;
+      const childTask = payloadSessionId ? context.agentTasks.get(payloadSessionId) : undefined;
+      if (
+        !isParentEvent &&
+        payloadSessionId &&
+        childTask &&
+        (event.type === "session.idle" ||
+          event.type === "session.error" ||
+          event.type === "session.deleted" ||
+          (event.type === "session.status" && event.properties.status.type === "idle"))
+      ) {
+        const status =
+          event.type === "session.error"
+            ? "failed"
+            : event.type === "session.deleted"
+              ? "stopped"
+              : "completed";
+        if (childTask.status === "running") {
+          childTask.status = status;
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId: childTask.turnId,
+              raw: event,
+            })),
+            type: "task.completed",
+            payload: {
+              taskId: RuntimeTaskId.make(payloadSessionId),
+              status,
+              taskType: "subagent",
+              agentKind: "agent",
+              timelineBypass: true,
+              toolUseId: childTask.toolUseId,
+              title: childTask.description,
+            },
+          });
+        }
+        return;
+      }
+
       let isKnownPendingTerminalEvent = false;
       if (
         payloadSessionId !== undefined &&
@@ -2505,6 +2575,67 @@ export function makeOpenCodeAdapter(
               payload,
             };
             yield* emit(runtimeEvent);
+            // Native Task metadata carries the child session ID used by the history API.
+            const metadata = part.state.status === "pending" ? undefined : part.state.metadata;
+            const childSessionId = metadata?.sessionId;
+            if (
+              part.tool === "task" &&
+              typeof childSessionId === "string" &&
+              childSessionId.trim()
+            ) {
+              const previous = context.agentTasks.get(childSessionId);
+              const description =
+                typeof part.state.input.description === "string" &&
+                part.state.input.description.trim()
+                  ? part.state.input.description
+                  : "Subagent";
+              const status =
+                part.state.status === "error"
+                  ? "failed"
+                  : part.state.status === "completed" && metadata?.background !== true
+                    ? "completed"
+                    : "running";
+              // A background launch returning is not child completion. Its native idle/error event settles it.
+              if (
+                previous?.status !== status &&
+                !(
+                  previous &&
+                  previous.toolUseId === part.callID &&
+                  previous.status !== "running" &&
+                  status === "running"
+                )
+              ) {
+                context.agentTasks.set(childSessionId, {
+                  toolUseId: part.callID,
+                  description,
+                  turnId,
+                  status,
+                });
+                const base = yield* buildEventBase({
+                  threadId: context.session.threadId,
+                  turnId,
+                  itemId: part.callID,
+                  createdAt: toolStateCreatedAt(part),
+                  raw: event,
+                });
+                const linkage = {
+                  taskId: RuntimeTaskId.make(childSessionId),
+                  taskType: "subagent",
+                  agentKind: "agent" as const,
+                  timelineBypass: true,
+                  toolUseId: part.callID,
+                  title: description,
+                };
+                if (status === "running")
+                  yield* emit({
+                    ...base,
+                    type: "task.started",
+                    payload: { ...linkage, description },
+                  });
+                else
+                  yield* emit({ ...base, type: "task.completed", payload: { ...linkage, status } });
+              }
+            }
           }
           break;
         }
@@ -2986,6 +3117,7 @@ export function makeOpenCodeAdapter(
           directory,
           openCodeSessionId: started.openCodeSession.id,
           relatedSessionIds: new Set([started.openCodeSession.id]),
+          agentTasks: new Map(),
           resolvedRequestIds: new Set(),
           autoRepliedRequestIds: new Set(),
           emittedTerminalRequestIds: new Set(),
@@ -3775,6 +3907,51 @@ export function makeOpenCodeAdapter(
     const hasSession: OpenCodeAdapterShape["hasSession"] = (threadId) =>
       Effect.sync(() => sessions.has(threadId));
 
+    /** Use the live parent client when available, otherwise share a directory-scoped history connection. */
+    const getAgentHistory: OpenCodeAdapterShape["getAgentHistory"] = Effect.fn("getAgentHistory")(
+      function* (input) {
+        const parentSessionId = parseOpenCodeResume(input.resumeCursor)?.sessionId;
+        if (!parentSessionId)
+          return {
+            status: "unavailable",
+            entries: [],
+            nextOffset: null,
+            message: "No saved OpenCode session is available for this thread.",
+          };
+        const read = (client: OpencodeClient) =>
+          readOpenCodeAgentHistory({
+            parentSessionId,
+            agentId: input.agentId,
+            offset: input.offset,
+            view: input.view,
+            readSession: (sessionID) =>
+              runOpenCodeSdk("session.get", (signal) =>
+                client.session.get({ sessionID }, { signal }),
+              ).pipe(Effect.map((response) => response.data)),
+            readMessages: (sessionID) =>
+              runOpenCodeSdk("session.messages", (signal) =>
+                client.session.messages({ sessionID }, { signal }),
+              ).pipe(Effect.map((response) => response.data ?? [])),
+          });
+        const context = sessions.get(input.threadId);
+        return yield* (
+          context?.openCodeSessionId === parentSessionId
+            ? read(context.client).pipe(Effect.timeout("20 seconds"))
+            : withHistoryClient(input.cwd ?? serverConfig.cwd, read)
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "session.messages",
+                detail: "Could not read saved agent history.",
+                cause,
+              }),
+          ),
+        );
+      },
+    );
+
     const readThread: OpenCodeAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
         const context = yield* ensureSessionContext(sessions, threadId);
@@ -3856,6 +4033,7 @@ export function makeOpenCodeAdapter(
       listSessions,
       hasSession,
       readThread,
+      getAgentHistory,
       rollbackThread,
       stopAll,
       get streamEvents() {

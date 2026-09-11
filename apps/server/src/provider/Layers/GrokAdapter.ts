@@ -1,3 +1,4 @@
+import { makeAgentHistoryClient } from "./agentHistoryClient.ts";
 import {
   ApprovalRequestId,
   type GrokSettings,
@@ -81,6 +82,12 @@ import {
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+
+import {
+  GrokSubagentNotification,
+  grokSubagentTask,
+  readGrokAgentHistory,
+} from "./grokAgentHistory.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
@@ -361,6 +368,20 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
     };
 
     const sessions = new Map<ThreadId, GrokSessionContext>();
+    const withHistoryClient = yield* makeAgentHistoryClient(
+      Effect.fn("Grok.historyClient")(function* (cwd: string) {
+        const acp = yield* makeGrokAcpRuntime({
+          grokSettings,
+          ...(options?.environment ? { environment: options.environment } : {}),
+          childProcessSpawner,
+          cwd,
+          clientInfo: { name: "t3-code", version: "0.0.0" },
+        });
+        // History needs transport negotiation, never a loaded or resumed coding session.
+        yield* acp.initialize();
+        return acp;
+      }),
+    );
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const requestedTurnInactivityTimeoutMs = options?.turnInactivityTimeoutMs;
@@ -1131,6 +1152,28 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         });
                       }
                       return makeXAiExitPlanModeCapturedResponse();
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
+            yield* Effect.forEach(
+              ["x.ai/session/update", "_x.ai/session/update"],
+              (method) =>
+                acp.handleExtNotification(method, GrokSubagentNotification, (notification) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      const ctx = sessions.get(input.threadId);
+                      if (!ctx || ctx.stopped) return;
+                      const task = grokSubagentTask(notification, ctx.acpSessionId);
+                      if (!task) return;
+                      yield* offerRuntimeEvent({
+                        ...task,
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId: resolveSessionCallbackTurnId(sessions, input.threadId),
+                      });
                     }),
                   ),
                 ),
@@ -2079,6 +2122,44 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         yield* Deferred.succeed(pending.resolution, { _tag: "answered", answers });
       });
 
+    /** Read verified child history over a shared initialized transport without loading a session. */
+    const getAgentHistory: GrokAdapterShape["getAgentHistory"] = Effect.fn(
+      "GrokAdapter.getAgentHistory",
+    )(function* (input) {
+      const parentSessionId = parseGrokResume(input.resumeCursor)?.sessionId;
+      if (!parentSessionId || !input.cwd)
+        return {
+          status: "unavailable",
+          entries: [],
+          nextOffset: null,
+          message: "No saved Grok session is available for this thread.",
+        };
+      const cwd = input.cwd;
+      return yield* withHistoryClient(cwd, (acp) =>
+        readGrokAgentHistory({
+          parentSessionId,
+          agentId: input.agentId,
+          cwd,
+          offset: input.offset,
+          view: input.view,
+          request: acp.request,
+        }),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "_x.ai/session/updates",
+              detail:
+                cause._tag === "TimeoutError"
+                  ? "Reading saved Grok agent history timed out after 20 seconds."
+                  : "Could not read saved Grok agent history. This requires a Grok CLI with session history extensions.",
+              cause,
+            }),
+        ),
+      );
+    });
+
     const readThread: GrokAdapterShape["readThread"] = (threadId) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(threadId);
@@ -2140,6 +2221,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       sendTurn,
       interruptTurn,
       readThread,
+      getAgentHistory,
       rollbackThread,
       respondToRequest,
       respondToUserInput,

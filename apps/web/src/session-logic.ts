@@ -473,6 +473,36 @@ export function deriveWorkLogEntries(
   return collapseDerivedWorkLogEntries(entries);
 }
 
+/**
+ * Work log for a single agent: the tool rows the thread's own work log
+ * deliberately hides. isAgentInternalActivity drops anything carrying
+ * `payload.agentId` from the parent timeline (quiet-timeline guarantee), and
+ * this is where those rows are re-homed. Derivation is shared with the parent
+ * work log, so an agent's tools render exactly like the thread's own.
+ *
+ * Callers derive this lazily, for the one agent a user opened — the roster
+ * never needs it.
+ */
+export function deriveAgentWorkEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  agentId: string,
+): WorkLogEntry[] {
+  const entries: DerivedWorkLogEntry[] = [];
+  for (const activity of [...activities].toSorted(compareActivitiesByOrder)) {
+    // tool.started is superseded by the updated/completed row for the same
+    // toolCallId, exactly as in the parent work log.
+    if (activity.kind !== "tool.updated" && activity.kind !== "tool.completed") continue;
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    if (!payload || payload.agentId !== agentId) continue;
+    if (isPlanBoundaryToolActivity(activity)) continue;
+    entries.push(toDerivedWorkLogEntry(activity));
+  }
+  return collapseDerivedWorkLogEntries(entries);
+}
+
 /** Adapters forward unknown wire-only SDK messages (background_tasks_changed,
  *  commands_changed, ...) as runtime warnings. The suffix comes from
  *  describeUnknownSdkMessage in the Claude adapter; a row with no displayable

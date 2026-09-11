@@ -212,6 +212,123 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
+  it.effect("receives underscore-prefixed Grok child lifecycle notifications", () =>
+    Effect.gen(function* () {
+      const dir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-lifecycle-")),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const wrapper = writeFakeCli({
+        directory: dir,
+        name: "lifecycle-grok",
+        source: `
+        import { createInterface } from "node:readline";
+        createInterface({ input: process.stdin }).on("line", (line) => {
+          const request = JSON.parse(line);
+          const respond = (result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+          if (request.method === "initialize") { respond({ protocolVersion: 1, agentCapabilities: {}, authMethods: [] }); return; }
+          if (request.method === "session/new") { respond({ sessionId: "mock-session-1" }); return; }
+          if (request.method !== "session/prompt") { if (request.id !== undefined) respond({}); return; }
+          for (const update of [
+            { sessionUpdate: "subagent_spawned", parent_session_id: "mock-session-1", child_session_id: "child", description: "Review" },
+            { sessionUpdate: "subagent_finished", child_session_id: "child", status: "completed" },
+          ]) process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "_x.ai/session/update", params: { sessionId: "mock-session-1", update } }) + "\\n");
+          respond({ stopReason: "end_turn" });
+        });
+      `,
+      });
+      const adapter = yield* makeTestAdapter(wrapper);
+      const threadId = ThreadId.make("grok-native-child-lifecycle");
+      const events = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started" || event.type === "task.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId,
+        cwd: dir,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-build" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "Review" });
+      const tasks = yield* Fiber.join(events);
+      assert.deepEqual(
+        tasks.map((event) => [event.type, event.payload.taskId]),
+        [
+          ["task.started", "child"],
+          ["task.completed", "child"],
+        ],
+      );
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+  it.effect("reads stopped child history with an isolated initialize-only transport", () =>
+    Effect.gen(function* () {
+      const dir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-history-")),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => NodeFSP.rm(dir, { recursive: true, force: true })),
+      );
+      const log = NodePath.join(dir, "requests.ndjson");
+      const wrapper = writeFakeCli({
+        directory: dir,
+        name: "history-grok",
+        source: `
+        import { appendFileSync } from "node:fs";
+        import { createInterface } from "node:readline";
+        const log = process.env.GROK_HISTORY_TEST_LOG;
+        process.on("SIGTERM", () => { appendFileSync(log, JSON.stringify({ method: "closed" }) + "\\n"); process.exit(0); });
+        createInterface({ input: process.stdin }).on("line", (line) => {
+          const request = JSON.parse(line);
+          appendFileSync(log, JSON.stringify({ method: request.method, params: request.params, home: process.env.GROK_HOME }) + "\\n");
+          if (request.id === undefined) return;
+          const result = request.method === "initialize" ? { protocolVersion: 1, agentCapabilities: {}, authMethods: [] }
+            : request.method === "_x.ai/session/state" ? { summary: { parent_session_id: "parent", session_kind: "subagent" } }
+            : request.method === "_x.ai/session/updates" ? { updates: [{ method: "session/update", params: { sessionId: "child", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Saved child output" } } } }] }
+            : undefined;
+          process.stdout.write(JSON.stringify(result === undefined ? { jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "unexpected method" } } : { jsonrpc: "2.0", id: request.id, result }) + "\\n");
+        });
+      `,
+      });
+      const adapter = yield* makeTestAdapter(wrapper, {
+        environment: { GROK_HISTORY_TEST_LOG: log, GROK_HOME: dir },
+      });
+      const threadId = ThreadId.make("stopped-grok-history");
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      assert.isDefined(adapter.getAgentHistory);
+      const input = {
+        threadId,
+        agentId: "child",
+        offset: 0,
+        cwd: dir,
+        resumeCursor: { schemaVersion: 1, sessionId: "parent" },
+      };
+      const result = yield* adapter.getAgentHistory!(input);
+      yield* adapter.getAgentHistory!(input);
+      assert.equal(result.status, "ready");
+      assert.equal(result.entries[0]?.detail, "Saved child output");
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const calls = yield* Effect.promise(() => readJsonLines(log));
+      assert.deepEqual(
+        calls.filter((call) => call.method !== "closed").map((call) => call.method),
+        [
+          "initialize",
+          "_x.ai/session/state",
+          "_x.ai/session/updates",
+          "_x.ai/session/state",
+          "_x.ai/session/updates",
+        ],
+      );
+      assert.isTrue(
+        calls.filter((call) => call.method !== "closed").every((call) => call.home === dir),
+      );
+      assert.isFalse(calls.some((call) => call.method === "closed"));
+    }),
+  );
   it.effect("sends runtime context with the current model without changing saved prompts", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-runtime-context");

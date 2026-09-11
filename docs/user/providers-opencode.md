@@ -20,6 +20,17 @@ fail, check the URL, credentials, and OpenCode version, then refresh provider st
 After a lost connection, send another prompt to reconnect to the same OpenCode
 session.
 
+## Agent history
+
+In the web or desktop Agents panel, expand an agent and choose **Open full
+activity** to read its saved conversation and tool activity. History comes from
+the OpenCode server configured for that environment and can be read after the
+agent stops. Opening history does not resume the agent.
+
+Use **Refresh** for newer activity and **Next** for more entries. Agents created
+before T3 Code began tracking OpenCode child sessions do not appear retroactively
+in the panel.
+
 ## Approvals
 
 OpenCode follows the shared [permission modes](./permission-modes.md). **Auto** has

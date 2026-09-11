@@ -99,3 +99,12 @@ config directory and put the router's endpoint and credential variables in that
 instance's **Environment variables**. The router must run where the environment
 can reach it. Follow the [Claude Code Router instructions](https://github.com/musistudio/claude-code-router)
 for its installation and routing configuration.
+
+## Subagent history
+
+On web and desktop, open the Agents panel, expand a subagent, and choose
+**Open full activity** to read its saved messages and tool activity. History
+comes from the configured Claude instance on the connected computer and can
+remain available after the session stops. Opening it does not resume Claude.
+Use **Refresh** for newly saved activity and **Next** for subsequent pages.
+Long entries are shortened and marked.
