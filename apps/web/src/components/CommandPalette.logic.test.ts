@@ -583,6 +583,28 @@ describe("buildThreadActionItems", () => {
     expect(item?.description).toBe("T3 Code · #feat/search");
   });
 
+  it("surfaces threads when the query is their ID", () => {
+    const threadId = ThreadId.make("thread-1");
+    const items = buildThreadActionItems({
+      threads: [makeThread({ id: threadId, title: "Refactor relay" })],
+      projectTitleById: new Map([[PROJECT_ID, "T3 Code"]]),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async (_thread) => undefined,
+    });
+
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: threadId,
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [],
+      threadSearchItems: items,
+    });
+
+    expect(groups.flatMap((group) => group.items)).toEqual(items);
+  });
+
   it("prefers renderDescription when provided", () => {
     const [item] = buildThreadActionItems({
       threads: [makeThread({ branch: "feat/search", worktreePath: "/tmp/wt" })],
