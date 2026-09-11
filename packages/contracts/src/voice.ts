@@ -45,7 +45,7 @@ export const VoiceAvailabilityResponse = Schema.Struct({
 export type VoiceAvailabilityResponse = typeof VoiceAvailabilityResponse.Type;
 
 /** Explicit unsupported marker for non-Codex providers; the mic stays visible but disabled. */
-export class VoiceProviderUnsupportedError extends Schema.TaggedErrorClass<VoiceProviderUnsupportedError>()(
+export class VoiceProviderUnsupportedError extends Schema.TaggedError<VoiceProviderUnsupportedError>()(
   "VoiceProviderUnsupportedError",
   {
     message: Schema.String,
