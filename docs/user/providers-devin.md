@@ -14,4 +14,8 @@ Type `$` in the composer to select a skill discovered by Devin CLI for your work
 
 For remote connections, installation and sign-in happen on the server machine. Provider instances can use separate environments, including `WINDSURF_API_KEY` for API-key authentication.
 
+If the CLI is signed in in your terminal but T3 reports **Not authenticated**, compare the environment variables used by each. On Linux and macOS, Devin stores credentials under `$XDG_DATA_HOME/devin` when set, otherwise `~/.local/share/devin`; on Windows it uses `%APPDATA%\devin`. See [Devin's credential locations](https://docs.devin.ai/cli/enterprise/devin-auth#credentials-file-location).
+
+Use the same credential directory in the provider instance's **Environment variables**, or run `devin auth login` with that instance's environment, then refresh provider status. Custom launchers should isolate T3 with `T3CODE_HOME` without redirecting `XDG_DATA_HOME` for provider processes.
+
 For generated titles and source-control text, choose another provider under **Settings → General → Text generation model**.
