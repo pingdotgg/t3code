@@ -265,6 +265,7 @@ export function SettingsRow({
   description,
   status,
   resetAction,
+  onResetOverride,
   control,
   serverScoped = false,
   settingKeys = EMPTY_SETTING_KEYS,
@@ -277,6 +278,8 @@ export function SettingsRow({
   description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
+  /** Replaces the default override clear for rows with side effects beyond the settings key. */
+  onResetOverride?: () => void;
   control?: ReactNode;
   serverScoped?: boolean;
   settingKeys?: readonly (keyof ServerSettings)[];
@@ -322,7 +325,7 @@ export function SettingsRow({
       <SettingResetButton
         label={typeof title === "string" ? title : "override"}
         tooltip="Reset to inherited value"
-        onClick={() => clearOverrides(scopedKeys)}
+        onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
       />
     ) : null
   ) : (

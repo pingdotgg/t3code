@@ -19,12 +19,12 @@ import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
-import { ProjectDefaultActionsSettings } from "./ProjectDefaultActionsSettings";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -45,11 +45,7 @@ import {
  * environment defaults at an environment scope and project overrides at a
  * project or checkout scope; the scoped hooks route the write.
  */
-export function ProjectDefaultsSettings({
-  category,
-}: {
-  category: Exclude<ProjectSettingsCategory, "overview">;
-}) {
+export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -74,6 +70,7 @@ export function ProjectDefaultsSettings({
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const workspaceSource = useScopedSettingSource(["defaultThreadEnvMode"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -132,7 +129,6 @@ export function ProjectDefaultsSettings({
     updateSettings({ defaultModelSelection: value });
   };
 
-  if (category === "actions") return <ProjectDefaultActionsSettings />;
   return (
     <SettingsSection
       id={
@@ -140,14 +136,14 @@ export function ProjectDefaultsSettings({
           ? "project-defaults"
           : category === "integrations"
             ? "browser-access"
-            : "automatic-pull-defaults"
+            : "source-control-defaults"
       }
       title={
         category === "general"
           ? "New threads"
           : category === "integrations"
             ? "Browser"
-            : "Project defaults"
+            : "Repositories"
       }
     >
       {category === "general" ? (
@@ -259,9 +255,13 @@ export function ProjectDefaultsSettings({
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Default workspace">
-                  <SelectValue placeholder={unavailable ? "Unavailable" : "Mixed"}>
+                  <SelectValue>
                     {(value: string | null) =>
-                      value === "local" || value === "worktree" ? resolveEnvModeLabel(value) : null
+                      value === "local" || value === "worktree"
+                        ? resolveEnvModeLabel(value)
+                        : unavailable
+                          ? "Unavailable"
+                          : "Mixed"
                     }
                   </SelectValue>
                 </SelectTrigger>
@@ -274,35 +274,85 @@ export function ProjectDefaultsSettings({
           />
         </>
       ) : category === "source-control" ? (
-        <SettingsRow
-          serverScoped
-          settingKeys={["defaultAutoPull"]}
-          mixed={mixedAutoPull}
-          id="automatic-pull"
-          title="Automatically pull"
-          description={
-            isProjectScope
-              ? "Keeps this project's default branch current when the checkout has no local changes or commits."
-              : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
-          }
-          resetAction={
-            settings.defaultAutoPull ? (
-              <SettingResetButton
-                label="default automatic pull"
-                tooltip="Reset automatic pull to off"
-                onClick={() => updateSettings({ defaultAutoPull: false })}
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["defaultAutoPull"]}
+            mixed={mixedAutoPull}
+            id="automatic-pull"
+            title="Automatically pull"
+            description={
+              isProjectScope
+                ? "Keeps this project's default branch current when the checkout has no local changes or commits."
+                : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+            }
+            resetAction={
+              settings.defaultAutoPull ? (
+                <SettingResetButton
+                  label="default automatic pull"
+                  tooltip="Reset automatic pull to off"
+                  onClick={() => updateSettings({ defaultAutoPull: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Default automatic pull"
+                mixed={mixedAutoPull}
+                checked={mixedAutoPull ? false : settings.defaultAutoPull}
+                onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
               />
-            ) : null
-          }
-          control={
-            <Switch
-              aria-label="Default automatic pull"
-              mixed={mixedAutoPull}
-              checked={mixedAutoPull ? false : settings.defaultAutoPull}
-              onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
-            />
-          }
-        />
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["pullRequestMergeMethod"]}
+            mixed={mixedMergeMethod}
+            {...searchableSetting("pull-request-merge-method")}
+            description={
+              isProjectScope
+                ? "Pull requests in this project start with this method."
+                : "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device."
+            }
+            resetAction={
+              settings.pullRequestMergeMethod !== null ? (
+                <SettingResetButton
+                  label="default merge method"
+                  tooltip="Reset to last selected"
+                  onClick={() => updateSettings({ pullRequestMergeMethod: null })}
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={mixedMergeMethod ? null : (settings.pullRequestMergeMethod ?? "last")}
+                onValueChange={(value) => {
+                  if (value === "last") updateSettings({ pullRequestMergeMethod: null });
+                  else if (value === "merge" || value === "squash" || value === "rebase")
+                    updateSettings({ pullRequestMergeMethod: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Default pull request merge method">
+                  <SelectValue>
+                    {(value: string | null) =>
+                      value === "merge" || value === "squash" || value === "rebase"
+                        ? PULL_REQUEST_MERGE_METHOD_LABELS[value]
+                        : value === "last"
+                          ? "Last selected"
+                          : "Mixed"
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="last">Last selected</SelectItem>
+                  <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
+                  <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
+                  <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </>
       ) : (
         <>
           <SettingsRow

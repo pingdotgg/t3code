@@ -19,7 +19,6 @@ import {
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
-  PlayIcon,
   SearchIcon,
   Settings2Icon,
   XIcon,
@@ -84,7 +83,6 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
-  "/settings/actions": PlayIcon,
   "/settings/connections": Link2Icon,
   "/settings/archived": ArchiveIcon,
 };

@@ -27,21 +27,21 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { ProjectActionsList } from "./ProjectActionsList";
-import { useProjectScriptSettings } from "./ProjectSettingsPanel";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { useProjectScriptSettings } from "./useProjectScriptSettings";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { useScopedSettingSource } from "./useScopedSettings";
 
 /**
- * Environment scopes edit the actions every inheriting project gets; project
- * scopes edit that project's override on each selected environment. Shortcuts
- * are environment-wide, so the same action id shares its binding on an environment.
+ * A project's actions on each selected environment. Actions belong to a
+ * project, so this only renders at a project scope; the environment's
+ * `defaultProjectScripts` is the layer a project without its own list
+ * inherits. Shortcuts are environment-wide, so the same action id shares its
+ * binding on an environment.
  */
-export function ProjectDefaultActionsSettings() {
+export function ProjectActionsSettings() {
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
-  const source = useScopedSettingSource(["defaultProjectScripts"]);
   const representativeConfig = target
     ? environments.find((environment) => environment.environmentId === target.environmentId)
         ?.serverConfig
@@ -122,32 +122,12 @@ export function ProjectDefaultActionsSettings() {
   return (
     <SettingsSection id="project-actions" title="Actions">
       <SettingsRow
-        title={isProjectScope ? "Project actions" : "Default actions"}
-        description={
-          isProjectScope
-            ? source === "project"
-              ? "Overridden for this project. Commands run in the checkout or its worktree."
-              : "Inherited from the environment's default actions. Adding an action creates an independent list for this project."
-            : "Available in every inheriting project. Commands run in that checkout or its worktree."
-        }
-        resetAction={
-          isProjectScope ? (
-            source === "project" || source === "mixed" ? (
-              <SettingResetButton
-                label="project actions"
-                tooltip="Reset to inherited actions"
-                disabled={saving}
-                onClick={() => void persist(() => null)}
-              />
-            ) : null
-          ) : targets.some((candidate) => candidate.settings.defaultProjectScripts.length > 0) ? (
-            <SettingResetButton
-              label="default actions"
-              disabled={saving}
-              onClick={() => void persist(() => [])}
-            />
-          ) : null
-        }
+        serverScoped
+        settingKeys={["defaultProjectScripts"]}
+        mixed={mixed}
+        title="Actions"
+        description="Commands that run in this project's checkout or its worktree, with optional shortcuts."
+        onResetOverride={() => void persist(() => null)}
         control={
           <div className="flex flex-wrap items-center gap-1.5">
             {importableScripts.length > 0 ? (
@@ -206,7 +186,7 @@ export function ProjectDefaultActionsSettings() {
       {mixed ? (
         <SettingsRow
           title="Different actions across environments"
-          description="Select one environment to edit its actions. Adding an action applies to every selected environment."
+          description="Choose one environment to edit its list. Adding an action here adds it on every selected environment."
         />
       ) : (
         <ProjectActionsList

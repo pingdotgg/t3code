@@ -17,7 +17,6 @@ export type SettingsPath =
   | "/settings/providers"
   | "/settings/integrations"
   | "/settings/source-control"
-  | "/settings/actions"
   | "/settings/connections"
   | "/settings/archived";
 
@@ -79,7 +78,6 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
-  "/settings/actions": "Actions",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
 };
@@ -101,7 +99,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "project-overview",
     title: "Project overview",
     to: "/settings/projects",
-    searchTerms: ["name icon emoji image checkout grouping remove delete"],
+    searchTerms: ["name icon emoji image checkout remove delete"],
   },
   {
     id: "default-model",
@@ -339,14 +337,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",
-    scope: "environment",
+    scope: "project-defaults",
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",
-    scope: "environment",
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
   },
   {
@@ -532,6 +529,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["auto pull default branch current checkout fast forward upstream"],
   },
   {
+    id: "pull-request-merge-method",
+    title: "Default merge method",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["pull request merge squash rebase last selected"],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
@@ -579,15 +583,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "project-actions",
     title: "Actions",
-    to: "/settings/actions",
-    searchTerms: ["commands scripts defaults setup run dev server checkout worktree inherit"],
-  },
-  {
-    id: "import-scripts",
-    title: "Import scripts",
-    to: "/settings/actions",
-    scope: "checkout",
-    searchTerms: ["actions t3.json checkout project commands"],
+    to: "/settings/projects",
+    searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
   },
   {
     id: "environment-icon",
@@ -686,7 +683,6 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/providers": "environment",
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
-  "/settings/actions": "project-defaults",
   "/settings/connections": "connections",
   "/settings/archived": "project-defaults",
 };

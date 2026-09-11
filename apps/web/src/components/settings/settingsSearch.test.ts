@@ -267,8 +267,7 @@ describe("searchSettings", () => {
     ["new threads", "new-threads", "/settings/general"],
     ["agent browser access", "agent-browser-access", "/settings/integrations"],
     ["automatically pull", "automatic-pull", "/settings/source-control"],
-    ["actions", "project-actions", "/settings/actions"],
-    ["import scripts", "import-scripts", "/settings/actions"],
+    ["actions", "project-actions", "/settings/projects"],
     ["project overview", "project-overview", "/settings/projects"],
   ])("routes %s to its owning category", (query, id, to) => {
     expect(searchSettings(query)[0]).toMatchObject({ id, to });
@@ -318,13 +317,11 @@ describe("settings search targets", () => {
     },
   );
 
-  it("requires a checkout for imports and an environment for provider models", () => {
-    const scripts = getSettingsSearchTargetScope("import-scripts")!;
-    expect(isSettingsSearchScopeAvailable(scripts.scope, "project")).toBe(false);
-    expect(isSettingsSearchScopeAvailable(scripts.scope, "checkout")).toBe(true);
+  it("lets project-scopable rows resolve at every server-backed scope", () => {
     const model = getSettingsSearchTargetScope("text-generation-model")!;
-    expect(isSettingsSearchScopeAvailable(model.scope, "all")).toBe(false);
+    expect(isSettingsSearchScopeAvailable(model.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(model.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(model.scope, "project")).toBe(true);
   });
 
   it("keeps environment-wide settings out of project scopes", () => {

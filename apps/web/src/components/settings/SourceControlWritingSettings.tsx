@@ -164,9 +164,9 @@ export function SourceControlWritingSettingsSection() {
               className="w-full sm:w-56"
               aria-label="Source control writing style"
             >
-              <SelectValue placeholder="Mixed">
+              <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
-                  value === null ? null : MODE_OPTIONS[value].label
+                  value === null ? "Mixed" : MODE_OPTIONS[value].label
                 }
               </SelectValue>
             </SelectTrigger>

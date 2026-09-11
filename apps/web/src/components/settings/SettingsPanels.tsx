@@ -2531,9 +2531,9 @@ export function GeneralSettingsPanel() {
                   className="w-full sm:w-40"
                   aria-label="Background activity profile"
                 >
-                  <SelectValue placeholder="Mixed">
+                  <SelectValue>
                     {(value: BackgroundActivityProfileOption | null) =>
-                      value === null ? null : BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[value]
+                      value === null ? "Mixed" : BACKGROUND_ACTIVITY_PROFILE_OPTION_LABELS[value]
                     }
                   </SelectValue>
                 </SelectTrigger>
@@ -2887,29 +2887,27 @@ export function GeneralSettingsPanel() {
           />
         )}
       </SettingsSection>
-      {scope.kind === "environment" ? (
-        <SettingsSection title="Diagnostics">
-          <SettingsRow
-            serverScoped
-            {...searchableSetting("diagnostics")}
-            description="Inspect processes, resource use, and logs on this environment."
-            control={
-              <Button
-                render={
-                  <Link
-                    to="/settings/diagnostics"
-                    search={{ machine: environmentId ?? undefined }}
-                  />
-                }
-                size="sm"
-                variant="outline"
-              >
-                View diagnostics
-              </Button>
-            }
-          />
-        </SettingsSection>
-      ) : null}
+      <SettingsSection title="Diagnostics">
+        <SettingsRow
+          {...searchableSetting("diagnostics")}
+          description={
+            isEnvironmentScope
+              ? "Inspect processes, resource use, and logs on this environment."
+              : "Inspect processes, resource use, and logs on one environment at a time."
+          }
+          control={
+            <Button
+              render={
+                <Link to="/settings/diagnostics" search={{ machine: environmentId ?? undefined }} />
+              }
+              size="sm"
+              variant="outline"
+            >
+              View diagnostics
+            </Button>
+          }
+        />
+      </SettingsSection>
 
       <LegacyFeaturesSection />
     </SettingsPageContainer>

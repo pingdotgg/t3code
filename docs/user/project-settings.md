@@ -10,36 +10,39 @@ edit its settings, or leave **All environments** to edit every connected environ
 Offline environments keep their current values; this is a bulk edit, not a synced global default.
 
 Choose a project to override settings for it on the selected environments. A layers icon beside
-each row's title shows whether the value is inherited from the environment or overridden for the
-project; click it to see the full chain, from the built-in default through the environment to the
-project, on every selected environment. An override can be reset to inherit again. Settings that cannot be overridden by a
-project are shown read-only while a project is selected. Mixed values mean the selected
-environments disagree.
+each server row's title shows where the value comes from: the built-in default, the environment,
+or a project override. Click it to see that chain on every selected environment. An override can
+be reset to inherit again. Settings that cannot be overridden by a project are shown read-only
+while a project is selected.
 
-Providers and diagnostics are per machine and ask for a single environment. Keybindings and every
-other environment setting fan out to the selection like the rest.
+When the selected environments disagree, the control shows **Mixed** in place of a value and the
+layers icon turns amber. Picking a value applies it to every selected environment.
+
+Providers and diagnostics are per machine: their breadcrumb ends at the environment, and they
+show the primary environment until you pick another. Every other setting fans out to the
+selection.
 
 ## Defaults and inheritance
 
 General contains the model and workspace for new threads. Integrations controls agent browser
-access, Source Control contains automatic pull and text generation, and Actions manages commands.
-The same rows edit environment defaults or project overrides depending on the project selector.
-The Project category, shown while a project is selected, holds the project's name, icon,
-checkouts and default merge method.
+access. Source Control contains automatic pull, the default pull request merge method and text
+generation. The same rows edit environment defaults or project overrides depending on the
+project crumb.
+
+The Project category, shown while a project is selected, holds the project's name, icon, actions,
+checkouts and removal. Actions belong to a project: editing them creates the project's own list
+on each selected environment, and reset returns to the environment's shared list. A project's
+`t3.json` actions can be imported there.
 
 Changing an environment default preserves explicit project overrides. For workspace mode, a
 project's `t3.json` preference applies when the project has no override. Browser access changes
 apply when an agent session next starts.
 
-Environment actions are available to inheriting projects. Editing a project's actions creates an
-independent list; reset that list to inherit again. A project's `t3.json` actions can be imported
-from the Actions page. Project grouping has a device-wide default with individual checkout overrides.
-
 ## Project icons
 
-Select the project and open Overview to choose an icon, emoji, or image. The choice applies
-to selected checkouts in the project group and appears on connected clients. Choose **Automatic** to
-let T3 Code detect an icon again.
+Select the project and open Project to choose an icon, emoji, or image. The choice applies to
+every checkout in the project group and appears on connected clients. Choose **Automatic** to let
+T3 Code detect an icon again.
 
 ## Keep the default branch current
 
