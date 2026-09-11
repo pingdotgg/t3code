@@ -22,6 +22,7 @@ const effectOverridesJson = JSON.stringify({
   effect: "4.0.0-rc.112",
   "@effect/platform-node": "4.0.0-rc.112",
   "@effect/platform-node-shared": "4.0.0-rc.112",
+  "@effect/vitest>vitest": "-",
   vite: "npm:@voidzero-dev/vite-plus-core@0.3.0",
 });
 
@@ -75,14 +76,15 @@ const successfulRunner = (fs: FileSystem.FileSystem, path: Path.Path) =>
       }),
   });
 
-it("selectEffectOverrides keeps only effect and @effect/* string pins", () => {
+it("selectEffectOverrides keeps only plain effect package version pins", () => {
   assert.deepEqual(
     selectEffectOverrides({
       effect: "4.0.0-rc.112",
       "@effect/platform-node": "4.0.0-rc.112",
+      "@effect/vitest>vitest": "-",
+      "@effect/broken": 12,
       vite: "1.0.0",
       "@clerk/react": "6.0.0",
-      "@effect/broken": 12,
     }),
     {
       effect: "4.0.0-rc.112",

@@ -85,12 +85,15 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
  * npm only honors `overrides` on the root project. Published `t3` carries Effect
  * pins, but they are ignored when `t3` is installed as a dependency into an empty
  * staging directory — caret ranges then float onto incompatible Effect RCs.
- * Re-apply only the Effect-related pins at the staging root before install.
+ * Re-apply only plain Effect package pins at the staging root before install.
+ * Nested selectors (`pkg>dep`) and removal overrides (`-`) are publish-time
+ * monorepo policy and are rejected by npm when copied into this staging root.
  */
 export function selectEffectOverrides(overrides: Record<string, unknown>): Record<string, string> {
   const selected: Record<string, string> = {};
   for (const [key, value] of Object.entries(overrides)) {
-    if ((key === "effect" || key.startsWith("@effect/")) && typeof value === "string") {
+    if (typeof value !== "string" || value === "-" || value.length === 0) continue;
+    if (key === "effect" || /^@effect\/[^>]+$/.test(key)) {
       selected[key] = value;
     }
   }
