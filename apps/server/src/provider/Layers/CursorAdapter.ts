@@ -871,7 +871,7 @@ export function makeCursorAdapter(
                     const todosPlan = extractTodosAsPlanFromToolCallInput(
                       event.toolCall.data.rawInput,
                     );
-                    if (todosPlan) {
+                    if (event.toolCall.status === "completed" && todosPlan) {
                       yield* emitPlanUpdate(
                         ctx,
                         todosPlan,

@@ -280,57 +280,68 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("maps Cursor ACP updateTodos tool calls onto turn.plan.updated", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CursorAdapter;
-      const settings = yield* ServerSettingsService;
-      const threadId = ThreadId.make("cursor-update-todos-thread");
+  it.effect.each(["completed", "failed", "in_progress"] as const)(
+    "emits a Cursor todo plan only after successful completion (%s)",
+    (status) =>
+      Effect.gen(function* () {
+        const adapter = yield* CursorAdapter;
+        const settings = yield* ServerSettingsService;
+        const threadId = ThreadId.make("cursor-update-todos-thread");
 
-      const wrapperPath = yield* Effect.promise(() =>
-        makeMockAgentWrapper({ T3_ACP_EMIT_CURSOR_UPDATE_TODOS: "1" }),
-      );
-      yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockAgentWrapper({
+            T3_ACP_EMIT_CURSOR_UPDATE_TODOS: "1",
+            T3_ACP_CURSOR_TODOS_STATUS: status,
+          }),
+        );
+        yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
 
-      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
-      const turnCompleted = yield* Deferred.make<void>();
-      yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.gen(function* () {
-          if (String(event.threadId) !== String(threadId)) {
-            return;
-          }
-          runtimeEvents.push(event);
-          if (event.type === "turn.completed") {
-            yield* Deferred.succeed(turnCompleted, undefined).pipe(Effect.orDie);
-          }
-        }),
-      ).pipe(Effect.forkChild);
+        const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+        const turnCompleted = yield* Deferred.make<void>();
+        yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.gen(function* () {
+            if (String(event.threadId) !== String(threadId)) {
+              return;
+            }
+            runtimeEvents.push(event);
+            if (event.type === "turn.completed") {
+              yield* Deferred.succeed(turnCompleted, undefined).pipe(Effect.orDie);
+            }
+          }),
+        ).pipe(Effect.forkChild);
 
-      yield* adapter.startSession({
-        threadId,
-        provider: ProviderDriverKind.make("cursor"),
-        cwd: process.cwd(),
-        runtimeMode: "full-access",
-        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
-      });
+        yield* adapter.startSession({
+          threadId,
+          provider: ProviderDriverKind.make("cursor"),
+          cwd: process.cwd(),
+          runtimeMode: "full-access",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+        });
 
-      yield* adapter.sendTurn({
-        threadId,
-        input: "hello mock",
-        attachments: [],
-      });
-      yield* Deferred.await(turnCompleted);
+        yield* adapter.sendTurn({
+          threadId,
+          input: "hello mock",
+          attachments: [],
+        });
+        yield* Deferred.await(turnCompleted);
 
-      const planUpdate = runtimeEvents.find((event) => event.type === "turn.plan.updated");
-      assert.isDefined(planUpdate);
-      if (planUpdate?.type === "turn.plan.updated") {
-        assert.deepStrictEqual(planUpdate.payload.plan, [
-          { step: "Inspect mock ACP state", status: "completed" },
-          { step: "Implement the requested change", status: "inProgress" },
-        ]);
-      }
+        const planUpdates = runtimeEvents.filter((event) => event.type === "turn.plan.updated");
+        assert.strictEqual(planUpdates.length, status === "completed" ? 1 : 0);
+        const planUpdate = planUpdates[0];
+        if (planUpdate?.type === "turn.plan.updated") {
+          const completedIndex = runtimeEvents.findIndex(
+            (event) => event.type === "item.completed" && event.itemId === "update-todos-1",
+          );
+          assert.isAtLeast(completedIndex, 0);
+          assert.isAbove(runtimeEvents.indexOf(planUpdate), completedIndex);
+          assert.deepStrictEqual(planUpdate.payload.plan, [
+            { step: "Inspect mock ACP state", status: "completed" },
+            { step: "Implement the requested change", status: "inProgress" },
+          ]);
+        }
 
-      yield* adapter.stopSession(threadId);
-    }),
+        yield* adapter.stopSession(threadId);
+      }),
   );
 
   it.effect("sends selected project skills in Cursor's native slash form", () =>
