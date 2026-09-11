@@ -25,6 +25,10 @@ vi.mock("react/compiler-runtime", async () => {
   return { c: reactHookHarness.useMemoCache };
 });
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
+vi.mock("../../state/environments", () => ({
+  usePrimaryEnvironmentId: () => null,
+  useEnvironments: () => [],
+}));
 vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
 vi.mock("./SettingsScopeContext", () => ({ useOptionalSettingsScope: () => null }));
 const bridge = vi.hoisted(() => ({

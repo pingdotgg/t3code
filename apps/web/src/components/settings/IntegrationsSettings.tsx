@@ -8,6 +8,7 @@ import { DeviceHostsSettings } from "./DeviceHostsSettings";
  * @module IntegrationsSettings
  */
 import {
+  AuthSettingsWriteScope,
   BrowserImportFailureReason,
   BROWSER_PROFILE_MAX_COUNT,
   type BrowserLinkTarget,
@@ -46,6 +47,7 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   AgentDeviceSetupStatus,
@@ -603,6 +605,7 @@ function DeviceIntegrationControls({
   enabled: boolean;
   agentAccessEnabled: boolean;
 }) {
+  const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state, loaded } = useDeviceState(environmentId);
   const configure = useAtomCommand(deviceEnvironment.configure);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
@@ -619,11 +622,16 @@ function DeviceIntegrationControls({
     kind: NonNullable<typeof pending>,
     input: { enabled?: boolean; agentAccessEnabled?: boolean },
   ) => {
-    if (!environmentId) return;
+    if (!environmentId || !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
     try {
       const result = await configure({ environmentId, input });
-      if (result._tag === "Success" && input.enabled === true && !state.onboardingCompleted) {
+      if (
+        result._tag === "Success" &&
+        input.enabled === true &&
+        !state.onboardingCompleted &&
+        readEnvironmentScope(environmentId, AuthSettingsWriteScope)
+      ) {
         await configure({ environmentId, input: { onboardingCompleted: true } });
       }
     } finally {
@@ -641,7 +649,7 @@ function DeviceIntegrationControls({
             {pending === "hub" ? <DeviceHubSetupStatus state={state} pending compact /> : null}
             <Switch
               checked={enabled}
-              disabled={!loaded || !environmentId || busy || pending !== null}
+              disabled={!canConfigure || !loaded || !environmentId || busy || pending !== null}
               aria-label="Device hub"
               onCheckedChange={(checked) =>
                 void update("hub", {
@@ -692,7 +700,9 @@ function DeviceIntegrationControls({
             {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
             <Switch
               checked={agentAccessEnabled}
-              disabled={!loaded || !environmentId || !enabled || busy || pending !== null}
+              disabled={
+                !canConfigure || !loaded || !environmentId || !enabled || busy || pending !== null
+              }
               aria-label="Agent device access"
               onCheckedChange={(checked) =>
                 void update("agent", { agentAccessEnabled: Boolean(checked) })

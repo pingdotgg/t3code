@@ -47,6 +47,7 @@ vi.mock("./entities", () => ({
       ],
     ]),
 }));
+vi.mock("./session", () => ({ readEnvironmentScope: () => true }));
 vi.mock("./threads", () => ({ threadEnvironment: {} }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./use-thread-selection", () => ({

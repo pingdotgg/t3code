@@ -9,6 +9,7 @@ import { AppText as Text } from "../../components/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
+  readonly canOperateThread: boolean;
   readonly approval: PendingApproval;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly onRespond: (
@@ -56,7 +57,10 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
                   ? "bg-danger"
                   : "bg-subtle-strong"
             }`}
-            disabled={props.respondingApprovalId === props.approval.requestId}
+            disabled={
+              !props.canOperateThread || props.respondingApprovalId === props.approval.requestId
+            }
+            style={!props.canOperateThread ? { opacity: 0.5 } : undefined}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
           >
             <Text
@@ -73,6 +77,11 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           </Pressable>
         ))}
       </View>
+      {!props.canOperateThread ? (
+        <Text className="font-sans text-xs text-adaptive-neutral-500-400">
+          This connection cannot respond to approvals.
+        </Text>
+      ) : null}
     </View>
   );
 }
