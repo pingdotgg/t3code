@@ -258,8 +258,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // (e.g. `"codex:gpt-5"`) still resolve — the default instance id equals
   // the driver slug.
   const favoritesSet = useMemo(() => {
-    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  }, [favorites]);
+    // Auto-balance entries have picker-only keys; favorites retain real instance IDs.
+    return new Set(
+      instanceEntries.flatMap((entry) =>
+        favorites
+          .filter((favorite) => favorite.provider === entry.snapshot.instanceId)
+          .map((favorite) => providerModelKey(entry.instanceId, favorite.model)),
+      ),
+    );
+  }, [favorites, instanceEntries]);
 
   /**
    * Lookup table keyed by `instanceId`. Used for display name + driver
@@ -572,16 +579,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const toggleFavorite = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
+      const provider = entryByInstanceId.get(instanceId)?.snapshot.instanceId ?? instanceId;
       const newFavorites = [...favorites];
-      const index = newFavorites.findIndex((f) => f.provider === instanceId && f.model === model);
+      const index = newFavorites.findIndex((f) => f.provider === provider && f.model === model);
       if (index >= 0) {
         newFavorites.splice(index, 1);
       } else {
-        newFavorites.push({ provider: instanceId, model });
+        newFavorites.push({ provider, model });
       }
       updateSettings({ favorites: newFavorites });
     },
-    [favorites, updateSettings],
+    [favorites, updateSettings, entryByInstanceId],
   );
 
   const modelJumpCommandByKey = useMemo(() => {
