@@ -191,6 +191,69 @@ layer("CommandPolicyV2", (it) => {
     }),
   );
 
+  it.effect("reports interrupt_restart_steering when forced restart is unsupported", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+      const cases = [
+        {
+          supportsActiveSteering: false,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: true,
+        },
+        {
+          supportsActiveSteering: true,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: true,
+        },
+        {
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: false,
+        },
+        {
+          supportsActiveSteering: true,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: false,
+        },
+        {
+          supportsActiveSteering: false,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: false,
+        },
+        {
+          supportsActiveSteering: true,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: false,
+        },
+      ] as const;
+
+      for (const turns of cases) {
+        const error = yield* policy
+          .decideSteeringExecution({
+            commandId,
+            threadId,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            capabilities: capabilities((current) => ({
+              ...current,
+              turns: {
+                ...current.turns,
+                ...turns,
+              },
+            })),
+            forceRestart: true,
+          })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+        assert.equal(error.capability, "interrupt_restart_steering");
+        assert.equal(
+          error.detail,
+          "providerInstanceId cannot satisfy an explicit interrupt-and-restart request",
+        );
+      }
+    }),
+  );
+
   it.effect("returns typed capability errors for unsupported active steering", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicyV2;
