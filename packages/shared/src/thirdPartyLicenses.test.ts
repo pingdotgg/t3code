@@ -44,6 +44,21 @@ describe("third-party license manifests", () => {
     );
   });
 
+  it("rejects unsafe source links", () => {
+    expect(() =>
+      decodeThirdPartyLicenseManifest({
+        schemaVersion: 1,
+        entries: [{ ...ENTRIES[0]!, sourceUrl: "javascript:alert(1)" }],
+      }),
+    ).toThrow("invalid shape");
+  });
+
+  it("rejects duplicate navigation keys", () => {
+    expect(() =>
+      decodeThirdPartyLicenseManifest({ schemaVersion: 1, entries: [ENTRIES[0]!, ENTRIES[0]!] }),
+    ).toThrow("duplicate entry");
+  });
+
   it("filters by package, license, version, and bundle", () => {
     expect(filterThirdPartyLicenseEntries(ENTRIES, "react 19.2")).toEqual([ENTRIES[0]]);
     expect(filterThirdPartyLicenseEntries(ENTRIES, "cc-by mobile")).toEqual([ENTRIES[1]]);
@@ -59,5 +74,11 @@ describe("third-party license manifests", () => {
   it("finds an entry by its stable navigation key", () => {
     const entry = ENTRIES[0]!;
     expect(findThirdPartyLicenseEntry(ENTRIES, thirdPartyLicenseEntryKey(entry))).toBe(entry);
+  });
+
+  it("uses path-safe navigation keys for scoped packages", () => {
+    expect(thirdPartyLicenseEntryKey({ ...ENTRIES[0]!, name: "@scope/package" })).not.toContain(
+      "/",
+    );
   });
 });

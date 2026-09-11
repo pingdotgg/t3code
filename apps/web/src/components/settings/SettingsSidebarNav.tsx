@@ -327,9 +327,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   (pathname === "/settings/diagnostics" ||
                     pathname === "/settings/open-source-licenses");
                 const isActive =
-                  isGeneralDetailPage ||
-                  pathname === item.to ||
-                  pathname.startsWith(`${item.to}/`);
+                  isGeneralDetailPage || pathname === item.to || pathname.startsWith(`${item.to}/`);
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton

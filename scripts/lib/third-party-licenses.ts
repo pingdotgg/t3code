@@ -48,9 +48,10 @@ interface PackageJson {
 
 interface CustomNoticeConfigEntry {
   readonly bundles?: ReadonlyArray<string>;
+  readonly includeInBundles?: ReadonlyArray<string>;
   readonly license: string;
   readonly name: string;
-  readonly noticeFile: string;
+  readonly noticeFiles: ReadonlyArray<string>;
   readonly sourceUrl?: string;
   readonly version?: string;
 }
@@ -144,13 +145,20 @@ function decodeCustomNotices(value: unknown): ReadonlyArray<CustomNoticeConfigEn
     const version = readOptionalString(entry, "version", context);
     const sourceUrl = readOptionalString(entry, "sourceUrl", context);
     const bundles = readOptionalStringArray(entry, "bundles", context);
+    const includeInBundles = readOptionalStringArray(entry, "includeInBundles", context);
+    const noticeFile = readOptionalString(entry, "noticeFile", context);
+    const noticeFiles = readOptionalStringArray(entry, "noticeFiles", context);
+    if ((noticeFile === undefined) === (noticeFiles === undefined)) {
+      throw new Error(`${context} must define exactly one of "noticeFile" or "noticeFiles".`);
+    }
     return {
       name: readRequiredString(entry, "name", context),
       license: readRequiredString(entry, "license", context),
-      noticeFile: readRequiredString(entry, "noticeFile", context),
+      noticeFiles: noticeFile === undefined ? noticeFiles! : [noticeFile],
       ...(version !== undefined ? { version } : {}),
       ...(sourceUrl !== undefined ? { sourceUrl } : {}),
       ...(bundles !== undefined ? { bundles } : {}),
+      ...(includeInBundles !== undefined ? { includeInBundles } : {}),
     };
   });
 }
@@ -319,9 +327,14 @@ async function collectProductionDependencyPackages(
 function moduleFilePath(moduleId: string): string | null {
   if (moduleId.startsWith("\0") || moduleId.includes("\0")) return null;
   const withoutQuery = moduleId.split(/[?#]/, 1)[0] ?? moduleId;
+  const viteFilePath = withoutQuery.startsWith("/@fs/")
+    ? withoutQuery.slice("/@fs/".length)
+    : withoutQuery;
   const filePath = withoutQuery.startsWith("file:")
     ? NodeURL.fileURLToPath(withoutQuery)
-    : withoutQuery.replace(/^\/@fs\//, "/");
+    : /^[A-Za-z]:[\\/]/.test(viteFilePath)
+      ? viteFilePath
+      : NodePath.resolve("/", viteFilePath);
   const normalized = filePath.replaceAll("\\", "/");
   return normalized.includes("/node_modules/") ? filePath : null;
 }
@@ -365,8 +378,11 @@ function normalizeLicense(packageJson: PackageJson): string | null {
   if (isRecord(packageJson.license) && typeof packageJson.license.type === "string") {
     return packageJson.license.type.trim() || null;
   }
-  if (Array.isArray(packageJson.licenses)) {
-    const licenses = packageJson.licenses
+  const declaredLicenses = Array.isArray(packageJson.license)
+    ? packageJson.license
+    : packageJson.licenses;
+  if (Array.isArray(declaredLicenses)) {
+    const licenses = declaredLicenses
       .map((entry) => {
         if (typeof entry === "string") return entry.trim();
         if (isRecord(entry) && typeof entry.type === "string") return entry.type.trim();
@@ -394,6 +410,7 @@ function normalizeRepositoryUrl(value: unknown): string | null {
     .replace(/^git@github\.com:/, "https://github.com/")
     .replace(/^ssh:\/\/(?:git@)?github\.com\//, "https://github.com/")
     .replace(/^git:\/\/github\.com\//, "https://github.com/")
+    .replace(/#.*$/, "")
     .replace(/\.git$/, "");
   if (/^[\w.-]+\/[\w.-]+$/.test(normalized)) return `https://github.com/${normalized}`;
   return normalized;
@@ -460,9 +477,7 @@ async function readPackageNoticeText(packageRoot: string): Promise<string | null
 
 function repositoryNoticeKey(packageJson: PackageJson, license: string): string | null {
   const repositoryUrl = normalizeRepositoryUrl(packageJson.repository);
-  return repositoryUrl
-    ? `${repositoryUrl.toLocaleLowerCase()}\n${license.toLocaleLowerCase()}`
-    : null;
+  return repositoryUrl ? `${repositoryUrl.toLowerCase()}\n${license.toLowerCase()}` : null;
 }
 
 async function collectRepositoryNotices(
@@ -470,16 +485,19 @@ async function collectRepositoryNotices(
   packageNotices: Map<string, Promise<string | null>>,
 ): Promise<ReadonlyMap<string, string>> {
   const notices = new Map<string, string>();
-  await Promise.all(
+  const candidates = await Promise.all(
     [...collection.byIdentity.values()].map(async (collected) => {
       const license = normalizeLicense(collected.packageJson);
-      if (!license) return;
+      if (!license) return null;
       const key = repositoryNoticeKey(collected.packageJson, license);
-      if (!key || notices.has(key)) return;
+      if (!key) return null;
       const noticeText = await packageNoticeText(collected.packageRoot, packageNotices);
-      if (noticeText) notices.set(key, noticeText);
+      return noticeText ? { key, noticeText } : null;
     }),
   );
+  for (const candidate of candidates) {
+    if (candidate && !notices.has(candidate.key)) notices.set(candidate.key, candidate.noticeText);
+  }
   return notices;
 }
 
@@ -500,19 +518,16 @@ function findPackageOverride(
   version: string,
   packageJson: PackageJson,
 ): PackageNoticeOverrideConfigEntry | undefined {
-  const matchingVersion = (override: PackageNoticeOverrideConfigEntry) =>
-    override.version === undefined || override.version === version;
-  const repositoryUrl = normalizeRepositoryUrl(packageJson.repository)?.toLocaleLowerCase();
+  const repositoryUrl = normalizeRepositoryUrl(packageJson.repository)?.toLowerCase();
+  const matchesRepository = (override: PackageNoticeOverrideConfigEntry) =>
+    repositoryUrl !== undefined &&
+    override.repositoryUrl !== undefined &&
+    normalizeRepositoryUrl(override.repositoryUrl)?.toLowerCase() === repositoryUrl;
   return (
     overrides.find((override) => override.name === name && override.version === version) ??
     overrides.find((override) => override.name === name && override.version === undefined) ??
-    overrides.find(
-      (override) =>
-        repositoryUrl !== undefined &&
-        override.repositoryUrl !== undefined &&
-        normalizeRepositoryUrl(override.repositoryUrl)?.toLocaleLowerCase() === repositoryUrl &&
-        matchingVersion(override),
-    )
+    overrides.find((override) => matchesRepository(override) && override.version === version) ??
+    overrides.find((override) => matchesRepository(override) && override.version === undefined)
   );
 }
 
@@ -575,13 +590,24 @@ async function customEntries(
     config.customNotices
       .filter(
         (notice) =>
-          notice.bundles === undefined ||
-          notice.bundles.some((bundle) => includedBundles.has(bundle)),
+          (notice.includeInBundles ?? notice.bundles) === undefined ||
+          (notice.includeInBundles ?? notice.bundles)?.some((bundle) =>
+            includedBundles.has(bundle),
+          ),
       )
       .map(async (notice) => {
-        const noticeText = (
-          await NodeFSP.readFile(NodePath.resolve(configDirectory, notice.noticeFile), "utf8")
-        ).trim();
+        const noticeSections = await Promise.all(
+          notice.noticeFiles.map(async (noticeFile) => {
+            const contents = (
+              await NodeFSP.readFile(NodePath.resolve(configDirectory, noticeFile), "utf8")
+            ).trim();
+            if (contents.length === 0) {
+              throw new Error(`Custom third-party notice "${notice.name}" is empty.`);
+            }
+            return contents;
+          }),
+        );
+        const noticeText = noticeSections.join("\n\n---\n\n");
         if (noticeText.length === 0) {
           throw new Error(`Custom third-party notice "${notice.name}" is empty.`);
         }
@@ -679,6 +705,9 @@ export function thirdPartyLicensesPlugin(options: ThirdPartyLicensesPluginOption
         manifestPromise ??= generateThirdPartyLicenseManifest({
           packageManifests: options.packageManifests,
           ...(options.configFile !== undefined ? { configFile: options.configFile } : {}),
+        }).catch((error: unknown) => {
+          manifestPromise = null;
+          throw error;
         });
         void manifestPromise.then(
           (manifest) => {

@@ -1,7 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
-const TypeScript = require("typescript");
 const { getDefaultConfig } = require("expo/metro-config");
 const { withUniwindConfig } = require("uniwind/metro");
 const extraThemes = require("./generated-uniwind-theme-names.json");
@@ -69,21 +68,9 @@ async function writeFileIfChanged(filePath, contents) {
 
 async function generateMobileThirdPartyLicenses() {
   await fs.promises.mkdir(generatedLicenseModuleRoot, { recursive: true });
-  const generatorSource = await fs.promises.readFile(licenseGeneratorSource, "utf8");
-  const compiledGenerator = TypeScript.transpileModule(generatorSource, {
-    compilerOptions: {
-      module: TypeScript.ModuleKind.ESNext,
-      target: TypeScript.ScriptTarget.ES2022,
-      verbatimModuleSyntax: true,
-    },
-    fileName: licenseGeneratorSource,
-  }).outputText;
-  const compiledGeneratorPath = path.join(generatedLicenseModuleRoot, "generator.mjs");
-  await writeFileIfChanged(compiledGeneratorPath, compiledGenerator);
-
-  const generatorVersion = (await fs.promises.stat(compiledGeneratorPath)).mtimeMs;
+  const generatorVersion = (await fs.promises.stat(licenseGeneratorSource)).mtimeMs;
   const { generateThirdPartyLicenseManifest } = await import(
-    `${pathToFileURL(compiledGeneratorPath).href}?version=${String(generatorVersion)}`
+    `${pathToFileURL(licenseGeneratorSource).href}?version=${String(generatorVersion)}`
   );
   const manifest = await generateThirdPartyLicenseManifest({
     configFile: path.join(workspaceRoot, "third-party-licenses.config.json"),

@@ -1,0 +1,12 @@
+serve-sim attribution notice
+
+This distribution includes software from the original serve-sim project,
+created and open-sourced by Evan Bacon:
+
+https://github.com/EvanBacon/serve-sim
+
+Original work copyright 2026 Evan Bacon.
+
+The original work is licensed under the Apache License, Version 2.0. This
+fork contains modifications by Expo and other contributors. See the LICENSE
+file for the applicable terms and the Git history for modification details.

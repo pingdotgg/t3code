@@ -21,6 +21,16 @@ function isStringArray(value: unknown): value is ReadonlyArray<string> {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function decodeEntry(value: unknown, index: number): ThirdPartyLicenseEntry {
   if (!isRecord(value)) {
     throw new Error(`License entry ${String(index + 1)} is not an object.`);
@@ -32,7 +42,7 @@ function decodeEntry(value: unknown, index: number): ThirdPartyLicenseEntry {
     typeof value.license !== "string" ||
     typeof value.name !== "string" ||
     typeof value.noticeText !== "string" ||
-    (value.sourceUrl !== null && typeof value.sourceUrl !== "string") ||
+    (value.sourceUrl !== null && !isHttpUrl(value.sourceUrl)) ||
     (value.version !== null && typeof value.version !== "string")
   ) {
     throw new Error(`License entry ${String(index + 1)} has an invalid shape.`);
@@ -52,9 +62,18 @@ export function decodeThirdPartyLicenseManifest(value: unknown): ThirdPartyLicen
   if (!isRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.entries)) {
     throw new Error("The open-source license manifest has an unsupported format.");
   }
+  const entries = value.entries.map(decodeEntry);
+  const entryKeys = new Set<string>();
+  for (const entry of entries) {
+    const key = thirdPartyLicenseEntryKey(entry);
+    if (entryKeys.has(key)) {
+      throw new Error(`The open-source license manifest contains a duplicate entry: ${key}`);
+    }
+    entryKeys.add(key);
+  }
   return {
     schemaVersion: 1,
-    entries: value.entries.map(decodeEntry),
+    entries,
   };
 }
 
@@ -64,7 +83,7 @@ export function filterThirdPartyLicenseEntries(
 ): ReadonlyArray<ThirdPartyLicenseEntry> {
   const terms = query
     .trim()
-    .toLocaleLowerCase()
+    .toLowerCase()
     .split(/\s+/)
     .filter((term) => term.length > 0);
   if (terms.length === 0) return entries;
@@ -72,7 +91,7 @@ export function filterThirdPartyLicenseEntries(
     const searchable = [entry.name, entry.version, entry.license, ...entry.bundles]
       .filter((value): value is string => value !== null)
       .join(" ")
-      .toLocaleLowerCase();
+      .toLowerCase();
     return terms.every((term) => searchable.includes(term));
   });
 }
@@ -81,6 +100,7 @@ const BUNDLE_LABELS: Readonly<Record<string, string>> = {
   android: "Android",
   assets: "Assets",
   desktop: "Desktop",
+  "device-tools": "Device tools",
   ios: "iOS",
   mobile: "Mobile",
   server: "Server",
@@ -92,7 +112,7 @@ export function formatLicenseBundles(bundles: ReadonlyArray<string>): string {
 }
 
 export function thirdPartyLicenseEntryKey(entry: ThirdPartyLicenseEntry): string {
-  return `${entry.kind}:${entry.name}:${entry.version ?? "custom"}`;
+  return encodeURIComponent(`${entry.kind}:${entry.name}:${entry.version ?? "custom"}`);
 }
 
 export function findThirdPartyLicenseEntry(

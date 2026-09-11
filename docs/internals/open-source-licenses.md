@@ -43,9 +43,12 @@ another asset that did not come from an npm package:
 }
 ```
 
-Paths in `noticeFile` are relative to the config file. The notice file should contain the complete
-copyright, attribution, and license text required for redistribution. `bundles` controls which
-generated manifests include the entry; omit it only when the notice belongs in every client.
+Paths in `noticeFile` are relative to the config file. Use `noticeFiles` when one row needs to join
+several notices, such as a tool that vendors separately licensed code. The files should contain the
+complete copyright, attribution, and license text required for redistribution. `bundles` controls
+which generated manifests include the entry and supplies the label shown to users. Use
+`includeInBundles` when those differ, such as an optional server tool that should appear in both
+client manifests but is not bundled into either client.
 
 Use `packageOverrides` only when an installed npm archive omits its notice or has incorrect
 metadata:

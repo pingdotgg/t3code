@@ -8,6 +8,36 @@
       "sourceUrl": "https://github.com/vscode-icons/vscode-icons"
     },
     {
+      "bundles": ["assets", "desktop", "web"],
+      "license": "MIT",
+      "name": "T3 Code SnapShot sound effects",
+      "noticeFile": "LICENSE",
+      "sourceUrl": "https://github.com/pingdotgg/t3code"
+    },
+    {
+      "bundles": ["device-tools"],
+      "includeInBundles": ["mobile", "web"],
+      "license": "MIT",
+      "name": "agent-device",
+      "noticeFile": "apps/web/licenses/agent-device.txt",
+      "sourceUrl": "https://github.com/callstack/agent-device",
+      "version": "0.20.10"
+    },
+    {
+      "bundles": ["device-tools"],
+      "includeInBundles": ["mobile", "web"],
+      "license": "MIT AND Apache-2.0 AND BSD-3-Clause",
+      "name": "expo-device-hub",
+      "noticeFiles": [
+        "apps/web/licenses/expo-device-hub.txt",
+        "apps/web/licenses/kubernetes-types.txt",
+        "apps/web/licenses/expo-device-hub-serve-sim-notice.txt",
+        "apps/web/licenses/expo-device-hub-webrtc.txt"
+      ],
+      "sourceUrl": "https://github.com/expo/expo-device-hub",
+      "version": "0.9.0"
+    },
+    {
       "bundles": ["android", "assets", "mobile", "web"],
       "license": "MIT",
       "name": "libghostty-vt",
@@ -98,6 +128,63 @@
     {
       "name": "@electron-internal/extract-zip",
       "noticeFile": "apps/web/licenses/electron-internal-extract-zip.txt"
+    },
+    {
+      "noticeFile": "apps/web/licenses/xa11y.txt",
+      "repositoryUrl": "https://github.com/xa11y/xa11y"
+    },
+    {
+      "license": "MIT",
+      "name": "map-stream",
+      "noticeFile": "apps/web/licenses/map-stream.txt"
+    },
+    {
+      "license": "Apache-2.0",
+      "name": "jsbi"
+    },
+    {
+      "name": "@yuuang/ffi-rs-android-arm64",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-darwin-arm64",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-darwin-x64",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-linux-arm-gnueabihf",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-linux-arm64-gnu",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-linux-arm64-musl",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-linux-x64-gnu",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-linux-x64-musl",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-win32-arm64-msvc",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-win32-ia32-msvc",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
+    },
+    {
+      "name": "@yuuang/ffi-rs-win32-x64-msvc",
+      "noticeFile": "apps/web/licenses/ffi-rs.txt"
     },
     {
       "noticeFile": "apps/mobile/licenses/metro.txt",
