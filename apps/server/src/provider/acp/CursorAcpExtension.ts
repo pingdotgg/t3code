@@ -6,6 +6,8 @@ import type { UserInputQuestion } from "@t3tools/contracts";
 import * as AcpSchema from "effect-acp/schema";
 import * as Schema from "effect/Schema";
 
+import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
+
 const CursorAskQuestionOption = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
@@ -110,4 +112,60 @@ export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type)
     return [{ step, status }];
   });
   return { plan };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function trimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export interface CursorTaskToolFields {
+  readonly title: string;
+  readonly role?: string;
+}
+
+/**
+ * Cursor exposes native Task/subagent launches as ordinary ACP tool calls.
+ * Ask-question, plan, and execute/read/edit tools must not match.
+ */
+export function cursorTaskToolFields(toolCall: AcpToolCallState): CursorTaskToolFields | undefined {
+  const kind = toolCall.kind;
+  if (
+    kind === "execute" ||
+    kind === "read" ||
+    kind === "edit" ||
+    kind === "delete" ||
+    kind === "move"
+  ) {
+    return undefined;
+  }
+  const raw = toolCall.data.rawInput;
+  if (isRecord(raw) && Array.isArray(raw.questions)) {
+    return undefined;
+  }
+  if (isRecord(raw) && (typeof raw.plan === "string" || Array.isArray(raw.todos))) {
+    return undefined;
+  }
+  const role = isRecord(raw) ? trimmedString(raw.subagent_type) : undefined;
+  const description = isRecord(raw) ? trimmedString(raw.description) : undefined;
+  const title = trimmedString(toolCall.title);
+  const titleLooksLikeTask =
+    title !== undefined &&
+    (title.toLowerCase() === "task" ||
+      title.toLowerCase() === "running task" ||
+      title.toLowerCase().startsWith("task "));
+  if (role === undefined && !titleLooksLikeTask) {
+    return undefined;
+  }
+  return {
+    title: description ?? title ?? "Task",
+    ...(role !== undefined ? { role } : {}),
+  };
+}
+
+export function classifyCursorTaskToolCall(toolCall: AcpToolCallState): boolean {
+  return cursorTaskToolFields(toolCall) !== undefined;
 }

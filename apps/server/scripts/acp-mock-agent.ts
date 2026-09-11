@@ -16,6 +16,7 @@ const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
+const emitTaskSubagent = process.env.T3_ACP_EMIT_TASK_SUBAGENT === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
@@ -617,6 +618,39 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (emitTaskSubagent) {
+        const toolCallId = "task-call-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Task",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {
+              subagent_type: "reviewer-subagent",
+              description: "Ship reviewer-subagent",
+              run_in_background: true,
+            },
+          },
+        });
+        yield* Effect.sync(() => {
+          setTimeout(() => {
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                status: "completed",
+                rawOutput: "PASS",
+              },
+            });
+          }, 80);
+        });
+        return { stopReason: "end_turn" };
+      }
 
       if (completeFirstPromptOnCancel && promptCount === 1) {
         yield* agent.client.sessionUpdate({

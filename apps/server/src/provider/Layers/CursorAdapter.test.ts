@@ -1593,4 +1593,74 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
   );
+
+  it.effect("projects Cursor Task tool calls onto task lifecycle events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-task-subagent");
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const turnSettled = yield* Deferred.make<void>();
+
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockAgentWrapper({ T3_ACP_EMIT_TASK_SUBAGENT: "1" }),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+
+      yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.gen(function* () {
+          if (String(event.threadId) !== String(threadId)) {
+            return;
+          }
+          runtimeEvents.push(event);
+          if (event.type === "turn.completed") {
+            yield* Deferred.succeed(turnSettled, undefined).pipe(Effect.ignore);
+          }
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "spawn a reviewer",
+        attachments: [],
+      });
+      yield* Deferred.await(turnSettled).pipe(Effect.timeout("10 seconds"));
+
+      const turnEvents = runtimeEvents.filter(
+        (event) => String(event.turnId) === String(turn.turnId),
+      );
+      const types = turnEvents.map((event) => event.type);
+      assert.includeMembers(types, ["task.started", "task.completed", "turn.completed"]);
+      const startedAt = types.indexOf("task.started");
+      const completedAt = types.lastIndexOf("task.completed");
+      const settledAt = types.lastIndexOf("turn.completed");
+      assert.isBelow(startedAt, completedAt);
+      assert.isBelow(completedAt, settledAt);
+      assert.isFalse(
+        turnEvents.some(
+          (event) => event.type === "item.updated" || event.type === "item.completed",
+        ),
+      );
+
+      const started = turnEvents.find((event) => event.type === "task.started");
+      assert.isDefined(started);
+      if (started?.type === "task.started") {
+        assert.equal(String(started.payload.taskId), "task-call-1");
+        assert.equal(started.payload.taskType, "subagent");
+        assert.equal(started.payload.agentKind, "agent");
+        assert.equal(started.payload.role, "reviewer-subagent");
+        assert.equal(started.payload.title, "Ship reviewer-subagent");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
 });
