@@ -1,5 +1,6 @@
 import { InfoIcon, Undo2Icon } from "lucide-react";
-import type { ServerSettings } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   createContext,
@@ -365,16 +366,29 @@ export function SettingsRow({
       control
     );
   // Server rows get an indicator beside the title that opens the resolution
-  // chain per target; client rows and rows without keys keep a plain status.
-  const inheritance: { state: SettingInheritanceState; summary: string } | null = mixed
+  // chain per target at every scope; client rows keep a plain status only.
+  const customized =
+    context !== null &&
+    settingKeys.some((key) =>
+      context.targets.some((candidate) => {
+        const environmentSettings = environmentSettingsById.get(candidate.environmentId);
+        return (
+          environmentSettings !== undefined &&
+          !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
+        );
+      }),
+    );
+  const inheritance: { state: SettingInheritanceState; summary: string } = mixed
     ? { state: "mixed", summary: "Mixed across selected environments" }
     : source === "project"
       ? { state: "overridden", summary: "Overridden for this project" }
       : source === "environment" && scopedKeys.length > 0
         ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
-        : null;
+        : customized
+          ? { state: "environment", summary: "Set on the environment" }
+          : { state: "default", summary: "Built-in default" };
   const renderedInheritance =
-    inheritance && context && serverScoped && settingKeys.length > 0 ? (
+    context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
         state={inheritance.state}
         summary={inheritance.summary}
@@ -383,7 +397,11 @@ export function SettingsRow({
         keys={settingKeys}
       />
     ) : null;
-  const renderedStatus = renderedInheritance ? null : (inheritance?.summary ?? status);
+  const renderedStatus = renderedInheritance
+    ? status
+    : source !== null || mixed
+      ? inheritance.summary
+      : status;
 
   return (
     <div

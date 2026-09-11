@@ -73,7 +73,12 @@ export function settingInheritanceLayers(
   return layers;
 }
 
-export type SettingInheritanceState = "inherited" | "overridden" | "mixed";
+export type SettingInheritanceState =
+  | "default"
+  | "environment"
+  | "inherited"
+  | "overridden"
+  | "mixed";
 
 /**
  * A small indicator beside a row's title that opens a top-down view of where
@@ -112,7 +117,9 @@ export function SettingInheritance({
                       ? "text-primary hover:text-primary"
                       : state === "mixed"
                         ? "text-warning hover:text-warning"
-                        : "text-muted-foreground/70 hover:text-foreground",
+                        : state === "environment"
+                          ? "text-foreground/70 hover:text-foreground"
+                          : "text-muted-foreground/60 hover:text-foreground",
                   )}
                 />
               }
