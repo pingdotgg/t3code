@@ -63,6 +63,7 @@ struct MarkdownMessageView: View {
             if let displayDocument {
                 MarkdownBlocksView(
                     blocks: displayDocument.blocks,
+                    continuousSelection: !isStreaming,
                     selectionContext: selectionContext,
                     imageContext: imageContext
                 )
@@ -237,6 +238,7 @@ private enum MarkdownTextColor: Equatable, Sendable {
 
 private struct MarkdownBlocksView: View {
     let blocks: [MarkdownRenderedBlock]
+    var continuousSelection = false
     let selectionContext: MarkdownSelectionContext
     let imageContext: MarkdownImageContext?
     var spacing: CGFloat = 12
@@ -244,19 +246,31 @@ private struct MarkdownBlocksView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            ForEach(blocks.indices, id: \.self) { index in
-                // Unchanged blocks share inline runs by reference across
-                // streaming revisions, so equatable comparison skips their
-                // body and layout entirely; only the changed tail re-renders.
-                MarkdownBlockView(
-                    block: blocks[index],
-                    selectionContext: selectionContext,
-                    imageContext: imageContext,
-                    textColor: textColor
-                )
+            ForEach(selectionGroups, id: \.lowerBound) { range in
+                if continuousSelection, MarkdownProseSelection.supports(blocks[range.lowerBound]) {
+                    MarkdownInlineText(
+                        prose: Array(blocks[range]),
+                        selectionContext: selectionContext,
+                        textColor: textColor
+                    )
+                } else {
+                    // Keep the existing per-block cache and layout while streaming.
+                    MarkdownBlockView(
+                        block: blocks[range.lowerBound],
+                        selectionContext: selectionContext,
+                        imageContext: imageContext,
+                        textColor: textColor
+                    )
                     .equatable()
+                }
             }
         }
+    }
+
+    private var selectionGroups: [Range<Int>] {
+        continuousSelection
+            ? MarkdownProseSelection.groups(in: blocks)
+            : blocks.indices.map { $0..<($0 + 1) }
     }
 }
 
@@ -777,11 +791,16 @@ enum MarkdownCodeBlockWrapping {
     }
 }
 
+private enum MarkdownTextContent: Equatable {
+    case inline(MarkdownRenderedInline)
+    case prose([MarkdownRenderedBlock])
+}
+
 private struct MarkdownInlineText: UIViewRepresentable {
     @SwiftUI.Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @SwiftUI.Environment(\.openURL) private var openURL
 
-    let rendered: MarkdownRenderedInline
+    let content: MarkdownTextContent
     let selectionContext: MarkdownSelectionContext
     let lineSpacing: CGFloat
     let textColor: MarkdownTextColor
@@ -794,11 +813,23 @@ private struct MarkdownInlineText: UIViewRepresentable {
         textColor: MarkdownTextColor = .primary,
         wrapsLines: Bool = true
     ) {
-        self.rendered = rendered
+        self.content = .inline(rendered)
         self.selectionContext = selectionContext
         self.lineSpacing = lineSpacing
         self.textColor = textColor
         self.wrapsLines = wrapsLines
+    }
+
+    init(
+        prose: [MarkdownRenderedBlock],
+        selectionContext: MarkdownSelectionContext,
+        textColor: MarkdownTextColor
+    ) {
+        self.content = .prose(prose)
+        self.selectionContext = selectionContext
+        self.lineSpacing = 4
+        self.textColor = textColor
+        self.wrapsLines = true
     }
 
     func makeCoordinator() -> Coordinator {
@@ -831,7 +862,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
 
     func updateUIView(_ textView: UITextView, context: Context) {
         let attributedText = context.coordinator.attributedText(
-            from: rendered,
+            from: content,
             lineSpacing: lineSpacing,
             textColor: textColor,
             dynamicTypeSize: dynamicTypeSize,
@@ -899,7 +930,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
         )
         var onOpenURL: ((URL) -> Void)?
         private var cacheKey: CacheKey?
-        private var cachedRendered: MarkdownRenderedInline?
+        private var cachedContent: MarkdownTextContent?
         private var cachedAttributedText: NSAttributedString?
         private var cachedSizes: [SizeKey: CGSize] = [:]
         private var lastAppliedAttributedText: NSAttributedString?
@@ -907,7 +938,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
         private var cachedAccessibilityActions: [UIAccessibilityCustomAction] = []
 
         func attributedText(
-            from rendered: MarkdownRenderedInline,
+            from content: MarkdownTextContent,
             lineSpacing: CGFloat,
             textColor: MarkdownTextColor,
             dynamicTypeSize: DynamicTypeSize,
@@ -923,20 +954,32 @@ private struct MarkdownInlineText: UIViewRepresentable {
                 skills: skills,
                 userInterfaceStyle: traits.userInterfaceStyle
             )
-            if cachedRendered === rendered, key == cacheKey, let cachedAttributedText {
+            if cachedContent == content, key == cacheKey, let cachedAttributedText {
                 return cachedAttributedText
             }
-            let attributedText = MarkdownSelectableTextAttributes.make(
-                from: rendered,
-                lineSpacing: lineSpacing,
-                foregroundColor: textColor.uiColor,
-                dynamicTypeSize: dynamicTypeSize,
-                wrapsLines: wrapsLines,
-                skills: skills,
-                traits: traits
-            )
+            let attributedText: NSAttributedString
+            switch content {
+            case let .inline(rendered):
+                attributedText = MarkdownSelectableTextAttributes.make(
+                    from: rendered,
+                    lineSpacing: lineSpacing,
+                    foregroundColor: textColor.uiColor,
+                    dynamicTypeSize: dynamicTypeSize,
+                    wrapsLines: wrapsLines,
+                    skills: skills,
+                    traits: traits
+                )
+            case let .prose(blocks):
+                attributedText = MarkdownProseSelection.attributedText(
+                    blocks: blocks,
+                    foregroundColor: textColor.uiColor,
+                    dynamicTypeSize: dynamicTypeSize,
+                    skills: skills,
+                    traits: traits
+                )
+            }
             cacheKey = key
-            cachedRendered = rendered
+            cachedContent = content
             cachedAttributedText = attributedText
             cachedSizes.removeAll(keepingCapacity: true)
             return attributedText
@@ -1058,6 +1101,142 @@ private struct MarkdownInlineText: UIViewRepresentable {
         private func copyMessage() {
             UIPasteboard.general.string = selectionContext.source.text
         }
+    }
+}
+
+/// Completed prose shares a text view so native selection can cross paragraph and
+/// list boundaries. Rich blocks keep their specialized views; streaming keeps its
+/// per-block rendering until the response finishes.
+enum MarkdownProseSelection {
+    static func supports(_ block: MarkdownRenderedBlock) -> Bool {
+        switch block {
+        case .paragraph, .heading:
+            return true
+        case let .unorderedList(items), let .orderedList(_, items):
+            return !items.isEmpty && items.allSatisfy { item in
+                guard item.task == nil, let first = item.blocks.first else { return false }
+                switch first {
+                case .paragraph, .heading: return item.blocks.allSatisfy(supports)
+                default: return false
+                }
+            }
+        default:
+            return false
+        }
+    }
+
+    static func groups(in blocks: [MarkdownRenderedBlock]) -> [Range<Int>] {
+        var groups: [Range<Int>] = []
+        for index in blocks.indices {
+            if supports(blocks[index]), let previous = groups.last,
+               supports(blocks[previous.lowerBound]) {
+                groups[groups.count - 1] = previous.lowerBound..<(index + 1)
+            } else {
+                groups.append(index..<(index + 1))
+            }
+        }
+        return groups
+    }
+
+    private struct Paragraph {
+        let inline: MarkdownRenderedInline
+        var prefix = ""
+        var indent: CGFloat = 0
+        var firstLineIndent: CGFloat = 0
+        var spacingBefore: CGFloat = 12
+        var lineSpacing: CGFloat = 4
+    }
+
+    private static func paragraphs(
+        _ blocks: [MarkdownRenderedBlock],
+        indent: CGFloat = 0,
+        spacing: CGFloat = 12
+    ) -> [Paragraph] {
+        var result: [Paragraph] = []
+        for block in blocks {
+            switch block {
+            case let .paragraph(inline):
+                result.append(Paragraph(
+                    inline: inline, indent: indent, firstLineIndent: indent, spacingBefore: spacing
+                ))
+            case let .heading(level, inline):
+                result.append(Paragraph(
+                    inline: inline, indent: indent, firstLineIndent: indent,
+                    spacingBefore: spacing + (level <= 2 ? 3 : 1), lineSpacing: 0
+                ))
+            case let .unorderedList(items):
+                appendList(items, start: nil, indent: indent, spacing: spacing, to: &result)
+            case let .orderedList(start, items):
+                appendList(items, start: start, indent: indent, spacing: spacing, to: &result)
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    private static func appendList(
+        _ items: [MarkdownRenderedListItem],
+        start: Int?,
+        indent: CGFloat,
+        spacing: CGFloat,
+        to result: inout [Paragraph]
+    ) {
+        for (index, item) in items.enumerated() {
+            var children = paragraphs(item.blocks, indent: indent + 32, spacing: 7)
+            guard !children.isEmpty else { continue }
+            children[0].prefix = start.map { "\($0 + index).\t" } ?? "•\t"
+            children[0].firstLineIndent = indent
+            children[0].spacingBefore = index == 0 ? spacing : 8
+            result.append(contentsOf: children)
+        }
+    }
+
+    @MainActor
+    static func attributedText(
+        blocks: [MarkdownRenderedBlock],
+        foregroundColor: UIColor = T3Colors.uiTextPrimary,
+        dynamicTypeSize: DynamicTypeSize = .large,
+        skills: [FeatureProviderSkill] = [],
+        traits: UITraitCollection = .current
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        for paragraph in paragraphs(blocks) {
+            let text = NSMutableAttributedString(attributedString: MarkdownSelectableTextAttributes.make(
+                from: paragraph.inline,
+                lineSpacing: paragraph.lineSpacing,
+                foregroundColor: foregroundColor,
+                dynamicTypeSize: dynamicTypeSize,
+                skills: skills,
+                traits: traits
+            ))
+            if !paragraph.prefix.isEmpty {
+                text.insert(NSAttributedString(string: paragraph.prefix, attributes: [
+                    .font: MarkdownInlineStyle.body.uiFont(dynamicTypeSize: dynamicTypeSize),
+                    .foregroundColor: foregroundColor,
+                ]), at: 0)
+            }
+            guard text.length > 0 else { continue }
+            let style = NSMutableParagraphStyle()
+            style.lineSpacing = paragraph.lineSpacing
+            style.headIndent = paragraph.indent
+            style.firstLineHeadIndent = paragraph.firstLineIndent
+            style.tabStops = [NSTextTab(textAlignment: .left, location: paragraph.indent)]
+            text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+            if result.length > 0 {
+                result.append(NSAttributedString(string: "\n", attributes: result.attributes(
+                    at: result.length - 1, effectiveRange: nil
+                )))
+                let firstStyle = NSMutableParagraphStyle()
+                firstStyle.setParagraphStyle(style)
+                firstStyle.paragraphSpacingBefore = paragraph.spacingBefore
+                text.addAttribute(.paragraphStyle, value: firstStyle, range: (text.string as NSString).paragraphRange(
+                    for: NSRange(location: 0, length: 0)
+                ))
+            }
+            result.append(text)
+        }
+        return result
     }
 }
 
