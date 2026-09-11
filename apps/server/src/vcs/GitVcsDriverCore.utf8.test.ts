@@ -68,7 +68,75 @@ it.effect("keeps truncated multibyte output valid and within the byte budget", (
     assert.isTrue(source.truncated);
     assert.include(source.diff, "01-large-untracked.txt");
     assert.notInclude(source.diff, "\uFFFD");
+    assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
+  }).pipe(Effect.provide(TestLayer)),
+);
 
+it.effect("keeps large tracked and untracked review diffs complete below one MiB", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    const baseRef = yield* git(cwd, ["branch", "--show-current"]);
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const lineCount = 16_000;
+    const original = Array.from({ length: lineCount }, (_, index) => `before-${index}\n`).join("");
+    const updated = Array.from({ length: lineCount }, (_, index) => `after-${index}\n`).join("");
+    const sourceBefore = 'export const source = "before";\n';
+    const sourceAfter = 'export const source = "after";\n';
+
+    yield* writeTextFile(cwd, "01-large-review-file.txt", original);
+    yield* writeTextFile(cwd, "02-source-file.ts", sourceBefore);
+    yield* git(cwd, ["add", "01-large-review-file.txt", "02-source-file.ts"]);
+    yield* git(cwd, ["commit", "-m", "add large review file"]);
+    yield* git(cwd, ["checkout", "-b", "feature/review-diff-budget"]);
+    yield* writeTextFile(cwd, "01-large-review-file.txt", updated);
+    yield* writeTextFile(cwd, "02-source-file.ts", sourceAfter);
+    yield* git(cwd, ["add", "01-large-review-file.txt", "02-source-file.ts"]);
+    yield* git(cwd, ["commit", "-m", "update large review file"]);
+
+    const untrackedLineCount = 12_000;
+    const untracked = Array.from(
+      { length: untrackedLineCount },
+      (_, index) => `untracked-${index}\n`,
+    ).join("");
+    yield* writeTextFile(cwd, "large-untracked-file.txt", untracked);
+
+    const preview = yield* driver.getReviewDiffPreview({ cwd, baseRef });
+    const branchSource = preview.sources.find((source) => source.kind === "branch-range");
+    const workingTreeSource = preview.sources.find((source) => source.kind === "working-tree");
+
+    assert.isDefined(branchSource);
+    assert.isFalse(branchSource.truncated);
+    assert.isAbove(branchSource.diff.length, 120_000);
+    assert.include(branchSource.diff, `+after-${lineCount - 1}`);
+    assert.include(branchSource.diff, `+${sourceAfter.trimEnd()}`);
+
+    assert.isDefined(workingTreeSource);
+    assert.isFalse(workingTreeSource.truncated);
+    assert.isAbove(workingTreeSource.diff.length, 80_000);
+    assert.include(workingTreeSource.diff, `+untracked-${untrackedLineCount - 1}`);
+  }).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("bounds the combined working-tree review preview to one MiB", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    const makeContents = (prefix: string) =>
+      Array.from(
+        { length: 45_000 },
+        (_, index) => `${prefix}-${index.toString().padStart(5, "0")}\n`,
+      ).join("");
+
+    yield* writeTextFile(cwd, "01-large-untracked.txt", makeContents("first"));
+    yield* writeTextFile(cwd, "02-later-source.ts", makeContents("second"));
+
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const preview = yield* driver.getReviewDiffPreview({ cwd });
+    const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+
+    assert.isDefined(source);
+    assert.isTrue(source.truncated);
     assert.isAtMost(new TextEncoder().encode(source.diff).byteLength, 1024 * 1024);
   }).pipe(Effect.provide(TestLayer)),
 );
