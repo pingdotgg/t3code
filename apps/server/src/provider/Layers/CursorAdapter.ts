@@ -75,6 +75,7 @@ import {
   extractAskQuestions,
   extractPlanMarkdown,
   extractTodosAsPlan,
+  extractTodosAsPlanFromToolCallInput,
 } from "../acp/CursorAcpExtension.ts";
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
@@ -867,6 +868,18 @@ export function makeCursorAdapter(
                         rawPayload: event.rawPayload,
                       }),
                     );
+                    const todosPlan = extractTodosAsPlanFromToolCallInput(
+                      event.toolCall.data.rawInput,
+                    );
+                    if (todosPlan) {
+                      yield* emitPlanUpdate(
+                        ctx,
+                        todosPlan,
+                        event.rawPayload,
+                        "acp.jsonrpc",
+                        "session/update",
+                      );
+                    }
                     return;
                   case "ContentDelta":
                     ctx.assistantReply.push(event.text);

@@ -20,6 +20,7 @@ const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
+const emitCursorUpdateTodos = process.env.T3_ACP_EMIT_CURSOR_UPDATE_TODOS === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
 const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
@@ -1200,24 +1201,62 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
-      yield* agent.client.sessionUpdate({
-        sessionId: requestedSessionId,
-        update: {
-          sessionUpdate: "plan",
-          entries: [
+      if (emitCursorUpdateTodos) {
+        const updateTodosInput = {
+          _toolName: "updateTodos",
+          todos: [
             {
+              id: "1",
               content: "Inspect mock ACP state",
-              priority: "high",
-              status: "completed",
+              status: "TODO_STATUS_COMPLETED",
             },
             {
+              id: "2",
               content: "Implement the requested change",
-              priority: "high",
-              status: "in_progress",
+              status: "TODO_STATUS_IN_PROGRESS",
             },
           ],
-        },
-      });
+        };
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "update-todos-1",
+            title: "Update TODOs: Inspect mock ACP state",
+            kind: "other",
+            status: "in_progress",
+            rawInput: updateTodosInput,
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "update-todos-1",
+            status: "completed",
+            rawInput: updateTodosInput,
+          },
+        });
+      } else {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              {
+                content: "Inspect mock ACP state",
+                priority: "high",
+                status: "completed",
+              },
+              {
+                content: "Implement the requested change",
+                priority: "high",
+                status: "in_progress",
+              },
+            ],
+          },
+        });
+      }
 
       yield* agent.client.sessionUpdate({
         sessionId: requestedSessionId,

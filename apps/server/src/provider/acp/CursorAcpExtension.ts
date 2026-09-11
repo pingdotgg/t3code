@@ -86,6 +86,35 @@ export function extractPlanMarkdown(params: typeof CursorCreatePlanRequest.Type)
   return params.plan || "# Plan\n\n(Cursor did not supply plan text.)";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCursorUpdateTodosToolName(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const compact = value.replaceAll("_", "").toLowerCase();
+  return compact === "updatetodos" || compact === "todowrite";
+}
+
+function normalizeCursorTodoStatus(
+  status: string | undefined,
+): "pending" | "inProgress" | "completed" {
+  const compact = (status ?? "")
+    .trim()
+    .replace(/^TODO_STATUS_/i, "")
+    .replaceAll("_", "")
+    .toLowerCase();
+  if (compact === "completed") {
+    return "completed";
+  }
+  if (compact === "inprogress") {
+    return "inProgress";
+  }
+  return "pending";
+}
+
 export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type): {
   readonly explanation?: string;
   readonly plan: ReadonlyArray<{
@@ -101,13 +130,41 @@ export function extractTodosAsPlan(params: typeof CursorUpdateTodosRequest.Type)
     if (step === "") {
       return [];
     }
-    const status: "pending" | "inProgress" | "completed" =
-      todo.status === "completed"
-        ? "completed"
-        : todo.status === "in_progress" || todo.status === "inProgress"
-          ? "inProgress"
-          : "pending";
-    return [{ step, status }];
+    return [{ step, status: normalizeCursorTodoStatus(todo.status) }];
   });
   return { plan };
+}
+
+/**
+ * Cursor CLI ACP does not send `cursor/update_todos`. It emits a generic
+ * `updateTodos` / `TodoWrite` tool call whose `rawInput` carries the todo list.
+ */
+export function extractTodosAsPlanFromToolCallInput(
+  rawInput: unknown,
+): ReturnType<typeof extractTodosAsPlan> | undefined {
+  if (!isRecord(rawInput) || !isCursorUpdateTodosToolName(rawInput._toolName)) {
+    return undefined;
+  }
+  if (!Array.isArray(rawInput.todos)) {
+    return undefined;
+  }
+  const todos = rawInput.todos.flatMap((item) => {
+    if (!isRecord(item)) {
+      return [];
+    }
+    return [
+      {
+        ...(typeof item.id === "string" ? { id: item.id } : {}),
+        ...(typeof item.content === "string" ? { content: item.content } : {}),
+        ...(typeof item.title === "string" ? { title: item.title } : {}),
+        ...(typeof item.status === "string" ? { status: item.status } : {}),
+      },
+    ];
+  });
+  const extracted = extractTodosAsPlan({
+    toolCallId: "updateTodos",
+    todos,
+    merge: false,
+  });
+  return extracted.plan.length > 0 ? extracted : undefined;
 }
