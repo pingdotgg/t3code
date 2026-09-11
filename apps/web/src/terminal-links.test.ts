@@ -4,9 +4,8 @@ import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
   isTerminalLinkActivation,
+  isTerminalUrl,
   resolvePathLinkTarget,
-  resolveWrappedTerminalLinkRange,
-  wrappedTerminalLinkRangeIntersectsBufferLine,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -33,6 +32,24 @@ describe("extractTerminalLinks", () => {
         text: "src/components/ThreadTerminalDrawer.tsx:42",
         start: 39,
         end: 81,
+      },
+    ]);
+  });
+
+  it("classifies uppercase schemes as URLs at activation time too", () => {
+    expect(isTerminalUrl("HTTPS://example.com/docs")).toBe(true);
+    expect(isTerminalUrl("Http://example.com")).toBe(true);
+    expect(isTerminalUrl("src/components/main.ts")).toBe(false);
+    expect(isTerminalUrl("httpsdocs/readme.md")).toBe(false);
+  });
+
+  it("finds URLs regardless of scheme casing", () => {
+    expect(extractTerminalLinks("open HTTPS://example.com/docs")).toEqual([
+      {
+        kind: "url",
+        text: "HTTPS://example.com/docs",
+        start: 5,
+        end: 29,
       },
     ]);
   });
@@ -132,46 +149,6 @@ describe("collectWrappedTerminalLinkLine", () => {
         end: firstSegment.length + secondSegment.length,
       },
     ]);
-  });
-});
-
-describe("resolveWrappedTerminalLinkRange", () => {
-  it("maps wrapped URL matches back to the correct buffer rows", () => {
-    const prefix = "see ";
-    const firstSegment = `${prefix}https://example.com/a`;
-    const secondSegment = "/bc?x=1";
-    const lines = [
-      createBufferLine("prompt> "),
-      createBufferLine(firstSegment),
-      createBufferLine(secondSegment, true),
-    ];
-    const wrappedLine = collectWrappedTerminalLinkLine(2, (index) => lines[index]);
-
-    expect(wrappedLine).not.toBeNull();
-    if (!wrappedLine) {
-      throw new Error("Expected wrapped terminal line to be present.");
-    }
-
-    const [match] = extractTerminalLinks(wrappedLine.text);
-    expect(match).toEqual({
-      kind: "url",
-      text: "https://example.com/a/bc?x=1",
-      start: prefix.length,
-      end: firstSegment.length + secondSegment.length,
-    });
-    if (!match) {
-      throw new Error("Expected wrapped URL match to be present.");
-    }
-
-    const range = resolveWrappedTerminalLinkRange(wrappedLine, match);
-
-    expect(range).toEqual({
-      start: { x: prefix.length + 1, y: 2 },
-      end: { x: secondSegment.length, y: 3 },
-    });
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 2)).toBe(true);
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 3)).toBe(true);
-    expect(wrappedTerminalLinkRangeIntersectsBufferLine(range, 4)).toBe(false);
   });
 });
 

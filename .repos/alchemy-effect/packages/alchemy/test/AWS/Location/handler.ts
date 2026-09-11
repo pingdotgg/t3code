@@ -27,7 +27,7 @@ const MISSING_JOB_ID = "00000000-0000-4000-8000-000000000000";
 export default LocationTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Place-index and route-calculator calls fan out to upstream data
     // providers and can exceed Lambda's 3s default.
     timeout: Duration.seconds(30),

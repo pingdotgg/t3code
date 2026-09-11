@@ -37,6 +37,22 @@ function wrapInlineMarker(content: string, marker: string): string {
   return `${match?.[1] ?? ""}${marker}${core}${marker}${match?.[3] ?? ""}`;
 }
 
+/**
+ * A code element whose pre wrapper fell outside the copied range is still
+ * block code, recognizable by its highlighter line spans or embedded
+ * newlines. Wrapping it like inline code produces backtick-surrounded
+ * shell commands on paste.
+ */
+function isBlockCodeElement(element: Element, content: string): boolean {
+  if (content.includes("\n")) return true;
+  for (const child of element.childNodes) {
+    if (child.nodeType === Node.ELEMENT_NODE && (child as Element).classList.contains("line")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function wrapInlineCode(code: string): string {
   const longestRun = [...(code.match(/`+/g) ?? [])].reduce(
     (max, run) => Math.max(max, run.length),
@@ -201,8 +217,10 @@ function serializeNode(node: Node): string {
       return `${serializeChildren(element).trim()}\n\n`;
     case "PRE":
       return serializeCodeBlock(element);
-    case "CODE":
-      return wrapInlineCode(element.textContent ?? "");
+    case "CODE": {
+      const content = element.textContent ?? "";
+      return isBlockCodeElement(element, content) ? content : wrapInlineCode(content);
+    }
     case "STRONG":
     case "B":
       return wrapInlineMarker(serializeChildren(element), "**");
@@ -238,6 +256,73 @@ function serializeNode(node: Node): string {
   }
 }
 
+/**
+ * Tracks whether a fragment carries exactly one code block and nothing else a
+ * reader would see.
+ */
+interface SoleCodeBlockScan {
+  pre: Element | null;
+  other: boolean;
+}
+
+function scanForSoleCodeBlock(node: Node, scan: SoleCodeBlockScan): void {
+  for (const child of node.childNodes) {
+    if (scan.other) return;
+    if (child.nodeType === Node.TEXT_NODE) {
+      if ((child.textContent ?? "").trim().length > 0) scan.other = true;
+      continue;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) continue;
+    const element = child as Element;
+    // Mirrors serializeNode's order: an element carrying markdown of its own
+    // still contributes it even when its tag is otherwise skipped, as a file
+    // chip rendered as a button does.
+    if (element.hasAttribute("data-markdown-details")) {
+      scan.other = true;
+      continue;
+    }
+    const markdownCopy = element.getAttribute("data-markdown-copy");
+    if (markdownCopy !== null) {
+      if (markdownCopy.trim().length > 0) scan.other = true;
+      continue;
+    }
+    if (isSkippedElement(element)) continue;
+    if (element.tagName === "PRE") {
+      if (scan.pre) scan.other = true;
+      else scan.pre = element;
+      continue;
+    }
+    if (element.tagName === "IMG" || element.tagName === "HR") {
+      scan.other = true;
+      continue;
+    }
+    if (element.tagName === "LI") {
+      // serializeListItem emits a marker ("- ", "1. ", "[x] ") for every item,
+      // so an item that does not hold the block carries content of its own even
+      // when it renders no text. An item that wraps the block is just the
+      // structure around it, and a pre-only selection would drop the marker too.
+      const preBeforeItem = scan.pre;
+      scanForSoleCodeBlock(element, scan);
+      if (!scan.other && scan.pre === preBeforeItem) scan.other = true;
+      continue;
+    }
+    scanForSoleCodeBlock(element, scan);
+  }
+}
+
+/**
+ * A drag that ends on a block's final newline pulls the closing `pre` into the
+ * range, so the fragment holds the whole block even though the user only
+ * highlighted code. Re-fencing that pastes stray backticks, so a fragment whose
+ * only visible content is one code block copies as plain code, matching a
+ * selection that never left the `pre`.
+ */
+function soleCodeBlock(container: Node): Element | null {
+  const scan: SoleCodeBlockScan = { pre: null, other: false };
+  scanForSoleCodeBlock(container, scan);
+  return scan.other ? null : scan.pre;
+}
+
 /** Collapses serializer spacing artifacts without touching fenced code content. */
 function tidyMarkdown(markdown: string): string {
   return markdown
@@ -250,6 +335,8 @@ function tidyMarkdown(markdown: string): string {
 }
 
 export function serializeRenderedMarkdownFragment(container: Node): string {
+  const codeBlock = soleCodeBlock(container);
+  if (codeBlock) return (codeBlock.textContent ?? "").replace(/\n$/, "");
   return tidyMarkdown(serializeChildren(container));
 }
 
@@ -301,6 +388,17 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    const ancestor = range.commonAncestorContainer;
+    const ancestorElement =
+      ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    if (ancestorElement?.closest("pre")) {
+      const text = range.toString();
+      if (text) {
+        texts.push(text);
+        htmls.push(sanitizedHtmlFrom(container));
+      }
+      continue;
+    }
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);

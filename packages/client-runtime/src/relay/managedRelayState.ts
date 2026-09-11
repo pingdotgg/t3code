@@ -2,6 +2,7 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
@@ -12,15 +13,18 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { findErrorTraceId } from "../errors/errorTrace.ts";
 import * as ManagedRelay from "./managedRelay.ts";
+import { relayProtectedErrorMessage } from "./errorPresentation.ts";
 
 const DEFAULT_STALE_TIME_MS = 15_000;
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
 const CLERK_TOKEN_EXPIRY_SKEW_MS = 5_000;
+const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
 
 export interface ManagedRelaySession {
   readonly accountId: string;
@@ -188,34 +192,22 @@ function readSessionClerkToken(
   );
 }
 
-export const waitForManagedRelayClerkToken = Effect.fn(
-  "clientRuntime.managedRelaySession.waitForClerkToken",
-)(function* (registry: AtomRegistry.AtomRegistry) {
-  return yield* Effect.callback<string, ManagedRelaySessionError>((resume) => {
-    let unsubscribe: (() => void) | undefined;
-    let completed = false;
-    const readCurrentSession = () => {
-      if (completed) {
-        return true;
-      }
-      const session = registry.get(managedRelaySessionAtom);
-      if (!session) {
-        return false;
-      }
-      completed = true;
-      unsubscribe?.();
-      resume(readSessionClerkToken(session));
-      return true;
-    };
-
-    if (readCurrentSession()) {
-      return;
-    }
-
-    unsubscribe = registry.subscribe(managedRelaySessionAtom, readCurrentSession);
-    readCurrentSession();
-    return Effect.sync(() => unsubscribe?.());
-  });
+/** Removes an environment from the signed-in account without contacting that environment. */
+export const deregisterManagedRelayEnvironment = Effect.fn(
+  "clientRuntime.managedRelaySession.deregisterEnvironment",
+)(function* (
+  registry: AtomRegistry.AtomRegistry,
+  input: { readonly accountId: string; readonly environmentId: EnvironmentId },
+) {
+  const session = registry.get(managedRelaySessionAtom);
+  if (!session || session.accountId !== input.accountId) {
+    return yield* new ManagedRelaySessionError({
+      message: "Sign in to T3 Connect before deregistering an environment.",
+    });
+  }
+  const clerkToken = yield* readSessionClerkToken(session);
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId });
 });
 
 function requireClerkToken(
@@ -296,7 +288,12 @@ export function readManagedRelaySnapshotState<A>(
   let errorTraceId: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
-    error = cause instanceof Error ? cause.message : "Could not load T3 Connect data.";
+    error =
+      isManagedRelayRequestFailedError(cause) && cause.relayError
+        ? relayProtectedErrorMessage(cause.relayError)
+        : cause instanceof Error
+          ? cause.message
+          : "Could not load T3 Connect data.";
     errorTraceId = findErrorTraceId(cause);
   }
   return {

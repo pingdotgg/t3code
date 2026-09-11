@@ -1,4 +1,10 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_PREVIEW_APPEARANCE,
+  DEFAULT_PREVIEW_ZOOM_FACTOR,
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { closeTab, createTab, stopBrowserRecording } = vi.hoisted(() => ({
@@ -16,10 +22,19 @@ vi.mock("./browserRecording", () => ({
 }));
 
 import { acquireDesktopTab } from "./desktopTabLifetime";
+import * as browserDefaults from "./browserDefaults";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
+
+/** Tests load default settings unless they select other preferences. */
+const DEFAULT_TAB_STATE = {
+  zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
+  colorScheme: DEFAULT_PREVIEW_APPEARANCE,
+};
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 describe("desktopTabLifetime", () => {
   beforeEach(() => {
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     closeTab.mockClear();
     createTab.mockClear();
     stopBrowserRecording.mockClear();
@@ -29,6 +44,35 @@ describe("desktopTabLifetime", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("does not create a desktop tab after a failed settings read and permits a later retry", async () => {
+    vi.useFakeTimers();
+    const failure = new Error("Settings read failed");
+    vi.spyOn(browserDefaults, "resolveBrowserDefaults").mockRejectedValueOnce(failure);
+    const failed = acquireDesktopTab("tab_settings_retry");
+
+    await expect(failed.ready).rejects.toBe(failure);
+    expect(createTab).not.toHaveBeenCalled();
+    failed.release();
+    await vi.advanceTimersByTimeAsync(0);
+
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      browserDefaultZoomFactor: 1.25,
+      browserDefaultAppearance: "dark",
+    });
+    createTab.mockResolvedValueOnce(undefined);
+    const retry = acquireDesktopTab("tab_settings_retry");
+    await retry.ready;
+
+    expect(createTab).toHaveBeenCalledExactlyOnceWith("tab_settings_retry", {
+      zoomFactor: 1.25,
+      colorScheme: "dark",
+    });
+    retry.release();
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   it("shares tab creation readiness across concurrent leases", async () => {
@@ -42,14 +86,16 @@ describe("desktopTabLifetime", () => {
     const first = acquireDesktopTab("tab_readiness");
     const second = acquireDesktopTab("tab_readiness");
 
-    expect(createTab).toHaveBeenCalledOnce();
+    // Both leases share one creation, and it is still in flight: creation now
+    // waits for client settings to hydrate so the guest is born at the user's
+    // zoom and appearance rather than painting at the defaults first.
     expect(first.ready).toBe(second.ready);
 
     let ready = false;
     void first.ready.then(() => {
       ready = true;
     });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(createTab).toHaveBeenCalledOnce());
     expect(ready).toBe(false);
 
     resolveCreation?.();
@@ -81,8 +127,8 @@ describe("desktopTabLifetime", () => {
     const second = acquireDesktopTab(tabB);
     await Promise.all([first.ready, second.ready]);
 
-    expect(createTab).toHaveBeenCalledWith(tabA);
-    expect(createTab).toHaveBeenCalledWith(tabB);
+    expect(createTab).toHaveBeenCalledWith(tabA, DEFAULT_TAB_STATE);
+    expect(createTab).toHaveBeenCalledWith(tabB, DEFAULT_TAB_STATE);
     expect(createTab).toHaveBeenCalledTimes(2);
 
     first.release();

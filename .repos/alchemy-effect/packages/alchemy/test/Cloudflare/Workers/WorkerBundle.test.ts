@@ -1,5 +1,5 @@
 import * as Cloudflare from "@/Cloudflare";
-import { WorkerBundle } from "@/Cloudflare/Workers/WorkerBundle";
+import { WorkerBundle } from "@/Cloudflare/Workers/Sources/Rolldown";
 import * as Alchemy from "@/index.ts";
 import * as Test from "@/Test/Alchemy";
 import * as NodeServices from "@effect/platform-node/NodeServices";

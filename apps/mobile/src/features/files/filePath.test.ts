@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  isBrowserPreviewFile,
-  isImagePreviewFile,
+  fileRoutePathSegments,
   isSvgImagePreviewFile,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
+
+describe("fileRoutePathSegments", () => {
+  it("round-trips workspace-relative and host paths through the route", () => {
+    expect(fileRoutePathSegments("src/main.ts")).toEqual(["src", "main.ts"]);
+    expect(fileRoutePathSegments("/tmp/t3-cleanup/report.md").join("/")).toBe(
+      "/tmp/t3-cleanup/report.md",
+    );
+  });
+});
 
 describe("resolveWorkspaceRelativeFilePath", () => {
   it("keeps normalized workspace-relative paths", () => {
@@ -24,18 +32,12 @@ describe("resolveWorkspaceRelativeFilePath", () => {
   it("rejects paths outside the workspace", () => {
     expect(resolveWorkspaceRelativeFilePath("/repo", "/other/main.ts")).toBeNull();
     expect(resolveWorkspaceRelativeFilePath("/repo", "../other/main.ts")).toBeNull();
+    expect(resolveWorkspaceRelativeFilePath("/repo", "/repo/../outside.txt")).toBeNull();
     expect(resolveWorkspaceRelativeFilePath(null, "/repo/main.ts")).toBeNull();
   });
 });
 
 describe("file preview types", () => {
-  it("recognizes browser and image previews", () => {
-    expect(isBrowserPreviewFile("reports/summary.html")).toBe(true);
-    expect(isImagePreviewFile("assets/icon.png")).toBe(true);
-    expect(isImagePreviewFile("assets/diagram.SVG?raw=1")).toBe(true);
-    expect(isImagePreviewFile("src/image.ts")).toBe(false);
-  });
-
   it("identifies SVG images that need web rendering", () => {
     expect(isSvgImagePreviewFile("assets/diagram.svg#icon")).toBe(true);
     expect(isSvgImagePreviewFile("assets/photo.png")).toBe(false);

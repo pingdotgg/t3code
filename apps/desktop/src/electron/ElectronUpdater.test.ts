@@ -71,7 +71,6 @@ describe("ElectronUpdater", () => {
       const error = yield* updater.checkForUpdates.pipe(Effect.flip);
 
       assert.instanceOf(error, ElectronUpdater.ElectronUpdaterCheckForUpdatesError);
-      assert.isTrue(ElectronUpdater.isElectronUpdaterError(error));
       assert.equal(error.channel, "beta");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message, "Electron updater failed to check for updates on channel beta.");
@@ -89,7 +88,6 @@ describe("ElectronUpdater", () => {
       const error = yield* updater.downloadUpdate.pipe(Effect.flip);
 
       assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
-      assert.isTrue(ElectronUpdater.isElectronUpdaterError(error));
       assert.equal(error.channel, "nightly");
       assert.strictEqual(error.cause, cause);
       assert.equal(
@@ -126,7 +124,6 @@ describe("ElectronUpdater", () => {
         .pipe(Effect.flip);
 
       assert.instanceOf(error, ElectronUpdater.ElectronUpdaterQuitAndInstallError);
-      assert.isTrue(ElectronUpdater.isElectronUpdaterError(error));
       assert.equal(error.channel, "alpha");
       assert.equal(error.isSilent, true);
       assert.equal(error.isForceRunAfter, false);

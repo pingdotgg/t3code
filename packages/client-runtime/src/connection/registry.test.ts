@@ -4,13 +4,17 @@ import {
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Scheduler from "effect/Scheduler";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -46,6 +50,7 @@ import * as EnvironmentRegistry from "./registry.ts";
 import * as RpcSession from "../rpc/session.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
+import { runDesktopCommitWithReconnectObserver } from "../state/server.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -352,6 +357,8 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           Effect.succeed({
             client: {} as RpcSession.RpcSession["client"],
             initialConfig: Effect.die(new Error("Config is not used by registry tests.")),
+            subscribeServerConfig: () =>
+              Stream.die(new Error("Config is not used by registry tests.")),
             ready: Effect.void,
             probe: Effect.void,
             closed: Deferred.await(closed),
@@ -420,6 +427,55 @@ function awaitConnectionState(
 }
 
 describe("EnvironmentRegistry", () => {
+  it.effect("replays connected state when arming a desktop commit observer", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        const commits = yield* Ref.make(0);
+        const result = yield* runDesktopCommitWithReconnectObserver(
+          registry.stateChanges(TARGET.environmentId),
+          Ref.update(commits, (count) => count + 1).pipe(
+            Effect.andThen(Effect.fail("commit refused")),
+          ),
+        ).pipe(Effect.flip, Effect.timeout("1 second"));
+
+        expect(result).toBe("commit refused");
+        expect(yield* Ref.get(commits)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("does not acquire a session after the registry scope has already closed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([TARGET]);
+      const registryScope = yield* Scope.make();
+      const context = yield* Layer.build(harness.layer).pipe(Scope.provide(registryScope));
+      const registry = Context.get(context, EnvironmentRegistry.EnvironmentRegistry);
+      const dispatcher = new Scheduler.MixedScheduler("sync", () => () => {}).makeDispatcher();
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: "sync",
+        shouldYield: () => false,
+        makeDispatcher: () => dispatcher,
+      };
+
+      yield* Scope.close(registryScope, Exit.void);
+      yield* registry.start.pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+      dispatcher.flush();
+
+      expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+      expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+    }),
+  );
+
   it.effect("hydrates connection profiles into catalog entries", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([SSH_CONNECTION], [SSH_PROFILE]);

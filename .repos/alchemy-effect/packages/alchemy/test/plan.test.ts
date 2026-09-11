@@ -6,6 +6,8 @@ import * as Output from "@/Output";
 import * as Plan from "@/Plan";
 import * as Provider from "@/Provider";
 import { UnsatisfiedResourceCycle } from "@/Plan";
+import { remote } from "@/ProviderMode.ts";
+import { renamedFrom } from "@/Rename.ts";
 import type { ResourceBinding } from "@/Resource";
 import * as Stack from "@/Stack";
 import { Stage } from "@/Stage";
@@ -32,9 +34,12 @@ import {
   BindingTarget,
   Bucket,
   Function,
+  inDev,
   KindStablesResource,
+  ModalResource,
   NoPrecreateBindingTarget,
   OverrideStablesResource,
+  ProbeBinding,
   Queue,
   TestLayers,
   TestResource,
@@ -2246,9 +2251,17 @@ describe("whole-resource refs resolve to the upstream's stable attributes", () =
   // that `ResourceExpr` to the downstream verbatim, so its `news` looked
   // unresolved (`isResolved(news) === false`) and the stable values never
   // reached the downstream `diff`. This forced the Neon `Branch` to manually
-  // extract `project.projectId` as a workaround. The engine must instead
-  // materialize the known stable attributes into a plain object so the
-  // stable values flow into the diff and the downstream can no-op.
+  // extract `project.projectId` as a workaround. The engine materializes the
+  // known stable attributes into a plain object for the DIFF-facing `news`
+  // so the stable values flow into the diff and the downstream can no-op.
+  //
+  // The plan node's `props`, however, must keep the reference as an
+  // evaluable `ResourceExpr`: Apply re-resolves `node.props` against the
+  // upstream's fresh post-reconcile attributes, and a materialized
+  // stables-only snapshot would permanently hide every non-stable attribute
+  // from the downstream's `reconcile` (e.g. a Lambda Alias promoting a
+  // freshly-published Lambda Version would never see the new version
+  // number — #993's alias promotion bug).
   const seedUpdatingUpstream = () =>
     seed({
       A: {
@@ -2273,7 +2286,7 @@ describe("whole-resource refs resolve to the upstream's stable attributes", () =
     });
 
   test(
-    "the whole-resource ref resolves to the upstream's stable attributes (not an Expr)",
+    "the node's whole-resource ref stays an evaluable Expr carrying the stable attributes",
     Effect.gen(function* () {
       yield* seedUpdatingUpstream();
 
@@ -2290,10 +2303,15 @@ describe("whole-resource refs resolve to the upstream's stable attributes", () =
       expect(plan.resources.A!.action).toBe("update");
 
       const bProps = (plan.resources.B as any).props as TestResourceProps;
-      // The whole-resource ref must resolve to a fully-resolved plain object
-      // of the upstream's stable attributes — NOT an unresolved Expr.
-      expect(Output.isExpr(bProps.object)).toBe(false);
-      expect(bProps.object).toEqual({
+      // The node's props keep the whole-resource ref as an evaluable
+      // `ResourceExpr` (so Apply resolves the upstream's FRESH attributes
+      // after its reconcile), with the stable attributes riding along for
+      // plan-time consumers.
+      expect(Output.isExpr(bProps.object)).toBe(true);
+      expect(Output.isResourceExpr(bProps.object)).toBe(true);
+      expect(
+        (bProps.object as any as Output.ResourceExpr<any>).stables,
+      ).toEqual({
         stableString: "A",
         stableArray: ["A"],
       });
@@ -2338,6 +2356,121 @@ describe("whole-resource refs resolve to the upstream's stable attributes", () =
       // Only stable attributes flow in and they are unchanged, so the
       // downstream no-ops instead of being dragged into a needless update.
       expect(plan.resources.B!.action).toBe("noop");
+    }),
+  );
+
+  // The binding path mirrors the props split: `diffBindings` compares the
+  // materialized (stables-only) view, but the node's binding rows carry the
+  // apply-faithful payload so `Output.evaluate(node.bindings, outputs)`
+  // re-resolves the upstream's fresh post-reconcile attributes.
+  const seedHostWithFullPayload = () =>
+    seed({
+      Host: {
+        instanceId,
+        providerVersion: 0,
+        logicalId: "Host",
+        fqn: "Host",
+        namespace: undefined,
+        resourceType: "Test.BindingTarget",
+        status: "created",
+        props: { name: "host" },
+        attr: {
+          name: "host",
+          string: "Host",
+          env: {},
+          replaceString: undefined,
+        },
+        downstream: [],
+        // Terminal commits persist the payload the provider reconciled
+        // with — the upstream's FULL attributes (#874), not the plan-time
+        // stables-only projection.
+        bindings: [
+          {
+            sid: "FromA",
+            data: {
+              env: {
+                A: {
+                  string: "old-value",
+                  stableString: "A",
+                  stableArray: ["A"],
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+  const hostProgram = (upstreamString: string) =>
+    Effect.gen(function* () {
+      const A = yield* TestResource("A", { string: upstreamString });
+      const host = yield* BindingTarget("Host", { name: "host" });
+      // The binding data embeds the WHOLE upstream resource.
+      yield* host.bind("FromA", { env: { A } } as any);
+    });
+
+  test(
+    "the node's binding payload keeps the whole-resource ref as an evaluable Expr carrying the stable attributes",
+    Effect.gen(function* () {
+      yield* seedUpdatingUpstream();
+
+      const plan = yield* hostProgram("new-value").pipe(makePlan);
+
+      expect(plan.resources.A!.action).toBe("update");
+
+      const rows = (plan.resources.Host as any).bindings;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].sid).toBe("FromA");
+      const payload = rows[0].data.env.A;
+      expect(Output.isResourceExpr(payload)).toBe(true);
+      expect((payload as Output.ResourceExpr<any>).stables).toEqual({
+        stableString: "A",
+        stableArray: ["A"],
+      });
+    }),
+  );
+
+  test(
+    "an updating upstream marks the binding row 'update' from the materialized comparison while the payload stays evaluable",
+    Effect.gen(function* () {
+      yield* seedUpdatingUpstream();
+      yield* seedHostWithFullPayload();
+
+      const plan = yield* hostProgram("new-value").pipe(makePlan);
+
+      expect(plan.resources.A!.action).toBe("update");
+      // The host's own props are unchanged; the binding drift alone drags
+      // it into the update that re-delivers A's fresh attributes.
+      expect(plan.resources.Host!.action).toBe("update");
+
+      const rows = (plan.resources.Host as any).bindings;
+      expect(rows).toHaveLength(1);
+      // Action from the materialized comparison (persisted full attrs vs
+      // stables-only projection)...
+      expect(rows[0].action).toBe("update");
+      // ...payload from the apply-faithful resolution.
+      expect(Output.isResourceExpr(rows[0].data.env.A)).toBe(true);
+    }),
+  );
+
+  test(
+    "an unchanged upstream's full persisted binding payload no-ops instead of churning",
+    Effect.gen(function* () {
+      yield* seedUpdatingUpstream();
+      yield* seedHostWithFullPayload();
+
+      // Same props as seeded — A no-ops, so it resolves to its full
+      // persisted attrs and the materialized binding payload matches the
+      // persisted row exactly.
+      const plan = yield* hostProgram("old-value").pipe(makePlan);
+
+      expect(plan.resources.A!.action).toBe("noop");
+      expect(plan.resources.Host!.action).toBe("noop");
+      const rows = (plan.resources.Host as any).bindings;
+      expect(rows[0].action).toBe("noop");
+      // Nothing left to re-evaluate — the payload is the plain full attrs.
+      expect(Output.isExpr(rows[0].data.env.A)).toBe(false);
+      expect(rows[0].data.env.A.string).toBe("old-value");
     }),
   );
 });
@@ -2876,6 +3009,203 @@ describe("engine-level adoption", () => {
       ) as Effect.Effect<Plan.Plan<A>, any, State>;
     }) as Effect.Effect<Plan.Plan<A>, any, State>;
 
+  const creatingWithoutAttrs = {
+    instanceId,
+    providerVersion: 0,
+    logicalId: "Recovering",
+    fqn: "Recovering",
+    namespace: undefined,
+    resourceType: "Test.TestResource",
+    status: "creating" as const,
+    props: { string: "hello" },
+    attr: undefined,
+    downstream: [],
+    bindings: [],
+  } satisfies ResourceState;
+
+  test.provider("cold adoption reconciles with olds undefined", (scratch) =>
+    Effect.gen(function* () {
+      let creates = 0;
+      let updates = 0;
+      const hooks = {
+        read: () => Effect.succeed(ownedAttrs),
+        create: () =>
+          Effect.sync(() => {
+            creates++;
+          }),
+        update: () =>
+          Effect.sync(() => {
+            updates++;
+          }),
+      };
+
+      yield* scratch
+        .deploy(
+          Effect.gen(function* () {
+            yield* TestResource("Adopted", { string: "hello" });
+          }),
+        )
+        .pipe(Effect.provideService(TestResourceHooks, hooks));
+
+      expect(creates).toBe(1);
+      expect(updates).toBe(0);
+
+      const state = yield* yield* State;
+      expect(
+        yield* state.get({
+          stack: scratch.name,
+          stage: TEST_STAGE,
+          fqn: "Adopted",
+        }),
+      ).toMatchObject({
+        status: "updated",
+        props: { string: "hello" },
+      });
+    }),
+  );
+
+  test.provider(
+    "cold adoption keeps olds undefined after a failed first reconcile",
+    (scratch) =>
+      Effect.gen(function* () {
+        let creates = 0;
+        let updates = 0;
+        const hooks = {
+          read: () => Effect.succeed(ownedAttrs),
+          create: () =>
+            Effect.suspend(() => {
+              creates++;
+              return creates === 1
+                ? Effect.fail(new Error("first adoption reconcile failed"))
+                : Effect.void;
+            }),
+          update: () =>
+            Effect.sync(() => {
+              updates++;
+            }),
+        };
+        const program = () =>
+          Effect.gen(function* () {
+            yield* TestResource("Adopted", { string: "hello" });
+          });
+
+        const first = yield* scratch
+          .deploy(program())
+          .pipe(Effect.provideService(TestResourceHooks, hooks), Effect.exit);
+        expect(Exit.isFailure(first)).toBe(true);
+        expect(creates).toBe(1);
+        expect(updates).toBe(0);
+
+        const state = yield* yield* State;
+        expect(
+          yield* state.get({
+            stack: scratch.name,
+            stage: TEST_STAGE,
+            fqn: "Adopted",
+          }),
+        ).toMatchObject({
+          status: "updating",
+          adopting: true,
+        });
+
+        yield* scratch
+          .deploy(program())
+          .pipe(Effect.provideService(TestResourceHooks, hooks));
+
+        expect(creates).toBe(2);
+        expect(updates).toBe(0);
+        const completed = yield* state.get({
+          stack: scratch.name,
+          stage: TEST_STAGE,
+          fqn: "Adopted",
+        });
+        expect(completed).toMatchObject({ status: "updated" });
+        expect((completed as any)?.adopting).toBeUndefined();
+      }),
+  );
+
+  test(
+    "recovered Unowned attrs require explicit adoption",
+    Effect.gen(function* () {
+      yield* seed({ Recovering: creatingWithoutAttrs });
+
+      const exit = yield* makeAdoptPlan(
+        Effect.gen(function* () {
+          yield* TestResource("Recovering", { string: "hello" });
+        }),
+        {
+          adopt: false,
+          readHook: () => Effect.succeed(Unowned(ownedAttrs)),
+        },
+      ).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const reason = exit.cause.reasons.find(Cause.isFailReason);
+        expect((reason?.error as any)?._tag).toBe("OwnedBySomeoneElse");
+        expect((reason?.error as any)?.resourceType).toBe("Test.TestResource");
+      }
+    }),
+  );
+
+  test(
+    "explicit adoption strips Unowned from recovered attrs",
+    Effect.gen(function* () {
+      yield* seed({ Recovering: creatingWithoutAttrs });
+
+      const plan = yield* makeAdoptPlan(
+        Effect.gen(function* () {
+          yield* TestResource("Recovering", { string: "hello" });
+        }),
+        {
+          adopt: true,
+          readHook: () => Effect.succeed(Unowned(ownedAttrs)),
+        },
+      );
+
+      const recovered = plan.resources.Recovering!;
+      expect(recovered.action).toBe("create");
+      expect(Unowned.is((recovered.state as any).attr)).toBe(false);
+      expect(
+        Object.getOwnPropertySymbols((recovered.state as any).attr),
+      ).toEqual([]);
+    }),
+  );
+
+  test(
+    "recovered attrs still diff immutable desired changes",
+    Effect.gen(function* () {
+      yield* seed({
+        Recovering: {
+          ...creatingWithoutAttrs,
+          props: { replaceString: "old" },
+        },
+      });
+
+      const plan = yield* makeAdoptPlan(
+        Effect.gen(function* () {
+          yield* TestResource("Recovering", { replaceString: "new" });
+        }),
+        {
+          readHook: () =>
+            Effect.succeed({
+              ...ownedAttrs,
+              replaceString: "old",
+            }),
+        },
+      );
+
+      expect(plan.resources.Recovering).toMatchObject({
+        action: "replace",
+        props: { replaceString: "new" },
+        state: {
+          status: "creating",
+          attr: { replaceString: "old" },
+        },
+      });
+    }),
+  );
+
   test(
     "owned read result is silently adopted (no AdoptPolicy needed) and forced to update",
     Effect.gen(function* () {
@@ -2891,6 +3221,13 @@ describe("engine-level adoption", () => {
       // (owned) attrs, the cloud resource may carry drift the engine
       // can't detect from `props` alone.
       expect(plan.resources.Adopted!.action).toBe("update");
+      expect(plan.resources.Adopted).toMatchObject({
+        adopting: true,
+        state: {
+          status: "created",
+          attr: { string: "hello" },
+        },
+      });
 
       // Planning no longer persists the adopted state (issue #793): it rides
       // on the plan node and is only committed to the store at apply time.
@@ -2927,6 +3264,10 @@ describe("engine-level adoption", () => {
       // logical id (a plain noop would leave the resource looking
       // foreign-owned to subsequent deploys).
       expect(plan.resources.Adopted!.action).toBe("update");
+      expect(plan.resources.Adopted).toMatchObject({
+        adopting: true,
+        state: { status: "created" },
+      });
 
       // The adopted state rides on the plan node, not the store (issue #793).
       const node = plan.resources.Adopted!;
@@ -3006,6 +3347,10 @@ describe("engine-level adoption", () => {
       );
 
       expect(plan.resources.Adopted!.action).toBe("update");
+      expect(plan.resources.Adopted).toMatchObject({
+        adopting: true,
+        state: { status: "created" },
+      });
 
       // Adopted state rides on the plan node; planning persists nothing
       // (issue #793).
@@ -3485,6 +3830,34 @@ describe("read is never handed unresolved persisted props", () => {
   );
 
   test(
+    "a recovery read that crashes degrades to re-driving the create instead of killing the plan",
+    Effect.gen(function* () {
+      // Stripped-at-commit props: an unresolved Output persisted as a hole
+      // still passes `isResolved`, so the read probe DOES run — and a
+      // provider that dereferences the hole crashes with a defect (e.g. a
+      // SchemaError deep in its SDK client, see #995). The plan must
+      // contain the defect to this resource's probe and fall through to
+      // re-driving the create.
+      yield* seed({
+        Half: {
+          ...creatingWithUnresolvedProps("Half"),
+          props: { string: undefined } as any,
+        },
+      });
+      const layer = Layer.succeed(TestResourceHooks, {
+        read: () =>
+          Effect.die(new Error("SchemaError: Expected string, got undefined")),
+      });
+      const plan = yield* makePlan(
+        Effect.gen(function* () {
+          yield* TestResource("Half", { string: "resolved-now" });
+        }),
+      ).pipe(Effect.provide(layer));
+      expect(plan.resources.Half!.action).toBe("create");
+    }),
+  );
+
+  test(
     "resolved persisted creating props still go through read recovery when re-declared (control)",
     Effect.gen(function* () {
       yield* seed({
@@ -3501,6 +3874,1083 @@ describe("read is never handed unresolved persisted props", () => {
       ).pipe(Effect.provide(layer));
       expect(reads).toContain("Half");
       expect(plan.resources.Half!.action).toBe("create");
+    }),
+  );
+});
+
+describe("provider modes (local ⇄ live)", () => {
+  // ModalResource registers via `ProviderLayer.dual` with distinct live and
+  // local implementations. These tests cover the PLAN-level semantics:
+  //   - the resolved mode lands on the plan node (`node.mode`)
+  //   - a persisted mode different from the resolved mode forces a
+  //     REPLACEMENT, overriding whatever the provider diff would say
+  //   - legacy rows (no persisted mode) are assumed live, unless their
+  //     attrs carry the `dev:` identity marker (then local)
+  //   - deletions carry the persisted mode so orphans are torn down by the
+  //     provider that created them
+  //   - a mode-switching upstream invalidates its attrs for downstream diffs
+
+  const modalState = (
+    fqn: string,
+    overrides?: Partial<ResourceState>,
+  ): ResourceState =>
+    ({
+      instanceId,
+      providerVersion: 0,
+      logicalId: fqn,
+      fqn,
+      namespace: undefined,
+      resourceType: "Test.ModalResource",
+      status: "created",
+      props: { value: "v1" },
+      attr: { value: "v1", runtime: "local" },
+      downstream: [],
+      bindings: [],
+      providerMode: "local",
+      ...overrides,
+    }) as ResourceState;
+
+  test(
+    "a fresh create resolves the run default (live) onto the node",
+    Effect.gen(function* () {
+      const plan = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(plan.resources.A).toMatchObject({
+        action: "create",
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "a dev run resolves the local mode onto the node",
+    Effect.gen(function* () {
+      const plan = yield* inDev(makePlan(ModalResource("A", { value: "v1" })));
+      expect(plan.resources.A).toMatchObject({
+        action: "create",
+        mode: "local",
+      });
+    }),
+  );
+
+  test(
+    "remote() opts a resource out of local emulation during dev",
+    Effect.gen(function* () {
+      const plan = yield* inDev(
+        makePlan(ModalResource("A", { value: "v1" }).pipe(remote())),
+      );
+      expect(plan.resources.A).toMatchObject({
+        action: "create",
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "mode-agnostic resources plan with mode undefined even in a dev run",
+    Effect.gen(function* () {
+      // A single-implementation provider (no dual registration) satisfies
+      // any requested mode — constructs that mix emulatable and live-only
+      // resources just work in dev.
+      const plan = yield* inDev(
+        makePlan(
+          Effect.gen(function* () {
+            yield* ModalResource("A", { value: "v1" });
+            yield* TestResource("T", { string: "x" });
+          }),
+        ),
+      );
+      expect(plan.resources.A!.mode).toBe("local");
+      expect(plan.resources.T!.mode).toBeUndefined();
+    }),
+  );
+
+  test(
+    "a persisted mode different from the resolved mode forces a replacement",
+    Effect.gen(function* () {
+      yield* seed({ A: modalState("A") }); // providerMode: "local"
+
+      // Identical props — the provider diff would report `noop` — but the
+      // row was reconciled by the LOCAL provider and this run resolves to
+      // LIVE, so the plan must replace (create-first).
+      const plan = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(plan.resources.A).toMatchObject({
+        action: "replace",
+        deleteFirst: false,
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "the same mode plans normally (noop on identical props)",
+    Effect.gen(function* () {
+      yield* seed({ A: modalState("A") }); // providerMode: "local"
+      const plan = yield* inDev(makePlan(ModalResource("A", { value: "v1" })));
+      expect(plan.resources.A).toMatchObject({ action: "noop" });
+    }),
+  );
+
+  test(
+    "switching live → local replaces too",
+    Effect.gen(function* () {
+      yield* seed({ A: modalState("A", { providerMode: "live" }) });
+      const plan = yield* inDev(makePlan(ModalResource("A", { value: "v1" })));
+      expect(plan.resources.A).toMatchObject({
+        action: "replace",
+        mode: "local",
+      });
+    }),
+  );
+
+  test(
+    "a mode switch overrides the provider diff (update would have sufficed)",
+    Effect.gen(function* () {
+      yield* seed({ A: modalState("A") }); // providerMode: "local"
+      // Changed value — same-mode planning would produce `update` — but the
+      // mode switch escalates to `replace` without consulting the diff.
+      const plan = yield* makePlan(ModalResource("A", { value: "v2" }));
+      expect(plan.resources.A).toMatchObject({
+        action: "replace",
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "legacy rows without a persisted mode are assumed live",
+    Effect.gen(function* () {
+      yield* seed({ A: modalState("A", { providerMode: undefined }) });
+
+      // An unstamped row was written by a pre-provider-mode engine (or by
+      // a provider that only became dual later) — its physical resource is
+      // LIVE. A deploy (live) run sees no churn; a dev run replaces it
+      // exactly like a stamped live row. Assuming the run's mode instead
+      // would silently adopt the deployed live resource as a local
+      // instance and leak it untracked.
+      const liveDefault = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(liveDefault.resources.A).toMatchObject({ action: "noop" });
+
+      const devRun = yield* inDev(
+        makePlan(ModalResource("A", { value: "v1" })),
+      );
+      expect(devRun.resources.A).toMatchObject({
+        action: "replace",
+        mode: "local",
+      });
+    }),
+  );
+
+  test(
+    "a mode-agnostic resource never replaces across dev/deploy runs",
+    Effect.gen(function* () {
+      yield* seed({
+        T: {
+          instanceId,
+          providerVersion: 0,
+          logicalId: "T",
+          fqn: "T",
+          namespace: undefined,
+          resourceType: "Test.TestResource",
+          status: "created",
+          props: { string: "x" },
+          attr: {
+            string: "x",
+            stringArray: [],
+            stableString: "T",
+            stableArray: ["T"],
+          },
+          downstream: [],
+          bindings: [],
+          // Mode-agnostic providers never stamp a mode.
+          providerMode: undefined,
+        },
+      });
+      const plan = yield* inDev(makePlan(TestResource("T", { string: "x" })));
+      expect(plan.resources.T).toMatchObject({ action: "noop" });
+    }),
+  );
+
+  test(
+    "an interrupted create still replaces on a mode switch",
+    Effect.gen(function* () {
+      // A `creating` row (attr-less, interrupted) normally re-drives its
+      // create via the read-recovery branch. When the mode switched, that
+      // branch is skipped — the other runtime's half-created instance must
+      // be replaced, not resumed.
+      yield* seed({
+        A: modalState("A", {
+          status: "creating",
+          attr: undefined,
+        } as Partial<ResourceState>),
+      });
+      const plan = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(plan.resources.A).toMatchObject({
+        action: "replace",
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "an interrupted update still replaces on a mode switch",
+    Effect.gen(function* () {
+      yield* seed({
+        A: modalState("A", {
+          status: "updating",
+          props: { value: "v2" },
+          old: {
+            props: { value: "v1" },
+            bindings: [],
+            attr: { value: "v1", runtime: "local" },
+          },
+        } as Partial<ResourceState>),
+      });
+      // Same-mode planning would resume the interrupted update; a mode
+      // switch must escalate to a replacement of the other runtime's
+      // instance instead.
+      const plan = yield* makePlan(ModalResource("A", { value: "v2" }));
+      expect(plan.resources.A).toMatchObject({
+        action: "replace",
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "an in-flight replacement generation hit by a mode switch restarts a new generation",
+    Effect.gen(function* () {
+      // `replacing`: the (local) replacement candidate is still being
+      // created. A mode switch makes that candidate itself obsolete — the
+      // plan must mint a NEW outer generation (`restart: true`) rather than
+      // resuming the local candidate under the live provider.
+      yield* seed({
+        A: modalState("A", {
+          status: "replacing",
+          attr: undefined,
+          deleteFirst: false,
+          old: modalState("A", {
+            instanceId: "00000000000000000000000000000000",
+          }),
+        } as Partial<ResourceState>),
+      });
+      const plan = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(plan.resources.A).toMatchObject({
+        action: "replace",
+        restart: true,
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "a completed-but-undrained replacement hit by a mode switch restarts; same mode just drains",
+    Effect.gen(function* () {
+      const replaced = (providerMode: "local" | "live") =>
+        modalState("A", {
+          status: "replaced",
+          deleteFirst: false,
+          providerMode,
+          old: modalState("A", {
+            instanceId: "00000000000000000000000000000000",
+          }),
+        } as Partial<ResourceState>);
+
+      // The live replacement of a LOCAL row completed but its old chain
+      // hasn't drained. Re-planning in the same (live) mode continues the
+      // existing generation (no restart — GC just finishes).
+      yield* seed({ A: replaced("live") });
+      const sameMode = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(sameMode.resources.A).toMatchObject({ action: "replace" });
+      expect((sameMode.resources.A as any).restart).toBeUndefined();
+
+      // But if the completed replacement was LOCAL and this run resolves
+      // live, the current "new" generation is itself obsolete — restart.
+      yield* seed({ A: replaced("local") });
+      const switched = yield* makePlan(ModalResource("A", { value: "v1" }));
+      expect(switched.resources.A).toMatchObject({
+        action: "replace",
+        restart: true,
+        mode: "live",
+      });
+    }),
+  );
+
+  test(
+    "orphan deletions carry the persisted mode",
+    Effect.gen(function* () {
+      yield* seed({
+        LocalOrphan: modalState("LocalOrphan"), // providerMode: "local"
+        LegacyOrphan: modalState("LegacyOrphan", {
+          providerMode: undefined,
+        }),
+      });
+      const plan = yield* makePlan(Effect.void);
+      // The Delete node records the mode its provider was resolved for —
+      // Apply deletes the local orphan with the LOCAL provider even though
+      // this is a live-default run.
+      expect(plan.deletions.LocalOrphan).toMatchObject({
+        action: "delete",
+        mode: "local",
+      });
+      expect(plan.deletions.LegacyOrphan).toMatchObject({ action: "delete" });
+      expect(plan.deletions.LegacyOrphan!.mode).toBeUndefined();
+    }),
+  );
+
+  test(
+    "a mode-switching upstream invalidates its attrs for downstream diffs",
+    Effect.gen(function* () {
+      yield* seed({
+        A: modalState("A", { downstream: ["B"] }), // providerMode: "local"
+        B: {
+          instanceId,
+          providerVersion: 0,
+          logicalId: "B",
+          fqn: "B",
+          namespace: undefined,
+          resourceType: "Test.TestResource",
+          status: "created",
+          props: { string: "v1" },
+          attr: {
+            string: "v1",
+            stringArray: [],
+            stableString: "B",
+            stableArray: ["B"],
+          },
+          downstream: [],
+          bindings: [],
+        },
+      });
+
+      const program = Effect.gen(function* () {
+        const a = yield* ModalResource("A", { value: "v1" });
+        yield* TestResource("B", { string: a.value });
+      });
+
+      // Mode switch (local row, deploy plan): A is being replaced, so its
+      // attrs are NOT stable — B must observe an unresolved upstream and
+      // plan an update rather than nooping against stale values.
+      const switched = yield* makePlan(program);
+      expect(switched.resources.A).toMatchObject({ action: "replace" });
+      expect(switched.resources.B).toMatchObject({ action: "update" });
+
+      // Control — same mode (dev run): A noops, its persisted attrs
+      // resolve, B noops.
+      const same = yield* inDev(makePlan(program));
+      expect(same.resources.A).toMatchObject({ action: "noop" });
+      expect(same.resources.B).toMatchObject({ action: "noop" });
+    }),
+  );
+});
+
+describe("binding client data-plane routing (plan)", () => {
+  // Binding.Service wraps deploy-time clients so they hit the plane the
+  // bound resource actually lives on. In a `dev` run ambient is the
+  // emulator; `Alchemy.remote()` must still wrap with the live layer (the
+  // inverse of the local wrap). Plan-time `yield* client()` is the same
+  // routing `Service.execute` uses.
+
+  test(
+    "in a dev run, a local resource's binding client hits the emulator plane",
+    Effect.gen(function* () {
+      const plan = yield* inDev(
+        makePlan(
+          Effect.gen(function* () {
+            const a = yield* ModalResource("A", { value: "v1" });
+            const read = yield* ProbeBinding(a);
+            return yield* read();
+          }),
+        ),
+      );
+      expect(plan.output).toBe("local");
+    }),
+  );
+
+  test(
+    "in a dev run, a remote() resource's binding client hits the live plane",
+    Effect.gen(function* () {
+      const plan = yield* inDev(
+        makePlan(
+          Effect.gen(function* () {
+            const a = yield* ModalResource("A", { value: "v1" }).pipe(remote());
+            const read = yield* ProbeBinding(a);
+            return yield* read();
+          }),
+        ),
+      );
+      expect(plan.output).toBe("live");
+    }),
+  );
+
+  test(
+    "a live-mode run wraps remote/live clients with the live plane (not ambient)",
+    Effect.gen(function* () {
+      const plan = yield* makePlan(
+        Effect.gen(function* () {
+          const a = yield* ModalResource("A", { value: "v1" });
+          const read = yield* ProbeBinding(a);
+          return yield* read();
+        }),
+      );
+      expect(plan.output).toBe("live");
+    }),
+  );
+
+  test(
+    "a binding spanning local and remote() resources dies",
+    Effect.gen(function* () {
+      const exit = yield* inDev(
+        makePlan(
+          Effect.gen(function* () {
+            const local = yield* ModalResource("A", { value: "v1" });
+            const live = yield* ModalResource("B", { value: "v1" }).pipe(
+              remote(),
+            );
+            const read = yield* ProbeBinding([local, live]);
+            return yield* read();
+          }),
+        ),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(Cause.squash(exit.cause))).toContain("mixed data planes");
+      }
+    }),
+  );
+});
+
+// Upstream dependency detection must find a Resource/Output reference at ANY
+// nesting depth of plain data — objects in arrays, arrays in objects, and
+// arbitrary mixes (#1082 hardened the walkers with a plain-data gate + cycle
+// guards; these pin that no nesting shape lost its dependency edge). Each
+// case plans `A` (upstream) and `B` whose props embed a reference to `A` in a
+// different shape, then asserts the A→B edge exists in the plan DAG.
+describe("upstream detection across nesting shapes", () => {
+  // Each shape gets the raw resource and an attr Output to embed.
+  const shapes: [name: string, props: (a: any) => Record<string, any>][] = [
+    ["raw resource at top level", (a) => ({ ref: a })],
+    ["attr output at top level", (a) => ({ name: a.name })],
+    ["raw resource in object", (a) => ({ obj: { ref: a } })],
+    ["attr output in object", (a) => ({ obj: { name: a.name } })],
+    [
+      "deeply nested object (4 levels)",
+      (a) => ({ l1: { l2: { l3: { l4: { name: a.name } } } } }),
+    ],
+    ["raw resource in array", (a) => ({ arr: [a] })],
+    ["attr output in array", (a) => ({ arr: [a.name] })],
+    [
+      "output among primitives in array",
+      (a) => ({ arr: [1, "x", a.name, null, true] }),
+    ],
+    ["array in object in array", (a) => ({ arr: [{ inner: [a.name] }] })],
+    ["object in array in object", (a) => ({ obj: { list: [{ ref: a }] } })],
+    [
+      "arrays in objects in arrays in objects",
+      (a) => ({
+        layers: [
+          { config: { hosts: [{ url: a.name }, { url: "static" }] } },
+          { config: { hosts: [] } },
+        ],
+      }),
+    ],
+    [
+      "mixed: raw resource and output at different depths",
+      (a) => ({
+        top: a,
+        nested: { deep: [{ deeper: { name: a.name } }] },
+      }),
+    ],
+    [
+      "nested empty containers alongside the ref",
+      (a) => ({
+        empties: [{}, [], { x: [] }],
+        ref: { arr: [[a.name]] },
+      }),
+    ],
+    ["array of arrays", (a) => ({ matrix: [[a.name]] })],
+  ];
+
+  for (const [name, props] of shapes) {
+    test(
+      `finds the dependency: ${name}`,
+      Effect.gen(function* () {
+        const plan = yield* Effect.gen(function* () {
+          const a = yield* Bucket("A", { name: "nest-a" });
+          yield* TestResource("B", props(a) as any);
+        }).pipe(makePlan);
+
+        expect(plan.resources.A!.action).toBe("create");
+        expect(plan.resources.B!.action).toBe("create");
+        // The dependency edge A -> B must exist regardless of nesting shape.
+        expect(plan.resources.A!.downstream).toContain("B");
+        expect(plan.resources.B!.downstream).not.toContain("A");
+      }),
+    );
+  }
+
+  test(
+    "a reference inside a foreign class instance is NOT a dependency",
+    Effect.gen(function* () {
+      class SdkConfig {
+        constructor(readonly ref: any) {}
+      }
+      const plan = yield* Effect.gen(function* () {
+        const a = yield* Bucket("A", { name: "nest-a" });
+        yield* TestResource("B", { config: new SdkConfig(a.name) } as any);
+      }).pipe(makePlan);
+
+      expect(plan.resources.A!.downstream).not.toContain("B");
+    }),
+  );
+
+  test(
+    "cyclic plain objects in props do not hang planning",
+    Effect.gen(function* () {
+      const cyclic: any = { name: "cycle" };
+      cyclic.self = cyclic;
+      const plan = yield* Effect.gen(function* () {
+        const a = yield* Bucket("A", { name: "nest-a" });
+        yield* TestResource("B", { config: cyclic, ref: a.name } as any);
+      }).pipe(makePlan);
+
+      // The cycle is tolerated AND the sibling dependency is still found.
+      expect(plan.resources.A!.downstream).toContain("B");
+    }),
+  );
+});
+
+describe("renamed resources (renamedFrom)", () => {
+  const bucketRow = (
+    fqn: string,
+    rowInstanceId: string = instanceId,
+  ): ResourceState => ({
+    instanceId: rowInstanceId,
+    providerVersion: 0,
+    logicalId: parseFqnLogicalId(fqn),
+    fqn,
+    namespace: undefined,
+    resourceType: "Test.Bucket",
+    status: "created",
+    props: { name: "b" },
+    attr: { name: "b", bucketArn: `arn:test:bucket:${fqn}` },
+    bindings: [],
+    downstream: [],
+  });
+  const parseFqnLogicalId = (fqn: string) => fqn.split("/").pop()!;
+
+  test(
+    "a row at a former FQN plans as an update at the new FQN, never a create+delete",
+    Effect.gen(function* () {
+      yield* seed({ OldBucket: bucketRow("OldBucket") });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      const node = plan.resources.NewBucket!;
+      // An update, not a noop: the physical resource's tags are still
+      // branded with the OLD logical id, so a reconcile must run to
+      // re-brand them under the new identity. Never a create.
+      expect(node.action).toEqual("update");
+      expect(node.renamedFrom).toEqual(["OldBucket"]);
+      // The row rides on the node under its NEW identity (apply persists
+      // the move before any lifecycle runs).
+      expect(node.state?.fqn).toEqual("NewBucket");
+      expect(node.state?.logicalId).toEqual("NewBucket");
+      expect(node.state?.instanceId).toEqual(instanceId);
+      // The former row is NOT an orphan.
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "the alias is ignored when the new FQN already has a row with a different instanceId",
+    Effect.gen(function* () {
+      yield* seed({
+        OldBucket: bucketRow("OldBucket", "0ld00000000000000000000000000000"),
+        NewBucket: bucketRow("NewBucket"),
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      // The declared resource plans from its OWN row...
+      const node = plan.resources.NewBucket!;
+      expect(node.action).toEqual("noop");
+      expect(node.renamedFrom).toBeUndefined();
+      expect(node.state?.instanceId).toEqual(instanceId);
+      // ...and the former row is a distinct resource: a normal orphan.
+      expect(plan.deletions.OldBucket?.action).toEqual("delete");
+    }),
+  );
+
+  test(
+    "rows at both FQNs with the same instanceId are an in-flight migration, not an orphan",
+    Effect.gen(function* () {
+      // Simulates a crash between apply's `state.set` (new FQN) and
+      // `state.delete` (former FQN).
+      yield* seed({
+        OldBucket: bucketRow("OldBucket"),
+        NewBucket: bucketRow("NewBucket"),
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      // The node plans from the new row and marks the leftover for
+      // state-only cleanup at apply; no delete of the physical resource.
+      const node = plan.resources.NewBucket!;
+      expect(node.action).toEqual("noop");
+      expect(node.renamedFrom).toEqual(["OldBucket"]);
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "the old id can be reused by a new resource in the same deploy",
+    Effect.gen(function* () {
+      yield* seed({ OldBucket: bucketRow("OldBucket") });
+
+      const plan = yield* Effect.gen(function* () {
+        // A brand-new resource reuses the old id...
+        yield* Bucket("OldBucket", { name: "fresh" });
+        // ...while the original resource (which owns the row) renames.
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      // The rename claim wins the row: `NewBucket` migrates it...
+      const renamed = plan.resources.NewBucket!;
+      expect(renamed.action).toEqual("update");
+      expect(renamed.renamedFrom).toEqual(["OldBucket"]);
+      expect(renamed.state?.instanceId).toEqual(instanceId);
+      // ...and the reusing resource starts from scratch — it must NOT
+      // inherit the migrated resource's row (or physical resource).
+      const reuser = plan.resources.OldBucket!;
+      expect(reuser.action).toEqual("create");
+      expect(reuser.state).toBeUndefined();
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "former ids resolve against the ambient namespace (StaticSite's <id>/Worker → <id>)",
+    Effect.gen(function* () {
+      // The pre-rename shape: a `Worker` resource declared under the
+      // `App/Site` namespace chain.
+      yield* seed({
+        "App/Site/Worker": {
+          ...bucketRow("App/Site/Worker"),
+          namespace: { Id: "Site", Parent: { Id: "App" } },
+        },
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        // The post-rename shape: the resource is `Site` itself, declared
+        // inside the same ambient namespace and claiming its former
+        // namespace-RELATIVE id — `renamedFrom("Site/Worker")` resolves to
+        // `App/Site/Worker` under `Namespace.push("App")`.
+        yield* Bucket("Site", { name: "b" }).pipe(
+          renamedFrom("Site/Worker"),
+          Namespace.push("App"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      const node = plan.resources["App/Site"]!;
+      expect(node.action).toEqual("update");
+      expect(node.renamedFrom).toEqual(["App/Site/Worker"]);
+      expect(node.state?.fqn).toEqual("App/Site");
+      expect(node.state?.namespace).toEqual({ Id: "App" });
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "the absolute { fqn } form claims a former FQN across namespaces",
+    Effect.gen(function* () {
+      // The resource used to live at the ROOT of the stack; it moved into
+      // a namespace. A relative former id cannot express that (it would
+      // resolve inside the new namespace), so the absolute form is used.
+      yield* seed({ Thing: bucketRow("Thing") });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("Thing", { name: "b" }).pipe(
+          renamedFrom({ fqn: "Thing" }),
+          Namespace.push("New"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      const node = plan.resources["New/Thing"]!;
+      expect(node.action).toEqual("update");
+      expect(node.renamedFrom).toEqual(["Thing"]);
+      expect(node.state?.fqn).toEqual("New/Thing");
+      expect(node.state?.instanceId).toEqual(instanceId);
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "a rename chain with several same-instanceId leftovers is cleaned in one plan",
+    Effect.gen(function* () {
+      // A → B → C rename history with repeated partial failures: rows
+      // linger at BOTH former FQNs, all copies of the same row (migration
+      // preserves the instanceId).
+      yield* seed({
+        OldA: bucketRow("OldA"),
+        OldB: bucketRow("OldB"),
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        // Most recent former id first.
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldA", "OldB"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      const node = plan.resources.NewBucket!;
+      expect(node.action).toEqual("update");
+      // The migration source AND the same-instance leftover are both
+      // collected — one apply drops them all.
+      expect(node.renamedFrom).toEqual(["OldA", "OldB"]);
+      expect(node.state?.instanceId).toEqual(instanceId);
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "a foreign row at a later former FQN is orphan-deleted, not adopted",
+    Effect.gen(function* () {
+      // `OldA` is the real predecessor; `OldB` is someone else's row
+      // (different instanceId) that happens to sit at an older former FQN.
+      yield* seed({
+        OldA: bucketRow("OldA"),
+        OldB: bucketRow("OldB", "f0re1gn0000000000000000000000000"),
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldA", "OldB"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      const node = plan.resources.NewBucket!;
+      expect(node.action).toEqual("update");
+      expect(node.renamedFrom).toEqual(["OldA"]);
+      expect(node.state?.instanceId).toEqual(instanceId);
+      // The foreign row is a normal orphan — deleted in the SAME plan (it
+      // never enters the migrated set, so the in-memory migration doesn't
+      // shield it).
+      expect(plan.deletions.OldB?.action).toEqual("delete");
+      expect(plan.deletions.OldA).toBeUndefined();
+    }),
+  );
+
+  test(
+    "a former row with a different resourceType is never migrated",
+    Effect.gen(function* () {
+      // The row at the former FQN was written by a DIFFERENT resource type
+      // — it cannot be this resource's row, whatever its FQN says.
+      yield* seed({
+        OldBucket: {
+          ...bucketRow("OldBucket"),
+          resourceType: "Test.Queue",
+          attr: { name: "b", queueUrl: "https://test.queue.com/b" },
+        },
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      // Fresh create; the type-mismatched row is a normal orphan.
+      const node = plan.resources.NewBucket!;
+      expect(node.action).toEqual("create");
+      expect(node.renamedFrom).toBeUndefined();
+      expect(plan.deletions.OldBucket?.action).toEqual("delete");
+    }),
+  );
+
+  test(
+    "a foreign-typed row at the NEW FQN blocks the migration loudly",
+    Effect.gen(function* () {
+      // A different resource type's row occupies `NewBucket`. Migrating
+      // over it would silently abandon that row's cloud resource, so the
+      // plan fails with a clear remediation instead.
+      yield* seed({
+        NewBucket: {
+          ...bucketRow("NewBucket", "f0re1gn0000000000000000000000000"),
+          resourceType: "Test.Queue",
+          attr: { name: "q", queueUrl: "https://test.queue.com/q" },
+        },
+        OldBucket: bucketRow("OldBucket"),
+      });
+
+      const exit = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan, Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const die = exit.cause.reasons.find(Cause.isDieReason);
+        expect(String(die?.defect)).toContain(
+          "a state row of a different type ('Test.Queue') already occupies 'NewBucket'",
+        );
+      }
+    }),
+  );
+
+  test(
+    "a mid-replacement row migrates with its old-generation chain intact",
+    Effect.gen(function* () {
+      // The row is in `replaced` status: the new generation is live and
+      // the old generation is queued for garbage collection. The rename
+      // must carry the whole row — chain included — so GC still drains it.
+      yield* seed({
+        OldBucket: {
+          ...bucketRow("OldBucket"),
+          status: "replaced",
+          deleteFirst: false,
+          old: {
+            ...bucketRow("OldBucket", "01d6e7000000000000000000000000000"),
+            status: "created",
+          },
+        } as ResourceState,
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      const node = plan.resources.NewBucket!;
+      expect(node.renamedFrom).toEqual(["OldBucket"]);
+      expect(node.state?.fqn).toEqual("NewBucket");
+      expect(node.state?.instanceId).toEqual(instanceId);
+      // The replacement backlog rides the migration.
+      expect((node.state as any).old?.instanceId).toEqual(
+        "01d6e7000000000000000000000000000",
+      );
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "renamedFrom on a fresh resource (no rows anywhere) is inert",
+    Effect.gen(function* () {
+      // Every new StaticSite carries `renamedFrom(`${id}/Worker`)` forever,
+      // so a green-field deploy must behave exactly as if the decoration
+      // were absent: a plain create — and the cold-start adoption probe
+      // still runs (probe suppression only applies while a row is actually
+      // migrating away).
+      const reads: string[] = [];
+      const plan = yield* Effect.gen(function* () {
+        yield* TestResource("New", { string: "v" }).pipe(renamedFrom("Old"));
+        return {};
+      }).pipe(
+        makePlan,
+        Effect.provide(
+          Layer.succeed(TestResourceHooks, {
+            read: (id: string) =>
+              Effect.sync(() => {
+                reads.push(id);
+                return undefined;
+              }),
+          }),
+        ),
+      );
+
+      const node = plan.resources.New!;
+      expect(node.action).toEqual("create");
+      expect(node.renamedFrom).toBeUndefined();
+      expect(node.state).toBeUndefined();
+      // The state-loss recovery probe still ran.
+      expect(reads).toEqual(["New"]);
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "a rename combined with a replacement-triggering change plans a replace carrying the rename",
+    Effect.gen(function* () {
+      yield* seed({
+        Old: {
+          instanceId,
+          providerVersion: 0,
+          logicalId: "Old",
+          fqn: "Old",
+          namespace: undefined,
+          resourceType: "Test.TestResource",
+          status: "created",
+          props: { string: "v", replaceString: "a" },
+          attr: { string: "v", replaceString: "a" } as any,
+          bindings: [],
+          downstream: [],
+        },
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* TestResource("New", {
+          string: "v",
+          replaceString: "b",
+        }).pipe(renamedFrom("Old"));
+        return {};
+      }).pipe(makePlan);
+
+      // The replacement wins the action; the rename rides along so apply
+      // still moves the row (and the old-generation delete targets the
+      // migrated attrs under the new FQN).
+      const node = plan.resources.New!;
+      expect(node.action).toEqual("replace");
+      expect(node.renamedFrom).toEqual(["Old"]);
+      expect(node.state?.instanceId).toEqual(instanceId);
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "an interrupted-create row migrates and resumes the create under the new FQN",
+    Effect.gen(function* () {
+      // The pre-rename deploy crashed mid-create: the row is `creating`.
+      yield* seed({
+        OldBucket: {
+          ...bucketRow("OldBucket"),
+          status: "creating",
+        } as ResourceState,
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket"),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      // Create resumes with the SAME instanceId under the new identity —
+      // deterministic physical names regenerate identically, so the
+      // half-created cloud resource is found rather than duplicated.
+      const node = plan.resources.NewBucket!;
+      expect(node.action).toEqual("create");
+      expect(node.renamedFrom).toEqual(["OldBucket"]);
+      expect(node.state?.instanceId).toEqual(instanceId);
+      expect(node.state?.fqn).toEqual("NewBucket");
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "a duplicated former id is collected once",
+    Effect.gen(function* () {
+      yield* seed({ OldBucket: bucketRow("OldBucket") });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("NewBucket", { name: "b" }).pipe(
+          renamedFrom("OldBucket", { fqn: "OldBucket" }),
+        );
+        return {};
+      }).pipe(makePlan);
+
+      expect(plan.resources.NewBucket?.renamedFrom).toEqual(["OldBucket"]);
+    }),
+  );
+
+  test(
+    "a same-deploy rename shift (A→B while B→C) migrates both rows",
+    Effect.gen(function* () {
+      // Two existing resources shift names in ONE deploy: the resource at
+      // `A` becomes `B`, and the resource at `B` becomes `C`. Each row
+      // must follow ITS resource — B's resolution may not treat the row
+      // at `B` as its own, because C is claiming it.
+      const instanceB = "b0000000000000000000000000000000";
+      yield* seed({
+        A: bucketRow("A"),
+        B: bucketRow("B", instanceB),
+      });
+
+      const plan = yield* Effect.gen(function* () {
+        yield* Bucket("B", { name: "b" }).pipe(renamedFrom("A"));
+        yield* Bucket("C", { name: "b" }).pipe(renamedFrom("B"));
+        return {};
+      }).pipe(makePlan);
+
+      // C took B's row...
+      const c = plan.resources.C!;
+      expect(c.action).toEqual("update");
+      expect(c.renamedFrom).toEqual(["B"]);
+      expect(c.state?.instanceId).toEqual(instanceB);
+      // ...so B falls back to A's row (never a fresh create)...
+      const b = plan.resources.B!;
+      expect(b.action).toEqual("update");
+      expect(b.renamedFrom).toEqual(["A"]);
+      expect(b.state?.instanceId).toEqual(instanceId);
+      // ...and nothing is deleted.
+      expect(Object.keys(plan.deletions)).toHaveLength(0);
+    }),
+  );
+
+  test(
+    "a same-deploy rename swap (A⇄B) fails the plan loudly",
+    Effect.gen(function* () {
+      // Swapping two live resources' ids cannot be persisted safely (the
+      // two migrations would set and delete each other's rows); it must
+      // die as a rename cycle, never silently half-apply.
+      yield* seed({
+        A: bucketRow("A"),
+        B: bucketRow("B", "b0000000000000000000000000000000"),
+      });
+
+      const exit = yield* Effect.gen(function* () {
+        yield* Bucket("A", { name: "b" }).pipe(renamedFrom("B"));
+        yield* Bucket("B", { name: "b" }).pipe(renamedFrom("A"));
+        return {};
+      }).pipe(makePlan, Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const die = exit.cause.reasons.find(Cause.isDieReason);
+        expect(String(die?.defect)).toContain("cycle");
+      }
+    }),
+  );
+
+  test(
+    "two resources claiming the same former FQN fail the plan loudly",
+    Effect.gen(function* () {
+      const exit = yield* Effect.gen(function* () {
+        yield* Bucket("A", { name: "a" }).pipe(renamedFrom("Shared"));
+        yield* Bucket("B", { name: "b" }).pipe(renamedFrom("Shared"));
+        return {};
+      }).pipe(makePlan, Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const die = exit.cause.reasons.find(Cause.isDieReason);
+        expect(String(die?.defect)).toContain("both claim former FQN 'Shared'");
+      }
     }),
   );
 });

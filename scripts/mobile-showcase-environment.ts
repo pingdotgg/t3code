@@ -198,6 +198,7 @@ export const SHOWCASE_THREADS = [
       "Keep hydration errors precise, but make the development copy unexpectedly delightful.",
     response:
       "The diagnostics still lead with the exact mismatch and component stack. A tiny optional haiku now closes the expanded explanation.",
+    snoozeMinutes: 90,
   },
   {
     id: "beautiful-boot",
@@ -210,6 +211,17 @@ export const SHOWCASE_THREADS = [
       "Design a clearer boot timeline that remains useful over serial and never hides kernel detail.",
     response:
       "The plan groups milestones without changing the underlying log stream, preserves plain-text output, and adds zero work to the hot path.",
+  },
+  {
+    id: "patient-penguins",
+    projectId: "linux",
+    title: "Teach penguins to wait patiently",
+    branch: "feat/patient-penguins",
+    minutesAgo: 52,
+    request: "Make delayed work easier to follow without adding noise to the scheduler trace.",
+    response:
+      "Delayed work now carries a concise reason through the trace, so the wait is legible without changing scheduling behavior.",
+    snoozeMinutes: 8 * 60,
   },
   // Finished work, settled by hand: the list keeps it as a receded tail so
   // the active block above reads as everything still in flight. The active
@@ -337,20 +349,29 @@ function insertThread(
     readonly minutesAgo: number;
     readonly state?: "working" | "approval" | "plan";
     readonly settled?: boolean;
+    readonly snoozeMinutes?: number;
     readonly workspaceRoot: string;
   },
 ): void {
   const turnId = `${input.id}-turn`;
   const updatedAt = minutesBefore(now, input.minutesAgo);
   const isWorking = input.state === "working";
+  const snoozedUntil =
+    input.snoozeMinutes === undefined
+      ? null
+      : new Date(now + input.snoozeMinutes * 60_000).toISOString();
+  const snoozedAt =
+    input.snoozeMinutes === undefined
+      ? null
+      : minutesBefore(now, Math.max(1, Math.floor(input.minutesAgo / 2)));
   database
     .prepare(
       `INSERT INTO projection_threads (
         thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
         branch, worktree_path, latest_turn_id, latest_user_message_at, pending_approval_count,
         pending_user_input_count, has_actionable_proposed_plan, created_at, updated_at,
-        archived_at, deleted_at, settled_override, settled_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?)`,
+        archived_at, deleted_at, settled_override, settled_at, snoozed_until, snoozed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
     )
     .run(
       input.id,
@@ -369,6 +390,8 @@ function insertThread(
       updatedAt,
       input.settled ? "settled" : null,
       input.settled ? updatedAt : null,
+      snoozedUntil,
+      snoozedAt,
     );
   database
     .prepare(
@@ -409,6 +432,8 @@ const SEEDED_PROJECTION_TABLES = [
   "projection_state",
 ] as const;
 
+const SEEDED_THREAD_COLUMNS = ["snoozed_until", "snoozed_at"] as const;
+
 function hasSeedableSchema(dbPath: string): boolean {
   let database: NodeSqlite.DatabaseSync;
   try {
@@ -417,12 +442,18 @@ function hasSeedableSchema(dbPath: string): boolean {
     return false;
   }
   try {
-    const row = database
+    const tableCount = database
       .prepare(
         `SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN (${SEEDED_PROJECTION_TABLES.map(() => "?").join(", ")})`,
       )
       .get(...SEEDED_PROJECTION_TABLES) as { count: number };
-    return row.count === SEEDED_PROJECTION_TABLES.length;
+    if (tableCount.count !== SEEDED_PROJECTION_TABLES.length) return false;
+
+    const threadColumns = database.prepare("PRAGMA table_info(projection_threads)").all() as Array<{
+      name: string;
+    }>;
+    const threadColumnNames = new Set(threadColumns.map((column) => column.name));
+    return SEEDED_THREAD_COLUMNS.every((column) => threadColumnNames.has(column));
   } catch {
     return false;
   } finally {

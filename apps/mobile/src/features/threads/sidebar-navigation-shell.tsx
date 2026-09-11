@@ -1,19 +1,15 @@
-import {
-  DarkTheme,
-  DefaultTheme,
-  NavigationContainer,
-  NavigationIndependentTree,
-} from "@react-navigation/native";
+import { NavigationContainer, NavigationIndependentTree } from "@react-navigation/native";
 import {
   createNativeStackNavigator,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import type { ReactNode } from "react";
-import { Platform, useColorScheme } from "react-native";
+import { Platform } from "react-native";
 
 import { getCompactBrandHeaderOptions } from "../../components/CompactBrandTitle";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
 
 const SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -56,11 +52,11 @@ const SidebarStack = createNativeStackNavigator();
  * navigation hooks used for header configuration inside the pane.
  */
 export function SidebarNavigationShell(props: { readonly children: ReactNode }) {
-  const colorScheme = useColorScheme();
+  const navigationTheme = useMobileNavigationTheme();
 
   return (
     <NavigationIndependentTree>
-      <NavigationContainer theme={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
+      <NavigationContainer theme={navigationTheme}>
         <SidebarStack.Navigator
           screenOptions={SIDEBAR_SCREEN_OPTIONS}
           initialRouteName="SidebarThreads"

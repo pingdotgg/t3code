@@ -23,9 +23,8 @@ export interface ListProfileResourceAssociationsRequest extends Omit<
  *
  * Provide `AWS.Route53Profiles.ListProfileResourceAssociationsHttp` on the
  * hosting Lambda Function to satisfy the requirement.
- * @binding
- * @section Listing Attached DNS Resources
- * @example Enumerate the DNS resources attached to a Profile
+ * ### Listing Attached DNS Resources
+ * **Example:** Enumerate the DNS resources attached to a Profile
  * ```typescript
  * // init — grants route53profiles:ListProfileResourceAssociations
  * const listProfileResourceAssociations =
@@ -38,6 +37,8 @@ export interface ListProfileResourceAssociationsRequest extends Omit<
  *   yield* Effect.log(`${association.ResourceType}: ${association.ResourceArn}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListProfileResourceAssociations extends Binding.Service<
   ListProfileResourceAssociations,

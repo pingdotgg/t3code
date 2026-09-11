@@ -1,5 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 
+import { MOBILE_THEME_IDS, type MobileThemeId } from "../../lib/mobileTheme";
+
 export const SHOWCASE_SCENES = ["threads", "thread", "terminal", "review", "environments"] as const;
 export type ShowcaseScene = (typeof SHOWCASE_SCENES)[number];
 
@@ -8,6 +10,7 @@ export type ShowcaseOrientation = "portrait" | "landscape";
 interface NativeShowcaseControls {
   readonly getShowcasePairingUrl?: () => string | null;
   readonly getShowcaseScene?: () => string | null;
+  readonly getShowcaseTheme?: () => string | null;
   readonly getShowcaseOrientation?: () => string | null;
   readonly applyShowcaseOrientation?: (orientation: ShowcaseOrientation) => Promise<void>;
   readonly getInterfaceOrientation?: () => Promise<string>;
@@ -51,6 +54,20 @@ export function getNativeShowcaseScene(): ShowcaseScene | null {
   try {
     const scene = nativeShowcaseControls()?.getShowcaseScene?.()?.trim();
     return SHOWCASE_SCENES.find((candidate) => candidate === scene) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns null when the runner requested no palette, which leaves the stored
+ * theme preference untouched. An unknown id also reads as null rather than
+ * silently falling back, so a capture never claims to show a theme it does not.
+ */
+export function getNativeShowcaseTheme(): MobileThemeId | null {
+  try {
+    const theme = nativeShowcaseControls()?.getShowcaseTheme?.()?.trim();
+    return MOBILE_THEME_IDS.find((candidate) => candidate === theme) ?? null;
   } catch {
     return null;
   }

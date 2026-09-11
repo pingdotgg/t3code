@@ -13,9 +13,8 @@ export interface GetCostCategoriesRequest extends ce.GetCostCategoriesRequest {}
  * Retrieve the cost category names (or the values of one category)
  * present in your cost data — usable in query filter expressions. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetCostCategoriesHttp)`.
- * @binding
- * @section Exploring Dimensions and Tags
- * @example List Cost Category Names and Values
+ * ### Exploring Dimensions and Tags
+ * **Example:** List Cost Category Names and Values
  * ```typescript
  * // init — account-level binding takes no resource
  * const getCostCategories = yield* AWS.CostExplorer.GetCostCategories();
@@ -26,6 +25,8 @@ export interface GetCostCategoriesRequest extends ce.GetCostCategoriesRequest {}
  * });
  * const names = result.CostCategoryNames;
  * ```
+ *
+ * @binding
  */
 export interface GetCostCategories extends Binding.Service<
   GetCostCategories,

@@ -16,9 +16,8 @@ export interface CreateMultipartUploadRequest extends Omit<
  * objects too large for a single `PutObject` (parts are 5 MiB–5 GiB, uploaded
  * independently and in parallel). Provide the implementation with
  * `Effect.provide(AWS.S3.CreateMultipartUploadHttp)`.
- * @binding
- * @section Multipart Uploads
- * @example Start a Multipart Upload
+ * ### Multipart Uploads
+ * **Example:** Start a Multipart Upload
  * ```typescript
  * // init — bind the operation to the bucket
  * const createUpload = yield* AWS.S3.CreateMultipartUpload(bucket);
@@ -31,6 +30,8 @@ export interface CreateMultipartUploadRequest extends Omit<
  * });
  * // pass UploadId to AWS.S3.UploadPart / CompleteMultipartUpload
  * ```
+ *
+ * @binding
  */
 export interface CreateMultipartUpload extends Binding.Service<
   CreateMultipartUpload,

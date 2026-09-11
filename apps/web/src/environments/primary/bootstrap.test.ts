@@ -155,6 +155,24 @@ describe("environmentBootstrap", () => {
     });
   });
 
+  it("keeps an uppercase wss scheme secure when deriving the http url", () => {
+    vi.stubEnv("VITE_WS_URL", "WSS://remote.example.com");
+
+    expect(readPrimaryEnvironmentTarget().target).toEqual({
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
+
+  it("keeps an uppercase https scheme secure when deriving the websocket url", () => {
+    vi.stubEnv("VITE_HTTP_URL", "HTTPS://remote.example.com");
+
+    expect(readPrimaryEnvironmentTarget().target).toEqual({
+      httpBaseUrl: "https://remote.example.com/",
+      wsBaseUrl: "wss://remote.example.com/",
+    });
+  });
+
   it("uses the current origin as the descriptor base for local dev environments", async () => {
     installTestBrowser("http://localhost:5735/");
     await installDescriptorApi();

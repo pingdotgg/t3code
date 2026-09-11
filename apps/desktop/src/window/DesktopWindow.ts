@@ -8,6 +8,8 @@ import * as Ref from "effect/Ref";
 
 import * as Electron from "electron";
 
+import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
@@ -16,9 +18,17 @@ import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL, WINDOW_FULLSCREEN_STATE_CHANNEL } from "../ipc/channels.ts";
+import {
+  MENU_ACTION_CHANNEL,
+  QUIT_SHORTCUT_CHANNEL,
+  SNAP_SHOT_EVENT_CHANNEL,
+  WINDOW_FULLSCREEN_STATE_CHANNEL,
+} from "../ipc/channels.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
+import { makeQuitShortcutHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -51,6 +61,8 @@ type DesktopWindowRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
   | DesktopAppSettings.DesktopAppSettings
+  | DesktopClientSettings.DesktopClientSettings
+  | ElectronApp.ElectronApp
   | ElectronMenu.ElectronMenu
   | ElectronShell.ElectronShell
   | ElectronTheme.ElectronTheme
@@ -88,7 +100,18 @@ export class DesktopWindow extends Context.Service<
     // produce a stranded window pointing at nothing.
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
-    readonly dispatchMenuAction: (action: string) => Effect.Effect<void, DesktopWindowError>;
+    readonly prepareCaptureReveal: Effect.Effect<void>;
+    readonly dispatchMenuAction: (
+      action: string,
+      options?: { readonly reveal?: boolean },
+    ) => Effect.Effect<void, DesktopWindowError>;
+    /**
+     * Push a capture lifecycle event to the renderer. Only `started` reveals the
+     * window; the rest must not interrupt the app the user has switched to.
+     */
+    readonly dispatchSnapShotEvent: (
+      event: DesktopSnapShotEvent,
+    ) => Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
     // embedded preview WebContentsView (or DevTools) focused they zoom the
@@ -196,6 +219,21 @@ export function isRetryableDevelopmentRendererLoadFailure(input: {
   );
 }
 
+export function concealPendingQuitWindow(
+  window: Pick<
+    Electron.BrowserWindow,
+    "isDestroyed" | "isFullScreen" | "setFullScreen" | "setOpacity"
+  >,
+): void {
+  if (window.isDestroyed()) return;
+  if (window.isFullScreen()) {
+    window.setFullScreen(false);
+  }
+  // Electron implements window opacity on macOS and Windows. Linux keeps the
+  // release-gated quit behavior but cannot make the pending window disappear.
+  window.setOpacity(0);
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -252,6 +290,7 @@ function bindFirstRevealTrigger(
   }
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const assets = yield* DesktopAssets.DesktopAssets;
@@ -261,6 +300,8 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const previewManager = yield* PreviewManager.PreviewManager;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+  const electronApp = yield* ElectronApp.ElectronApp;
   // Window-side latch for the primary backend's readiness. Set by
   // handleBackendReady (driven by the pool's onReady callback), cleared
   // by handleBackendNotReady (driven by onShutdown). Only consumed by
@@ -346,6 +387,11 @@ export const make = Effect.gen(function* () {
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
       webPreferences: {
         preload: environment.preloadPath,
+        // The window boots hidden (show: false until ready-to-show), and
+        // Chromium throttles hidden renderers: timers coalesce and rAF stops,
+        // which stalls first paint. Boot unthrottled; the first-reveal trigger
+        // re-enables throttling so a hidden or minimized window goes back to
+        // being cheap after it has been shown once.
         backgroundThrottling: false,
         contextIsolation: true,
         nodeIntegration: false,
@@ -459,52 +505,81 @@ export const make = Effect.gen(function* () {
       webPreferences.contextIsolation = false;
     });
 
-    window.webContents.on("context-menu", (event, params) => {
-      event.preventDefault();
+    const contextMenuContents = new WeakSet<Electron.WebContents>();
+    const installContextMenu = (
+      ownerWindow: Electron.BrowserWindow,
+      contents: Electron.WebContents,
+    ): void => {
+      if (contextMenuContents.has(contents)) return;
+      contextMenuContents.add(contents);
+      contents.on("context-menu", (event, params) => {
+        event.preventDefault();
+        if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
+        // Native editing roles act on the focused contents, which may still be
+        // the host renderer when the user right-clicks inside a browser guest.
+        contents.focus();
 
-      const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
-      if (params.misspelledWord) {
-        for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-          menuTemplate.push({
-            label: suggestion,
-            click: () => window.webContents.replaceMisspelling(suggestion),
-          });
+        if (params.misspelledWord) {
+          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+            menuTemplate.push({
+              label: suggestion,
+              click: () => {
+                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+              },
+            });
+          }
+          if (params.dictionarySuggestions.length === 0) {
+            menuTemplate.push({ label: "No suggestions", enabled: false });
+          }
+          menuTemplate.push({ type: "separator" });
         }
-        if (params.dictionarySuggestions.length === 0) {
-          menuTemplate.push({ label: "No suggestions", enabled: false });
-        }
-        menuTemplate.push({ type: "separator" });
-      }
 
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
-        menuTemplate.push(
-          {
-            label: "Copy Link",
-            click: () => {
-              void runPromise(electronShell.copyText(params.linkURL));
+        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
+          menuTemplate.push(
+            {
+              label: "Copy Link",
+              click: () => {
+                void runPromise(electronShell.copyText(params.linkURL));
+              },
             },
-          },
-          { type: "separator" },
+            { type: "separator" },
+          );
+        }
+
+        if (params.mediaType === "image") {
+          menuTemplate.push({
+            label: "Copy Image",
+            click: () => {
+              if (!contents.isDestroyed()) contents.copyImageAt(params.x, params.y);
+            },
+          });
+          menuTemplate.push({ type: "separator" });
+        }
+
+        menuTemplate.push(
+          { role: "cut", enabled: params.editFlags.canCut },
+          { role: "copy", enabled: params.editFlags.canCopy },
+          { role: "paste", enabled: params.editFlags.canPaste },
+          { role: "selectAll", enabled: params.editFlags.canSelectAll },
         );
-      }
 
-      if (params.mediaType === "image") {
-        menuTemplate.push({
-          label: "Copy Image",
-          click: () => window.webContents.copyImageAt(params.x, params.y),
-        });
-        menuTemplate.push({ type: "separator" });
-      }
-
-      menuTemplate.push(
-        { role: "cut", enabled: params.editFlags.canCut },
-        { role: "copy", enabled: params.editFlags.canCopy },
-        { role: "paste", enabled: params.editFlags.canPaste },
-        { role: "selectAll", enabled: params.editFlags.canSelectAll },
-      );
-
-      void runPromise(electronMenu.popupTemplate({ window, template: menuTemplate }));
+        void runPromise(
+          electronMenu.popupTemplate({
+            window: ownerWindow,
+            template: menuTemplate,
+            ...(params.frame ? { frame: params.frame } : {}),
+          }),
+        );
+      });
+      contents.on("did-create-window", (popup) => {
+        installContextMenu(popup, popup.webContents);
+      });
+    };
+    installContextMenu(window, window.webContents);
+    window.webContents.on("did-attach-webview", (_event, contents) => {
+      installContextMenu(window, contents);
     });
 
     window.webContents.setWindowOpenHandler(({ url }) => {
@@ -533,7 +608,34 @@ export const make = Effect.gen(function* () {
     // close-terminal shortcut can outlive the terminal that handled its first
     // press, so reject repeats before they reach the native window accelerator.
     // Deliberate presses still flow through the renderer or native menu.
+    // Intercept the quit accelerator before the native menu sees it and apply
+    // the configured direct, hold, or double-press behavior.
+    const quitShortcutHandler = makeQuitShortcutHandler({
+      platform: environment.platform,
+      getMode: () =>
+        runPromise(
+          Effect.map(
+            clientSettings.get,
+            Option.match({
+              onNone: () => DEFAULT_CLIENT_SETTINGS.confirmQuit,
+              onSome: (settings) => settings.confirmQuit,
+            }),
+          ),
+        ),
+      notify: (hint) => {
+        if (!window.isDestroyed()) {
+          window.webContents.send(QUIT_SHORTCUT_CHANNEL, hint);
+        }
+      },
+      // Keep the transparent window focused until the physical shortcut is
+      // released so its remaining repeats cannot reach the next app.
+      concealWindow: () => concealPendingQuitWindow(window),
+      quit: () => {
+        void runPromise(electronApp.quit);
+      },
+    });
     window.webContents.on("before-input-event", (event, input) => {
+      quitShortcutHandler(event, input);
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
@@ -688,6 +790,11 @@ export const make = Effect.gen(function* () {
       revealSubscribers.push((fire) => window.webContents.once("did-finish-load", fire));
     }
     bindFirstRevealTrigger(revealSubscribers, () => {
+      // Boot is done; hand the window back to normal hidden-window throttling
+      // (see the backgroundThrottling comment on the create options above).
+      if (!window.isDestroyed()) {
+        window.webContents.setBackgroundThrottling(true);
+      }
       // Reveal the real window, then close the connecting splash (if any) so the
       // two don't overlap and there's no blank gap between them.
       if (persistedSettings.mainWindowMaximized) {
@@ -785,10 +892,40 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.window.showConnectingSplash"),
   );
 
+  const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
+    channel: string,
+    payload: unknown,
+    { reveal = true }: { readonly reveal?: boolean } = {},
+  ) {
+    const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
+    if (Option.isNone(existingWindow) && (!reveal || !(yield* Ref.get(backendReadyRef)))) return;
+    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
+    if (targetWindow.isDestroyed()) return;
+    const send = Effect.sync(() => {
+      if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
+    });
+    // The renderer must learn about the event even when another process refuses to
+    // yield the foreground, so send first and treat the reveal as best effort.
+    const dispatch = reveal
+      ? send.pipe(Effect.andThen(electronWindow.reveal(targetWindow).pipe(Effect.ignoreCause)))
+      : send;
+    if (targetWindow.webContents.isLoadingMainFrame()) {
+      targetWindow.webContents.once("did-finish-load", () => void runPromise(dispatch));
+      return;
+    }
+    yield* dispatch;
+  });
+
   return DesktopWindow.of({
     createMain,
     ensureMain,
     revealOrCreateMain,
+    prepareCaptureReveal: Effect.gen(function* () {
+      const existingWindow = yield* currentMainWindow;
+      if (Option.isSome(existingWindow)) {
+        yield* electronWindow.prepareReveal(existingWindow.value);
+      }
+    }),
     activate: Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
@@ -823,26 +960,18 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
-    dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action) {
+    dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action, options) {
       yield* Effect.annotateCurrentSpan({ action });
-      const existingWindow = yield* focusedMainWindow;
-      if (Option.isNone(existingWindow) && !(yield* Ref.get(backendReadyRef))) {
-        return;
-      }
-      const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-
-      const send = () => {
-        if (targetWindow.isDestroyed()) return;
-        targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
-        void runPromise(electronWindow.reveal(targetWindow));
-      };
-
-      if (targetWindow.webContents.isLoadingMainFrame()) {
-        targetWindow.webContents.once("did-finish-load", send);
-        return;
-      }
-
-      send();
+      yield* dispatchRendererEvent(MENU_ACTION_CHANNEL, action, options);
+    }),
+    dispatchSnapShotEvent: Effect.fn("desktop.window.dispatchSnapShotEvent")(function* (event) {
+      yield* Effect.annotateCurrentSpan({
+        event: event.type,
+        captureId: "id" in event ? (event.id ?? null) : null,
+      });
+      yield* dispatchRendererEvent(SNAP_SHOT_EVENT_CHANNEL, event, {
+        reveal: event.type === "started",
+      });
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
@@ -855,6 +984,10 @@ export const make = Effect.gen(function* () {
       webContents.setZoomLevel(
         direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
       );
+      // Chromium pushes the new level down to embedded guests, which would zoom
+      // the previewed page along with the app UI. The preview browser keeps its
+      // own zoom, so put each guest back where the preview left it.
+      yield* previewManager.reapplyZoom();
     }),
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;

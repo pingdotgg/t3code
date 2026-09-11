@@ -40,21 +40,16 @@ describe("DiffCommentAnnotation", () => {
         {...callbacks}
         submitLabel="Add to review"
         secondaryAction={{
-          label: "Ask",
-          icon: <span data-test-icon />,
-          allowEmpty: true,
+          label: "Add to agent",
           onAction: vi.fn(),
         }}
       />,
     );
 
     expect(markup).toContain("Add a comment…");
-    expect(markup).toContain(">Ask</button>");
     expect(markup).toContain(">Add to review</button>");
     expect(markup.match(/<button[^>]*disabled[^>]*>Add to review<\/button>/)).not.toBeNull();
-    const askButton = markup.match(/<button[^>]*>.*?Ask<\/button>/)?.[0];
-    expect(askButton).toBeDefined();
-    expect(askButton).not.toContain(' disabled=""');
+    expect(markup.match(/<button[^>]*disabled[^>]*>Add to agent<\/button>/)).not.toBeNull();
   });
 
   it("renders a saved comment without a nested card or redundant range label", () => {

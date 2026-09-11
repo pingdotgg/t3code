@@ -82,124 +82,63 @@ describe("runtimeEventToActivities task progress", () => {
     expect(usagePayload).not.toHaveProperty("status");
   });
 });
+describe("runtimeEventToActivities tool streaming persistence", () => {
+  const accumulatedStdout = [
+    "first line of output",
+    ...Array.from({ length: 500 }, (_, index) => `Capturing frame ${index}/9028`),
+  ].join("\n");
+  const streamingData = {
+    toolCallId: "tool-call-1",
+    kind: "execute",
+    command: "blender --render",
+    rawOutput: { stdout: accumulatedStdout },
+    content: [{ type: "content", content: { type: "text", text: accumulatedStdout } }],
+  };
 
-describe("runtimeEventToActivities usage limits", () => {
-  it("normalizes a Claude rate_limit_event into a usage-limits activity", () => {
-    const activities = runtimeEventToActivities({
+  it("persists tool.updated with the wire projection of data, not the accumulated stream", () => {
+    const event = {
       ...base,
-      provider: ProviderDriverKind.make("claudeAgent"),
-      type: "account.rate-limits.updated",
-      eventId: EventId.make("evt-claude-limits"),
+      type: "item.updated",
+      eventId: EventId.make("evt-tool-streaming-updated"),
       payload: {
-        rateLimits: {
-          type: "rate_limit_event",
-          rate_limit_info: {
-            status: "allowed_warning",
-            rateLimitType: "five_hour",
-            utilization: 0.82,
-            resetsAt: 1_785_000_000,
-            overageStatus: "allowed",
-            isUsingOverage: false,
-          },
-          uuid: "uuid-1",
-          session_id: "session-1",
-        },
+        itemType: "command_execution",
+        status: "inProgress",
+        title: "Render",
+        detail: accumulatedStdout,
+        data: streamingData,
       },
-    } satisfies ProviderRuntimeEvent);
+    } satisfies ProviderRuntimeEvent;
+
+    const activities = runtimeEventToActivities(event);
 
     expect(activities).toHaveLength(1);
-    expect(activities[0]).toMatchObject({
-      kind: "usage-limits.updated",
-      tone: "info",
-      summary: "Usage limits updated",
-      payload: {
-        provider: "claudeAgent",
-        status: "warning",
-        windows: [
-          {
-            id: "five_hour",
-            usedPercent: 82,
-            resetsAt: "2026-07-25T17:20:00.000Z",
-            windowDurationMins: 300,
-          },
-        ],
-        overage: { status: "ok", inUse: false, resetsAt: null, disabledReason: null },
-      },
-    });
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    const data = payload.data as Record<string, unknown>;
+    expect(payload.status).toBe("inProgress");
+    expect(data.toolCallId).toBe("tool-call-1");
+    expect(data.command).toBe("blender --render");
+    expect(data.rawOutput).toEqual({ content: "first line of output" });
+    expect(data.content).toBeUndefined();
+    expect(JSON.stringify(data).length).toBeLessThan(1_000);
   });
 
-  it("normalizes a Codex rate limit snapshot with both windows and plan context", () => {
-    const activities = runtimeEventToActivities({
+  it("persists the full terminal payload on tool.completed", () => {
+    const event = {
       ...base,
-      type: "account.rate-limits.updated",
-      eventId: EventId.make("evt-codex-limits"),
+      type: "item.completed",
+      eventId: EventId.make("evt-tool-streaming-completed"),
       payload: {
-        rateLimits: {
-          rateLimits: {
-            planType: "plus",
-            primary: { usedPercent: 12, resetsAt: 1_785_000_000, windowDurationMins: 300 },
-            secondary: { usedPercent: 47, resetsAt: 1_785_400_000, windowDurationMins: 10_080 },
-            credits: { hasCredits: true, unlimited: false, balance: "12.50" },
-            rateLimitReachedType: null,
-            spendControlReached: false,
-          },
-        },
+        itemType: "command_execution",
+        status: "completed",
+        title: "Render",
+        data: streamingData,
       },
-    } satisfies ProviderRuntimeEvent);
+    } satisfies ProviderRuntimeEvent;
+
+    const activities = runtimeEventToActivities(event);
 
     expect(activities).toHaveLength(1);
-    expect(activities[0]?.payload).toEqual({
-      provider: "codex",
-      status: "ok",
-      windows: [
-        {
-          id: "primary",
-          usedPercent: 12,
-          resetsAt: "2026-07-25T17:20:00.000Z",
-          windowDurationMins: 300,
-        },
-        {
-          id: "secondary",
-          usedPercent: 47,
-          resetsAt: "2026-07-30T08:26:40.000Z",
-          windowDurationMins: 10_080,
-        },
-      ],
-      planType: "plus",
-      credits: { hasCredits: true, unlimited: false, balance: "12.50" },
-    });
-  });
-
-  it("marks Codex snapshots limited when a limit has been reached", () => {
-    const activities = runtimeEventToActivities({
-      ...base,
-      type: "account.rate-limits.updated",
-      eventId: EventId.make("evt-codex-limited"),
-      payload: {
-        rateLimits: {
-          rateLimits: {
-            primary: { usedPercent: 100, resetsAt: null, windowDurationMins: 300 },
-            rateLimitReachedType: "rate_limit_reached",
-          },
-        },
-      },
-    } satisfies ProviderRuntimeEvent);
-
-    expect(activities[0]?.payload).toMatchObject({
-      status: "limited",
-      limitReason: "rate_limit_reached",
-      windows: [{ id: "primary", usedPercent: 100, resetsAt: null }],
-    });
-  });
-
-  it("drops rate limit events that carry nothing to display", () => {
-    const activities = runtimeEventToActivities({
-      ...base,
-      type: "account.rate-limits.updated",
-      eventId: EventId.make("evt-empty-limits"),
-      payload: { rateLimits: { rateLimits: {} } },
-    } satisfies ProviderRuntimeEvent);
-
-    expect(activities).toEqual([]);
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    expect(payload.data).toEqual(streamingData);
   });
 });

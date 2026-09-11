@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
   PullRequestComment,
+  PullRequestMergeMethod,
   PullRequestMergeability,
   PullRequestState,
 } from "@t3tools/contracts";
@@ -35,6 +36,20 @@ const RawPullRequestSchema = Schema.Struct({
   description: Schema.optional(Schema.NullOr(Schema.String)),
   status: Schema.optional(Schema.NullOr(Schema.String)),
   isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /**
+   * Who armed auto-complete, which is the only thing Azure says about it: the field carries an
+   * identity while the pull request is set to complete on its own, and Azure leaves it out
+   * entirely once nobody has. So its presence is the answer, and there is no third state.
+   */
+  autoCompleteSetBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
+  completionOptions: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        mergeStrategy: Schema.optional(Schema.NullOr(Schema.String)),
+        squashMerge: Schema.optional(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
+  ),
   mergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
   createdBy: Schema.optional(Schema.NullOr(RawIdentitySchema)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawIdentitySchema))),
@@ -124,6 +139,10 @@ export interface AzureDevOpsPullRequest {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   /** Where this pull request's threads live, when Azure said enough to work it out. */
   readonly threadsUrl: string | null;
+  /** Whether Azure is set to complete this on its own once its policies pass. */
+  readonly autoMergeEnabled: boolean;
+  /** The completion strategy Azure stored with auto-complete, where it reported one. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
 }
 
 function trimmed(value: string | null | undefined): string | null {
@@ -180,6 +199,23 @@ function toThreadsUrl(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): str
   return `${base}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repository)}/pullRequests/${raw.pullRequestId}/threads`;
 }
 
+function toAutoMergeMethod(
+  raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
+): PullRequestMergeMethod | undefined {
+  if (raw.autoCompleteSetBy == null) return undefined;
+  switch (raw.completionOptions?.mergeStrategy?.trim().toLowerCase()) {
+    case "squash":
+      return "squash";
+    case "rebase":
+    case "rebasemerge":
+      return "rebase";
+    case "nofastforward":
+      return "merge";
+    default:
+      return raw.completionOptions?.squashMerge === true ? "squash" : undefined;
+  }
+}
+
 /**
  * Null when Azure said too little to place the pull request: a row with no browser url and no
  * branch left after its prefix is dropped cannot be rendered or opened, and the wire contract
@@ -188,6 +224,7 @@ function toThreadsUrl(raw: Schema.Schema.Type<typeof RawPullRequestSchema>): str
 function toPullRequest(
   raw: Schema.Schema.Type<typeof RawPullRequestSchema>,
 ): AzureDevOpsPullRequest | null {
+  const autoMergeMethod = toAutoMergeMethod(raw);
   const reviewers = (raw.reviewers ?? []).flatMap((reviewer) => {
     const actor = toActor(reviewer);
     return actor === null ? [] : [actor];
@@ -223,6 +260,8 @@ function toPullRequest(
     reviewRequestLogins: reviewers.map((reviewer) => reviewer.login),
     reviewers,
     threadsUrl: toThreadsUrl(raw),
+    autoMergeEnabled: (raw.autoCompleteSetBy ?? null) !== null,
+    ...(autoMergeMethod === undefined ? {} : { autoMergeMethod }),
   };
 }
 

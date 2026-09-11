@@ -18,9 +18,8 @@ export interface ListMessageMoveTasksRequest extends Omit<
  * `TaskHandle` for cancellation. The binding grants the host function
  * `sqs:ListMessageMoveTasks` on the queue. Provide the
  * `ListMessageMoveTasksHttp` layer on the Function to implement the binding.
- * @binding
- * @section Dead-Letter Queue Redrive
- * @example Inspect Redrive Progress
+ * ### Dead-Letter Queue Redrive
+ * **Example:** Inspect Redrive Progress
  * ```typescript
  * // init (provide SQS.ListMessageMoveTasksHttp on the Function)
  * const listMessageMoveTasks = yield* SQS.ListMessageMoveTasks(dlq);
@@ -31,6 +30,8 @@ export interface ListMessageMoveTasksRequest extends Omit<
  *   // task.Status, task.ApproximateNumberOfMessagesMoved, task.TaskHandle
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListMessageMoveTasks extends Binding.Service<
   ListMessageMoveTasks,

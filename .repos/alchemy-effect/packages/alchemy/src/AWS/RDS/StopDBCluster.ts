@@ -11,9 +11,8 @@ import type { DBCluster } from "./DBCluster.ts";
  * development cluster overnight to save cost. The cluster identifier is
  * injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.RDS.StopDBClusterHttp)`.
- * @binding
- * @section Operating a Cluster
- * @example Stop a Running Cluster
+ * ### Operating a Cluster
+ * **Example:** Stop a Running Cluster
  * ```typescript
  * // init — bind the operation to the cluster
  * const stopDBCluster = yield* AWS.RDS.StopDBCluster(cluster);
@@ -21,6 +20,8 @@ import type { DBCluster } from "./DBCluster.ts";
  * // runtime
  * yield* stopDBCluster();
  * ```
+ *
+ * @binding
  */
 export interface StopDBCluster extends Binding.Service<
   StopDBCluster,

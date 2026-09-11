@@ -1,7 +1,7 @@
 import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
-import { Platform, Pressable, useColorScheme, View, type NativeSyntheticEvent } from "react-native";
+import { Platform, Pressable, View, type NativeSyntheticEvent } from "react-native";
 import {
   Screen,
   ScreenStack,
@@ -12,11 +12,13 @@ import {
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { useThemeColor } from "../../lib/useThemeColor";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 export function ThreadFileNavigatorPane(props: {
   readonly cwd: string;
@@ -27,11 +29,11 @@ export function ThreadFileNavigatorPane(props: {
   readonly onSelectFile: (path: string) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const colorScheme = useColorScheme();
-  const highlightTheme = colorScheme === "dark" ? "dark" : "light";
-  const iconColor = String(useThemeColor("--color-icon-muted"));
-  const foregroundColor = String(useThemeColor("--color-foreground"));
-  const sheetColor = String(useThemeColor("--color-sheet"));
+  const { toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { themeAppearance: highlightTheme } = useAppearancePreferences();
+  const theme = useUniwindTheme();
+  const foregroundColor = theme["--color-foreground"];
+  const sheetColor = theme["--color-sheet"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
   const entriesQuery = useEnvironmentQuery(
     projectEnvironment.listEntries({
@@ -64,8 +66,18 @@ export function ThreadFileNavigatorPane(props: {
           type: "button" as const,
           width: 44,
         },
+        {
+          accessibilityLabel: "Close files",
+          icon: { name: "xmark", type: "sfSymbol" as const },
+          identifier: "thread-file-navigator-close",
+          onPress: toggleAuxiliaryPane,
+          sharesBackground: false,
+          tintColor: foregroundColor,
+          type: "button" as const,
+          width: 44,
+        },
       ] as ComponentProps<typeof ScreenStackHeaderConfig>["headerRightBarButtonItems"],
-    [entriesQuery.refresh, foregroundColor],
+    [entriesQuery.refresh, foregroundColor, toggleAuxiliaryPane],
   );
 
   const fileTree = (
@@ -152,11 +164,30 @@ export function ThreadFileNavigatorPane(props: {
             className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
             onPress={entriesQuery.refresh}
           >
-            <SymbolView name="arrow.clockwise" size={14} tintColor={iconColor} type="monochrome" />
+            <SymbolView
+              name="arrow.clockwise"
+              size={14}
+              tintColorClassName={"accent-icon-muted"}
+              type="monochrome"
+            />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close files"
+            hitSlop={8}
+            className="h-8 w-8 items-center justify-center rounded-full active:bg-subtle"
+            onPress={toggleAuxiliaryPane}
+          >
+            <SymbolView name="xmark" size={14} tintColorClassName="accent-icon-muted" />
           </Pressable>
         </View>
         <View className="flex-row items-center gap-2 border-t border-border px-3 py-2">
-          <SymbolView name="magnifyingglass" size={15} tintColor={iconColor} type="monochrome" />
+          <SymbolView
+            name="magnifyingglass"
+            size={15}
+            tintColorClassName={"accent-icon-muted"}
+            type="monochrome"
+          />
           <TextInput
             accessibilityLabel="Search files"
             autoCapitalize="none"

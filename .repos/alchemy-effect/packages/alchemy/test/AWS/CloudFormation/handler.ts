@@ -54,7 +54,7 @@ export class CfnTestFunction extends Lambda.Function<Lambda.Function>()(
 export default CfnTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Above the 3s AWS default: describe/list calls plus distilled's bounded
     // retries must complete within the invocation.
     timeout: Duration.seconds(30),

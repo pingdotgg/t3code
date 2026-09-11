@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Returns the details of a restore job by its ID — poll a job started with
  * `StartRestoreJob` until it completes. Provide the implementation with
  * `Effect.provide(AWS.Backup.DescribeRestoreJobHttp)`.
- * @binding
- * @section Restoring Recovery Points
- * @example Poll A Restore Job
+ * ### Restoring Recovery Points
+ * **Example:** Poll A Restore Job
  * ```typescript
  * const describeRestoreJob = yield* AWS.Backup.DescribeRestoreJob();
  *
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.log(`restored: ${job.CreatedResourceArn}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeRestoreJob extends Binding.Service<
   DescribeRestoreJob,

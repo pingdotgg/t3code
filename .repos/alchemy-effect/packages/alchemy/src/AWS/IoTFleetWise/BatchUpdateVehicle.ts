@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * the implementation with
  * `Effect.provide(AWS.IoTFleetWise.BatchUpdateVehicleHttp)`.
  *
- * @binding
- * @section Provisioning Vehicles
- * @example Update a Batch of Vehicle Attributes
+ * ### Provisioning Vehicles
+ * **Example:** Update a Batch of Vehicle Attributes
  * ```typescript
  * const batchUpdateVehicle = yield* IoTFleetWise.BatchUpdateVehicle();
  *
@@ -28,6 +27,8 @@ import * as Binding from "../../Binding.ts";
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchUpdateVehicle extends Binding.Service<
   BatchUpdateVehicle,

@@ -25,6 +25,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 
 const decodeDesktopBackendBootstrap = Schema.decodeEffect(
   Schema.fromJsonString(DesktopBackendBootstrap),
@@ -132,6 +133,7 @@ interface MakeInstanceInput {
   readonly desktopTelemetryPublisher?: Partial<
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
+  readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
 }
 
 // Helper that constructs a primary backend instance using the factory
@@ -165,8 +167,15 @@ function makeTestInstance(input: MakeInstanceInput) {
       handleControlForSource: (_sourceId, message) =>
         (input.desktopTelemetryPublisher?.handleControl ?? (() => Effect.void))(message),
       removeControlSource: () => Effect.void,
+      publishUpdateReport: () => Effect.void,
+      updateRequests: Stream.empty,
+      updateCommits: Stream.empty,
+      updateCancellations: Stream.empty,
       ...input.desktopTelemetryPublisher,
     }),
+    DesktopWslEnvironment.layerTest(
+      input.pruneRuntimes === undefined ? {} : { pruneRuntimes: input.pruneRuntimes },
+    ),
   );
 
   const instance = DesktopBackendManager.makeBackendInstance({
@@ -647,10 +656,13 @@ describe("DesktopBackendManager", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const requestUrls: Array<string> = [];
+        const prunedRuntimes: Array<[string | null, string]> = [];
         const statuses = [503, 200];
         let readyCount = 0;
         const firstRequest = yield* Deferred.make<void>();
-        const ready = yield* Deferred.make<void>();
+        const backendReady = yield* Deferred.make<void>();
+        const processExit = yield* Deferred.make<void>();
+        const pruneComplete = yield* Deferred.make<void>();
         const exited = yield* Queue.unbounded<void>();
 
         const spawnerLayer = Layer.succeed(
@@ -658,7 +670,9 @@ describe("DesktopBackendManager", () => {
           ChildProcessSpawner.make(() =>
             Effect.succeed(
               makeProcess({
-                exitCode: Deferred.await(ready).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                exitCode: Deferred.await(processExit).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
               }),
             ),
           ),
@@ -666,6 +680,15 @@ describe("DesktopBackendManager", () => {
 
         const instance = yield* makeTestInstance({
           spawnerLayer,
+          config: {
+            ...baseConfig,
+            runningDistro: "Ubuntu",
+            wslRuntimeId: "1.2.3-x64",
+          },
+          pruneRuntimes: (distro, runtimeId) =>
+            Effect.sync(() => {
+              prunedRuntimes.push([distro, runtimeId]);
+            }).pipe(Effect.andThen(Deferred.succeed(pruneComplete, void 0)), Effect.asVoid),
           httpClientLayer: httpClientLayer((request) =>
             Effect.gen(function* () {
               const status = statuses.shift();
@@ -677,7 +700,7 @@ describe("DesktopBackendManager", () => {
           ),
           onReady: Effect.sync(() => {
             readyCount += 1;
-          }).pipe(Effect.andThen(Deferred.succeed(ready, void 0)), Effect.asVoid),
+          }).pipe(Effect.andThen(Deferred.succeed(backendReady, void 0)), Effect.asVoid),
           backendOutputLog: {
             persistFailure: () => Queue.offer(exited, void 0).pipe(Effect.asVoid),
           },
@@ -687,18 +710,101 @@ describe("DesktopBackendManager", () => {
         yield* Deferred.await(firstRequest);
 
         assert.equal(readyCount, 0);
+        assert.deepEqual(prunedRuntimes, []);
         assert.deepEqual(requestUrls, ["http://127.0.0.1:3773/.well-known/t3/environment"]);
 
         yield* TestClock.adjust(Duration.millis(100));
+        yield* Deferred.await(backendReady);
+        yield* Deferred.await(pruneComplete);
+        yield* Deferred.succeed(processExit, void 0);
         yield* Queue.take(exited);
 
         assert.equal(readyCount, 1);
+        assert.deepEqual(prunedRuntimes, [["Ubuntu", "1.2.3-x64"]]);
         assert.deepEqual(requestUrls, [
           "http://127.0.0.1:3773/.well-known/t3/environment",
           "http://127.0.0.1:3773/.well-known/t3/environment",
         ]);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
+  );
+
+  it.effect(
+    "re-probes readiness after the first budget expires while the backend is still alive",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const requestUrls: Array<string> = [];
+          let requestCount = 0;
+          let readyCount = 0;
+          let readinessTimeoutCount = 0;
+          const firstProbe = yield* Deferred.make<void>();
+          const childExit = yield* Deferred.make<void>();
+
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                makeProcess({
+                  exitCode: Deferred.await(childExit).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                }),
+              ),
+            ),
+          );
+
+          // The backend stays 503 through the first *two* readiness budgets
+          // and only becomes healthy (200) for the third round, i.e. it comes
+          // up well after the initial 50ms budget has expired.
+          const httpLayer = httpClientLayer((request) =>
+            Effect.gen(function* () {
+              requestCount += 1;
+              requestUrls.push(request.url);
+              yield* Deferred.succeed(firstProbe, void 0);
+              return responseForRequest(request, requestCount <= 2 ? 503 : 200);
+            }),
+          );
+
+          const runFiber = yield* DesktopBackendManager.runBackendProcess({
+            ...baseConfig,
+            desktopTelemetryStream: Stream.empty,
+            readinessTimeout: Duration.millis(50),
+            onReady: () =>
+              Effect.sync(() => {
+                readyCount += 1;
+              }),
+            onReadinessFailure: () =>
+              Effect.sync(() => {
+                readinessTimeoutCount += 1;
+              }),
+          }).pipe(Effect.provide(Layer.merge(spawnerLayer, httpLayer)), Effect.forkChild);
+
+          yield* Deferred.await(firstProbe);
+          assert.equal(readyCount, 0);
+          assert.equal(readinessTimeoutCount, 0);
+
+          // The first 50ms readiness budget expires while the backend still
+          // answers 503. The child is alive and may yet become healthy, so the
+          // probe must start a fresh round instead of stopping permanently —
+          // the pre-fix behavior left the app stuck on "Connecting to WSL…"
+          // forever even though the backend kept running.
+          yield* TestClock.adjust(Duration.millis(50));
+          assert.equal(readinessTimeoutCount, 1);
+          assert.equal(readyCount, 0);
+
+          // The second budget also expires (backend still 503), then the third
+          // round connects. The point is the probe persisted across budgets
+          // while the process was alive instead of giving up after the first.
+          yield* TestClock.adjust(Duration.millis(100));
+          assert.equal(readinessTimeoutCount, 2);
+          assert.equal(readyCount, 1);
+          assert.equal(requestUrls.length, 3);
+
+          yield* Deferred.succeed(childExit, void 0);
+          assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 0);
+        }).pipe(Effect.provide(TestClock.layer())),
+      ),
   );
 
   it.effect("starts the configured backend and closes the scoped process on stop", () =>
