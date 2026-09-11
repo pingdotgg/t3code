@@ -1,16 +1,12 @@
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import {
-  CircleDashedIcon,
-  FileIcon,
-  ImageIcon,
-  MessageCircleIcon,
-  MousePointerClickIcon,
-} from "lucide-react";
-import { createContext, type ReactElement, use } from "react";
+import { videoMimeType } from "@t3tools/shared/video";
+import { GitPullRequestIcon, MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
 import { composerFileNeedsReattach } from "~/composerDraftStore";
+import { useTheme } from "~/hooks/useTheme";
 import {
   formatAttachmentUploadProgress,
   type AttachmentUploadState,
@@ -19,6 +15,9 @@ import { cn } from "~/lib/utils";
 import {
   fileContextReference,
   imageContextReference,
+  isPullRequestSummaryContext,
+  pullRequestContextDisplayState,
+  pullRequestContextKindLabel,
   previewAnnotationContextId,
   previewAnnotationContextLabel,
   reviewCommentContextId,
@@ -30,11 +29,26 @@ import type { TerminalContextDraft } from "~/lib/terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import {
+  createContextPresentationRegistry,
+  type ContextPresentationCapability,
+} from "./contextPresentationRegistry";
+import {
   COMPOSER_INLINE_CHIP_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
+  CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES,
+  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
+  PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES,
 } from "./composerInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import {
+  ContextChipPopover,
+  ContextChipShell,
+  FileChip,
+  ImageChipButton,
+  PullRequestChip,
+  UnresolvedChip,
+} from "./contextChipParts";
 
 /**
  * Draft-side payload behind a context reference chip. Each kind keeps its existing draft
@@ -50,10 +64,14 @@ export type ComposerDraftContextRecord =
 /** What a chip can do beyond showing itself; the composer supplies the handlers. */
 export interface ComposerContextActions {
   expandImage: (imageId: string) => void;
+  expandVideo: (fileId: string) => void;
+  openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 
 export const ComposerContextActionsContext = createContext<ComposerContextActions>({
   expandImage: () => {},
+  expandVideo: () => {},
+  openPullRequest: () => {},
 });
 
 export type ComposerDraftContextRecords = ReadonlyMap<string, ComposerDraftContextRecord>;
@@ -108,27 +126,32 @@ function ContextChip(props: {
   icon: ReactElement;
   label: string;
   kindLabel: string;
-  tooltip: string;
+  details: ReactNode;
+  detailsMode: ContextPresentationCapability["details"];
+  toneClassName: string;
 }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={COMPOSER_INLINE_CHIP_CLASS_NAME}
-            tabIndex={props.tooltip ? 0 : undefined}
-            aria-label={`${props.kindLabel}, ${props.label}`}
-          >
-            {props.icon}
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.label}</span>
-          </span>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap leading-tight">
-        {props.tooltip}
-      </TooltipPopup>
-    </Tooltip>
+  const content = (
+    <ContextChipShell
+      icon={props.icon}
+      label={props.label}
+      className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
+      labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+      interactive={props.detailsMode === "popover"}
+      aria-hidden={props.detailsMode === "popover" ? true : undefined}
+      aria-label={
+        props.detailsMode === "tooltip" ? `${props.kindLabel}, ${props.label}` : undefined
+      }
+      tooltip={props.detailsMode === "tooltip" ? props.details : undefined}
+    />
   );
+  if (props.detailsMode === "popover") {
+    return (
+      <ContextChipPopover accessibleLabel={props.kindLabel + ", " + props.label} chip={content}>
+        {props.details}
+      </ContextChipPopover>
+    );
+  }
+  return content;
 }
 
 function uploadStatusSuffix(upload: AttachmentUploadState | undefined): string | null {
@@ -151,29 +174,18 @@ function ImageContextChip(props: {
   upload: AttachmentUploadState | undefined;
 }) {
   const actions = use(ComposerContextActionsContext);
-  const suffix = uploadStatusSuffix(props.upload);
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
-            type="button"
-            className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "cursor-zoom-in")}
-            aria-label={`Image attachment, ${props.record.name}`}
+          <ImageChipButton
+            name={props.record.name}
+            previewUrl={props.record.previewUrl}
+            className={COMPOSER_INLINE_CHIP_CLASS_NAME}
+            labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+            suffix={uploadStatusSuffix(props.upload)}
             onClick={() => actions.expandImage(props.record.id)}
-          >
-            {props.record.previewUrl ? (
-              <img
-                src={props.record.previewUrl}
-                alt=""
-                className="size-3.5 shrink-0 rounded-sm object-cover"
-              />
-            ) : (
-              <ImageIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-            )}
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.record.name}</span>
-            {suffix ? <span className="text-[10px] text-muted-foreground">{suffix}</span> : null}
-          </button>
+          />
         }
       />
       <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
@@ -187,41 +199,48 @@ function FileContextChip(props: {
   record: ComposerFileAttachment;
   upload: AttachmentUploadState | undefined;
 }) {
+  const actions = use(ComposerContextActionsContext);
+  const { resolvedTheme } = useTheme();
   const needsReattach = composerFileNeedsReattach(props.record);
   const suffix = needsReattach ? "attach again" : uploadStatusSuffix(props.upload);
+  const size = formatAttachmentSize(props.record.sizeBytes);
+  const isVideo = videoMimeType(props.record) !== null;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={cn(
-              COMPOSER_INLINE_CHIP_CLASS_NAME,
-              needsReattach && "border-dashed text-muted-foreground",
-              props.upload?.status === "failed" &&
-                "border-destructive/35 bg-destructive/8 text-destructive",
-            )}
-            aria-label={`File attachment, ${props.record.name}`}
-            data-context-unresolved={needsReattach ? "true" : undefined}
-          >
-            <FileIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.record.name}</span>
-            {suffix ? <span className="text-[10px] opacity-80">{suffix}</span> : null}
-          </span>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
-        {needsReattach
+    <FileChip
+      name={props.record.name}
+      size={size}
+      isVideo={isVideo}
+      theme={resolvedTheme}
+      className={COMPOSER_INLINE_CHIP_CLASS_NAME}
+      labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+      error={props.upload?.status === "failed"}
+      unresolved={needsReattach}
+      suffix={suffix}
+      accessibleLabel={`${isVideo && !needsReattach ? "Preview video" : "File"} attachment, ${props.record.name}, ${size}`}
+      onOpen={isVideo && !needsReattach ? () => actions.expandVideo(props.record.id) : undefined}
+      tooltip={
+        needsReattach
           ? `${props.record.name} was not saved with this draft. Attach it again to send it.`
-          : attachmentTooltip(props.record, props.upload)}
-      </TooltipPopup>
-    </Tooltip>
+          : attachmentTooltip(props.record, props.upload)
+      }
+    />
   );
 }
 
-function reviewCommentTooltip(comment: ReviewCommentContext): string {
-  const lines = [`${comment.filePath} ${comment.rangeLabel}`];
-  if (comment.text.trim()) lines.push("", comment.text.trim());
-  return lines.join("\n");
+function PullRequestContextChip(props: { record: ReviewCommentContext; toneClassName: string }) {
+  const actions = use(ComposerContextActionsContext);
+  const metadata = props.record.pullRequest;
+  if (metadata === undefined) return null;
+  return (
+    <PullRequestChip
+      metadata={metadata}
+      label={reviewCommentContextLabel(props.record)}
+      kindLabel={pullRequestContextKindLabel(props.record)}
+      className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, props.toneClassName)}
+      labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+      onOpen={actions.openPullRequest}
+    />
+  );
 }
 
 function previewAnnotationTooltip(annotation: PreviewAnnotationPayload): string {
@@ -239,68 +258,199 @@ function previewAnnotationTooltip(annotation: PreviewAnnotationPayload): string 
   return lines.join("\n");
 }
 
-function UnresolvedContextChip(props: { label: string }) {
+function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentContext }) {
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            className={cn(COMPOSER_INLINE_CHIP_CLASS_NAME, "border-dashed text-muted-foreground")}
-            aria-label={`Unavailable context, ${props.label}`}
-            data-context-unresolved="true"
-          >
-            <CircleDashedIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-            <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{props.label}</span>
-          </span>
-        }
-      />
-      <TooltipPopup side="top" className="max-w-80 leading-tight">
-        This context is no longer available. Remove it or attach it again.
-      </TooltipPopup>
-    </Tooltip>
+    <div className="space-y-2 overflow-hidden rounded-lg border border-border/70 bg-background/70 p-3">
+      <div className="space-y-1">
+        <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
+        <div className="text-secondary-label text-[11px]">
+          {comment.sectionTitle} · {comment.rangeLabel}
+        </div>
+      </div>
+      {comment.text.trim() ? (
+        <div className="whitespace-pre-wrap wrap-break-word text-sm text-foreground">
+          {comment.text.trim()}
+        </div>
+      ) : null}
+      {comment.diff.trim() ? (
+        <pre className="max-h-64 overflow-auto whitespace-pre rounded-md bg-muted/50 p-2 font-mono text-[11px] text-foreground leading-relaxed">
+          {comment.diff.trim()}
+        </pre>
+      ) : null}
+    </div>
   );
 }
 
-/** Compact chip for one reference. Unknown kinds and missing records get the unresolved chip. */
+function ComposerPreviewAnnotationDetails({
+  annotation,
+}: {
+  annotation: PreviewAnnotationPayload;
+}) {
+  const summary = previewAnnotationTooltip(annotation);
+  return (
+    <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
+      {annotation.screenshot?.dataUrl ? (
+        <img
+          src={annotation.screenshot.dataUrl}
+          alt="Annotated preview crop"
+          className="max-h-64 w-full border-border/70 border-b bg-muted object-contain"
+        />
+      ) : (
+        <div className="border-border/70 border-b bg-muted/40 px-3 py-2 text-secondary-label text-xs">
+          Screenshot unavailable
+        </div>
+      )}
+      <div className="whitespace-pre-wrap wrap-break-word px-3 py-2.5 text-sm text-foreground">
+        {summary}
+      </div>
+    </div>
+  );
+}
+
+function UnresolvedContextChip(props: { label: string }) {
+  return (
+    <UnresolvedChip
+      label={props.label}
+      className={COMPOSER_INLINE_CHIP_CLASS_NAME}
+      labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+      tooltip="This context is no longer available. Remove it or attach it again."
+      tooltipClassName="max-w-80 leading-tight"
+    />
+  );
+}
+
+interface ComposerContextRenderContext {
+  label: string;
+}
+
+const composerContextPresentationRegistry = createContextPresentationRegistry<
+  ComposerDraftContextRecord,
+  ComposerContextRenderContext,
+  ReactElement
+>({
+  requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation"],
+  handlers: [
+    {
+      kind: "terminal",
+      canRender: (entry) => entry.kind === "terminal",
+      render: (entry, context, definition) =>
+        entry.kind === "terminal" ? (
+          <ComposerPendingTerminalContextChip
+            context={entry.record}
+            detailsMode={definition.capabilities.details}
+          />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "image",
+      canRender: (entry) => entry.kind === "image",
+      render: (entry, context) =>
+        entry.kind === "image" ? (
+          <ImageContextChip record={entry.record} upload={entry.upload} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "file",
+      canRender: (entry) => entry.kind === "file",
+      render: (entry, context) =>
+        entry.kind === "file" ? (
+          <FileContextChip record={entry.record} upload={entry.upload} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "review-comment",
+      canRender: (entry) => entry.kind === "review-comment",
+      render: (entry, context, definition) => {
+        if (entry.kind !== "review-comment") {
+          return <UnresolvedContextChip label={context.label} />;
+        }
+        const isPullRequest = isPullRequestSummaryContext(entry.record);
+        const pullRequestState = pullRequestContextDisplayState(entry.record) ?? "unknown";
+        if (isPullRequest && entry.record.pullRequest !== undefined) {
+          return (
+            <PullRequestContextChip
+              record={entry.record}
+              toneClassName={PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES[pullRequestState]}
+            />
+          );
+        }
+        return (
+          <ContextChip
+            icon={
+              isPullRequest ? (
+                <GitPullRequestIcon
+                  className={cn(
+                    COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+                    CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["pull-request"],
+                    "size-3.5",
+                  )}
+                />
+              ) : (
+                <MessageCircleIcon
+                  className={cn(
+                    COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+                    CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["review-comment"],
+                    "size-3.5",
+                  )}
+                />
+              )
+            }
+            label={reviewCommentContextLabel(entry.record)}
+            kindLabel={isPullRequest ? pullRequestContextKindLabel(entry.record) : "Review comment"}
+            details={<ComposerReviewCommentDetails comment={entry.record} />}
+            detailsMode={definition.capabilities.details}
+            toneClassName={
+              isPullRequest
+                ? PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES[pullRequestState]
+                : CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["review-comment"]
+            }
+          />
+        );
+      },
+    },
+    {
+      kind: "preview-annotation",
+      canRender: (entry) => entry.kind === "preview-annotation",
+      render: (entry, context, definition) =>
+        entry.kind === "preview-annotation" ? (
+          <ContextChip
+            icon={
+              <MousePointerClickIcon
+                className={cn(
+                  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+                  CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES["preview-annotation"],
+                  "size-3.5",
+                )}
+              />
+            }
+            label={previewAnnotationContextLabel(entry.record)}
+            kindLabel="Preview annotation"
+            details={<ComposerPreviewAnnotationDetails annotation={entry.record} />}
+            detailsMode={definition.capabilities.details}
+            toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES["preview-annotation"]}
+          />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+  ],
+  fallback: (_kind, _entry, context) => <UnresolvedContextChip label={context.label} />,
+});
+
+/** Compact chip for one reference. Unknown kinds and missing records use the registry fallback. */
 export function ComposerContextReferenceChip(props: {
   kind: string;
   contextId: string;
   label: string;
 }): ReactElement {
   const records = use(ComposerContextRecordsContext);
-  const entry = records.get(props.contextId);
-  if (entry?.kind === "terminal" && props.kind === "terminal") {
-    return <ComposerPendingTerminalContextChip context={entry.record} />;
-  }
-  if (entry?.kind === "image" && props.kind === "image") {
-    return <ImageContextChip record={entry.record} upload={entry.upload} />;
-  }
-  if (entry?.kind === "file" && props.kind === "file") {
-    return <FileContextChip record={entry.record} upload={entry.upload} />;
-  }
-  if (entry?.kind === "review-comment" && props.kind === "review-comment") {
-    return (
-      <ContextChip
-        icon={
-          <MessageCircleIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-        }
-        label={reviewCommentContextLabel(entry.record)}
-        kindLabel="Review comment"
-        tooltip={reviewCommentTooltip(entry.record)}
-      />
-    );
-  }
-  if (entry?.kind === "preview-annotation" && props.kind === "preview-annotation") {
-    return (
-      <ContextChip
-        icon={
-          <MousePointerClickIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-        }
-        label={previewAnnotationContextLabel(entry.record)}
-        kindLabel="Preview annotation"
-        tooltip={previewAnnotationTooltip(entry.record)}
-      />
-    );
-  }
-  return <UnresolvedContextChip label={props.label} />;
+  return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
+    label: props.label,
+  });
 }

@@ -52,12 +52,53 @@ function clampContextText(value: string, max: number): string {
   return `${value.slice(0, Math.max(0, max - TRUNCATION_MARKER.length))}${TRUNCATION_MARKER}`;
 }
 
+type ReviewCommentPresentation = ReviewCommentContext | ReviewCommentContextRecord;
+
 function basename(filePath: string): string {
   return filePath.split(/[\\/]/).at(-1) ?? filePath;
 }
 
-export function reviewCommentContextLabel(comment: ReviewCommentContext): string {
-  return `${basename(comment.filePath)} ${comment.rangeLabel}`;
+export function reviewCommentContextLabel(comment: ReviewCommentPresentation): string {
+  const pullRequestNumber = pullRequestContextNumber(comment);
+  if (isPullRequestSummaryContext(comment) && pullRequestNumber !== null) {
+    return `#${pullRequestNumber}`;
+  }
+  const diffRange = /^([+-])(\d+)(?: to \1(\d+))?$/u.exec(comment.rangeLabel);
+  const rangeLabel = diffRange
+    ? `L${diffRange[2]}${diffRange[3] ? ` to L${diffRange[3]}` : ""}${diffRange[1] === "-" ? " (before)" : ""}`
+    : comment.rangeLabel;
+  return `${basename(comment.filePath)} ${rangeLabel}`;
+}
+
+export function isPullRequestSummaryContext(comment: ReviewCommentPresentation): boolean {
+  if (comment.pullRequest !== undefined) return true;
+  return (
+    comment.sectionId.startsWith("pull-request:") &&
+    comment.diff.trim().length === 0 &&
+    /^PR #\d+$/u.test(comment.filePath)
+  );
+}
+
+function pullRequestContextNumber(comment: ReviewCommentPresentation): number | null {
+  if (comment.pullRequest !== undefined) return comment.pullRequest.number;
+  const legacyNumber = /^PR #(\d+)$/u.exec(comment.filePath)?.[1];
+  return legacyNumber === undefined ? null : Number(legacyNumber);
+}
+
+export type PullRequestContextDisplayState = "open" | "draft" | "merged" | "closed";
+
+export function pullRequestContextDisplayState(
+  comment: ReviewCommentPresentation,
+): PullRequestContextDisplayState | null {
+  const pullRequest = comment.pullRequest;
+  if (pullRequest === undefined) return null;
+  return pullRequest.state === "open" && pullRequest.isDraft ? "draft" : pullRequest.state;
+}
+
+export function pullRequestContextKindLabel(comment: ReviewCommentPresentation): string {
+  const state = pullRequestContextDisplayState(comment);
+  if (state === null) return "Pull request";
+  return `${state[0]!.toUpperCase()}${state.slice(1)} pull request`;
 }
 
 export function previewAnnotationContextLabel(annotation: PreviewAnnotationPayload): string {

@@ -18,11 +18,15 @@ import {
   attachmentContextRecord,
   buildMessageContext,
   composerContextImportLookupIds,
+  isPullRequestSummaryContext,
   isSameComposerContextPayload,
+  pullRequestContextDisplayState,
+  pullRequestContextKindLabel,
   previewAnnotationContextLabel,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
   resolveUserMessageContext,
+  reviewCommentContextLabel,
   reviewCommentContextRecord,
   reviewCommentFromRecord,
   terminalContextRecord,
@@ -282,6 +286,70 @@ describe("composerContextRecords", () => {
     expect(restored.styleChanges).toEqual(styleChanges);
     expect(restored.elements[0]?.id).toBe("el_1");
   });
+  it.each([
+    ["+181", "a.ts L181"],
+    ["+181 to +183", "a.ts L181 to L183"],
+    ["-63", "a.ts L63 (before)"],
+    ["L4", "a.ts L4"],
+  ])("presents review range %s consistently as %s", (rangeLabel, expected) => {
+    expect(
+      reviewCommentContextLabel({
+        id: "review-1",
+        sectionId: "file:src/a.ts",
+        sectionTitle: "File comment",
+        filePath: "src/a.ts",
+        startIndex: 0,
+        endIndex: 0,
+        rangeLabel,
+        text: "",
+        diff: "",
+      }),
+    ).toBe(expected);
+  });
+
+  it("distinguishes a PR summary from a comment on its diff", () => {
+    const summary = {
+      id: "review-1",
+      sectionId: "pull-request:42",
+      sectionTitle: "PR #42",
+      filePath: "PR #42",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "Improve context chips",
+      text: "Pull request details",
+      diff: "",
+      pullRequest: {
+        number: 42,
+        title: "Improve context chips",
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+        headBranch: "feat/context-chips",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+      },
+    };
+
+    expect(isPullRequestSummaryContext(summary)).toBe(true);
+    expect(reviewCommentContextLabel(summary)).toBe("#42");
+    expect(pullRequestContextDisplayState(summary)).toBe("open");
+    expect(pullRequestContextKindLabel(summary)).toBe("Open pull request");
+    expect(
+      pullRequestContextDisplayState({
+        ...summary,
+        pullRequest: { ...summary.pullRequest, isDraft: true },
+      }),
+    ).toBe("draft");
+    expect(
+      isPullRequestSummaryContext({
+        ...summary,
+        pullRequest: undefined,
+        filePath: "src/a.ts",
+        rangeLabel: "+12",
+        diff: "+const answer = 42;",
+      }),
+    ).toBe(false);
+  });
+
   it("builds a preview annotation record with element details and readable style changes", () => {
     expect(previewAnnotationContextLabel(annotation)).toBe("Make this bigger");
     expect(previewAnnotationContextRecord(annotation, { screenshotContextId: "ann_1" })).toEqual({

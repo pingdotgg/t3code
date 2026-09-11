@@ -53,6 +53,13 @@ around it.
 Select the quote in a draft or sent message to return to its source. If the source
 is unavailable or has changed, the saved quote remains readable.
 
+The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
+button to add or change the comment. To remove the citation, place the caret beside its chip and
+delete it like other inline context. Copying, reloading, and restoring a
+[stashed prompt](#prompt-stash) keep each comment
+with its quote, and sending tells the agent which words were quoted and which comment you wrote.
+The quoted text and comment count toward the message limit.
+
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
@@ -114,8 +121,13 @@ provider supports it. Web and desktop also offer compaction from the context met
 Context you attach lands where your cursor is, as a chip inside your text: a terminal excerpt,
 a review comment from a diff or file, a preview annotation, or a file. You can type before and
 after a chip, move it by cutting and pasting, and delete it like a character. Hover a chip for
-its details; in a sent message, select a review comment or preview annotation chip to open the
-full card. Chips read as "Terminal excerpt, Terminal 1 lines 3-4" and similar to screen readers.
+its brief details. Select a terminal excerpt to open its captured output, or select a review
+comment, picked element, or preview annotation to open its full details. Chips read as "Terminal
+excerpt, Terminal 1 lines 3-4" and similar to screen readers.
+
+A pull request appears as its icon and number. Its color reflects whether it was open, draft,
+merged, or closed when it was attached. Hover it to see the title and branches, or select it to
+open that pull request beside the current thread.
 
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
