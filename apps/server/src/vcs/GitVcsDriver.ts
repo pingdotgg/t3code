@@ -1,5 +1,3 @@
-import * as NodeCrypto from "node:crypto";
-
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -12,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsCheckpointStorageError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -700,39 +699,38 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const resolveGitCommonDir = (cwd: string) =>
-    Effect.gen(function* () {
-      const result = yield* execute({
-        operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
-        cwd,
-        args: ["rev-parse", "--git-common-dir"],
-      });
-      const gitCommonDir = result.stdout.trim();
-      return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
-    });
-
   const checkpoints: VcsDriver.VcsCheckpointOps = {
-    captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
-      const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
-      const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
-      const tempIndexPath = path.join(
-        gitCommonDir,
-        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
-      );
-      const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
-        GIT_INDEX_FILE: tempIndexPath,
-        GIT_AUTHOR_NAME: "T3 Code",
-        GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
-        GIT_COMMITTER_NAME: "T3 Code",
-        GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
-      };
+    captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(
+      function* (input) {
+        const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
+        const objectDirResult = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["rev-parse", "--path-format=absolute", "--git-path", "objects"],
+        });
+        const objectDir = objectDirResult.stdout.trim();
+        // Git prune recognizes this prefix when reclaiming stale crash leftovers.
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+          directory: objectDir,
+          prefix: "tmp_objdir-t3-checkpoint-",
+        });
+        const tempObjectDir = path.join(tempDir, "objects");
+        yield* fileSystem.makeDirectory(path.join(tempObjectDir, "info"), { recursive: true });
+        // Alternate paths are relative to this object directory, not the working tree.
+        yield* fileSystem.writeFileString(
+          path.join(tempObjectDir, "info", "alternates"),
+          "../..\n",
+        );
+        const commitEnv: NodeJS.ProcessEnv = {
+          ...process.env,
+          GIT_INDEX_FILE: path.join(tempDir, "index"),
+          GIT_OBJECT_DIRECTORY: tempObjectDir,
+          GIT_AUTHOR_NAME: "T3 Code",
+          GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
+          GIT_COMMITTER_NAME: "T3 Code",
+          GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+        };
 
-      const cleanupTempIndex = fileSystem
-        .remove(tempIndexPath, { force: true })
-        .pipe(Effect.ignore);
-
-      yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
           yield* execute({
@@ -785,13 +783,64 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["update-ref", input.checkpointRef, commitOid],
-        });
-      }).pipe(Effect.ensuring(cleanupTempIndex));
-    }),
+        yield* Effect.gen(function* () {
+          // Finish publishing objects and the ref before honoring an interruption.
+          yield* Effect.forEach(
+            yield* fileSystem.readDirectory(tempObjectDir),
+            Effect.fn(function* (directory: string) {
+              if (directory !== "pack" && !/^[0-9a-f]{2}$/.test(directory)) return;
+              const sourceDir = path.join(tempObjectDir, directory);
+              const targetDir = path.join(objectDir, directory);
+              // Keep Git's shared-repository permissions on newly published directories.
+              yield* fileSystem.makeDirectory(targetDir).pipe(
+                Effect.andThen(fileSystem.stat(sourceDir)),
+                Effect.flatMap((info) => fileSystem.chmod(targetDir, info.mode)),
+                Effect.catch((error) =>
+                  error.reason._tag === "AlreadyExists" ? Effect.void : Effect.fail(error),
+                ),
+              );
+              const names = yield* fileSystem.readDirectory(sourceDir);
+              // Git discovers packs through their indexes, so publish each index last.
+              names.sort((a, b) => Number(a.endsWith(".idx")) - Number(b.endsWith(".idx")));
+              for (const name of names) {
+                if (name.startsWith("tmp_")) continue;
+                const destination = path.join(targetDir, name);
+                yield* fileSystem
+                  .rename(path.join(sourceDir, name), destination)
+                  .pipe(
+                    Effect.catch((error) =>
+                      fileSystem
+                        .exists(destination)
+                        .pipe(
+                          Effect.flatMap((exists) => (exists ? Effect.void : Effect.fail(error))),
+                        ),
+                    ),
+                  );
+              }
+            }),
+            { concurrency: 4, discard: true },
+          );
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["update-ref", input.checkpointRef, commitOid],
+          });
+        }).pipe(Effect.uninterruptible);
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.scoped,
+          Effect.catchTag(
+            "PlatformError",
+            (cause) =>
+              new VcsCheckpointStorageError({
+                operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+                cwd: input.cwd,
+                cause,
+              }),
+          ),
+        ),
+    ),
 
     hasCheckpointRef: (input) =>
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(

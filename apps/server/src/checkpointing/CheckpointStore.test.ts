@@ -95,6 +95,103 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(TestLayer)("CheckpointStore.layer", (it) => {
+  describe("checkpoint capture", () => {
+    it.effect("reads existing objects when the repository path contains control characters", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcessPlatform;
+        if (platform === "win32") return;
+        const tmp = yield* makeTmpDir("checkpoint-store-\u0001-");
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("control-path"), 0);
+        yield* writeTextFile(NodePath.join(tmp, "new.txt"), "checkpoint contents\n");
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        expect(yield* git(tmp, ["show", `${checkpointRef}:README.md`])).toBe("# test");
+        expect(yield* git(tmp, ["show", `${checkpointRef}:new.txt`])).toBe("checkpoint contents");
+      }),
+    );
+
+    it.effect("restores large untracked files without changing the user index during capture", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["config", "core.bigFileThreshold", "1k"]);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("large-checkpoint"), 0);
+        const artifactPath = NodePath.join(tmp, "artifact[1].bin");
+        const ignoredPath = NodePath.join(tmp, "ignored.bin");
+        const unrelatedPackPath = NodePath.join(tmp, ".git/objects/pack/tmp_pack_unrelated");
+
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "staged\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "workspace\n");
+        yield* writeTextFile(NodePath.join(tmp, ".gitignore"), "ignored.bin\n");
+        yield* writeTextFile(ignoredPath, "ignored before capture\n");
+        yield* writeTextFile(artifactPath, "checkpoint contents\n");
+        yield* fileSystem.truncate(artifactPath, 32 * 1024 * 1024 + 1);
+        yield* writeTextFile(unrelatedPackPath, "another Git operation owns this file\n");
+        const artifactOid = yield* git(tmp, ["hash-object", "--", "artifact[1].bin"]);
+        const userIndex = yield* fileSystem.readFile(NodePath.join(tmp, ".git/index"));
+
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+        expect(yield* fileSystem.readFile(NodePath.join(tmp, ".git/index"))).toEqual(userIndex);
+        expect(yield* git(tmp, ["rev-parse", `${checkpointRef}:artifact[1].bin`])).toBe(
+          artifactOid,
+        );
+        expect(yield* git(tmp, ["show", `${checkpointRef}:README.md`])).toBe("workspace");
+        expect(yield* git(tmp, ["ls-tree", "--name-only", checkpointRef])).not.toContain(
+          "ignored.bin",
+        );
+        expect(
+          (yield* fileSystem.readDirectory(NodePath.join(tmp, ".git/objects/pack"))).some((name) =>
+            name.endsWith(".pack"),
+          ),
+        ).toBe(true);
+        yield* git(tmp, ["fsck", "--full", "--no-dangling"]);
+
+        yield* writeTextFile(artifactPath, "changed and now small\n");
+        yield* writeTextFile(ignoredPath, "ignored after capture\n");
+        yield* writeTextFile(NodePath.join(tmp, "extra.txt"), "created after capture\n");
+        expect(yield* checkpointStore.restoreCheckpoint({ cwd: tmp, checkpointRef })).toBe(true);
+
+        expect(yield* git(tmp, ["hash-object", "--", "artifact[1].bin"])).toBe(artifactOid);
+        expect(yield* fileSystem.readFileString(ignoredPath)).toBe("ignored after capture\n");
+        expect(yield* fileSystem.exists(NodePath.join(tmp, "extra.txt"))).toBe(false);
+        expect(yield* fileSystem.readFileString(unrelatedPackPath)).toBe(
+          "another Git operation owns this file\n",
+        );
+      }),
+    );
+
+    it.effect("publishes checkpoint objects to the shared repository from a linked worktree", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const worktree = NodePath.join(yield* makeTmpDir(), "worktree");
+        yield* git(tmp, ["worktree", "add", "--detach", worktree]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("worktree-checkpoint"), 0);
+        const filePath = NodePath.join(worktree, "new.txt");
+        yield* writeTextFile(filePath, "worktree checkpoint\n");
+
+        yield* checkpointStore.captureCheckpoint({ cwd: worktree, checkpointRef });
+
+        expect(yield* git(tmp, ["show", `${checkpointRef}:new.txt`])).toBe("worktree checkpoint");
+        yield* git(tmp, ["fsck", "--full", "--no-dangling"]);
+        yield* writeTextFile(filePath, "changed\n");
+        expect(yield* checkpointStore.restoreCheckpoint({ cwd: worktree, checkpointRef })).toBe(
+          true,
+        );
+        const fileSystem = yield* FileSystem.FileSystem;
+        expect(yield* fileSystem.readFileString(filePath)).toBe("worktree checkpoint\n");
+      }),
+    );
+  });
+
   describe("isGitRepository", () => {
     it.effect("returns false when no Git repository is detected", () =>
       Effect.gen(function* () {
