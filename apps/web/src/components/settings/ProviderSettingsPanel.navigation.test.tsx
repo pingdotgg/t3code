@@ -39,6 +39,7 @@ vi.mock("../ui/tooltip", () => ({
 vi.mock("../../hooks/useSettings", () => ({
   useEnvironmentSettings: () => state.settings,
   useUpdateEnvironmentSettings: () => vi.fn(),
+  useUpdateClientSettings: () => vi.fn(),
   usePrimarySettingsAvailable: () => true,
   useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
     select(DEFAULT_CLIENT_SETTINGS),

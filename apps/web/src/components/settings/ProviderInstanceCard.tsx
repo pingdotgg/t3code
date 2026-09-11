@@ -890,6 +890,10 @@ export function ProviderInstanceCard({
               className={readOnly ? "opacity-50 select-none" : undefined}
             >
               <div className="px-3 py-3 sm:px-4">
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Favorites, visibility, and ordering are saved on this device. Custom models are
+                  saved on the selected environment.
+                </p>
                 <ProviderModelsSection
                   instanceId={instanceId}
                   driverKind={driverKind}

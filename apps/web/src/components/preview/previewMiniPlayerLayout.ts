@@ -1,4 +1,4 @@
-import type { PreviewViewportSetting } from "@t3tools/contracts";
+import type { DevicePlatform, PreviewViewportSetting } from "@t3tools/contracts";
 
 import type { BrowserSurfaceContentPresentation } from "~/browser/browserSurfaceStore";
 import {
@@ -7,7 +7,10 @@ import {
 } from "~/browser/browserViewportLayout";
 import type { PreviewMiniPlayerPosition, PreviewMiniPlayerSize } from "~/previewMiniPlayerStore";
 
+import type { DeviceScreenSize } from "../device/deviceStream";
+
 export const PREVIEW_MINI_PLAYER_EDGE_GAP = 12;
+export const PREVIEW_MINI_PLAYER_CORNER_RADIUS = 12;
 // The mini-player shell straddles this webview at 47 and 49; dialogs begin at 50.
 export const PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX = 48;
 // A fresh player is the largest box at the source aspect ratio that fits here.
@@ -32,6 +35,46 @@ export function resolvePreviewMiniPlayerSourceSize(
     width: fitted.width * normalizedZoomFactor,
     height: fitted.height * normalizedZoomFactor,
   };
+}
+
+/**
+ * The device screen as the user sees it, so a rotated phone floats as a
+ * landscape box. Before the stream reports its size the platform's usual phone
+ * shape stands in, matching the stream view's own placeholder aspect; the
+ * nominal width only keeps the source cap above any sensible player width.
+ */
+export function resolveDeviceMiniPlayerSourceSize(
+  platform: DevicePlatform,
+  screen: DeviceScreenSize | null,
+): PreviewMiniPlayerSize {
+  if (!screen) {
+    const width = 1_000;
+    return { width, height: width / (platform === "ios" ? 9 / 19.5 : 9 / 20) };
+  }
+  const landscape =
+    screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
+  const long = Math.max(screen.width, screen.height);
+  const short = Math.min(screen.width, screen.height);
+  return landscape ? { width: long, height: short } : { width: short, height: long };
+}
+
+/**
+ * The Android emulator composites the skin's rounded corners into its
+ * framebuffer as black wedges (measured at ~13% of the short side on a
+ * Pixel 9), so its player clips at a matching phone-like radius; the sliver
+ * lost under the curve is status-bar padding. iOS simulators stream an
+ * edge-to-edge rectangle and keep the frame radius, which matters for iPads
+ * whose real corners are far tighter than a phone's.
+ */
+export function resolveDeviceMiniPlayerCornerRadius(
+  platform: DevicePlatform,
+  player: PreviewMiniPlayerSize,
+): number {
+  if (platform !== "android") return PREVIEW_MINI_PLAYER_CORNER_RADIUS;
+  return Math.max(
+    PREVIEW_MINI_PLAYER_CORNER_RADIUS,
+    Math.round(Math.min(player.width, player.height) * 0.14),
+  );
 }
 
 const availableArea = (
