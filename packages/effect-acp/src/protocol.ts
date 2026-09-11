@@ -85,7 +85,10 @@ const decodeSessionUpdate = Schema.decodeUnknownEffect(AcpSchema.SessionNotifica
 const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.ElicitationCompleteNotification,
 );
-const parserFactory = RpcSerialization.ndJsonRpc();
+// Cursor sessions replay large tool results on session/load; real sessions exceed
+// Effect's 16 MiB ndjson default and brick the thread on every resume.
+const ACP_MAX_WIRE_BYTES = 64 * 1024 * 1024;
+const parserFactory = RpcSerialization.ndJsonRpc({ maxBufferSize: ACP_MAX_WIRE_BYTES });
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
 // Outbound JSON-RPC notification: no `id`, so peers never treat it as a request.
 const encodeJsonRpcNotification = Schema.encodeUnknownExit(
