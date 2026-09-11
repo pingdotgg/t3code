@@ -1,3 +1,8 @@
+import {
+  ProjectTransferInput,
+  ProjectTransferResult,
+  ProjectTransferError,
+} from "./projectTransfer.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -254,6 +259,7 @@ import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
   // Project registry methods
+  projectsTransfer: "projects.transfer",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -823,6 +829,12 @@ const WsSourceControlPublishRepositoryRpc = Rpc.make(WS_METHODS.sourceControlPub
   error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsTransferRpc = Rpc.make(WS_METHODS.projectsTransfer, {
+  payload: ProjectTransferInput,
+  success: ProjectTransferResult,
+  error: Schema.Union([ProjectTransferError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
@@ -1339,6 +1351,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
+  WsProjectsTransferRpc,
   WsProjectsListEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,

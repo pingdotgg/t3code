@@ -55,6 +55,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.projectId]),
   };
   return {
+    transfer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:transfer",
+      tag: WS_METHODS.projectsTransfer,
+      scheduler: fileScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     searchEntries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:search-entries",
       tag: WS_METHODS.projectsSearchEntries,
@@ -104,3 +110,5 @@ export function createProjectEnvironmentAtoms<R, E>(
     }),
   };
 }
+
+export { copyProjectToEnvironment } from "./projectTransfer.ts";

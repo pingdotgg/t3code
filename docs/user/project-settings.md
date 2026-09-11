@@ -33,3 +33,21 @@ upstream.
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Copy a project to another machine
+
+In the web or desktop app, select a project in **Settings → Projects**. The copy action is available
+when another connected machine has no checkout of that project and both servers support project copying.
+Choose a source checkout, a destination machine, and a new folder. Browse the destination machine to
+choose an existing parent folder, or enter the new folder path directly.
+
+**Fresh checkout** clones the repository's default branch from its origin remote using the destination's
+Git credentials. **One-time copy** transfers the current files, Git history, staged and unstaged work.
+It supports folders without Git too. Ignored files, including `.env` and installed dependencies, are
+included unless you turn that option off. Dependencies may need reinstalling on a different OS.
+Pause edits while the snapshot is prepared; copies are limited to 10 GB and links must stay inside the project.
+
+Both options copy the project name, icon, model and workspace defaults, automatic-pull preference,
+browser-access preference, and actions. Provider credentials and conversations remain on their original
+machine. Configure any missing provider instances on the destination. The source remains intact,
+existing destination folders are never overwritten, and subsequent changes do not sync automatically.

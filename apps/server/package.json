@@ -34,6 +34,7 @@
     "node-pty": "^1.1.0",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
+    "tar": "7.5.16",
     "yaml": "catalog:",
     "yauzl": "^3.4.0"
   },

@@ -528,6 +528,9 @@ importers:
       stream-json:
         specifier: 3.6.0
         version: 3.6.0
+      tar:
+        specifier: 7.5.16
+        version: 7.5.16
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
