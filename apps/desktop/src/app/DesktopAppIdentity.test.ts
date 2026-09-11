@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -88,6 +89,7 @@ const makeEnvironmentLayer = (overrides: TestEnvironmentInput = {}) => {
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodePath.layerPosix,
         DesktopConfig.layerTest({
           ...env,
         }),
@@ -199,7 +201,9 @@ describe("DesktopAppIdentity", () => {
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
-        assert.deepEqual(calls.setDockIcon, ["/icon.png"]);
+        // Packaged: the bundle's own icon stands, so a custom one the user
+        // attached survives.
+        assert.deepEqual(calls.setDockIcon, []);
       }),
       {
         calls,
@@ -208,6 +212,30 @@ describe("DesktopAppIdentity", () => {
             T3CODE_COMMIT_HASH: "0123456789abcdef",
           },
         },
+        pngIconPath: Option.some("/icon.png"),
+      },
+    );
+  });
+
+  it.effect("sets the dock icon only when running unpackaged", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        // Electron shows a generic icon for an unpackaged run, which is the
+        // reason this call exists at all.
+        assert.deepEqual(calls.setDockIcon, ["/icon.png"]);
+      }),
+      {
+        calls,
+        environment: { isPackaged: false },
         pngIconPath: Option.some("/icon.png"),
       },
     );

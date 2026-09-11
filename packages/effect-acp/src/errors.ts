@@ -3,7 +3,7 @@ import type * as SchemaIssue from "effect/SchemaIssue";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 
-export const AcpRequestOperation = Schema.Literals([
+const AcpRequestOperation = Schema.Literals([
   "decode-extension-request-payload",
   "encode-extension-response",
   "handle-request",
@@ -11,12 +11,12 @@ export const AcpRequestOperation = Schema.Literals([
   "receive-response",
   "receive-streaming-response",
 ]);
-export type AcpRequestOperation = typeof AcpRequestOperation.Type;
+type AcpRequestOperation = typeof AcpRequestOperation.Type;
 
 export const AcpRequestId = Schema.Union([Schema.String, Schema.Number]);
 export type AcpRequestId = typeof AcpRequestId.Type;
 
-export const AcpSchemaIssueKind = Schema.Literals([
+const AcpSchemaIssueKind = Schema.Literals([
   "Filter",
   "Encoding",
   "Pointer",
@@ -29,9 +29,9 @@ export const AcpSchemaIssueKind = Schema.Literals([
   "Forbidden",
   "OneOf",
 ]);
-export type AcpSchemaIssueKind = typeof AcpSchemaIssueKind.Type;
+type AcpSchemaIssueKind = typeof AcpSchemaIssueKind.Type;
 
-export interface AcpSchemaIssueDiagnostics {
+interface AcpSchemaIssueDiagnostics {
   readonly issueCount: number;
   readonly issueKinds: ReadonlyArray<AcpSchemaIssueKind>;
   readonly maximumPathDepth: number;
@@ -79,7 +79,7 @@ export interface AcpRequestDiagnostics {
   readonly maximumPathDepth?: number;
 }
 
-export class AcpSpawnError extends Schema.TaggedErrorClass<AcpSpawnError>()("AcpSpawnError", {
+export class AcpSpawnError extends Schema.TaggedError<AcpSpawnError>()("AcpSpawnError", {
   command: Schema.optional(Schema.String),
   cause: Schema.Defect(),
 }) {
@@ -90,7 +90,7 @@ export class AcpSpawnError extends Schema.TaggedErrorClass<AcpSpawnError>()("Acp
   }
 }
 
-export class AcpProcessExitedError extends Schema.TaggedErrorClass<AcpProcessExitedError>()(
+export class AcpProcessExitedError extends Schema.TaggedError<AcpProcessExitedError>()(
   "AcpProcessExitedError",
   {
     code: Schema.optional(Schema.Number),
@@ -112,7 +112,7 @@ export const AcpProtocolParseOperation = Schema.Literals([
 ]);
 export type AcpProtocolParseOperation = typeof AcpProtocolParseOperation.Type;
 
-export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolParseError>()(
+export class AcpProtocolParseError extends Schema.TaggedError<AcpProtocolParseError>()(
   "AcpProtocolParseError",
   {
     operation: AcpProtocolParseOperation,
@@ -156,7 +156,7 @@ export class AcpProtocolParseError extends Schema.TaggedErrorClass<AcpProtocolPa
   }
 }
 
-export class AcpTransportError extends Schema.TaggedErrorClass<AcpTransportError>()(
+export class AcpTransportError extends Schema.TaggedError<AcpTransportError>()(
   "AcpTransportError",
   {
     operation: Schema.optional(
@@ -176,7 +176,7 @@ export class AcpTransportError extends Schema.TaggedErrorClass<AcpTransportError
   }
 }
 
-export class AcpInputStreamEndedError extends Schema.TaggedErrorClass<AcpInputStreamEndedError>()(
+export class AcpInputStreamEndedError extends Schema.TaggedError<AcpInputStreamEndedError>()(
   "AcpInputStreamEndedError",
   {},
 ) {
@@ -185,7 +185,7 @@ export class AcpInputStreamEndedError extends Schema.TaggedErrorClass<AcpInputSt
   }
 }
 
-export class AcpRequestError extends Schema.TaggedErrorClass<AcpRequestError>()("AcpRequestError", {
+export class AcpRequestError extends Schema.TaggedError<AcpRequestError>()("AcpRequestError", {
   code: AcpSchema.ErrorCode,
   errorMessage: Schema.String,
   data: Schema.optional(Schema.Unknown),

@@ -7,12 +7,15 @@
  * @module ServerConfig
  */
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LogLevel from "effect/LogLevel";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+
+import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 
 export const DEFAULT_PORT = 3773;
 
@@ -30,9 +33,13 @@ export interface ServerDerivedPaths {
   readonly dbPath: string;
   readonly keybindingsConfigPath: string;
   readonly settingsPath: string;
+  /** Palettes this machine publishes for clients to follow, one file per theme. */
+  readonly environmentThemesDir: string;
   readonly providerStatusCacheDir: string;
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
+  /** Screenshots the agent asks the collaborative browser to keep for the user. */
+  readonly browserArtifactsDir: string;
   readonly logsDir: string;
   readonly serverLogPath: string;
   readonly serverTracePath: string;
@@ -116,9 +123,11 @@ export const deriveServerPaths = Effect.fn(function* (
     dbPath,
     keybindingsConfigPath: join(stateDir, "keybindings.json"),
     settingsPath: join(stateDir, "settings.json"),
+    environmentThemesDir: join(stateDir, "themes"),
     providerStatusCacheDir,
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
+    browserArtifactsDir: join(stateDir, "browser-artifacts"),
     logsDir,
     serverLogPath: join(logsDir, "server.log"),
     serverTracePath: join(logsDir, "server.trace.ndjson"),
@@ -152,6 +161,14 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
     ],
     { concurrency: "unbounded" },
   );
+
+  const swept = sweepStalePendingAttachments({
+    attachmentsDir: derivedPaths.attachmentsDir,
+    nowMs: yield* Clock.currentTimeMillis,
+  });
+  if (swept.deleted > 0) {
+    yield* Effect.logInfo("Removed expired attachment uploads.", { deleted: swept.deleted });
+  }
 });
 
 const makeTest = Effect.fn("ServerConfig.makeTest")(function* (

@@ -4,15 +4,17 @@
  *
  * Isolated here so the rest of the usage code stays on Effect's `FileSystem`.
  * The direct `node:fs` streaming is deliberate: a cold 30-day window is ~1.4 GB
- * across ~1,500 files, and scanning a read stream is roughly an order of
+ * across ~1,500 files, and buffer-level streaming is roughly an order of
  * magnitude cheaper than materialising each file. The equivalent Effect stream
- * pipeline is idiomatic but not fast enough to sit behind a page load. The
- * byte-oriented line reader also lets us discard pathological records before
- * constructing a string that could cross V8's maximum length.
+ * pipeline is idiomatic but not fast enough to sit behind a page load.
+ *
+ * Transcripts are append-only, so a parse also reports the byte position it
+ * stopped at. A later scan of the same file resumes from that position and
+ * parses only the appended bytes, which is what keeps a warm scan cheap while a
+ * session is actively writing a multi-hundred-megabyte rollout.
  *
  * @module usageTranscriptReader
  */
-import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -23,6 +25,8 @@ import {
   mightCarryUsage,
   parseClaudeLine,
   parseCodexLine,
+  parseGrokLine,
+  type CodexScanState,
   type UsageRecord,
 } from "./usageTranscripts.ts";
 
@@ -32,81 +36,56 @@ export interface TranscriptFile {
   readonly mtimeMs: number;
 }
 
-export interface TranscriptReadOptions {
-  /** Maximum UTF-8 bytes retained for one JSONL record before it is skipped. */
-  readonly maxLineBytes?: number;
-}
-
 /**
- * Well above observed valid provider records while remaining safely below
- * V8's maximum string length. Usage-bearing records are ordinarily tiny; the
- * largest transcript lines are tool outputs and embedded media.
- */
-const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024;
-
-function decodeLine(chunks: readonly Buffer[], byteLength: number): string {
-  const bytes = chunks.length === 1 ? chunks[0] : Buffer.concat(chunks, byteLength);
-  const end = bytes?.[byteLength - 1] === 0x0d ? byteLength - 1 : byteLength;
-  return bytes?.toString("utf8", 0, end) ?? "";
-}
-
-/**
- * Streams newline-delimited UTF-8 without ever retaining an unbounded record.
+ * Where a parse stopped, with enough state to continue from there.
  *
- * Node's `readline` concatenates a whole line before yielding it. A rollout
- * can legitimately contain a huge tool result on one line, which lets that
- * internal string cross V8's limit and terminate the process before the
- * caller's `try/catch` can run. Once a line crosses this reader's limit, its
- * remaining bytes are drained through the next newline and scanning resumes.
+ * The guard hash fingerprints the bytes immediately before `resumeOffset`. A
+ * resume only proceeds when those bytes still match: transcripts are
+ * append-only by design, but a rotated or rewritten file silently mis-parsed
+ * from the middle would corrupt usage totals. The window is a cheap tripwire
+ * for those realistic failure shapes, all of which disturb the file's tail at
+ * that exact offset; it deliberately does not hash the whole prefix, which
+ * would cost the full re-read the resume exists to avoid.
  */
-async function* readBoundedLines(
-  filePath: string,
-  maxLineBytes: number,
-): AsyncGenerator<string, void> {
-  const input = NodeFS.createReadStream(filePath);
-  let chunks: Buffer[] = [];
-  let byteLength = 0;
-  let discarding = false;
+export interface TranscriptParsePosition {
+  /** Byte offset just past the last newline-terminated line consumed. */
+  readonly resumeOffset: number;
+  /** Length of the fingerprinted window ending at `resumeOffset`. */
+  readonly guardLength: number;
+  /** FNV-1a hash of that window. */
+  readonly guardHash: number;
+  /** Codex reducer state as of `resumeOffset`; `null` for stateless providers. */
+  readonly codexState: CodexScanState | null;
+}
 
-  for await (const rawChunk of input) {
-    const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
-    let start = 0;
+export interface TranscriptParseResult {
+  /** Records from newline-terminated lines at or after the parse start. */
+  readonly records: readonly UsageRecord[];
+  /**
+   * Records from a trailing segment the writer has not newline-terminated yet.
+   * Kept out of `records` because `position` deliberately excludes that
+   * segment: the next scan re-reads it once the writer finishes the line.
+   */
+  readonly tailRecords: readonly UsageRecord[];
+  readonly position: TranscriptParsePosition;
+  /** Whether the parse continued from `resumeFrom` rather than byte 0. */
+  readonly resumed: boolean;
+}
 
-    while (start < chunk.length) {
-      const newline = chunk.indexOf(0x0a, start);
-      const end = newline === -1 ? chunk.length : newline;
-      const segmentLength = end - start;
+/** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
+export const GUARD_LENGTH = 64;
+// Bound records before decoding, well below V8's maximum string length.
+const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024;
+const NEWLINE = 0x0a;
+const CARRIAGE_RETURN = 0x0d;
 
-      if (!discarding && segmentLength > 0) {
-        if (byteLength + segmentLength <= maxLineBytes) {
-          chunks.push(chunk.subarray(start, end));
-          byteLength += segmentLength;
-        } else {
-          chunks = [];
-          byteLength = 0;
-          discarding = true;
-        }
-      }
-
-      if (newline === -1) break;
-
-      if (!discarding) {
-        const line = decodeLine(chunks, byteLength);
-        chunks = [];
-        byteLength = 0;
-        yield line;
-      } else {
-        chunks = [];
-        byteLength = 0;
-        discarding = false;
-      }
-      start = newline + 1;
-    }
+function fnv1a(buffer: Buffer): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < buffer.length; index += 1) {
+    hash ^= buffer[index]!;
+    hash = Math.imul(hash, 0x01000193);
   }
-
-  if (!discarding && byteLength > 0) {
-    yield decodeLine(chunks, byteLength);
-  }
+  return hash >>> 0;
 }
 
 /**
@@ -115,12 +94,18 @@ async function* readBoundedLines(
  * Errors on individual entries are swallowed: session files rotate and get
  * removed while the walk is in flight, and a partial listing is far better than
  * failing the page.
+ *
+ * `fileName` restricts the walk to a single basename (Grok's `updates.jsonl`).
+ * Grok sessions also ship multi-megabyte `chat_history` and `events` logs that
+ * never carry usage, so the basename filter keeps a cold scan off those files.
  */
 export async function listTranscriptFiles(
   root: string,
   sinceMs: number,
+  options?: { readonly fileName?: string },
 ): Promise<readonly TranscriptFile[]> {
   const found: TranscriptFile[] = [];
+  const fileName = options?.fileName;
 
   const walk = async (dir: string): Promise<void> => {
     let entries;
@@ -135,7 +120,11 @@ export async function listTranscriptFiles(
         await walk(child);
         continue;
       }
-      if (!entry.name.endsWith(".jsonl")) continue;
+      if (fileName !== undefined) {
+        if (entry.name !== fileName) continue;
+      } else if (!entry.name.endsWith(".jsonl")) {
+        continue;
+      }
       try {
         const stats = await NodeFSP.stat(child);
         if (stats.mtimeMs >= sinceMs) {
@@ -167,6 +156,25 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
   }
 }
 
+async function guardMatches(
+  handle: NodeFSP.FileHandle,
+  position: TranscriptParsePosition,
+): Promise<boolean> {
+  if (position.guardLength <= 0 || position.guardLength > GUARD_LENGTH) return false;
+  try {
+    const window = Buffer.alloc(position.guardLength);
+    const { bytesRead } = await handle.read(
+      window,
+      0,
+      position.guardLength,
+      position.resumeOffset - position.guardLength,
+    );
+    return bytesRead === position.guardLength && fnv1a(window) === position.guardHash;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Streams one transcript and returns the usage records it contains, or `null`
  * when the file could not be read.
@@ -176,6 +184,10 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
  * under the same `(size, mtime)` key would silently drop that file's usage
  * until the file next changes.
  *
+ * With `resumeFrom`, parsing continues from that position when its guard bytes
+ * still match, so only appended lines are read; otherwise the whole file is
+ * re-parsed from the start and `resumed` reports `false`.
+ *
  * Codex carries the active model on `turn_context` lines that hold no usage of
  * their own, so those still have to pass through the reducer to keep model
  * attribution correct.
@@ -183,35 +195,140 @@ export async function readDirectoryVolumeId(path: string): Promise<string> {
 export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
-  options: TranscriptReadOptions = {},
-): Promise<readonly UsageRecord[] | null> {
-  const records: UsageRecord[] = [];
-  const codexState = initialCodexScanState();
+  resumeFrom?: TranscriptParsePosition,
+  options?: { readonly maxLineBytes?: number },
+): Promise<TranscriptParseResult | null> {
+  const maxLineBytes = options?.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(filePath, "r");
+  } catch {
+    return null;
+  }
 
   try {
-    const lines = readBoundedLines(filePath, options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES);
+    let codexState = initialCodexScanState();
+    let resumed = false;
+    let start = 0;
+    if (
+      resumeFrom !== undefined &&
+      resumeFrom.resumeOffset > 0 &&
+      (provider !== "codex" || resumeFrom.codexState !== null) &&
+      (await guardMatches(handle, resumeFrom))
+    ) {
+      if (resumeFrom.codexState !== null) codexState = { ...resumeFrom.codexState };
+      start = resumeFrom.resumeOffset;
+      resumed = true;
+    }
 
-    for await (const line of lines) {
+    const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
       if (provider === "codex") {
         if (
           !mightCarryUsage(line, provider) &&
           !line.includes('"turn_context"') &&
           !line.includes('"session_meta"')
         ) {
-          continue;
+          return;
         }
-        const record = parseCodexLine(line, codexState);
-        if (record !== null) records.push(record);
-        continue;
+        const record = parseCodexLine(line, state);
+        if (record !== null) out.push(record);
+        return;
       }
-
-      if (!mightCarryUsage(line, provider)) continue;
+      if (!mightCarryUsage(line, provider)) return;
+      if (provider === "grok") {
+        for (const grokRecord of parseGrokLine(line)) out.push(grokRecord);
+        return;
+      }
       const record = parseClaudeLine(line);
-      if (record !== null) records.push(record);
+      if (record !== null) out.push(record);
+    };
+
+    const toLineString = (lineBuffer: Buffer): string => {
+      const content =
+        lineBuffer.length > 0 && lineBuffer[lineBuffer.length - 1] === CARRIAGE_RETURN
+          ? lineBuffer.subarray(0, -1)
+          : lineBuffer;
+      return content.toString("utf8");
+    };
+
+    const records: UsageRecord[] = [];
+    // Buffer-level line splitting rather than `readline`, because resuming
+    // needs byte-exact offsets and decoded strings cannot provide them.
+    // Oversized lines are drained without decoding or retaining their bytes.
+    // The scan offset advances through them, but only a newline commits it.
+    let resumeOffset = start;
+    let scanOffset = start;
+    let pendingChunks: Buffer[] = [];
+    let pendingBytes = 0;
+    let discardingLine = false;
+    const stream = handle.createReadStream({
+      start,
+      autoClose: false,
+    }) as AsyncIterable<Buffer>;
+    for await (const chunk of stream) {
+      let lineStart = 0;
+      while (lineStart < chunk.length) {
+        const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
+        const lineEnd = newlineIndex === -1 ? chunk.length : newlineIndex;
+        const segment = chunk.subarray(lineStart, lineEnd);
+        if (!discardingLine) {
+          if (pendingBytes + segment.length > maxLineBytes) {
+            pendingChunks = [];
+            pendingBytes = 0;
+            discardingLine = true;
+          } else if (segment.length > 0) {
+            pendingChunks.push(segment);
+            pendingBytes += segment.length;
+          }
+        }
+        if (newlineIndex === -1) break;
+        if (!discardingLine && pendingBytes > 0) {
+          const line =
+            pendingChunks.length === 1
+              ? pendingChunks[0]!
+              : Buffer.concat(pendingChunks, pendingBytes);
+          parseLine(toLineString(line), codexState, records);
+        }
+        lineStart = newlineIndex + 1;
+        resumeOffset = scanOffset + lineStart;
+        pendingChunks = [];
+        pendingBytes = 0;
+        discardingLine = false;
+      }
+      scanOffset += chunk.length;
     }
+
+    // A trailing segment without its newline is parsed for this result but not
+    // consumed: a writer may still be appending to it, and counting a half
+    // record now and its full form later would double count.
+    const tailRecords: UsageRecord[] = [];
+    if (pendingChunks.length > 0) {
+      const pending = pendingChunks.length === 1 ? pendingChunks[0]! : Buffer.concat(pendingChunks);
+      if (pending.length > 0) parseLine(toLineString(pending), { ...codexState }, tailRecords);
+    }
+
+    const guardLength = Math.min(GUARD_LENGTH, resumeOffset);
+    let guardHash = 0;
+    if (guardLength > 0) {
+      const window = Buffer.alloc(guardLength);
+      await handle.read(window, 0, guardLength, resumeOffset - guardLength);
+      guardHash = fnv1a(window);
+    }
+
+    return {
+      records,
+      tailRecords,
+      position: {
+        resumeOffset,
+        guardLength,
+        guardHash,
+        codexState: provider === "codex" ? codexState : null,
+      },
+      resumed,
+    };
   } catch {
     return null;
+  } finally {
+    await handle.close().catch(() => undefined);
   }
-
-  return records;
 }

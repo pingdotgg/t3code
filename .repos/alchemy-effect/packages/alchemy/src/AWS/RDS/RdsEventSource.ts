@@ -92,8 +92,8 @@ export interface RdsEventSourceProps extends EventRouteProps {
  * resources. Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming RDS Events
- * @example Alert on Cluster Failovers
+ * ### Consuming RDS Events
+ * **Example:** Alert on Cluster Failovers
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

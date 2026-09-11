@@ -11,15 +11,16 @@ export interface SetSMSAttributesRequest extends sns.SetSMSAttributesInput {}
  * e.g. switching the default message type between `Promotional` and
  * `Transactional`.
  * Provide the `SetSMSAttributesHttp` layer on the Function to implement the binding.
- * @binding
- * @section SMS Account Settings
- * @example Set the Default SMS Type
+ * ### SMS Account Settings
+ * **Example:** Set the Default SMS Type
  * ```typescript
  * const setSmsAttributes = yield* SNS.SetSMSAttributes();
  * yield* setSmsAttributes({
  *   attributes: { DefaultSMSType: "Transactional" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface SetSMSAttributes extends Binding.Service<
   SetSMSAttributes,

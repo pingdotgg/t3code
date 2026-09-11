@@ -1,6 +1,5 @@
 import type { HostPowerSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -9,12 +8,9 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import {
-  NativeTelemetryRequestTimedOut,
-  NativeTelemetryStreamClosed,
   canCommandNativeTelemetrySidecar,
   canRequestNativeTelemetryRetry,
   commitCollectionControlUpdate,
-  nativeTelemetrySupervisorFailureMessage,
   retainRecentNativeTelemetryFailures,
   resolveNativeSampleIntervalMs,
   synchronizeCollectionControlOnStart,
@@ -44,7 +40,7 @@ describe("resolveNativeSampleIntervalMs", () => {
     expect(resolveNativeSampleIntervalMs({ ...basePower, onBattery: "true" }, 1)).toBe(5_000);
   });
 
-  it("keeps unknown background telemetry cheap but serves live diagnostics at 1Hz", () => {
+  it("slows background telemetry and serves live diagnostics at 1Hz", () => {
     const unknown: HostPowerSnapshot = {
       ...basePower,
       source: "unknown",
@@ -58,7 +54,8 @@ describe("resolveNativeSampleIntervalMs", () => {
         0,
       ),
     ).toBe(5_000);
-    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(1_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 0)).toBe(5_000);
+    expect(resolveNativeSampleIntervalMs(basePower, 1)).toBe(1_000);
   });
 });
 
@@ -78,44 +75,6 @@ describe("canCommandNativeTelemetrySidecar", () => {
     expect(canCommandNativeTelemetrySidecar("degraded", true)).toBe(true);
     expect(canCommandNativeTelemetrySidecar("unavailable", true)).toBe(false);
     expect(canCommandNativeTelemetrySidecar("degraded", false)).toBe(false);
-  });
-});
-
-describe("NativeTelemetryRequestTimedOut", () => {
-  it("models history and sample request deadlines without a fabricated cause", () => {
-    const historyTimeout = new NativeTelemetryRequestTimedOut({
-      operation: "readHistory",
-      timeoutMs: 15_000,
-    });
-    const sampleTimeout = new NativeTelemetryRequestTimedOut({
-      operation: "sampleNow",
-      timeoutMs: 5_000,
-    });
-
-    expect(historyTimeout.message).toBe(
-      "Resource monitor 'readHistory' request timed out after 15000ms.",
-    );
-    expect(sampleTimeout.message).toBe(
-      "Resource monitor 'sampleNow' request timed out after 5000ms.",
-    );
-    expect("cause" in historyTimeout).toBe(false);
-    expect("cause" in sampleTimeout).toBe(false);
-  });
-});
-
-describe("native telemetry supervisor failures", () => {
-  it("distinguishes a closed event stream from a process exit", () => {
-    expect(new NativeTelemetryStreamClosed().message).toBe(
-      "Resource monitor event stream closed unexpectedly.",
-    );
-  });
-
-  it("keeps defect details out of the caller-visible health message", () => {
-    const secret = "credential=do-not-expose";
-    const message = nativeTelemetrySupervisorFailureMessage(Cause.die(new Error(secret)));
-
-    expect(message).toBe("Resource monitor supervisor stopped unexpectedly.");
-    expect(message).not.toContain(secret);
   });
 });
 

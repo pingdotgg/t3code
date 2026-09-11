@@ -46,12 +46,10 @@ options=('!debug' '!strip')
 _appimage="T3-Code-${pkgver}-x86_64.AppImage"
 source=(
   "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${pkgver}/$_appimage"
-  "${pkgname}-${pkgver}.png::https://raw.githubusercontent.com/pingdotgg/t3code/v${pkgver}/assets/prod/black-universal-1024.png"
   "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${pkgver}/LICENSE"
 )
 sha256sums=(
   '415c8648f43c3d22d572f27f2c50fdc8c310ea7fcde9537b903e1e2f1c8775a1' # AppImage
-  '403e874556ffbecee8d1b2b5d612a874303fac791212a261bb3bd1b71d83e78d' # icon
   '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # upstream license
 )
 
@@ -79,8 +77,13 @@ exec /opt/t3code-bin/AppRun "$@"
 EOF
   ln -s t3code "$pkgdir/usr/bin/t3-code-desktop"
 
-  install -Dm644 "$srcdir/${pkgname}-${pkgver}.png" \
-    "$pkgdir/usr/share/icons/hicolor/1024x1024/apps/t3code.png"
+  # Icon lookup only sees sizes registered in hicolor's index.theme (max 512x512).
+  local icon size_dir
+  for icon in "$srcdir"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
+    size_dir="${icon%/apps/t3code.png}"
+    install -Dm644 "$icon" \
+      "$pkgdir/usr/share/icons/hicolor/${size_dir##*/}/apps/t3code.png"
+  done
 
   install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/t3code.desktop" <<'EOF'
 [Desktop Entry]

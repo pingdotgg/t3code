@@ -12,9 +12,8 @@ import type { Schema } from "./Schema.ts";
  * {@link DescribeCodeBinding} to report `CREATE_COMPLETE`. The registry and
  * schema names are injected from the binding. Provide the implementation
  * with `Effect.provide(AWS.Schemas.GetCodeBindingSourceHttp)`.
- * @binding
- * @section Code Bindings
- * @example Download The Generated Package
+ * ### Code Bindings
+ * **Example:** Download The Generated Package
  * ```typescript
  * // init — bind the operation to the schema
  * const getCodeBindingSource = yield* AWS.Schemas.GetCodeBindingSource(schema);
@@ -23,6 +22,8 @@ import type { Schema } from "./Schema.ts";
  * const { Body } = yield* getCodeBindingSource({ Language: "Python36" });
  * const bytes = yield* Stream.runFold(Body!, 0, (n, chunk) => n + chunk.length);
  * ```
+ *
+ * @binding
  */
 export interface GetCodeBindingSource extends Binding.Service<
   GetCodeBindingSource,

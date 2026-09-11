@@ -21,9 +21,8 @@ export interface ListOperationsRequest
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.ListOperationsHttp)`.
  *
- * @binding
- * @section Tracking Registration Operations
- * @example List In-Progress Operations
+ * ### Tracking Registration Operations
+ * **Example:** List In-Progress Operations
  * ```typescript
  * // init
  * const listOperations = yield* AWS.Route53Domains.ListOperations();
@@ -35,6 +34,8 @@ export interface ListOperationsRequest
  * });
  * const ids = (result.Operations ?? []).map((op) => op.OperationId);
  * ```
+ *
+ * @binding
  */
 export interface ListOperations extends Binding.Service<
   ListOperations,

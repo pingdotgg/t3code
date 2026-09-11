@@ -39,9 +39,8 @@ export interface ResourcePolicy extends Resource<
  * the workspace's data plane (remote-write, query). A workspace has at most
  * one.
  *
- * @resource
- * @section Creating a Resource Policy
- * @example Allow Another Account to Query the Workspace
+ * ### Creating a Resource Policy
+ * **Example:** Allow Another Account to Query the Workspace
  * ```typescript
  * const workspace = yield* AMP.Workspace("Metrics", {});
  * const policy = yield* AMP.ResourcePolicy("Sharing", {
@@ -59,6 +58,8 @@ export interface ResourcePolicy extends Resource<
  *   }),
  * });
  * ```
+ *
+ * @resource
  */
 export const ResourcePolicy = Resource<ResourcePolicy>(
   "AWS.AMP.ResourcePolicy",

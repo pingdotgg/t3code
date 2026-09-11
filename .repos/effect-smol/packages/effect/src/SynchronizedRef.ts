@@ -226,7 +226,7 @@ export const getAndUpdateSome: {
 } = dual(
   2,
   <A>(self: SynchronizedRef<A>, pf: (a: A) => Option.Option<A>): Effect.Effect<A> =>
-    self.semaphore.withPermit(Ref.getAndUpdateSome(self, pf))
+    self.semaphore.withPermit(Ref.getAndUpdateSome(self.backing, pf))
 )
 
 /**

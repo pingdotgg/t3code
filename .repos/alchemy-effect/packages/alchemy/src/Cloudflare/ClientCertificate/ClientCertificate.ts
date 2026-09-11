@@ -122,11 +122,8 @@ export type ClientCertificate = Resource<
  * prior state, `read` scans the zone for a non-revoked certificate issued
  * from the same CSR and reports it as `Unowned`, so the engine refuses to
  * take it over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Client Certificates
- * @category SSL/TLS & Certificates
- * @section Issuing a client certificate
- * @example Sign a CSR with the Cloudflare Managed CA
+ * ### Issuing a client certificate
+ * **Example:** Sign a CSR with the Cloudflare Managed CA
  * ```typescript
  * const cert = yield* Cloudflare.ClientCertificate.ClientCertificate("ApiClient", {
  *   zoneId: zone.zoneId,
@@ -136,7 +133,7 @@ export type ClientCertificate = Resource<
  * // cert.certificate is the signed client certificate PEM
  * ```
  *
- * @example Read the CSR from disk
+ * **Example:** Read the CSR from disk
  * ```typescript
  * const fs = yield* FileSystem.FileSystem;
  * const csr = yield* fs.readFileString("certs/client.csr");
@@ -148,8 +145,8 @@ export type ClientCertificate = Resource<
  * });
  * ```
  *
- * @section Rotation
- * @example Rotate by changing the CSR
+ * ### Rotation
+ * **Example:** Rotate by changing the CSR
  * ```typescript
  * // csr and validityDays are immutable — changing either replaces the
  * // certificate: a new one is signed and the old one is revoked.
@@ -161,6 +158,10 @@ export type ClientCertificate = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/client-certificates/
+ *
+ * @resource
+ * @product Client Certificates
+ * @category SSL/TLS & Certificates
  */
 export const ClientCertificate = Resource<ClientCertificate>(TypeId, {
   aliases: ["Cloudflare.ClientCertificate"],

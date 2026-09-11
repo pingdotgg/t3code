@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * are chosen per request at runtime, so the binding takes no resource
  * argument. Provide the implementation with
  * `Effect.provide(AWS.RAM.ListSourceAssociationsHttp)`.
- * @binding
- * @section Discovering Shares & Shared Resources
- * @example List Source Associations
+ * ### Discovering Shares & Shared Resources
+ * **Example:** List Source Associations
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listSourceAssociations = yield* AWS.RAM.ListSourceAssociations();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { sourceAssociations } = yield* listSourceAssociations();
  * ```
+ *
+ * @binding
  */
 export interface ListSourceAssociations extends Binding.Service<
   ListSourceAssociations,

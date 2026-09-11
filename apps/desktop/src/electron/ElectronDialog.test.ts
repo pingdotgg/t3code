@@ -43,13 +43,40 @@ describe("ElectronDialog", () => {
       );
 
       assert.instanceOf(error, ElectronDialog.ElectronDialogPickFolderError);
-      assert.isTrue(ElectronDialog.isElectronDialogError(error));
       assert.strictEqual(error.ownerWindowId, 7);
       assert.strictEqual(error.defaultPath, "/workspace");
       assert.strictEqual(error.cause, cause);
       assert.include(error.message, "window 7");
       assert.include(error.message, "/workspace");
       assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(ElectronDialog.layer)),
+  );
+
+  it.effect("opens a single-file picker when multiple selections are disabled", () =>
+    Effect.gen(function* () {
+      showOpenDialogMock.mockResolvedValue({
+        canceled: false,
+        filePaths: ["/pictures/icon.png"],
+      });
+      const dialog = yield* ElectronDialog.ElectronDialog;
+
+      const paths = yield* dialog.pickFiles({
+        owner: Option.none(),
+        defaultPath: Option.some("/project"),
+        filters: [{ name: "Images", extensions: ["png"] }],
+        multiple: false,
+      });
+
+      assert.deepEqual(paths, ["/pictures/icon.png"]);
+      assert.deepEqual(showOpenDialogMock.mock.calls, [
+        [
+          {
+            defaultPath: "/project",
+            filters: [{ name: "Images", extensions: ["png"] }],
+            properties: ["openFile"],
+          },
+        ],
+      ]);
     }).pipe(Effect.provide(ElectronDialog.layer)),
   );
 

@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
+  EnvironmentAuthInvalidError,
   EnvironmentHttpBadRequestError,
   EnvironmentHttpConflictError,
   EnvironmentHttpForbiddenError,
@@ -17,7 +18,6 @@ import {
   RelayEnvironmentConnectScope,
   RelayEnvironmentStatusScope,
   type RelayDpopAccessTokenScope,
-  type RelayProtectedError as RelayProtectedErrorType,
   type RelayClientEnvironmentRecord,
   type RelayEnvironmentStatusResponse as RelayEnvironmentStatusResponseType,
   type RelayManagedEndpointProviderKind,
@@ -25,7 +25,11 @@ import {
 import { exchangeRemoteDpopAccessToken } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
-import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import {
+  dpopFailureMessage,
+  ManagedRelay,
+  relayProtectedErrorMessage,
+} from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
 import { authClientMetadata } from "../../lib/authClientMetadata";
@@ -38,14 +42,6 @@ const RELAY_STATUS_AND_CONNECT_SCOPES = [
   RelayEnvironmentStatusScope,
   RelayEnvironmentConnectScope,
 ] satisfies ReadonlyArray<RelayDpopAccessTokenScope>;
-
-export function normalizeRelayBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed.replace(/\/+$/g, "");
-}
 
 function readRelayUrl(): string | null {
   return resolveCloudPublicConfig().relay.url;
@@ -73,18 +69,24 @@ const isEnvironmentCloudApiError = Schema.is(
     EnvironmentCloudEndpointUnavailableError,
   ]),
 );
+const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
 
-function cloudEnvironmentLinkError(message: string) {
+function cloudEnvironmentLinkError(message: string, options?: { readonly dpop?: boolean }) {
   return (cause: unknown) => {
     const environmentError = findEnvironmentCloudApiError(cause);
     const traceId = findErrorTraceId(cause);
+    const dpopAuthError = options?.dpop ? findEnvironmentAuthInvalidError(cause) : null;
+    const detail = environmentError
+      ? `${message.replace(/[.:]$/, "")}: ${environmentError.message}`
+      : withDevCause(message, cause);
     return new CloudEnvironmentLinkError({
-      message: environmentError
-        ? `${message.replace(/[.:]$/, "")}: ${environmentError.message}`
-        : withDevCause(message, cause),
+      message:
+        dpopAuthError?.reason === "invalid_credential"
+          ? dpopFailureMessage(detail, dpopAuthError.dpopFailureReason)
+          : detail,
       cause,
       ...(traceId === null ? {} : { traceId }),
     });
@@ -117,50 +119,6 @@ function withDevCause(message: string, cause: unknown): string {
   return detail ? `${message} (${detail})` : message;
 }
 
-function relayProtectedErrorMessage(error: RelayProtectedErrorType): string {
-  switch (error._tag) {
-    case "RelayAuthInvalidError":
-      switch (error.reason) {
-        case "missing_bearer":
-        case "invalid_bearer":
-          return "Relay rejected the cloud session token.";
-        case "invalid_dpop":
-          return "Relay rejected the DPoP proof.";
-        case "not_authorized":
-          return "Relay rejected the authenticated request.";
-      }
-    case "RelayEnvironmentLinkProofExpiredError":
-      return "Relay rejected an expired environment link proof.";
-    case "RelayEnvironmentLinkProofInvalidError":
-      return `Relay rejected the environment link proof (${error.reason}).`;
-    case "RelayEnvironmentConnectNotAuthorizedError":
-      // "Not authorized" covers non-auth causes too; surface the reason so a
-      // missing link doesn't read as a credential problem.
-      if (error.reason === "environment_link_not_found") {
-        return "Relay has no active link for this environment. The environment server may not have re-established its link yet.";
-      }
-      return error.reason
-        ? `Relay rejected the environment connection request (${error.reason}).`
-        : "Relay rejected the environment connection request.";
-    case "RelayEnvironmentEndpointUnavailableError":
-      return `Relay could not reach the environment endpoint (${error.reason}).`;
-    case "RelayEnvironmentEndpointTimedOutError":
-      return "Relay timed out while contacting the environment endpoint.";
-    case "RelayEnvironmentLinkFailedError":
-      return `Relay could not link the environment (${error.reason}).`;
-    case "RelayEnvironmentLinkUnavailableError":
-      return `Relay cannot provision the managed endpoint (${error.reason}).`;
-    case "RelayEnvironmentLinkLimitExceededError":
-      return `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
-    case "RelayAgentActivityPublishProofExpiredError":
-      return "Relay rejected an expired agent activity publish proof.";
-    case "RelayAgentActivityPublishProofInvalidError":
-      return `Relay rejected the agent activity publish proof (${error.reason}).`;
-    case "RelayInternalError":
-      return `Relay encountered an internal error (${error.reason}).`;
-  }
-}
-
 function decodedRelayClientError(message: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
     const relayError =
@@ -183,6 +141,16 @@ function findEnvironmentCloudApiError(cause: unknown): { readonly message: strin
     return null;
   }
   return "cause" in cause ? findEnvironmentCloudApiError(cause.cause) : null;
+}
+
+function findEnvironmentAuthInvalidError(cause: unknown): EnvironmentAuthInvalidError | null {
+  if (isEnvironmentAuthInvalidError(cause)) {
+    return cause;
+  }
+  if (typeof cause !== "object" || cause === null) {
+    return null;
+  }
+  return "cause" in cause ? findEnvironmentAuthInvalidError(cause.cause) : null;
 }
 
 function requireRelayUrl(): Effect.Effect<string, CloudEnvironmentLinkError> {
@@ -429,16 +397,6 @@ export function getCloudEnvironmentStatus(input: {
   });
 }
 
-export function cloudEnvironmentsPendingStatus(
-  environments: ReadonlyArray<RelayClientEnvironmentRecord>,
-): ReadonlyArray<CloudEnvironmentRecordWithStatus> {
-  return environments.map((environment) => ({
-    environment,
-    status: null,
-    statusError: "Checking status...",
-  }));
-}
-
 export function loadCloudEnvironmentStatuses(input: {
   readonly clerkToken: string;
   readonly environments: ReadonlyArray<RelayClientEnvironmentRecord>;
@@ -560,7 +518,9 @@ const connectRelayManagedEnvironment = Effect.fn("mobile.cloud.connectRelayManag
       clientMetadata: authClientMetadata(),
     }).pipe(
       Effect.mapError(
-        cloudEnvironmentLinkError("Could not exchange a managed endpoint DPoP access token."),
+        cloudEnvironmentLinkError("Could not exchange a managed endpoint DPoP access token.", {
+          dpop: true,
+        }),
       ),
     );
     const pairingUrl = new URL(connect.endpoint.httpBaseUrl);

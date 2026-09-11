@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -29,6 +30,7 @@ import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { retryAtFromHeader } from "./SourceControlRateLimit.ts";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
 /** A response body past this is cut short, so one huge diff cannot exhaust the server. */
@@ -61,7 +63,7 @@ const BitbucketApiOperation = Schema.Literals([
 ]);
 type BitbucketApiOperation = typeof BitbucketApiOperation.Type;
 
-export class BitbucketRepositoryLocatorError extends Schema.TaggedErrorClass<BitbucketRepositoryLocatorError>()(
+export class BitbucketRepositoryLocatorError extends Schema.TaggedError<BitbucketRepositoryLocatorError>()(
   "BitbucketRepositoryLocatorError",
   {
     repository: Schema.String,
@@ -76,7 +78,7 @@ export class BitbucketRepositoryLocatorError extends Schema.TaggedErrorClass<Bit
   }
 }
 
-export class BitbucketRequestError extends Schema.TaggedErrorClass<BitbucketRequestError>()(
+export class BitbucketRequestError extends Schema.TaggedError<BitbucketRequestError>()(
   "BitbucketRequestError",
   {
     operation: BitbucketApiOperation,
@@ -92,12 +94,13 @@ export class BitbucketRequestError extends Schema.TaggedErrorClass<BitbucketRequ
   }
 }
 
-export class BitbucketResponseError extends Schema.TaggedErrorClass<BitbucketResponseError>()(
+export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponseError>()(
   "BitbucketResponseError",
   {
     operation: BitbucketApiOperation,
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
+    retryAt: Schema.optional(Schema.Number),
   },
 ) {
   get detail(): string {
@@ -109,7 +112,7 @@ export class BitbucketResponseError extends Schema.TaggedErrorClass<BitbucketRes
   }
 }
 
-export class BitbucketResponseBodyReadError extends Schema.TaggedErrorClass<BitbucketResponseBodyReadError>()(
+export class BitbucketResponseBodyReadError extends Schema.TaggedError<BitbucketResponseBodyReadError>()(
   "BitbucketResponseBodyReadError",
   {
     operation: BitbucketApiOperation,
@@ -126,7 +129,7 @@ export class BitbucketResponseBodyReadError extends Schema.TaggedErrorClass<Bitb
   }
 }
 
-export class BitbucketResponseDecodeError extends Schema.TaggedErrorClass<BitbucketResponseDecodeError>()(
+export class BitbucketResponseDecodeError extends Schema.TaggedError<BitbucketResponseDecodeError>()(
   "BitbucketResponseDecodeError",
   {
     operation: BitbucketApiOperation,
@@ -143,7 +146,7 @@ export class BitbucketResponseDecodeError extends Schema.TaggedErrorClass<Bitbuc
   }
 }
 
-export class BitbucketRepositoryVcsResolveError extends Schema.TaggedErrorClass<BitbucketRepositoryVcsResolveError>()(
+export class BitbucketRepositoryVcsResolveError extends Schema.TaggedError<BitbucketRepositoryVcsResolveError>()(
   "BitbucketRepositoryVcsResolveError",
   {
     cwd: Schema.String,
@@ -159,7 +162,7 @@ export class BitbucketRepositoryVcsResolveError extends Schema.TaggedErrorClass<
   }
 }
 
-export class BitbucketRepositoryRemotesListError extends Schema.TaggedErrorClass<BitbucketRepositoryRemotesListError>()(
+export class BitbucketRepositoryRemotesListError extends Schema.TaggedError<BitbucketRepositoryRemotesListError>()(
   "BitbucketRepositoryRemotesListError",
   {
     cwd: Schema.String,
@@ -175,7 +178,7 @@ export class BitbucketRepositoryRemotesListError extends Schema.TaggedErrorClass
   }
 }
 
-export class BitbucketRepositoryRemoteNotFoundError extends Schema.TaggedErrorClass<BitbucketRepositoryRemoteNotFoundError>()(
+export class BitbucketRepositoryRemoteNotFoundError extends Schema.TaggedError<BitbucketRepositoryRemoteNotFoundError>()(
   "BitbucketRepositoryRemoteNotFoundError",
   {
     cwd: Schema.String,
@@ -190,7 +193,7 @@ export class BitbucketRepositoryRemoteNotFoundError extends Schema.TaggedErrorCl
   }
 }
 
-export class BitbucketPullRequestBodyReadError extends Schema.TaggedErrorClass<BitbucketPullRequestBodyReadError>()(
+export class BitbucketPullRequestBodyReadError extends Schema.TaggedError<BitbucketPullRequestBodyReadError>()(
   "BitbucketPullRequestBodyReadError",
   {
     cwd: Schema.String,
@@ -207,7 +210,7 @@ export class BitbucketPullRequestBodyReadError extends Schema.TaggedErrorClass<B
   }
 }
 
-export class BitbucketCheckoutError extends Schema.TaggedErrorClass<BitbucketCheckoutError>()(
+export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckoutError>()(
   "BitbucketCheckoutError",
   {
     cwd: Schema.String,
@@ -229,7 +232,7 @@ export class BitbucketCheckoutError extends Schema.TaggedErrorClass<BitbucketChe
  * the request carries the account's credentials and a url that came back in a response — a
  * pagination cursor, or the target of a redirect — is not this server's to trust.
  */
-export class BitbucketUntrustedUrlError extends Schema.TaggedErrorClass<BitbucketUntrustedUrlError>()(
+export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
   {
     /** The host only. A rejected hop is often a signed url, whose query carries a credential. */
@@ -259,7 +262,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketCheckoutError,
 ]);
 export type BitbucketApiError = typeof BitbucketApiError.Type;
-export const isBitbucketApiError = Schema.is(BitbucketApiError);
+const isBitbucketApiError = Schema.is(BitbucketApiError);
 
 const RawBitbucketRepositorySchema = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -579,30 +582,31 @@ function responseError(
 ): Effect.Effect<never, BitbucketApiError> {
   // Bounded like any other body: an error response is no smaller than a successful one, and
   // only its length is reported anyway.
-  return collectUint8StreamText({
-    stream: response.stream,
-    maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new BitbucketResponseBodyReadError({
-          operation,
-          status: response.status,
-          cause,
-        }),
-    ),
-    Effect.flatMap((collected) =>
-      Effect.fail(
-        new BitbucketResponseError({
-          operation,
-          status: response.status,
-          responseBodyLength: collected.text.length,
-        }),
+  return Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const collected = yield* collectUint8StreamText({
+      stream: response.stream,
+      maxBytes: DEFAULT_MAX_RESPONSE_BYTES,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new BitbucketResponseBodyReadError({
+            operation,
+            status: response.status,
+            cause,
+          }),
       ),
-    ),
-  );
+    );
+    return yield* new BitbucketResponseError({
+      operation,
+      status: response.status,
+      responseBodyLength: collected.text.length,
+      retryAt: retryAtFromHeader(response.headers["retry-after"], now),
+    });
+  });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* BitbucketApiEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;

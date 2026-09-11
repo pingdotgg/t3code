@@ -12,9 +12,8 @@ export interface DescribeReplayRequest
  * Bind this operation inside a function runtime to poll a replay started
  * with `StartReplay` until it completes. Provide the `DescribeReplayHttp`
  * layer on the Function to satisfy the binding.
- * @binding
- * @section Replaying Events
- * @example Poll a Replay's State
+ * ### Replaying Events
+ * **Example:** Poll a Replay's State
  * ```typescript
  * // init — bind the operation (provide AWS.EventBridge.DescribeReplayHttp on the Function)
  * const describeReplay = yield* AWS.EventBridge.DescribeReplay();
@@ -23,6 +22,8 @@ export interface DescribeReplayRequest
  * const replay = yield* describeReplay({ ReplayName: "backfill-2026-07-14" });
  * console.log(replay.State, replay.EventLastReplayedTime);
  * ```
+ *
+ * @binding
  */
 export interface DescribeReplay extends Binding.Service<
   DescribeReplay,

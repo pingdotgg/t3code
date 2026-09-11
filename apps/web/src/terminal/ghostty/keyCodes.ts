@@ -233,6 +233,15 @@ export function loadGhosttyKeyboardLayoutMap(): Promise<GhosttyKeyboardLayoutMap
   return promise;
 }
 
+// Browsers do not expose consumed modifiers; treat Shift as consumed for
+// unchorded character input.
+export function ghosttyConsumedMods(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+): number {
+  if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return 0;
+  return [...event.key].length === 1 ? 1 : 0;
+}
+
 export function ghosttyUnshiftedCodepoint(
   event: Pick<KeyboardEvent, "code" | "key" | "shiftKey">,
   layoutMap?: GhosttyKeyboardLayoutMap,

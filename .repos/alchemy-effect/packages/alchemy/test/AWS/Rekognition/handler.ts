@@ -42,7 +42,7 @@ export class RekognitionTestFunction extends Lambda.Function<Lambda.Function>()(
 export default RekognitionTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The image-analysis route runs seven sequential inferences and the
     // collection route ~15 sequential data-plane calls.
     timeout: Duration.seconds(120),

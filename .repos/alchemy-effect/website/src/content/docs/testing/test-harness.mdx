@@ -46,6 +46,9 @@ Test.make({
   state,       // optional
   profile,     // optional
   stage,       // optional
+  dev,         // optional — run the suite against local emulators
+  adopt,       // optional
+  sidecar,     // optional — defaults to dev
 });
 ```
 
@@ -111,6 +114,58 @@ afterAll.skipIf(!process.env.CI)(destroy(Stack, { stage: "ci-pr-42" }));
 
 A unique stage per PR or test run lets multiple suites run in
 parallel against the same provider account without colliding.
+
+### `dev`
+
+Off by default — tests deploy to the real cloud. `dev: true` runs
+the whole file in local-dev mode, the same wiring as
+[`alchemy dev`](/environments/local-development): Cloudflare
+Workers, Durable Objects, KV, R2, D1, Queues, and Workflows run in
+workerd with local simulators, and AWS Lambda/ECS plus the
+emulated AWS surface run in a local Docker emulator. No cloud
+account is touched for emulated resources.
+
+```typescript
+Test.make({
+  providers: Cloudflare.providers(),
+  dev: true,  // deploy(Stack) boots workerd / Docker simulators
+});
+```
+
+Everything else in the file is unchanged — `beforeAll(deploy(Stack))`
+boots the stack locally and the outputs (`url`, ids) point at the
+local instances, so the same HTTP assertions run against
+`http://localhost:<port>`. Local resource ids are `dev:`-prefixed,
+which doubles as proof no cloud call ran. `Alchemy.remote()` still
+pins individual resources live, exactly as it does under
+`alchemy dev`.
+
+When omitted, the flag falls back to the `ALCHEMY_DEV` env var —
+leave it out of the file and set `ALCHEMY_DEV=1` locally to run the
+same suite against emulators while CI runs it live. Separately,
+`ALCHEMY_TEST_DEV=1` **overrides** the option in both directions —
+use it to force an entire existing suite through local providers
+without editing each `Test.make`.
+
+What each cloud emulates is covered in
+[Cloudflare local development](/cloudflare/local-development) and
+[AWS local development](/aws/local-development); the step-by-step
+walkthrough is [Cloudflare Tutorial Part 4](/cloudflare/tutorial/part-4).
+
+### `adopt`
+
+Engine-level adoption policy for the run, matching the CLI's
+`--adopt` flag. When `true`, a resource with no prior state whose
+physical counterpart already exists in the cloud is adopted via
+`provider.read` instead of failing. Defaults to `false`.
+
+### `sidecar`
+
+Only meaningful in dev mode, and defaults to the resolved `dev`
+flag: dev tests run local providers behind the same RPC sidecar
+process the real `alchemy dev` command uses. `sidecar: false` runs
+them in-process instead — useful when debugging provider code,
+since there's no child process between you and the breakpoint.
 
 ## Hooks
 
