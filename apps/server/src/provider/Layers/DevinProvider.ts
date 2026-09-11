@@ -118,19 +118,21 @@ export function devinModelsFromCatalog(
 ): ReadonlyArray<ServerProviderModel> {
   const models: ServerProviderModel[] = [];
   for (const family of parsed?.families ?? []) {
-    const familySlug = typeof family.slug === "string" ? family.slug.trim() : "";
     const familyAliases = (family.aliases ?? []).filter(
       (alias): alias is string => typeof alias === "string" && alias.trim().length > 0,
     );
     for (const variant of family.variants ?? []) {
       const slug = typeof variant.model_uid === "string" ? variant.model_uid.trim() : "";
       if (!slug) continue;
+      // Variant labels are already fully qualified ("Inkling High",
+      // "SWE-2 Max"), so no `subProvider` — the picker strips a leading
+      // subProvider from the name, which would leave only the effort
+      // suffix ("High") as the row title.
       const name =
         typeof variant.label === "string" && variant.label.trim() ? variant.label.trim() : slug;
       models.push({
         slug,
         name,
-        ...(familySlug ? { subProvider: familySlug } : {}),
         ...(familyAliases.length > 0 ? { aliases: [...familyAliases] } : {}),
         ...(variant.is_new === true ? { badge: "new" as const } : {}),
         isCustom: false,

@@ -33,15 +33,17 @@ describe("devinModelsFromCatalog", () => {
       "adaptive",
     ]);
 
-    const sweHigh = models[0];
+    const sweHigh = models[0]!;
     expect(sweHigh).toMatchObject({
       name: "SWE-2 High",
-      subProvider: "swe-2",
       aliases: ["swe"],
       badge: "new",
       isCustom: false,
       isDefault: false,
     });
+    // Family slug must not become `subProvider` — the picker strips that
+    // prefix from the label, leaving bare effort names like "High".
+    expect(sweHigh.subProvider).toBeUndefined();
   });
 
   it("marks adaptive as the default model", () => {
