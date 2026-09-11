@@ -229,12 +229,16 @@ function translateLegacyProjectOverridePatch(
   const entries = new Map<string, ProjectSettingsOverrides | null>(
     Object.entries(rest.projectSettingsOverrides ?? {}),
   );
+  // A canonical entry in the same patch is the newer representation; a legacy
+  // map must not resurrect a key that entry deliberately omits.
+  const canonicalProjectIds = new Set(Object.keys(rest.projectSettingsOverrides ?? {}));
   const applyKey = <K extends ProjectScopedServerSettingKey>(
     map: Readonly<Record<string, ProjectSettingsOverrides[K] | null>> | undefined,
     key: K,
   ) => {
     if (map === undefined) return;
     for (const [projectId, value] of Object.entries(map)) {
+      if (canonicalProjectIds.has(projectId)) continue;
       const entry: ProjectSettingsOverrides = {
         ...(entries.get(projectId) ?? currentEntries[projectId] ?? {}),
       };

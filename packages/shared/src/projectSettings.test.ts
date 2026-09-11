@@ -61,6 +61,17 @@ describe("resolveProjectSettings", () => {
     );
     expect(resolved.sources.textGenerationModelSelection).toBe("environment");
   });
+
+  it("keeps the environment default model when the override's provider is disabled", () => {
+    const disabledSelection = createModelSelection(ProviderInstanceId.make("claudeAgent"), "opus");
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providers: { claudeAgent: { enabled: false } },
+      projectSettingsOverrides: { [projectId]: { defaultModelSelection: disabledSelection } },
+    });
+    const resolved = resolveProjectSettings(settings, projectId);
+    expect(resolved.settings.defaultModelSelection).toBeNull();
+    expect(resolved.sources.defaultModelSelection).toBe("environment");
+  });
 });
 
 describe("projectSettingsOverrides patches", () => {
@@ -117,6 +128,22 @@ describe("projectSettingsOverrides patches", () => {
       projectAgentBrowserAccessOverrides: { [projectId]: null, [otherProjectId]: null },
     });
     expect(cleared.projectSettingsOverrides).toEqual({ [projectId]: { defaultAutoPull: true } });
+  });
+
+  it("lets a canonical entry win over a legacy map for the same project", () => {
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    });
+    // The canonical entry omits defaultAutoPull to clear it; the stale legacy
+    // map in the same patch must not put it back.
+    const next = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
+      projectAutoPullOverrides: { [projectId]: true, [otherProjectId]: false },
+    });
+    expect(next.projectSettingsOverrides).toEqual({
+      [projectId]: { defaultThreadEnvMode: "local" },
+      [otherProjectId]: { defaultAutoPull: false },
+    });
   });
 
   it("builds replacement entries and clears individual keys", () => {

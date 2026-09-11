@@ -47,14 +47,16 @@ function autoSettlementConfigured(settings: ServerSettingsValue): boolean {
 }
 
 /** Identity of every settlement input, so unrelated settings edits do not trigger a sweep. */
-function autoSettlementSettingsKey(settings: ServerSettingsValue): string {
+/** @internal Exported for tests. */
+export function autoSettlementSettingsKey(settings: ServerSettingsValue): string {
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
+    // JSON drops undefined, so inherit (absent) and never (null) need distinct marks.
     Object.entries(settings.projectSettingsOverrides).map(([projectId, entry]) => [
       projectId,
-      entry.sidebarAutoSettleOnMerge,
-      entry.sidebarAutoSettleAfterDays,
+      entry.sidebarAutoSettleOnMerge ?? "inherit",
+      entry.sidebarAutoSettleAfterDays === undefined ? "inherit" : entry.sidebarAutoSettleAfterDays,
     ]),
   ]);
 }

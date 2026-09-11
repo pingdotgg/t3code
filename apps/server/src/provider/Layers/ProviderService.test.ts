@@ -4803,6 +4803,7 @@ describe("agent browser access", () => {
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
+    options?: { readonly withoutOrchestration?: boolean },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -4875,7 +4876,7 @@ describe("agent browser access", () => {
       }).pipe(
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
-        Layer.provide(projectionLayer),
+        Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
         Layer.provide(
           ServerSettings.ServerSettingsService.layerTest({
             enableAgentBrowserAccess,
@@ -4986,6 +4987,21 @@ describe("agent browser access", () => {
         device: true,
       });
       assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // Without orchestration the project cannot be resolved, so an overridden
+  // capability is withheld; one no project overrides keeps its environment value.
+  it.effect("withholds only the overridden capability when the project cannot be resolved", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-no-orchestration-device-override");
+      const issued = yield* startSessionWith(
+        { browser: true, device: true },
+        threadId,
+        { device: false },
+        { withoutOrchestration: true },
+      );
+      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

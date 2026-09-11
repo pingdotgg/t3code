@@ -1,4 +1,5 @@
 import {
+  type ModelSelection,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
   type ProjectScopedServerSettingKey,
@@ -58,11 +59,13 @@ export function resolveProjectSettings(
   for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
     if (!Object.hasOwn(overrides, key)) continue;
     const value = overrides[key];
+    // A model on a disabled provider falls back to the environment, like the
+    // environment-level guards do for these keys.
     if (
-      key === "textGenerationModelSelection" &&
+      (key === "textGenerationModelSelection" || key === "defaultModelSelection") &&
       value !== undefined &&
       value !== null &&
-      !isModelSelectionProviderEnabled(settings, value as ServerSettings[typeof key])
+      !isModelSelectionProviderEnabled(settings, value as ModelSelection)
     ) {
       continue;
     }

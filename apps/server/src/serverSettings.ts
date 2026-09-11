@@ -555,6 +555,9 @@ const make = Effect.gen(function* () {
   const loadSettingsFromDisk = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let persisted: typeof PersistedOptionalProviderSettings.Type = {};
+    // A file that failed to decode must stay on disk for the user to repair;
+    // the fold below only writes when it started from the file's real contents.
+    let settingsFileTrusted = true;
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
@@ -565,6 +568,7 @@ const make = Effect.gen(function* () {
       }
       if (decoded._tag === "Failure" || persistedSettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : persistedSettings;
+        settingsFileTrusted = false;
         if (failure._tag === "Failure") {
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,
@@ -603,9 +607,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    const legacyProjectRows = settings.projectSettingsFolded
-      ? []
-      : yield* sql<LegacyProjectSettingsRow>`
+    const legacyProjectRows =
+      settings.projectSettingsFolded || !settingsFileTrusted
+        ? []
+        : yield* sql<LegacyProjectSettingsRow>`
           SELECT
             project_id AS "projectId",
             default_model_selection_json AS "defaultModelSelection",
@@ -615,20 +620,22 @@ const make = Effect.gen(function* () {
           FROM projection_projects
           WHERE deleted_at IS NULL
         `.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerSettingsError({
-                settingsPath,
-                operation: "read-project-settings",
-                cause,
-              }),
-          ),
-        );
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "read-project-settings",
+                  cause,
+                }),
+            ),
+          );
 
     const loaded = foldProviderInstanceEnabledFlags(
       restoreUsedProviders(settings, persisted, providerHistory),
     );
-    const folded = foldLegacyProjectSettings(loaded, legacyProjectRows);
+    const folded = settingsFileTrusted
+      ? foldLegacyProjectSettings(loaded, legacyProjectRows)
+      : loaded;
     if (folded !== loaded) {
       yield* writeSettingsAtomically(folded);
     }

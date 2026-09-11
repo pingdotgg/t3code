@@ -28,10 +28,12 @@ import {
   ProviderUploadFeedbackInput,
   ThreadId,
   TurnId,
+  type ProjectId,
   type ProviderInstanceId,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -867,22 +869,26 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const agentAccessSettings = Effect.fn("ProviderService.agentAccessSettings")(
     function* (threadId: ThreadId) {
       const settings = yield* serverSettings.getSettings;
-      const overridden = Object.values(settings.projectSettingsOverrides).some(
-        (entry) =>
-          entry.enableAgentBrowserAccess !== undefined ||
-          entry.enableAgentDeviceAccess !== undefined,
+      const entries = Object.values(settings.projectSettingsOverrides);
+      const browserOverridden = entries.some(
+        (entry) => entry.enableAgentBrowserAccess !== undefined,
       );
-      if (!overridden) {
-        return {
-          browser: settings.enableAgentBrowserAccess,
-          device: settings.enableAgentDeviceAccess,
-        };
-      }
+      const deviceOverridden = entries.some((entry) => entry.enableAgentDeviceAccess !== undefined);
+      const environment = {
+        browser: settings.enableAgentBrowserAccess,
+        device: settings.enableAgentDeviceAccess,
+      };
+      if (!browserOverridden && !deviceOverridden) return environment;
       // Provider-only runtimes may omit orchestration. An unresolved project
-      // must not bypass an explicit project override.
-      if (Option.isNone(projectionQuery)) return { browser: false, device: false };
+      // must not bypass an explicit project override, but a capability no
+      // project overrides keeps its environment value.
+      const denied = {
+        browser: browserOverridden ? false : environment.browser,
+        device: deviceOverridden ? false : environment.device,
+      };
+      if (Option.isNone(projectionQuery)) return denied;
       const thread = yield* projectionQuery.value.getThreadShellById(threadId);
-      if (Option.isNone(thread)) return { browser: false, device: false };
+      if (Option.isNone(thread)) return denied;
       const resolved = resolveProjectSettings(settings, thread.value.projectId).settings;
       return {
         browser: resolved.enableAgentBrowserAccess,
@@ -2227,10 +2233,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   );
 
   const runStopAll = Effect.fn("runStopAll")(function* () {
-    const continueAfterRestart = yield* serverSettings.getSettings.pipe(
-      Effect.map((settings) => settings.continueThreadsAfterServerUpdate),
-      Effect.orElseSucceed(() => false),
+    // Continuation is project-scopable, so decide it per session's project;
+    // without orchestration the environment value is all there is.
+    const stopSettings = yield* serverSettings.getSettings.pipe(
+      Effect.map(Option.some),
+      Effect.orElseSucceed(() => Option.none<ServerSettingsValue>()),
     );
+    const continueAfterRestartFor = Effect.fn("continueAfterRestartFor")(function* (
+      threadId: ThreadId,
+    ) {
+      if (Option.isNone(stopSettings)) return false;
+      const settings = stopSettings.value;
+      const overridden = Object.values(settings.projectSettingsOverrides).some(
+        (entry) => entry.continueThreadsAfterServerUpdate !== undefined,
+      );
+      if (!overridden || Option.isNone(projectionQuery)) {
+        return settings.continueThreadsAfterServerUpdate;
+      }
+      const thread = yield* projectionQuery.value
+        .getThreadShellById(threadId)
+        .pipe(Effect.orElseSucceed(() => Option.none<{ projectId: ProjectId }>()));
+      if (Option.isNone(thread)) return settings.continueThreadsAfterServerUpdate;
+      return resolveProjectSettings(settings, thread.value.projectId).settings
+        .continueThreadsAfterServerUpdate;
+    });
     const properties = yield* Ref.modify(turnAnalytics, (state) => {
       const completed: Array<Readonly<Record<string, unknown>>> = [];
       for (const [sessionKey, session] of state.sessions) {
@@ -2256,15 +2282,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       ),
     ).pipe(Effect.map((sessionsByAdapter) => sessionsByAdapter.flatMap((sessions) => sessions)));
     yield* Effect.forEach(activeSessions, (session) =>
-      Effect.flatMap(nowIso, (lastRuntimeEventAt) =>
-        upsertSessionBinding(session, session.threadId, {
-          ...(continueAfterRestart && session.status === "running" && session.activeTurnId
+      Effect.gen(function* () {
+        const continueAfterRestart =
+          session.status === "running" && session.activeTurnId
+            ? yield* continueAfterRestartFor(session.threadId)
+            : false;
+        const lastRuntimeEventAt = yield* nowIso;
+        yield* upsertSessionBinding(session, session.threadId, {
+          ...(continueAfterRestart && session.activeTurnId
             ? { continueAfterServerUpdate: session.activeTurnId }
             : {}),
           lastRuntimeEvent: "provider.stopAll",
           lastRuntimeEventAt,
-        }),
-      ),
+        });
+      }),
     ).pipe(Effect.asVoid);
     yield* Effect.forEach(currentAdapters, ([, adapter]) => adapter.stopAll()).pipe(Effect.asVoid);
     yield* McpSessionRegistry.revokeAllActiveMcpCredentials();
