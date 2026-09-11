@@ -1,6 +1,8 @@
-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, SquareTerminalIcon, PanelRightIcon } from "lucide-react";
 import { memo } from "react";
 
+// Reuses the project Toggle; the attached drawer treatment is a local variant.
+// https://ui.shadcn.com/docs/components/base/toggle
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -18,6 +20,40 @@ interface PanelLayoutControlsProps {
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
+
+export const TerminalDrawerToggle = memo(function TerminalDrawerToggle({
+  attached = false,
+  terminalAvailable,
+  terminalOpen,
+  terminalShortcutLabel,
+  onToggleTerminal,
+}: Pick<
+  PanelLayoutControlsProps,
+  "terminalAvailable" | "terminalOpen" | "terminalShortcutLabel" | "onToggleTerminal"
+> & { attached?: boolean }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="flex shrink-0" />}>
+        <Toggle
+          className="[-webkit-app-region:no-drag]"
+          pressed={terminalOpen}
+          onPressedChange={onToggleTerminal}
+          aria-label="Toggle terminal drawer"
+          variant={attached ? "drawer" : "ghost"}
+          size={attached ? "drawer" : "sm"}
+          disabled={!terminalAvailable}
+        >
+          <SquareTerminalIcon className="size-4" />
+        </Toggle>
+      </TooltipTrigger>
+      <TooltipPopup side="top">
+        {terminalAvailable
+          ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
+          : "Terminal drawer is unavailable"}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
   showTerminalControl = true,
@@ -38,26 +74,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       data-panel-layout-controls
     >
       {showTerminalControl ? (
-        <Tooltip>
-          <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={terminalOpen}
-              onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
-              variant="ghost"
-              size="sm"
-              disabled={!terminalAvailable}
-            >
-              <PanelBottomIcon className="size-4" />
-            </Toggle>
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">
-            {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
-          </TooltipPopup>
-        </Tooltip>
+        <TerminalDrawerToggle
+          terminalAvailable={terminalAvailable}
+          terminalOpen={terminalOpen}
+          terminalShortcutLabel={terminalShortcutLabel}
+          onToggleTerminal={onToggleTerminal}
+        />
       ) : null}
       <Tooltip>
         <TooltipTrigger render={<span className="flex shrink-0" />}>
