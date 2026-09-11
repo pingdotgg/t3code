@@ -108,11 +108,15 @@ const BUNDLE_LABELS: Readonly<Record<string, string>> = {
 };
 
 export function formatLicenseBundles(bundles: ReadonlyArray<string>): string {
-  return bundles.map((bundle) => BUNDLE_LABELS[bundle] ?? bundle).join(", ");
+  return bundles
+    .map((bundle) =>
+      Object.prototype.hasOwnProperty.call(BUNDLE_LABELS, bundle) ? BUNDLE_LABELS[bundle] : bundle,
+    )
+    .join(", ");
 }
 
 export function thirdPartyLicenseEntryKey(entry: ThirdPartyLicenseEntry): string {
-  return encodeURIComponent(`${entry.kind}:${entry.name}:${entry.version ?? "custom"}`);
+  return encodeURIComponent(JSON.stringify([entry.kind, entry.name, entry.version]));
 }
 
 export function findThirdPartyLicenseEntry(

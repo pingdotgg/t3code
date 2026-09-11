@@ -66,9 +66,9 @@ describe("third-party license manifests", () => {
   });
 
   it("formats platform bundle names for display", () => {
-    expect(formatLicenseBundles(["android", "assets", "ios", "mobile", "plugin"])).toBe(
-      "Android, Assets, iOS, Mobile, plugin",
-    );
+    expect(
+      formatLicenseBundles(["android", "assets", "ios", "mobile", "plugin", "constructor"]),
+    ).toBe("Android, Assets, iOS, Mobile, plugin, constructor");
   });
 
   it("finds an entry by its stable navigation key", () => {
@@ -80,5 +80,12 @@ describe("third-party license manifests", () => {
     expect(thirdPartyLicenseEntryKey({ ...ENTRIES[0]!, name: "@scope/package" })).not.toContain(
       "/",
     );
+  });
+
+  it("uses distinct navigation keys when names and versions contain delimiters", () => {
+    const first = thirdPartyLicenseEntryKey({ ...ENTRIES[0]!, name: "a:1", version: null });
+    const second = thirdPartyLicenseEntryKey({ ...ENTRIES[0]!, name: "a", version: "1:custom" });
+
+    expect(first).not.toBe(second);
   });
 });
