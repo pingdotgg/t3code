@@ -318,6 +318,7 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const config = yield* ServerConfig.ServerConfig;
     const otlpTracesUrl = config.otlpTracesUrl;
+    const otlpHeaders = config.otlpHeaders;
     const browserTraceCollector = yield* BrowserTraceCollector.BrowserTraceCollector;
     const httpClient = yield* HttpClient.HttpClient;
     const bodyJson = cast<unknown, OtlpTracer.TraceData>(yield* request.json);
@@ -342,6 +343,7 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
     return yield* httpClient
       .post(otlpTracesUrl, {
         body: HttpBody.jsonUnsafe(bodyJson),
+        headers: otlpHeaders,
       })
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
