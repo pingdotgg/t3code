@@ -117,6 +117,8 @@ export function applyAppearanceFontVariables(
   root.style.fontSize = `${interfaceSize}px`;
   const conversationSize = clampConversationFontSize(preferences.sizeConversation, interfaceSize);
   root.style.setProperty("--font-size-conversation", `${conversationSize}px`);
+  // Preserve existing fixed-pixel labels when following Interface; scale them
+  // only when the conversation size is explicitly overridden.
   root.style.setProperty(
     "--font-scale-conversation",
     String(

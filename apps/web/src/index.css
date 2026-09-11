@@ -1594,6 +1594,7 @@ code {
     --text-xl: calc(var(--conversation-text-unit) * 1.25);
     --text-2xl: calc(var(--conversation-text-unit) * 1.5);
     --text-3xl: calc(var(--conversation-text-unit) * 1.875);
+
     font-size: var(--conversation-text-unit);
   }
 }
