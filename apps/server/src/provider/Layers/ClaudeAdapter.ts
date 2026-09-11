@@ -4088,7 +4088,28 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         yield* completeTurn(context, "failed", message);
       }
     } else if (context.turnState) {
-      yield* completeTurn(context, "interrupted", "Claude runtime stream ended.");
+      // A clean stream end with no result normally means the turn was cut off,
+      // but a turn parked on a rejected usage-limit window can also end this
+      // way; classify it as the failure it parked on so ingestion persists
+      // the window and the resume sweep can fire, instead of clearing the
+      // classification as an interruption would.
+      const usageLimitFailure =
+        context.turnState.rejectedRateLimitTypes.size > 0 ||
+        context.turnState.latestAssistantRateLimited
+          ? {
+              reason: "usage_limit" as const,
+              resetsAtMs: maxUsageLimitResetMs(context.turnState),
+            }
+          : undefined;
+      yield* completeTurn(
+        context,
+        usageLimitFailure !== undefined ? "failed" : "interrupted",
+        usageLimitFailure !== undefined
+          ? "Claude usage limit reached. Send the message again once the limit resets."
+          : "Claude runtime stream ended.",
+        undefined,
+        usageLimitFailure,
+      );
     }
 
     yield* stopSessionInternal(context, {
