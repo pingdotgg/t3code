@@ -48,46 +48,46 @@ jobs:
           sentinel = 'it.effect("preserves trailing spaces when joining fallback patches"'
           if sentinel not in test:
               test += r'''
-
-it.effect("preserves trailing spaces when joining fallback patches", () =>
-  Effect.gen(function* () {
-    const cwd = yield* makeTmpDir();
-    yield* initRepoWithCommit(cwd);
-    const pathService = yield* Path.Path;
-
-    yield* writeTextFile(cwd, "tracked.txt", "before\n");
-    yield* git(cwd, ["add", "tracked.txt"]);
-    yield* git(cwd, ["commit", "-m", "add trailing-space fixture"]);
-    yield* writeTextFile(cwd, "tracked.txt", "tracked trailing spaces   \n");
-    yield* writeTextFile(cwd, "untracked.txt", "untracked trailing spaces   \n");
-
-    const blockerPath = pathService.join(cwd, "tmp-blocker");
-    yield* writeTextFile(cwd, "tmp-blocker", "not a directory\n");
-    const driver = yield* GitVcsDriver.GitVcsDriver;
-    const preview = yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const previous = process.env.TMPDIR;
-        process.env.TMPDIR = blockerPath;
-        return previous;
-      }),
-      () => driver.getReviewDiffPreview({ cwd }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) {
-            delete process.env.TMPDIR;
-          } else {
-            process.env.TMPDIR = previous;
-          }
-        }),
-    );
-    const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
-
-    assert.isDefined(source);
-    assert.include(source.diff, "+tracked trailing spaces   \n");
-    assert.include(source.diff, "+untracked trailing spaces   \n");
-  }).pipe(Effect.provide(TestLayer)),
-);
-'''
+          
+          it.effect("preserves trailing spaces when joining fallback patches", () =>
+            Effect.gen(function* () {
+              const cwd = yield* makeTmpDir();
+              yield* initRepoWithCommit(cwd);
+              const pathService = yield* Path.Path;
+          
+              yield* writeTextFile(cwd, "tracked.txt", "before\n");
+              yield* git(cwd, ["add", "tracked.txt"]);
+              yield* git(cwd, ["commit", "-m", "add trailing-space fixture"]);
+              yield* writeTextFile(cwd, "tracked.txt", "tracked trailing spaces   \n");
+              yield* writeTextFile(cwd, "untracked.txt", "untracked trailing spaces   \n");
+          
+              const blockerPath = pathService.join(cwd, "tmp-blocker");
+              yield* writeTextFile(cwd, "tmp-blocker", "not a directory\n");
+              const driver = yield* GitVcsDriver.GitVcsDriver;
+              const preview = yield* Effect.acquireUseRelease(
+                Effect.sync(() => {
+                  const previous = process.env.TMPDIR;
+                  process.env.TMPDIR = blockerPath;
+                  return previous;
+                }),
+                () => driver.getReviewDiffPreview({ cwd }),
+                (previous) =>
+                  Effect.sync(() => {
+                    if (previous === undefined) {
+                      delete process.env.TMPDIR;
+                    } else {
+                      process.env.TMPDIR = previous;
+                    }
+                  }),
+              );
+              const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+          
+              assert.isDefined(source);
+              assert.include(source.diff, "+tracked trailing spaces   \n");
+              assert.include(source.diff, "+untracked trailing spaces   \n");
+            }).pipe(Effect.provide(TestLayer)),
+          );
+          '''
           test_path.write_text(test)
           PY
 
