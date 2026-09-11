@@ -165,9 +165,14 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     pendingCreation.outcome?.kind === "delivered"
       ? selectedThreadRef
       : null;
+  const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
+  // Normal selection is shell-only. Detail readers subscribe separately; only
+  // optimistic creation needs the projection here until its prompt arrives.
+  const needsDetail =
+    selectedThreadShell === null || pendingCreation !== null || previousCreation !== null;
   const selectedThreadDetailState = useEnvironmentThread(
-    selectedThreadDetailRef?.environmentId ?? null,
-    selectedThreadDetailRef?.threadId ?? null,
+    needsDetail ? (selectedThreadDetailRef?.environmentId ?? null) : null,
+    needsDetail ? (selectedThreadDetailRef?.threadId ?? null) : null,
   );
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const selectedThread = useMemo(
@@ -180,7 +185,6 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
           : null),
     [pendingCreation, selectedThreadDetail, selectedThreadRef, selectedThreadShell],
   );
-  const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
   const selectedThreadCreation = resolvePendingThreadCreation({
     threadKey: selectedThreadKey,
     pending: pendingCreation,
@@ -210,7 +214,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       selectedThreadRef,
       selectedThread,
       selectedThreadCreation,
-      selectedThreadDetailState,
+      selectedThreadDetailRef,
       selectedThreadProject,
       selectedEnvironmentConnection,
       selectedEnvironmentRuntime,
@@ -220,7 +224,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       selectedEnvironmentRuntime,
       selectedThread,
       selectedThreadCreation,
-      selectedThreadDetailState,
+      selectedThreadDetailRef,
       selectedThreadProject,
       selectedThreadRef,
     ],
