@@ -9,8 +9,24 @@ export const MAX_VOICE_AUDIO_BYTES = 25 * 1024 * 1024;
 export const VOICE_TRANSCRIBE_PATH = "/api/voice/transcribe";
 export const VOICE_AVAILABILITY_PATH = "/api/voice/availability";
 
-/** Desktop recorders emit webm/opus; v1 forwards it with auto-detect (no language hint). */
+/** Desktop recorders emit webm/opus; Safari falls back to mp4. Both ride the same endpoint. */
 export const VOICE_TRANSCRIBE_CONTENT_TYPE = "audio/webm";
+
+/** MIME type carried in `x-voice-mime-type` so the server forwards Safari mp4 correctly. */
+export const VOICE_TRANSCRIBE_MIME_TYPE_HEADER = "x-voice-mime-type";
+
+export const VOICE_TRANSCRIBE_DEFAULT_MIME_TYPE = "audio/webm";
+
+/** Normalizes a recorder/blob MIME to the upstream set; unknown/empty falls back to webm. */
+export function normalizeVoiceAudioMimeType(mimeType: string | null | undefined): string {
+  const base = (mimeType ?? "").split(";")[0]?.trim().toLowerCase();
+  return base === "audio/mp4" ? "audio/mp4" : VOICE_TRANSCRIBE_DEFAULT_MIME_TYPE;
+}
+
+/** Upstream filename matching the normalized MIME (`recording.mp4` for Safari, else webm). */
+export function voiceAudioFileNameForMimeType(mimeType: string | null | undefined): string {
+  return normalizeVoiceAudioMimeType(mimeType) === "audio/mp4" ? "recording.mp4" : "recording.webm";
+}
 
 /** Raw recording bytes for POST /api/voice/transcribe. */
 export const VoiceAudioPayload = Schema.Uint8Array.pipe(

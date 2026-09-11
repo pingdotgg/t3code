@@ -67,6 +67,13 @@ const OptionalBearerHeaders = Schema.Struct({
   dpop: Schema.optionalKey(Schema.String),
 });
 
+const VoiceTranscribeHeaders = Schema.Struct({
+  authorization: Schema.optionalKey(Schema.String),
+  dpop: Schema.optionalKey(Schema.String),
+  // Recorder MIME (e.g. Safari `audio/mp4`); absent/unknown means `audio/webm`.
+  "x-voice-mime-type": Schema.optionalKey(Schema.String),
+});
+
 const OptionalDpopProofHeaders = Schema.Struct({
   dpop: Schema.optionalKey(Schema.String),
 });
@@ -633,7 +640,7 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   )
   .add(
     HttpApiEndpoint.post("transcribe", VOICE_TRANSCRIBE_PATH, {
-      headers: OptionalBearerHeaders,
+      headers: VoiceTranscribeHeaders,
       payload: VoiceAudioPayload,
       success: VoiceTranscribeResponse,
       error: [

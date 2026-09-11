@@ -44,20 +44,53 @@ class FakeRecorder implements ComposerVoiceRecorder {
   stopped = false;
   disposed = false;
   failStop = false;
+  useDeferredStop = false;
   audio = new Blob(["audio-bytes"], { type: "audio/webm" });
+  onError: ((error: Error) => void) | null = null;
+  private deferredStop: {
+    promise: Promise<Blob>;
+    resolve: (blob: Blob) => void;
+    reject: (reason: unknown) => void;
+  } | null = null;
 
   start(): void {
     this.started = true;
   }
 
-  async stop(): Promise<Blob> {
+  stop(): Promise<Blob> {
     this.stopped = true;
-    if (this.failStop) throw new Error("stop failed");
-    return this.audio;
+    if (this.failStop) return Promise.reject(new Error("stop failed"));
+    if (this.useDeferredStop) {
+      if (!this.deferredStop) {
+        let resolveFn = (_blob: Blob) => {};
+        let rejectFn = (_reason: unknown) => {};
+        const promise = new Promise<Blob>((resolve, reject) => {
+          resolveFn = resolve;
+          rejectFn = reject;
+        });
+        this.deferredStop = { promise, resolve: resolveFn, reject: rejectFn };
+      }
+      return this.deferredStop.promise;
+    }
+    return Promise.resolve(this.audio);
+  }
+
+  resolveDeferredStop(): void {
+    this.deferredStop?.resolve(this.audio);
+    this.deferredStop = null;
+  }
+
+  simulateRecorderError(message = "Microphone recording failed."): void {
+    this.onError?.(new Error(message));
   }
 
   dispose(): void {
     this.disposed = true;
+    // Mirror createMediaRecorderVoiceRecorder: settling a pending stop() so
+    // finishRecording() can't hang with `finishing` stuck true.
+    const pending = this.deferredStop;
+    this.deferredStop = null;
+    pending?.reject(new Error("Voice recording was cancelled."));
   }
 }
 
@@ -126,7 +159,10 @@ function createSession(input: {
         microphoneCalls += 1;
         return stream;
       }),
-    createRecorder: () => recorder,
+    createRecorder: (_stream, callbacks) => {
+      recorder.onError = callbacks.onError;
+      return recorder;
+    },
     onStateChange: (state) => {
       phases.push(state.phase);
     },
@@ -356,6 +392,68 @@ describe("ComposerVoiceSession lifecycle", () => {
     await session.stop();
 
     expect(phases).toHaveLength(0);
+    expect(session.currentState.phase).toBe("idle");
+  });
+
+  it("surfaces an async recorder error during recording and releases the mic", async () => {
+    const draft = createDraft("hello", 5);
+    const { transcribe, pending } = createDeferredTranscriber();
+    const { session, recorder, stoppedTracks } = createSession({ draft, transcribe });
+
+    await session.start();
+    expect(session.currentState.phase).toBe("recording");
+    recorder.simulateRecorderError();
+
+    expect(session.currentState.phase).toBe("error");
+    expect(session.currentState.error).toContain("Microphone recording failed");
+    expect(session.busy).toBe(false);
+    expect(recorder.disposed).toBe(true);
+    expect(stoppedTracks).toEqual(["track"]);
+    expect(pending).toHaveLength(0);
+  });
+
+  it("releases the microphone when recorder.stop() rejects", async () => {
+    const draft = createDraft("hello", 5);
+    const { transcribe } = createDeferredTranscriber();
+    const { session, recorder, stoppedTracks } = createSession({ draft, transcribe });
+    recorder.failStop = true;
+
+    await session.start();
+    await session.stop();
+
+    expect(session.currentState.phase).toBe("error");
+    expect(recorder.disposed).toBe(true);
+    expect(stoppedTracks).toEqual(["track"]);
+  });
+
+  it("cancel during the recording handoff settles and unblocks the next stop", async () => {
+    const draft = createDraft("hello", 5);
+    const { transcribe, pending } = createDeferredTranscriber();
+    const { session, recorder } = createSession({ draft, transcribe });
+    recorder.useDeferredStop = true;
+
+    await session.start();
+    const stopPromise = session.stop();
+    await flushAsync();
+    expect(session.currentState.phase).toBe("transcribing");
+    // Cancel while recorder.stop() is still pending: dispose rejects the
+    // pending stop so finishRecording() settles instead of hanging.
+    session.cancel();
+    await stopPromise;
+
+    expect(session.currentState.phase).toBe("idle");
+    expect(pending).toHaveLength(0);
+
+    // A fresh recording must still transcribe after the cancelled handoff.
+    recorder.useDeferredStop = false;
+    await session.start();
+    expect(session.currentState.phase).toBe("recording");
+    const retryStop = session.stop();
+    await flushAsync();
+    expect(pending).toHaveLength(1);
+    pending[0]?.resolve({ text: "retry", locale: "en" });
+    await retryStop;
+    expect(draft.text).toBe("hello retry");
     expect(session.currentState.phase).toBe("idle");
   });
 });

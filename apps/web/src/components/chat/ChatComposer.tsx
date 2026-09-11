@@ -2871,18 +2871,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [composerCursor, composerTerminalContexts, promptRef]);
 
   // Voice dictation adapters: the session captures environment + thread +
-  // selection at start (the ownerKey pins the exact draft) and commits
-  // through the guarded prompt replacement, so the transcript always lands
-  // as an editable draft at the captured cursor — never auto-sent.
+  // pending-answer target + selection at start (the ownerKey pins the exact
+  // draft) and commits through the guarded prompt replacement, so the
+  // transcript always lands as an editable draft at the captured cursor —
+  // never auto-sent. The pending-question id matters: a dictation started
+  // for an empty normal draft must not land as the answer when a pending
+  // question opens mid-recording (same empty text would otherwise look
+  // current).
+  const pendingVoiceOwnerSuffix = activePendingProgress?.activeQuestion
+    ? `pending:${activePendingProgress.questionIndex}:${activePendingProgress.activeQuestion.id}`
+    : "composer";
   const readVoiceDraft = useCallback((): ComposerVoiceDraft | null => {
     const snapshot = readComposerSnapshot();
     return {
-      ownerKey: `${environmentId}:${composerTargetKey(composerDraftTarget)}`,
+      ownerKey: `${environmentId}:${composerTargetKey(composerDraftTarget)}:${pendingVoiceOwnerSuffix}`,
       text: snapshot.value,
       selectionStart: snapshot.expandedCursor,
       selectionEnd: snapshot.expandedCursor,
     };
-  }, [composerDraftTarget, environmentId, readComposerSnapshot]);
+  }, [composerDraftTarget, environmentId, pendingVoiceOwnerSuffix, readComposerSnapshot]);
 
   const commitVoiceTranscript = useCallback(
     (commit: ComposerVoiceCommit): boolean =>

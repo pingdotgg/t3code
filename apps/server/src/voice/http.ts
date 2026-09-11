@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
+  VOICE_TRANSCRIBE_MIME_TYPE_HEADER,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/unstable/http";
@@ -37,7 +38,10 @@ export const voiceHttpApiLayer = HttpApiBuilder.group(
               message: "Content-Length must match the audio size.",
             });
           }
-          return yield* transcribeCodexVoice(args.payload);
+          return yield* transcribeCodexVoice(
+            args.payload,
+            args.headers[VOICE_TRANSCRIBE_MIME_TYPE_HEADER],
+          );
         }),
       );
   }),

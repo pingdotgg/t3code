@@ -1,6 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { MAX_VOICE_AUDIO_BYTES } from "@t3tools/contracts";
+import {
+  MAX_VOICE_AUDIO_BYTES,
+  normalizeVoiceAudioMimeType,
+  voiceAudioFileNameForMimeType,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -236,6 +240,47 @@ it.layer(NodeServices.layer)("VoiceTranscription", (it) => {
         yield* Deferred.await(entered);
         yield* Fiber.interrupt(fiber);
         yield* Deferred.await(interrupted);
+      }),
+    );
+  });
+
+  describe("audio mime", () => {
+    it("normalizes recorder mimes to the upstream set with matching filenames", () => {
+      expect(normalizeVoiceAudioMimeType("audio/mp4")).toBe("audio/mp4");
+      expect(normalizeVoiceAudioMimeType("audio/mp4;codecs=mp4a.40.2")).toBe("audio/mp4");
+      expect(normalizeVoiceAudioMimeType("audio/webm;codecs=opus")).toBe("audio/webm");
+      expect(normalizeVoiceAudioMimeType("audio/webm")).toBe("audio/webm");
+      expect(normalizeVoiceAudioMimeType(null)).toBe("audio/webm");
+      expect(normalizeVoiceAudioMimeType(undefined)).toBe("audio/webm");
+      expect(voiceAudioFileNameForMimeType("audio/mp4")).toBe("recording.mp4");
+      expect(voiceAudioFileNameForMimeType("audio/webm;codecs=opus")).toBe("recording.webm");
+    });
+
+    it.effect("transcribes Safari mp4 audio instead of mislabeling it as webm", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "voice-mp4-" });
+        yield* writeCodexAuth(homePath, "mp4-token");
+
+        const successClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() =>
+              HttpClientResponse.fromWeb(request, Response.json({ text: "  hola  " })),
+            ),
+          ),
+        );
+
+        const result = yield* transcribeCodexVoice(new Uint8Array([1, 2, 3]), "audio/mp4").pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              successClient,
+              ServerSettingsService.layerTest({ providers: { codex: { homePath } } }),
+            ),
+          ),
+        );
+
+        expect(result).toEqual({ transcript: "hola" });
       }),
     );
   });

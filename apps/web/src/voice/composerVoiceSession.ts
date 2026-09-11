@@ -50,7 +50,10 @@ export type ComposerVoiceSessionDependencies = {
   readonly commitDraft: (commit: ComposerVoiceCommit) => boolean;
   readonly transcribe: ComposerVoiceTranscriber;
   readonly requestMicrophone: () => Promise<MediaStream>;
-  readonly createRecorder: (stream: MediaStream) => ComposerVoiceRecorder;
+  readonly createRecorder: (
+    stream: MediaStream,
+    callbacks: { readonly onError: (error: Error) => void },
+  ) => ComposerVoiceRecorder;
   readonly onStateChange: (state: VoiceInputState) => void;
   readonly now?: () => number;
 };
@@ -124,7 +127,10 @@ export function requestComposerMicrophone(): Promise<MediaStream> {
   return mediaDevices.getUserMedia({ audio: true });
 }
 
-export function createMediaRecorderVoiceRecorder(stream: MediaStream): ComposerVoiceRecorder {
+export function createMediaRecorderVoiceRecorder(
+  stream: MediaStream,
+  callbacks?: { readonly onError?: (error: Error) => void },
+): ComposerVoiceRecorder {
   const mimeType = pickSupportedVoiceMimeType();
   const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
   const chunks: Blob[] = [];
@@ -143,9 +149,17 @@ export function createMediaRecorderVoiceRecorder(stream: MediaStream): ComposerV
     pending?.resolve(takeAudio());
   };
   const handleError = () => {
+    const failure = new Error("Microphone recording failed.");
     const pending = pendingStop;
     pendingStop = null;
-    pending?.reject(new Error("Microphone recording failed."));
+    if (pending) {
+      pending.reject(failure);
+      return;
+    }
+    // No stop() is awaiting (normal recording): the session would otherwise
+    // stay in `recording` forever, blocking send and risking a partial
+    // submit on a later stop.
+    callbacks?.onError?.(failure);
   };
   recorder.addEventListener("dataavailable", handleDataAvailable);
   recorder.addEventListener("stop", handleStop);
@@ -169,7 +183,12 @@ export function createMediaRecorderVoiceRecorder(stream: MediaStream): ComposerV
       recorder.removeEventListener("dataavailable", handleDataAvailable);
       recorder.removeEventListener("stop", handleStop);
       recorder.removeEventListener("error", handleError);
+      // Settle any awaiting stop() so a cancel/dispose during the
+      // recording->transcribing handoff can't leave finishRecording()
+      // pending forever with `finishing` stuck true.
+      const pending = pendingStop;
       pendingStop = null;
+      pending?.reject(new Error("Voice recording was cancelled."));
       if (recorder.state !== "inactive") {
         try {
           recorder.stop();
@@ -247,7 +266,15 @@ export class ComposerVoiceSession {
         return;
       }
       this.stream = stream;
-      const recorder = this.dependencies.createRecorder(stream);
+      const recorder = this.dependencies.createRecorder(stream, {
+        onError: (recorderError) => {
+          if (!this.isCurrent(generation)) return;
+          if (this.state.phase !== "recording") return;
+          this.cleanupCapture();
+          this.capturedDraft = null;
+          this.setError(transcriptionErrorMessage(recorderError), "retry");
+        },
+      });
       this.recorder = recorder;
       recorder.start();
       this.startedAt = this.now();
@@ -281,6 +308,10 @@ export class ComposerVoiceSession {
       case "recording":
       case "transcribing":
         this.generation += 1;
+        // Release the stop gate: cleanup settles any awaiting recorder.stop()
+        // (dispose rejects pendingStop), and the stale finishRecording() below
+        // must not clobber a fresh session's flag (see finally guard).
+        this.finishing = false;
         this.cleanupCapture();
         this.capturedDraft = null;
         this.elapsedSeconds = 0;
@@ -304,6 +335,7 @@ export class ComposerVoiceSession {
     if (this.disposed) return;
     this.disposed = true;
     this.generation += 1;
+    this.finishing = false;
     this.cleanupCapture();
     this.capturedDraft = null;
   }
@@ -325,6 +357,9 @@ export class ComposerVoiceSession {
       try {
         audio = await recorder.stop();
       } catch (error) {
+        // Release the microphone before reporting: a retry overwrites
+        // this.stream, which would orphan the live tracks.
+        this.cleanupCapture();
         if (this.isCurrent(generation)) this.setError(transcriptionErrorMessage(error), "retry");
         return;
       }
@@ -383,7 +418,10 @@ export class ComposerVoiceSession {
       this.elapsedSeconds = 0;
       this.setState(IDLE_COMPOSER_VOICE_STATE);
     } finally {
-      this.finishing = false;
+      // A cancel/dispose bumps generation and already cleared the gate; only
+      // clear here when still current so a stale finish can't unblock (or
+      // re-block) a fresh session's stop().
+      if (this.generation === generation) this.finishing = false;
     }
   }
 

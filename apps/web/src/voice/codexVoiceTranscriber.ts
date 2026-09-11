@@ -2,6 +2,7 @@ import {
   throwIfVoiceTranscriptionAborted,
   VoiceTranscriptionError,
 } from "@t3tools/client-runtime/voice-input";
+import { normalizeVoiceAudioMimeType, VOICE_TRANSCRIBE_MIME_TYPE_HEADER } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { PrimaryEnvironmentHttpClient } from "../environments/primary/httpClient";
@@ -14,9 +15,10 @@ import type { ComposerVoiceTranscriber } from "./composerVoiceSession";
  * Reconciled server contract (`packages/contracts/src/voice.ts`,
  * `apps/server/src/voice/`):
  * - `POST /api/voice/transcribe` takes the raw recording bytes
- *   (`VoiceAudioPayload`, content type `audio/webm`) and returns
- *   `{ transcript: string }`. No provider id or mime field: v1 always uses
- *   the ambient Codex subscription.
+ *   (`VoiceAudioPayload`) and returns `{ transcript: string }`. The
+ *   recorder MIME rides `x-voice-mime-type` (Safari records `audio/mp4`,
+ *   elsewhere `audio/webm`) so the server forwards matching bytes + filename
+ *   to Codex. No provider id: v1 always uses the ambient Codex subscription.
  * - `GET /api/voice/availability` returns `{ codexVoiceAvailable: boolean }`
  *   (see `codexVoiceAvailability.ts`).
  * - Errors: BadRequest (empty/oversize) / Forbidden (Codex rejected the
@@ -72,20 +74,34 @@ export function createCodexVoiceTranscriber(): ComposerVoiceTranscriber {
   return async (audio, { signal }) => {
     throwIfVoiceTranscriptionAborted(signal);
     const bytes = new Uint8Array(await audio.arrayBuffer());
+    throwIfVoiceTranscriptionAborted(signal);
+    // Forward the recorder MIME so Safari mp4 isn't mislabeled upstream, and
+    // forward the session signal so cancel interrupts the upload instead of
+    // merely racing the wrapper below.
+    const mimeType = normalizeVoiceAudioMimeType(audio.type);
     const transcript = await runWithAbort(
       runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
           Effect.flatMap((client) =>
-            client.voice.transcribe({ payload: bytes, headers: {} }).pipe(
-              Effect.map((result) => result.transcript),
-              Effect.mapError(
-                (cause) =>
-                  new VoiceTranscriptionError("transcription-failed", voiceErrorMessage(cause)),
+            client.voice
+              .transcribe({
+                payload: bytes,
+                headers: { [VOICE_TRANSCRIBE_MIME_TYPE_HEADER]: mimeType },
+              })
+              .pipe(
+                Effect.map((result) => result.transcript),
+                Effect.mapError(
+                  (cause) =>
+                    new VoiceTranscriptionError("transcription-failed", voiceErrorMessage(cause)),
+                ),
               ),
-            ),
           ),
         ),
+        { signal },
       ).catch((error: unknown) => {
+        if (signal.aborted) {
+          throw new VoiceTranscriptionError("cancelled", "Voice transcription was cancelled.");
+        }
         throw error instanceof VoiceTranscriptionError
           ? error
           : new VoiceTranscriptionError("transcription-failed", voiceErrorMessage(error));

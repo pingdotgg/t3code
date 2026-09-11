@@ -14,6 +14,8 @@ import {
   EnvironmentHttpForbiddenError,
   EnvironmentHttpInternalServerError,
   MAX_VOICE_AUDIO_BYTES,
+  normalizeVoiceAudioMimeType,
+  voiceAudioFileNameForMimeType,
   VoiceProviderUnsupportedError,
   voiceUnsupportedMessage,
 } from "@t3tools/contracts";
@@ -109,9 +111,14 @@ export const requireCodexVoiceProvider = Effect.fn("VoiceTranscription.requireCo
 );
 
 const forwardToCodexTranscription = Effect.fn("VoiceTranscription.forwardToCodexTranscription")(
-  function* (audio: Uint8Array, credentials: CodexVoiceCredentials) {
+  function* (audio: Uint8Array, mimeType: string, credentials: CodexVoiceCredentials) {
+    const normalizedMime = normalizeVoiceAudioMimeType(mimeType);
     const form = new FormData();
-    form.append("file", new Blob([audio], { type: "audio/webm" }), "recording.webm");
+    form.append(
+      "file",
+      new Blob([audio], { type: normalizedMime }),
+      voiceAudioFileNameForMimeType(normalizedMime),
+    );
     const httpClient = yield* HttpClient.HttpClient;
     const completed = yield* HttpClientRequest.post(CODEX_TRANSCRIBE_URL, {
       body: HttpBody.formData(form),
@@ -158,6 +165,7 @@ const forwardToCodexTranscription = Effect.fn("VoiceTranscription.forwardToCodex
 /** Validates one-shot audio in memory, then transcribes via the Codex subscription. */
 export const transcribeCodexVoice = Effect.fn("VoiceTranscription.transcribeCodexVoice")(function* (
   audio: Uint8Array,
+  mimeType?: string | null,
 ) {
   if (audio.byteLength === 0) {
     return yield* new EnvironmentHttpBadRequestError({ message: "The recording is empty." });
@@ -168,7 +176,7 @@ export const transcribeCodexVoice = Effect.fn("VoiceTranscription.transcribeCode
     });
   }
   const credentials = yield* resolveCodexVoiceCredentials();
-  return yield* forwardToCodexTranscription(audio, credentials);
+  return yield* forwardToCodexTranscription(audio, mimeType ?? "audio/webm", credentials);
 });
 
 /** Availability probe: false for missing/rejected file login, never token material. */

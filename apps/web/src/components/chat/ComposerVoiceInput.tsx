@@ -74,6 +74,10 @@ export const ComposerVoiceInput = memo(function ComposerVoiceInput(props: {
     () => () => {
       sessionRef.current?.dispose();
       sessionRef.current = null;
+      // The parent keys this input by draft target and lifts `busy` to gate
+      // Send. dispose() emits no state change, so clear the lifted flag here;
+      // otherwise a target switch mid-recording leaves Send disabled forever.
+      busyRef.current?.(false);
     },
     [],
   );
